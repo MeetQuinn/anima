@@ -13,6 +13,8 @@ import { slackRuntimeDecision } from '../inbox/slack-subscription.service.js';
 import { clearActiveRuntimeItem, setActiveRuntimeItem } from '../runtime/active-item.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
+import { MessageStore } from '../storage/schema/message.store.js';
+import type { AgentMessageRecord } from '../../shared/messages.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { slackBlocks, slackPostBody, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
@@ -585,6 +587,87 @@ test('inbox and outbox commands show recent received and sent history', async ()
     assert.equal(dmSearch.status, 0, dmSearch.stderr || dmSearch.stdout);
     assert.match(dmSearch.stdout, /^Message search \(1 match, newest first\)/);
     assert.match(dmSearch.stdout, /\[time=2026-05-11T00:06:00\.000Z direction=out channel=@alice channel_id=D-alice message_ts=1770000206\.000001\] sent: Sent the summary\./);
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('local history commands scope threads before limiting and include the root', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-thread-history-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackConfig(stateDir);
+      const rows: AgentMessageRecord[] = [
+        { messageId: 'root', messageTs: '1770000200.000001', direction: 'in', text: 'launch root' },
+        { messageId: 'reply-in', threadTs: '1770000200.000001', direction: 'in', text: 'launch inbound' },
+        { messageId: 'reply-out', threadTs: '1770000200.000001', direction: 'out', text: 'launch outbound' },
+        { messageId: 'other-thread', threadTs: '1770000300.000001', direction: 'in', text: 'launch unrelated' },
+        { messageId: 'other-channel', channelId: 'C-other', threadTs: '1770000200.000001', direction: 'in', text: 'launch elsewhere' },
+        { messageId: 'other-root', messageTs: '1770000400.000001', direction: 'in', text: 'launch top level' },
+      ].map((row, i) => ({
+        channelId: 'C-product', channelKind: 'channel', channelName: 'product',
+        kind: 'message', source: { id: `fixture-${i}`, kind: 'inbox' },
+        timestamp: `2026-05-11T00:0${i}:00.000Z`, ...row,
+      } as AgentMessageRecord));
+      await new MessageStore('scout').appendManyIfAbsent(rows);
+    });
+    const env = { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir };
+    const scope = ['--channel', 'C-product', '--thread-ts', '1770000200.000001'];
+    const history = await runNode([cliPath, 'history', ...scope], { env });
+    assert.equal(history.status, 0, history.stderr);
+    assert.match(history.stdout, /launch root/);
+    assert.match(history.stdout, /launch inbound/);
+    assert.match(history.stdout, /launch outbound/);
+    assert.doesNotMatch(history.stdout, /launch unrelated|launch elsewhere|launch top level/);
+    const inbox = await runNode([cliPath, 'inbox', ...scope, '--limit', '1'], { env });
+    assert.equal(inbox.status, 0, inbox.stderr);
+    assert.match(inbox.stdout, /launch inbound/);
+    assert.doesNotMatch(inbox.stdout, /launch root|launch outbound|launch unrelated/);
+    assert.match(inbox.stdout, /has_more=true next_cursor=2026-05-11T00:01:00.000Z/);
+    const next = await runNode([cliPath, 'inbox', ...scope, '--limit', '1', '--before', '2026-05-11T00:01:00.000Z'], { env });
+    assert.equal(next.status, 0, next.stderr);
+    assert.match(next.stdout, /launch root/);
+    assert.match(next.stdout, /has_more=false/);
+    const outbox = await runNode([cliPath, 'outbox', ...scope], { env });
+    assert.equal(outbox.status, 0, outbox.stderr);
+    assert.match(outbox.stdout, /launch outbound/);
+    assert.doesNotMatch(outbox.stdout, /launch inbound|launch root/);
+    const search = await runNode([cliPath, 'message', 'search', 'launch', ...scope, '--since', '2026-05-11T00:01:00Z'], { env });
+    assert.equal(search.status, 0, search.stderr);
+    assert.match(search.stdout, /launch inbound/);
+    assert.match(search.stdout, /launch outbound/);
+    assert.doesNotMatch(search.stdout, /launch root|launch unrelated|launch elsewhere/);
+    for (const command of [['history'], ['inbox'], ['outbox'], ['message', 'search', 'launch']]) {
+      const missing = await runNode([cliPath, ...command, '--thread-ts', '1770000200.000001'], { env });
+      assert.notEqual(missing.status, 0);
+      assert.match(missing.stderr, /input\.missing_channel/);
+      assert.match(missing.stderr, /Pass --channel together with --thread-ts/);
+    }
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('history orders the selected page by event time when arrivals are late', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-history-late-arrival-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackConfig(stateDir);
+      await new MessageStore('scout').appendManyIfAbsent([
+        ['newer first arrival', '2026-05-11T00:05:00.000Z'],
+        ['older late arrival', '2026-05-11T00:01:00.000Z'],
+        ['same-time later arrival', '2026-05-11T00:05:00.000Z'],
+      ].map(([text, timestamp], i) => ({
+        direction: 'in', kind: 'message', messageId: `late-${i}`,
+        source: { id: `late-${i}`, kind: 'inbox' }, text: text!, timestamp: timestamp!,
+      })));
+    });
+    const env = { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir };
+    const history = await runNode([cliPath, 'history'], { env });
+    assert.equal(history.status, 0, history.stderr);
+    assert.deepEqual(history.stdout.split('\n').filter((line) => line.startsWith('[time=')).map((line) => line.split('Unknown: ')[1]), [
+      'older late arrival', 'newer first arrival', 'same-time later arrival',
+    ]);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

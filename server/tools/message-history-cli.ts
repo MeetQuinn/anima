@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { z } from 'zod';
 
 import type { AgentMessageDirection, AgentMessageRecord } from '../../shared/messages.js';
+import { cliError } from '../cli/cli-errors.js';
 import { renderEnvelope, renderPageFooter } from '../messages/envelope.js';
 import { messageServiceForAgent, normalizeSearchKeywords } from '../messages/message.service.js';
 import { resolveToolAgentId } from './tool-context.js';
@@ -11,6 +12,7 @@ const MessageHistorySchema = z.object({
   channel: z.string().optional(),
   limit: z.coerce.number().int().positive().optional(),
   since: z.string().optional(),
+  threadTs: z.string().trim().min(1).optional(),
 });
 
 type MessageHistoryInput = z.infer<typeof MessageHistorySchema>;
@@ -21,6 +23,7 @@ export interface MessageSearchCliInput {
   keywords: string[];
   limit?: number;
   since?: string;
+  threadTs?: string;
 }
 
 export function registerMessageHistoryCommands(program: Command): void {
@@ -31,6 +34,7 @@ export function registerMessageHistoryCommands(program: Command): void {
     .option('--before <iso>', 'page older than this ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
     .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
+    .option('--thread-ts <id>', 'only include this thread and its root message; requires --channel')
     .action(async (_, command) => {
       const opts = MessageHistorySchema.parse(command.optsWithGlobals());
       await runMessageTimeline(opts);
@@ -43,6 +47,7 @@ export function registerMessageHistoryCommands(program: Command): void {
     .option('--before <iso>', 'page older than this ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
     .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
+    .option('--thread-ts <id>', 'only include this thread and its root message; requires --channel')
     .action(async (_, command) => {
       const opts = MessageHistorySchema.parse(command.optsWithGlobals());
       await runMessageHistory('in', opts);
@@ -55,6 +60,7 @@ export function registerMessageHistoryCommands(program: Command): void {
     .option('--before <iso>', 'page older than this ISO timestamp')
     .option('--since <iso>', 'only include entries at or after this ISO timestamp')
     .option('--channel <id-or-name>', 'only include entries from a channel, DM handle, or conversation id')
+    .option('--thread-ts <id>', 'only include this thread and its root message; requires --channel')
     .action(async (_, command) => {
       const opts = MessageHistorySchema.parse(command.optsWithGlobals());
       await runMessageHistory('out', opts);
@@ -62,10 +68,12 @@ export function registerMessageHistoryCommands(program: Command): void {
 }
 
 async function runMessageTimeline(opts: MessageHistoryInput): Promise<void> {
+  validateThreadFilter(opts);
   const agentId = resolveToolAgentId({});
   if (!agentId) throw new Error('history requires current agent context');
   const page = await messageServiceForAgent(agentId).list({
     channel: opts.channel,
+    threadTs: opts.threadTs,
     ...normalizeTimeWindow(opts),
     limit: opts.limit ?? 20,
   });
@@ -73,17 +81,22 @@ async function runMessageTimeline(opts: MessageHistoryInput): Promise<void> {
     console.log('History is empty.');
     return;
   }
-  const entries = [...page.entries].reverse();
+  // Select the same recent page, then order its display by event time. Late
+  // arrivals/backfills can be appended after messages with newer timestamps.
+  const entries = [...page.entries].reverse().sort((a, b) =>
+    Date.parse(a.timestamp) - Date.parse(b.timestamp));
   console.log(`History (${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, newest last)`);
   for (const entry of entries) console.log(formatTimelineEntry(entry));
   console.log(renderPageFooter({ hasMore: Boolean(page.nextCursor), nextCursor: page.nextCursor }));
 }
 
 async function runMessageHistory(direction: AgentMessageDirection, opts: MessageHistoryInput): Promise<void> {
+  validateThreadFilter(opts);
   const agentId = resolveToolAgentId({});
   if (!agentId) throw new Error(`${direction === 'in' ? 'inbox' : 'outbox'} requires current agent context`);
   const page = await messageServiceForAgent(agentId).list({
     channel: opts.channel,
+    threadTs: opts.threadTs,
     direction,
     ...normalizeTimeWindow(opts),
     limit: opts.limit ?? 20,
@@ -99,12 +112,14 @@ async function runMessageHistory(direction: AgentMessageDirection, opts: Message
 }
 
 export async function runMessageSearch(opts: MessageSearchCliInput): Promise<void> {
+  validateThreadFilter(opts);
   const agentId = resolveToolAgentId({});
   if (!agentId) throw new Error('message search requires current agent context');
   const keywords = normalizeSearchKeywords(opts.keywords);
   if (keywords.length === 0) throw new Error('message search requires at least one keyword');
   const page = await messageServiceForAgent(agentId).search({
     channel: opts.channel,
+    threadTs: opts.threadTs,
     keywords,
     ...normalizeTimeWindow(opts),
     limit: opts.limit ?? 20,
@@ -116,6 +131,16 @@ export async function runMessageSearch(opts: MessageSearchCliInput): Promise<voi
   console.log(`Message search (${page.entries.length} match${page.entries.length === 1 ? '' : 'es'}, newest first)`);
   for (const entry of page.entries) console.log(formatSearchEntry(entry, keywords));
   console.log(renderPageFooter({ hasMore: Boolean(page.nextCursor), nextCursor: page.nextCursor }));
+}
+
+function validateThreadFilter(opts: { channel?: string; threadTs?: string }): void {
+  if (opts.threadTs && !opts.channel?.trim()) {
+    throw cliError({
+      code: 'input.missing_channel',
+      hint: 'Pass --channel together with --thread-ts so the thread is scoped to one conversation.',
+      retryable: false,
+    });
+  }
 }
 
 function normalizeTimeWindow(opts: MessageHistoryInput): { before?: string; since?: string } {

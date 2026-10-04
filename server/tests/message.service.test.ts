@@ -109,6 +109,35 @@ test('message service list scopes to a single channel when given a channel filte
   }
 });
 
+test('thread filters include stored roots, scope channels and preserve opaque topic ids', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-thread-filter-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const row = (id: string, extra: Partial<AgentMessageRecord>): AgentMessageRecord => ({
+        ...channelMessage({ messageId: id, timestamp: '2026-05-11T00:00:00.000Z', channelId: 'C-product', channelName: 'product' }),
+        ...extra,
+      });
+      await new MessageStore('scout').appendManyIfAbsent([
+        row('root', { messageTs: 'topic:opaque-id' }),
+        row('reply', { threadTs: 'topic:opaque-id', timestamp: '2026-05-11T00:01:00.000Z' }),
+        row('other-topic', { threadTs: 'other', messageTs: 'topic:opaque-id' }),
+        row('other-channel', { channelId: 'C-other', channelName: 'other', threadTs: 'topic:opaque-id' }),
+      ]);
+      const page = await messageServiceForAgent('scout').list({ channel: '#product', threadTs: 'topic:opaque-id', limit: 1 });
+      assert.deepEqual(page.entries.map((entry) => entry.messageId), ['reply']);
+      assert.equal(page.nextCursor, '2026-05-11T00:01:00.000Z');
+      const next = await messageServiceForAgent('scout').list({ channel: '#product', threadTs: 'topic:opaque-id', before: page.nextCursor!, limit: 1 });
+      assert.deepEqual(next.entries.map((entry) => entry.messageId), ['root']);
+      assert.equal(next.nextCursor, null);
+      const search = await messageServiceForAgent('scout').search({ channel: 'C-product', threadTs: 'topic:opaque-id', keywords: ['reply'] });
+      assert.deepEqual(search.entries.map((entry) => entry.messageId), ['reply']);
+      assert.equal((await messageServiceForAgent('scout').list()).entries.length, 4);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('wake queue enqueue writes inbound messages without duplicate ledger rows', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-inbox-write-test-'));
   try {

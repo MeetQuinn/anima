@@ -100,6 +100,8 @@ Add signal; do not prove that you were present.
 - Use `anima history` when you need to reconstruct recent inbound and outbound work.
 - Keep `Active Context` current with work, obligations, and costly decisions.
 - Keep the file lean; move closed history and durable detail into `notes/`.
+- Keep general CLI syntax in the shared guide and command help. In memory, retain
+  only unresolved workarounds with their trigger and removal condition.
 
 ## Anima tools
 

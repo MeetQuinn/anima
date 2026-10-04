@@ -3,6 +3,7 @@ import type { WebClient } from '@slack/web-api';
 import { z } from 'zod';
 
 import type { InboxItem } from '../../shared/inbox.js';
+import { cliError } from '../cli/cli-errors.js';
 import {
   INTERACTIVE_ASK_ACTION_ID,
   interactiveAskServiceForAgent,
@@ -67,7 +68,7 @@ export function registerAskCommands(program: Command): void {
     .description('Ask a bounded Slack question with one-click answer buttons.')
     .requiredOption('--question <text>', 'question text')
     .option('--option <label>', 'answer option label; repeat 2–5 times', collectOption, [])
-    .option('--to <user>', 'limit who can answer: @handle, <@U…>, or U…; omit for DM counterpart or anyone in a channel/thread')
+    .option('--to <user>', 'human Slack user who can answer: @handle, <@U…>, or U…; omit for DM counterpart or anyone in a channel/thread')
     .option('--channel <channel>', 'channel ID/name or DM target; defaults to the current Slack surface when available')
     .option('--thread-ts <ts>', 'post inside this thread; requires or derives a channel')
     .option('--no-reply-hint', 'hide the typed-reply escape hatch')
@@ -269,25 +270,34 @@ async function resolveSlackUserArgument(input: {
   const directory = new SlackWorkspaceDirectoryService({ client: input.client, teamId: input.teamId });
   if (userId) {
     const info = await directory.getUser(userId);
-    assertHumanAskTarget(info, user);
+    assertHumanAskTarget(info);
     return slackAnswerUser(info, userId);
   }
   const handle = user.replace(/^@/, '');
   if (!handle) throw new Error('--to requires @handle, <@U…>, or U…');
   const info = await directory.getUserByHandle(handle);
   if (!info.id) throw new Error(`Slack user not found: ${user}`);
-  assertHumanAskTarget(info, user);
+  assertHumanAskTarget(info);
   return slackAnswerUser(info, info.id);
 }
 
 function assertHumanAskTarget(
   user: { deleted?: boolean; isAppUser?: boolean; isBot?: boolean } | undefined,
-  label: string,
 ): void {
   if (!user) return;
-  if (user.deleted) throw new Error(`Cannot ask ${label}: that Slack user is deleted`);
+  if (user.deleted) {
+    throw cliError({
+      code: 'input.invalid_ask_target',
+      hint: 'Choose an active human Slack user; anima ask cannot target a deleted user.',
+      retryable: false,
+    });
+  }
   if (isBotSlackUser(user)) {
-    throw new Error(`Cannot ask ${label}: anima ask is for human Slack users, not bots`);
+    throw cliError({
+      code: 'input.invalid_ask_target',
+      hint: 'anima ask is for human Slack users. To reach an agent, use anima message send with an @mention in a shared channel or thread.',
+      retryable: false,
+    });
   }
 }
 

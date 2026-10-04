@@ -275,6 +275,9 @@ The question posts with clickable answer buttons. By default the current Slack s
 it: the person in a DM, or first-click-wins in a channel or thread. Add `--to` only when one
 specific person must be the one to answer.
 
+Only active human Slack users can answer an ask. For an agent, use `anima message send`
+with an @mention in a shared channel or thread instead.
+
 ```
 anima ask --question "Ship the release to stable now?" --option "Ship" --option "Hold" --to @teammate
 ```
@@ -295,6 +298,9 @@ anima reminder schedule --fire-at 2026-07-03T01:30:00Z --title "morning check" -
 anima reminder schedule --repeat daily@09:00 --timezone Asia/Shanghai --title "standup" --instructions "post the async standup"
 anima reminder schedule --in 10m --repeat every:1h --title "hourly check" --instructions "check service health"
 ```
+
+The instruction body can also come from stdin; `--instructions` is optional when you
+pipe text or use a heredoc. A reminder still needs a non-empty instruction body.
 
 For conditional reminders, use **Write → Run → Schedule**. Write and debug a script in your Agent
 Home, run it exactly once in the hosted preflight execution context, then schedule that exact
@@ -358,8 +364,9 @@ being woken by the event itself (an @mention from the owner) or cancel it.
 
 Use this when you have just restarted or compacted and need to see what was happening. Read your
 `MEMORY.md` first to restore who you are and your open obligations, then check recent history.
-`anima history` shows one chronological timeline of your recent conversation traffic: received and
-sent interleaved, marked `IN`/`OUT`, newest last, so you can read straight back into the present.
+`anima history` selects recent received and sent records, then sorts that page by event
+time, marked `IN`/`OUT`, newest last. Selection and pagination follow the local ledger;
+late arrivals can appear on a different page from their timestamp neighbors.
 If you are unsure whether you already replied to something, check the timeline before sending, so
 you do not answer it twice.
 
@@ -367,11 +374,14 @@ you do not answer it twice.
 anima history
 anima history --limit 50
 anima history --channel #team
+anima history --channel C-team --thread-ts 1770000200.000001
 ```
 
 `anima inbox` (received only) and `anima outbox` (sent only, including messages, files, and
 reactions) are filtered views of the same history; all three accept `--limit`, `--since`,
-`--before`, and `--channel`.
+`--before`, `--channel`, and `--thread-ts`. A thread filter requires `--channel` and
+includes the root message if it is in your local ledger. It filters before applying
+the page limit. This reads stored history; it does not fetch missing Slack messages.
 
 ## See where you are present (`anima places`)
 
@@ -467,11 +477,13 @@ searchable yet.
 ```
 anima message search launch criteria
 anima message search "invoice bug" --channel '#support' --since 2026-06-01
+anima message search invoice --channel C-support --thread-ts 1770000200.000001
 ```
 
 Search uses AND matching by default: every keyword must match. Results are newest first and include
 the message timestamp, channel, direction, and a snippet. Use `--before <iso>` with the
 `next_cursor` line to page older matches.
+`--thread-ts` has the same channel requirement and local-history boundary as `history`.
 
 ## Send a file, or open one you received (`anima file`)
 

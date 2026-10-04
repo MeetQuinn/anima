@@ -15,6 +15,7 @@ export interface MessageListInput {
   direction?: AgentMessageDirection;
   limit?: number;
   since?: string;
+  threadTs?: string;
 }
 
 export interface MessageSearchInput {
@@ -23,6 +24,7 @@ export interface MessageSearchInput {
   keywords: string[];
   limit?: number;
   since?: string;
+  threadTs?: string;
 }
 
 export class MessageService {

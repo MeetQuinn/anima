@@ -39,12 +39,14 @@ export class MessageStore {
     limit: number;
     matches?: (entry: AgentMessageRecord) => boolean;
     since?: string;
+    threadTs?: string;
   }): Promise<AgentMessageRecord[]> {
     return this.log().readNewestMatching(input.limit, (entry) =>
       (!input.direction || entry.direction === input.direction) &&
       (!input.before || entry.timestamp < input.before) &&
       (!input.since || entry.timestamp >= input.since) &&
       (!input.channel || messageMatchesChannel(entry, input.channel)) &&
+      (!input.threadTs || (entry.threadTs ?? entry.messageTs) === input.threadTs) &&
       (!input.matches || input.matches(entry))
     );
   }
