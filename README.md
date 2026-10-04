@@ -8,7 +8,7 @@
 <p align="center"><strong>AI teammates in your Slack.</strong></p>
 
 <p align="center">
-  Your coding agent is powerful, but it works alone, one session at a time. Anima gives it a name, a memory, and a seat in your Slack, so your whole team can work with it.
+  A coding agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly.
 </p>
 
 <p align="center">
@@ -53,19 +53,27 @@ Anima installs its managed runtime under `~/.anima/` and opens the local dashboa
 
 The step-by-step flow, including the Slack app setup, is in the [Quickstart guide](https://anima.meetquinn.ai/guide/quickstart).
 
-## What Anima adds
+## Why Anima
 
-### From a terminal to your Slack
+Until now, every agent was private. One person has the agent. Teammates ask that person, who asks the agent and passes the answer back. The person is the relay, and the work waits on their calendar and their time zone. We built Anima around three questions.
 
-On its own, a coding agent lives in one terminal, visible to one person. Anima gives it its own Slack account, so anyone on your team can DM it, @mention it, pull it into a channel, and see its work and decisions in the same conversations as everyone else.
+### What if anyone could talk to an agent directly?
 
-### From a session to a memory
+Anima gives each agent its own Slack account. Anyone on your team can DM it, @mention it, or pull it into a channel, and see its work and decisions in the same conversations as everyone else. No relay, and no waiting for its owner to wake up.
 
-On its own, what an agent learns stays in one session on one laptop. With Anima, DMs, channels, and threads feed one continuous context: each agent keeps durable memory in `MEMORY.md`, and shared knowledge lives in ordinary files your team can review and govern in git.
+### What if everyone had their own agent?
 
-### From one agent to a team
+Anima can run an assistant for each teammate, alongside shared agents for engineering, support, or sales. DMs, channels, and threads feed each agent one continuous context: it keeps durable memory in `MEMORY.md`, and shared knowledge lives in ordinary files your team can review and govern in git.
 
-On its own, it is a single agent doing everything. Anima runs a team: agents with roles that divide work, review each other, and bring decisions back to a person. Their Slack-facing actions and runtime activity are recorded locally, so a long task remains inspectable instead of disappearing into a private terminal session.
+### What if agents could pass work to each other?
+
+Agents with roles hand work to the one whose role fits, review each other, and bring decisions back to a person, in the same threads your team already reads. Their Slack-facing actions and runtime activity are recorded locally, so a long task stays inspectable instead of disappearing into a private terminal session.
+
+### You decide at the gates
+
+A gate is where an agent stops and a person decides. Up to the gate, the agent works on its own: it looks into the problem, drafts, writes code, tests, and hands work to another agent. At the gate, a person decides, and then the agent keeps going. Common gates are merging code, sending anything outside the company, changing production, publishing, and anything you can't undo.
+
+Gates are written into each agent's role. A role is not an access-control list, so back the gates that matter with real permissions, such as who can merge and which credentials an agent holds.
 
 ## How it works
 
@@ -109,6 +117,8 @@ Use them directly for private, one-person terminal work. Add Anima when the work
 The agents in this project help build Anima itself. Product work is defined in Slack, implementation moves to the right owner, another agent reviews the risky boundary, and a person keeps the merge gate.
 
 [PR #508](https://github.com/MeetQuinn/anima/pull/508) is a recent example. Nora built a mobile file-list redesign. Milo's independent gate caught a relative-time label that froze after crossing an hour. Nora fixed the clock boundary, the exact-head tests and CI went green, and the change merged. The review trail is public; the coordination happened through Anima.
+
+It is not only for engineering. Here is a real handoff from a team running Anima, with names left out. A customer success manager's assistant spotted a customer's logout problem in her inbox and brought it to the engineering agent. The engineering agent confirmed the bug, got a fix written and reviewed, and passed it to an engineer to merge. It retested, found a second issue, and told the assistant not to call it fixed yet. When the second fix passed, the assistant updated its draft reply, and the decision to send stayed with the manager. Two decisions, two people. The agents did the rest.
 
 The product claim is not just that an agent can answer a prompt. It is that a team of agents can carry work through build, proof, review, and a human decision.
 
