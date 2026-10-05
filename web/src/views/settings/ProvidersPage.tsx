@@ -14,6 +14,7 @@ import {
   startProviderLogin,
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
+import { cancelThenSetQueryData } from '@/lib/query-write';
 import { useNow } from '@/hooks/useNow';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
@@ -99,7 +100,7 @@ export default function ProvidersPage() {
       refetchLogin(),
     ]);
     queryClient.setQueryData(queryKeys.providerUsage(), usage);
-    queryClient.setQueryData(queryKeys.providerCliStatus(), status);
+    await cancelThenSetQueryData(queryClient, queryKeys.providerCliStatus(), status);
   }
 
   function toggleProviderExpanded(provider: ProviderUsageKind): void {
@@ -165,7 +166,7 @@ export default function ProvidersPage() {
         action === 'cancel'
           ? await cancelProviderLogin(provider)
           : await startProviderLogin(provider, action);
-      queryClient.setQueryData(queryKeys.providerLogin(), next);
+      await cancelThenSetQueryData(queryClient, queryKeys.providerLogin(), next);
     } catch (error) {
       setLoginFailure({
         message: error instanceof Error ? error.message : 'Could not run the provider sign-in',
