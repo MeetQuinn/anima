@@ -42,6 +42,7 @@ function mergeLatestItems<T>(
   latest: readonly T[],
   idOf: (item: T) => string,
   side: Side,
+  detectGap = true,
 ): { pages: T[][] | null; added: number; replaced: number; gap: boolean } {
   const where = new Map<string, [number, number]>();
   let cached = 0;
@@ -74,7 +75,7 @@ function mergeLatestItems<T>(
     }
   }
 
-  const gap = cached > 0 && latest.length > 0 && overlap === 0;
+  const gap = detectGap && cached > 0 && latest.length > 0 && overlap === 0;
   if (gap) return { pages: null, added: 0, replaced: 0, gap };
   let replaced = 0;
   for (const byIndex of replacements.values()) replaced += byIndex.size;
@@ -154,4 +155,67 @@ export function mergeLatestMessagePage(
     replaced: merged.replaced,
     gap: merged.gap,
   };
+}
+
+// Rows read forward with `after` (see activity-live-after.ts) are exactly what
+// was appended past the anchor, so there is no gap to detect: they are merged
+// like a newest page (unknown ids into page 0, known ids re-checked with
+// structural sharing) and page 0's `headCursor` moves to the last row read, in
+// the same write. Nothing else may move the anchor: a poll that writes no rows
+// leaves it where the cached rows end.
+//
+// The same id can come back more than once: a restore or copy re-appends old
+// rows, and the next poll re-reads rows a skipped merge did not write. Only the
+// last copy of an id in the batch is kept, and a cached id is replaced in
+// place, so the cache never holds an id twice.
+
+function lastCopyPerId<T>(rows: readonly T[], idOf: (item: T) => string): T[] {
+  const last = new Map<string, number>();
+  rows.forEach((row, index) => last.set(idOf(row), index));
+  return rows.filter((row, index) => last.get(idOf(row)) === index);
+}
+
+function withAnchor<TPage, T>(
+  prev: InfiniteData<TPage, string | undefined>,
+  inputs: readonly (readonly T[])[],
+  merged: { pages: T[][] | null; added: number; replaced: number },
+  withItems: (page: TPage, items: T[]) => TPage,
+  headCursor: string,
+): LiveMergeResult<InfiniteData<TPage, string | undefined>> {
+  const pages = prev.pages.map((page, pi) => {
+    const items = merged.pages ? merged.pages[pi]! : (inputs[pi] as T[]);
+    if (pi === 0) return { ...withItems(page, items), headCursor };
+    return items === inputs[pi] ? page : withItems(page, items);
+  });
+  return {
+    data: { pages, pageParams: prev.pageParams },
+    changed: true,
+    added: merged.added,
+    replaced: merged.replaced,
+    gap: false,
+  };
+}
+
+/** Activity rows arrive oldest first, as page 0 stores them: fresh ones go to its END. */
+export function mergeAfterActivityRows(
+  prev: ActivityData,
+  rows: readonly AgentActivityFeedPage['events'][number][],
+  headCursor: string,
+): LiveMergeResult<ActivityData> {
+  const idOf = (event: AgentActivityFeedPage['events'][number]) => event.activityId;
+  const inputs = prev.pages.map((page) => page.events ?? []);
+  const merged = mergeLatestItems(inputs, lastCopyPerId(rows, idOf), idOf, 'end', false);
+  return withAnchor(prev, inputs, merged, (page, events) => ({ ...page, events }), headCursor);
+}
+
+/** Message rows arrive oldest first; page 0 is newest first, so fresh ones go to its START, newest first. */
+export function mergeAfterMessageRows(
+  prev: MessageData,
+  rows: readonly AgentMessageHistoryPage['entries'][number][],
+  headCursor: string,
+): LiveMergeResult<MessageData> {
+  const idOf = (entry: AgentMessageHistoryPage['entries'][number]) => entry.messageId;
+  const inputs = prev.pages.map((page) => page.entries ?? []);
+  const merged = mergeLatestItems(inputs, lastCopyPerId(rows, idOf).reverse(), idOf, 'start', false);
+  return withAnchor(prev, inputs, merged, (page, entries) => ({ ...page, entries }), headCursor);
 }

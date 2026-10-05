@@ -16,10 +16,11 @@ import type {
   SlackUserCandidate,
 } from '@shared/agent-config';
 import type { Reminder } from '@shared/reminder';
-import type { AgentActivityFeedPage } from '@shared/activity';
+import type { AgentActivityAfterPage, AgentActivityFeedPage } from '@shared/activity';
 import type { AgentDiagnosticsBundle } from '@shared/diagnostics';
 import type {
   AgentChannelListResponse,
+  AgentMessageAfterPage,
   AgentMessageDirection,
   AgentMessageHistoryPage,
 } from '@shared/messages';
@@ -262,6 +263,44 @@ export async function fetchAgentActivities(
   return normalizeAgentActivityFeedPage(body);
 }
 
+// Live tail: read what was appended after `after` (a headCursor or
+// afterCursor). A runtime without `after` support ignores the parameter and
+// answers with its newest page; that comes back as a plain feed page, so the
+// caller can tell the two apart only by `readAfter`.
+export async function fetchAgentActivitiesAfter(
+  agentId: string,
+  after: string,
+  limit = 100,
+): Promise<AgentActivityAfterPage | AgentActivityFeedPage> {
+  const params = new URLSearchParams({ after, limit: String(limit) });
+  const body = await apiRequest<unknown>(`/api/agents/${encodeURIComponent(agentId)}/activities?${params.toString()}`);
+  if (isAfterPage(body) && Array.isArray((body as { events?: unknown }).events)) return body as AgentActivityAfterPage;
+  return normalizeAgentActivityFeedPage(body);
+}
+
+export async function fetchAgentMessagesAfter(
+  agentId: string,
+  after: string,
+  limit = 100,
+): Promise<AgentMessageAfterPage | AgentMessageHistoryPage> {
+  const params = new URLSearchParams({ after, limit: String(limit) });
+  const body = await apiRequest<unknown>(`/api/agents/${encodeURIComponent(agentId)}/messages?${params.toString()}`);
+  if (isAfterPage(body) && Array.isArray((body as { entries?: unknown }).entries)) return body as AgentMessageAfterPage;
+  const record = (body && typeof body === 'object' ? body : {}) as Partial<AgentMessageHistoryPage>;
+  return {
+    entries: Array.isArray(record.entries) ? record.entries : [],
+    nextCursor: record.nextCursor ?? null,
+    ...(typeof record.headCursor === 'string' || record.headCursor === null ? { headCursor: record.headCursor } : {}),
+  };
+}
+
+function isAfterPage(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const record = body as { readAfter?: unknown; hasMore?: unknown; afterCursor?: unknown };
+  return record.readAfter === true && typeof record.hasMore === 'boolean'
+    && (record.afterCursor === null || typeof record.afterCursor === 'string');
+}
+
 export async function fetchAgentMessages(
   agentId: string,
   input: {
@@ -295,6 +334,7 @@ function normalizeAgentActivityFeedPage(body: unknown): AgentActivityFeedPage {
   return {
     events: Array.isArray(record.events) ? record.events : [],
     nextCursor: record.nextCursor ?? null,
+    ...(typeof record.headCursor === 'string' || record.headCursor === null ? { headCursor: record.headCursor } : {}),
   };
 }
 

@@ -184,4 +184,22 @@ export interface AgentActivityFeedPage {
   events: Activity[];
   // Opaque append-position cursor. Null means no older matching records.
   nextCursor?: string | null;
+  // First page only (no before/cursor): position of the newest event, null
+  // when there is none. Pass it as `after` to read what is appended later.
+  // A runtime without `after` support never sends it.
+  headCursor?: string | null;
+}
+
+// Response to `?after=<cursor>`. `readAfter` is the only proof the server read
+// forward: a runtime without `after` support ignores the parameter and answers
+// with an ordinary newest page instead.
+export interface AgentActivityAfterPage {
+  readAfter: true;
+  // Events appended after the cursor, oldest-appended first.
+  events: Activity[];
+  // Position of the last event returned, null when none was. Continue from
+  // here; never from a newer head, or the rows in between are skipped.
+  afterCursor: string | null;
+  // More matching events follow `afterCursor`.
+  hasMore: boolean;
 }

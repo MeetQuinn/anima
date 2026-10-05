@@ -2,9 +2,11 @@ import { join } from 'node:path';
 
 import { agentsDir } from './agent.store.js';
 import { makeId, nowIso } from '../../ids.js';
-import { DEFAULT_JSONL_ROTATE_BYTES, JsonlAppendLog } from '../jsonl-log.js';
-import type { Activity, ActivityType } from '../../../shared/activity.js';
-import { encodeHistoryCursor, resolveHistoryQuery } from '../history-cursor.js';
+import { DEFAULT_JSONL_ROTATE_BYTES, JsonlAppendLog, type PositionedRecord } from '../jsonl-log.js';
+import type { Activity, ActivityType, AgentActivityAfterPage, AgentActivityFeedPage } from '../../../shared/activity.js';
+import {
+  encodeHistoryCursor, resolveHistoryAfter, resolveHistoryQuery, type HistoryFilters,
+} from '../history-cursor.js';
 
 export interface ActivityRecordInput {
   createdAt?: string;
@@ -30,22 +32,43 @@ export class ActivityStore {
     return await this.log().readAll();
   }
 
-  async readPage(input: { before?: string; cursor?: string; limit: number }): Promise<{
-    events: Activity[]; nextCursor: string | null;
-  }> {
+  async readPage(input: { before?: string; cursor?: string; limit: number }): Promise<AgentActivityFeedPage> {
     const { anchor, filters } = resolveHistoryQuery({
       agentId: this.agentId, kind: 'activity', before: input.before, cursor: input.cursor,
     });
     const { rows, hasMore } = await this.log().readPage({
-      limit: input.limit, anchor, idOf: (event) => event.activityId,
-      matches: (event) => !filters.beforeTime || event.createdAt < filters.beforeTime,
+      limit: input.limit, anchor, idOf: (event) => event.activityId, matches: activityMatcher(filters),
+    });
+    const last = rows.at(-1);
+    const head = rows[0];
+    return {
+      events: rows.map(({ record }) => record).reverse(),
+      nextCursor: hasMore && last ? this.cursorAt(filters, last) : null,
+      // Rows come newest first, so the first page's first row is the head.
+      ...(anchor ? {} : { headCursor: head ? this.cursorAt(filters, head) : null }),
+    };
+  }
+
+  /** Events appended after `after`, oldest first, in the cursor's scope. */
+  async readAfter(input: { after: string; before?: string; cursor?: string; limit: number }): Promise<AgentActivityAfterPage> {
+    const { anchor, filters } = resolveHistoryAfter({
+      agentId: this.agentId, kind: 'activity', after: input.after, before: input.before, cursor: input.cursor,
+    });
+    const { rows, hasMore } = await this.log().readPage({
+      direction: 'newer', limit: input.limit, anchor, idOf: (event) => event.activityId,
+      matches: activityMatcher(filters),
     });
     const last = rows.at(-1);
     return {
-      events: rows.map(({ record }) => record).reverse(),
-      nextCursor: hasMore && last ? encodeHistoryCursor({ k: 'activity', a: this.agentId,
-        f: filters, p: last.position, id: last.record.activityId }) : null,
+      readAfter: true,
+      events: rows.map(({ record }) => record),
+      afterCursor: last ? this.cursorAt(filters, last) : null,
+      hasMore,
     };
+  }
+
+  private cursorAt(filters: HistoryFilters, row: PositionedRecord<Activity>): string {
+    return encodeHistoryCursor({ k: 'activity', a: this.agentId, f: filters, p: row.position, id: row.record.activityId });
   }
 
   /** Read the last `n` activity records without loading the full log file. */
@@ -82,4 +105,8 @@ export class ActivityStore {
       maxBytes: DEFAULT_JSONL_ROTATE_BYTES,
     });
   }
+}
+
+function activityMatcher(filters: HistoryFilters): (event: Activity) => boolean {
+  return (event) => !filters.beforeTime || event.createdAt < filters.beforeTime;
 }

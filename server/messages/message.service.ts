@@ -1,5 +1,6 @@
 import type { Activity } from '../../shared/activity.js';
 import type {
+  AgentMessageAfterPage,
   AgentMessageDirection,
   AgentMessageHistoryPage,
   AgentMessageRecord,
@@ -17,6 +18,10 @@ export interface MessageListInput {
   limit?: number;
   since?: string;
   threadTs?: string;
+}
+
+export interface MessageAfterInput extends MessageListInput {
+  after: string;
 }
 
 export interface MessageSearchInput {
@@ -52,6 +57,11 @@ export class MessageService {
   async list(input: MessageListInput = {}): Promise<AgentMessageHistoryPage> {
     const limit = normalizeHistoryLimit(input.limit);
     return this.store.readPage({ ...input, limit, matchesKeywords: messageMatchesKeywords });
+  }
+
+  async listAfter(input: MessageAfterInput): Promise<AgentMessageAfterPage> {
+    const limit = normalizeHistoryLimit(input.limit);
+    return this.store.readAfter({ ...input, limit, matchesKeywords: messageMatchesKeywords });
   }
 
   async listLatest(input: { limit: number }): Promise<AgentMessageRecord[]> {
