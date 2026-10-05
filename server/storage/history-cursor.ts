@@ -97,3 +97,25 @@ export function resolveHistoryQuery(input: {
   }
   return { anchor, filters: anchor.f };
 }
+
+/**
+ * `after` reads forward from a cursor with the cursor's own scope, so it
+ * accepts the same filter inheritance as `cursor` but never a second cursor
+ * or a time bound of its own.
+ */
+export function resolveHistoryAfter(input: {
+  agentId: string;
+  kind: HistoryCursor['k'];
+  after: string;
+  before?: string;
+  cursor?: string;
+  filters?: HistoryFilters;
+}): { anchor: HistoryCursor; filters: HistoryFilters } {
+  if (input.before !== undefined || input.cursor !== undefined) {
+    throw new HistoryReadError('cursor_invalid', 400, 'after cannot be combined with before or cursor.');
+  }
+  const { anchor, filters } = resolveHistoryQuery({
+    agentId: input.agentId, kind: input.kind, cursor: input.after, filters: input.filters,
+  });
+  return { anchor: anchor!, filters };
+}

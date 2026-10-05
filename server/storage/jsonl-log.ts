@@ -158,12 +158,18 @@ export class JsonlAppendLog<T> {
     return out;
   }
 
-  /** Append-order pagination. Positions remain valid when live is renamed. */
+  /**
+   * Append-order pagination. Positions remain valid when live is renamed.
+   * `older` (default) walks newest to oldest, from the end or from just
+   * before `anchor`. `newer` walks oldest to newest from just after `anchor`
+   * and needs one. Both skip the anchor row itself.
+   */
   async readPage(input: {
     limit: number;
     matches: (record: T) => boolean;
     idOf: (record: T) => string;
     anchor?: { p: LogPosition; id: string };
+    direction?: 'older' | 'newer';
   }): Promise<{ rows: PositionedRecord<T>[]; hasMore: boolean }> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const segments = await this.pageSegments();
@@ -188,6 +194,7 @@ export class JsonlAppendLog<T> {
     matches: (record: T) => boolean;
     idOf: (record: T) => string;
     anchor?: { p: LogPosition; id: string };
+    direction?: 'older' | 'newer';
   }): Promise<{ rows: PositionedRecord<T>[]; hasMore: boolean }> {
     const loaded = new Map<number, T[]>();
     const read = async (i: number): Promise<T[]> => {
@@ -205,7 +212,7 @@ export class JsonlAppendLog<T> {
       segmentIndex = segments.findIndex((s) => s.dev === p.dev && s.ino === p.ino);
       const candidate = segmentIndex < 0 ? undefined : (await read(segmentIndex))[p.line];
       if (candidate !== undefined && input.idOf(candidate) === id) {
-        line = p.line - 1;
+        line = p.line;
       } else {
         // Restore/copy/manual rewrite: only a unique logical id is safe.
         const occurrences: { segment: number; line: number }[] = [];
@@ -219,10 +226,25 @@ export class JsonlAppendLog<T> {
             occurrences.length === 0 ? 'anchor_missing; reload the first page.' : 'anchor_ambiguous; reload the first page.');
         }
         segmentIndex = occurrences[0]!.segment;
-        line = occurrences[0]!.line - 1;
+        line = occurrences[0]!.line;
       }
     }
     const rows: PositionedRecord<T>[] = [];
+    if (input.direction === 'newer') {
+      if (line === undefined) throw new Error('readPage newer needs an anchor');
+      for (let i = segmentIndex; i < segments.length; i += 1) {
+        const records = await read(i);
+        for (let j = i === segmentIndex ? line + 1 : 0; j < records.length; j += 1) {
+          const record = records[j]!;
+          if (!input.matches(record)) continue;
+          if (rows.length === input.limit) return { rows, hasMore: true };
+          const segment = segments[i]!;
+          rows.push({ record, position: { dev: segment.dev, ino: segment.ino, line: j } });
+        }
+      }
+      return { rows, hasMore: false };
+    }
+    if (line !== undefined) line -= 1;
     for (let i = segmentIndex; i >= 0; i -= 1) {
       const records = await read(i);
       for (let j = line ?? records.length - 1; j >= 0; j -= 1) {

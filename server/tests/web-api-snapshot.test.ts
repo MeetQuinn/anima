@@ -107,7 +107,8 @@ test('web snapshot summarizes state without exposing secrets', async () => {
         activityFeed.events.some((event) => event.type === 'tool.call.completed'),
         true,
       );
-      assert.deepEqual(Object.keys(activityFeed).sort(), ['events', 'nextCursor']);
+      // A first page names its newest row for the live tail's `after` reads.
+      assert.deepEqual(Object.keys(activityFeed).sort(), ['events', 'headCursor', 'nextCursor']);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

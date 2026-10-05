@@ -158,6 +158,11 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       // Opaque append-position cursor; legacy ISO values remain time filters.
       const before = queryParam(request.url, 'before') ?? undefined;
       const cursor = queryParam(request.url, 'cursor') ?? undefined;
+      // `after` reads forward from a cursor (the live tail); see AgentActivityAfterPage.
+      const after = queryParam(request.url, 'after');
+      if (after !== undefined) {
+        return activityServiceForAgent(request.params.agentId).listActivityFeedAfter({ after, before, cursor, limit });
+      }
       return activityServiceForAgent(request.params.agentId).listActivityFeed({ before, cursor, limit });
     },
   );
@@ -175,6 +180,14 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
       // this channel's history rather than the whole agent stream filtered
       // client-side.
       const channel = queryParam(request.url, 'channel') ?? undefined;
+      // `after` reads forward from a cursor (the live tail); see AgentMessageAfterPage.
+      const after = queryParam(request.url, 'after');
+      if (after !== undefined) {
+        const afterPage = await messageServiceForAgent(request.params.agentId).listAfter({
+          after, before, cursor, channel, direction, limit, since,
+        });
+        return enrichInboundAvatars(request.params.agentId, afterPage);
+      }
       const page = await messageServiceForAgent(request.params.agentId).list({
         before,
         cursor,

@@ -49,6 +49,7 @@ const READ_METHODS = [
   'readNewestMatching',
   'readNewestUntil',
   'listActivityFeed',
+  'listActivityFeedAfter',
 ] as const;
 
 /** Both quote styles. Prettier normalizes to single, but a check that relies on a formatter is not a check. */

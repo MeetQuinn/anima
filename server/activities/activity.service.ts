@@ -1,4 +1,4 @@
-import type { Activity, AgentActivityFeedPage } from '../../shared/activity.js';
+import type { Activity, AgentActivityAfterPage, AgentActivityFeedPage } from '../../shared/activity.js';
 import { normalizeHistoryLimit } from '../../shared/messages.js';
 import { ActivityStore, type ActivityRecordInput } from '../storage/schema/activity.store.js';
 
@@ -6,6 +6,10 @@ export interface ActivityListInput {
   before?: string;
   cursor?: string;
   limit?: number;
+}
+
+export interface ActivityAfterInput extends ActivityListInput {
+  after: string;
 }
 
 export interface ActivityRecorder {
@@ -42,6 +46,11 @@ export class ActivityService {
   async listActivityFeed(input: ActivityListInput = {}): Promise<AgentActivityFeedPage> {
     const limit = normalizeHistoryLimit(input.limit);
     return this.store.readPage({ ...input, limit });
+  }
+
+  async listActivityFeedAfter(input: ActivityAfterInput): Promise<AgentActivityAfterPage> {
+    const limit = normalizeHistoryLimit(input.limit);
+    return this.store.readAfter({ ...input, limit });
   }
 
 }

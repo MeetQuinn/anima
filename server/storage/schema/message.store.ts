@@ -1,10 +1,16 @@
 import { join } from 'node:path';
 
 import { agentsDir } from './agent.store.js';
-import type { AgentMessageDirection, AgentMessageRecord } from '../../../shared/messages.js';
+import type {
+  AgentMessageAfterPage, AgentMessageDirection, AgentMessageHistoryPage, AgentMessageRecord,
+} from '../../../shared/messages.js';
 import { messageMatchesChannel } from '../../../shared/channel-match.js';
-import { DEFAULT_JSONL_ROTATE_BYTES, JsonlAppendLog } from '../jsonl-log.js';
-import { encodeHistoryCursor, resolveHistoryQuery } from '../history-cursor.js';
+import { DEFAULT_JSONL_ROTATE_BYTES, JsonlAppendLog, type PositionedRecord } from '../jsonl-log.js';
+import {
+  encodeHistoryCursor, resolveHistoryAfter, resolveHistoryQuery, type HistoryFilters,
+} from '../history-cursor.js';
+
+type KeywordMatcher = (entry: AgentMessageRecord, keywords: string[]) => boolean;
 
 const MESSAGE_DEDUPE_RECENT_LIMIT = 10_000;
 
@@ -42,8 +48,8 @@ export class MessageStore {
     limit: number;
     since?: string;
     threadTs?: string;
-    matchesKeywords: (entry: AgentMessageRecord, keywords: string[]) => boolean;
-  }): Promise<{ entries: AgentMessageRecord[]; nextCursor: string | null }> {
+    matchesKeywords: KeywordMatcher;
+  }): Promise<AgentMessageHistoryPage> {
     const { anchor, filters } = resolveHistoryQuery({
       agentId: this.agentId, kind: 'messages', before: input.before, cursor: input.cursor,
       filters: { channel: input.channel, direction: input.direction, keywords: input.keywords,
@@ -51,20 +57,51 @@ export class MessageStore {
     });
     const { rows, hasMore } = await this.log().readPage({
       limit: input.limit, anchor, idOf: (entry) => entry.messageId,
-      matches: (entry) =>
-        (!filters.direction || entry.direction === filters.direction) &&
-        (!filters.beforeTime || entry.timestamp < filters.beforeTime) &&
-        (!filters.since || entry.timestamp >= filters.since) &&
-        (!filters.channel || messageMatchesChannel(entry, filters.channel)) &&
-        (!filters.threadTs || (entry.threadTs ?? entry.messageTs) === filters.threadTs) &&
-        (!filters.keywords || input.matchesKeywords(entry, filters.keywords)),
+      matches: messageMatcher(filters, input.matchesKeywords),
+    });
+    const last = rows.at(-1);
+    const head = rows[0];
+    return {
+      entries: rows.map(({ record }) => record),
+      nextCursor: hasMore && last ? this.cursorAt(filters, last) : null,
+      // Rows come newest first, so the first page's first row is the head.
+      ...(anchor ? {} : { headCursor: head ? this.cursorAt(filters, head) : null }),
+    };
+  }
+
+  /** Entries appended after `after`, oldest first, in the cursor's scope. */
+  async readAfter(input: {
+    after: string;
+    before?: string;
+    cursor?: string;
+    channel?: string;
+    direction?: AgentMessageDirection;
+    keywords?: string[];
+    limit: number;
+    since?: string;
+    threadTs?: string;
+    matchesKeywords: KeywordMatcher;
+  }): Promise<AgentMessageAfterPage> {
+    const { anchor, filters } = resolveHistoryAfter({
+      agentId: this.agentId, kind: 'messages', after: input.after, before: input.before, cursor: input.cursor,
+      filters: { channel: input.channel, direction: input.direction, keywords: input.keywords,
+        since: input.since, threadTs: input.threadTs },
+    });
+    const { rows, hasMore } = await this.log().readPage({
+      direction: 'newer', limit: input.limit, anchor, idOf: (entry) => entry.messageId,
+      matches: messageMatcher(filters, input.matchesKeywords),
     });
     const last = rows.at(-1);
     return {
+      readAfter: true,
       entries: rows.map(({ record }) => record),
-      nextCursor: hasMore && last ? encodeHistoryCursor({ k: 'messages', a: this.agentId,
-        f: filters, p: last.position, id: last.record.messageId }) : null,
+      afterCursor: last ? this.cursorAt(filters, last) : null,
+      hasMore,
     };
+  }
+
+  private cursorAt(filters: HistoryFilters, row: PositionedRecord<AgentMessageRecord>): string {
+    return encodeHistoryCursor({ k: 'messages', a: this.agentId, f: filters, p: row.position, id: row.record.messageId });
   }
 
   async readLatest(input: {
@@ -93,4 +130,14 @@ export class MessageStore {
       maxBytes: DEFAULT_JSONL_ROTATE_BYTES,
     });
   }
+}
+
+function messageMatcher(filters: HistoryFilters, matchesKeywords: KeywordMatcher): (entry: AgentMessageRecord) => boolean {
+  return (entry) =>
+    (!filters.direction || entry.direction === filters.direction) &&
+    (!filters.beforeTime || entry.timestamp < filters.beforeTime) &&
+    (!filters.since || entry.timestamp >= filters.since) &&
+    (!filters.channel || messageMatchesChannel(entry, filters.channel)) &&
+    (!filters.threadTs || (entry.threadTs ?? entry.messageTs) === filters.threadTs) &&
+    (!filters.keywords || matchesKeywords(entry, filters.keywords));
 }

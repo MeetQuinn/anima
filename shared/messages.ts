@@ -94,6 +94,19 @@ export interface AgentMessageHistoryPage {
   entries: AgentMessageRecord[];
   // Opaque append-position cursor. Null means no older matching records.
   nextCursor?: string | null;
+  // First page only (no before/cursor): position of the newest entry, null
+  // when there is none. Pass it as `after` to read what is appended later.
+  // A runtime without `after` support never sends it.
+  headCursor?: string | null;
+}
+
+// Response to `?after=<cursor>`; see AgentActivityAfterPage. Unlike the
+// newest-first history page, entries here are oldest-appended first.
+export interface AgentMessageAfterPage {
+  readAfter: true;
+  entries: AgentMessageRecord[];
+  afterCursor: string | null;
+  hasMore: boolean;
 }
 
 // One limit policy for paged history reads (message ledger and activity feed):

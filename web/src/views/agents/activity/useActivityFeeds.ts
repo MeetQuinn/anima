@@ -1,6 +1,11 @@
 import { useMemo } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import { fetchAgentActivities, fetchAgentMessages } from '@/api/agents';
+import {
+  fetchAgentActivities,
+  fetchAgentActivitiesAfter,
+  fetchAgentMessages,
+  fetchAgentMessagesAfter,
+} from '@/api/agents';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import {
   buildHeldConversationItems,
@@ -10,9 +15,15 @@ import {
   mergeActivityPages,
   mergeMessagePages,
 } from '@/lib/activity-timeline';
-import { mergeLatestActivityPage, mergeLatestMessagePage } from '@/lib/activity-live-merge';
-import type { AgentActivityFeedPage } from '@shared/activity';
-import type { AgentMessageHistoryPage } from '@shared/messages';
+import {
+  mergeAfterActivityRows,
+  mergeAfterMessageRows,
+  mergeLatestActivityPage,
+  mergeLatestMessagePage,
+} from '@/lib/activity-live-merge';
+import { readAfterAnchor } from '@/lib/activity-live-after';
+import type { Activity, AgentActivityFeedPage } from '@shared/activity';
+import type { AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
 
 const PAGE_LIMIT = 100;
 // Older activity pages (the coverage auto-fetch walking back until the step
@@ -55,16 +66,23 @@ export function useActivityFeeds(agentId: string | undefined) {
     getPreviousPageParam: () => undefined,
   });
 
-  // Live tail: every poll fetches ONLY the newest page of each feed and folds
-  // it into the infinite caches (append new ids to page 0, structurally share
-  // the rest). An unchanged poll returns the same cache reference, so nothing
-  // re-renders. The probe's own result is never read for rendering; only its
-  // error is surfaced (a failing poll still shows the feed error banner). It
-  // waits for both first pages to settle (success or error) so it never races
-  // the initial load; an errored feed is re-kicked from the probe instead,
-  // which is the retry the old per-query refetchInterval used to provide.
-  // The two feeds are independent: one endpoint failing never stops the other
-  // from merging; the failure is re-thrown afterwards so it still surfaces.
+  // Live tail: every poll reads only what is new and folds it into the
+  // infinite caches (new ids into page 0, structurally sharing the rest). An
+  // unchanged poll returns the same cache reference, so nothing re-renders.
+  // The probe's own result is never read for rendering; only its error is
+  // surfaced (a failing poll still shows the feed error banner). It waits for
+  // both first pages to settle (success or error) so it never races the
+  // initial load; an errored feed is re-kicked from the probe instead, which
+  // is the retry the old per-query refetchInterval used to provide. The two
+  // feeds are independent: one endpoint failing never stops the other from
+  // merging; the failure is re-thrown afterwards so it still surfaces.
+  //
+  // How a poll reads depends on cached page 0:
+  //   - it carries `headCursor` (a runtime with `after` support served it):
+  //     read forward from that anchor, a bounded number of requests (see
+  //     activity-live-after.ts). An idle poll is one empty response;
+  //   - otherwise (older runtime, or a cache that never had a head): fetch the
+  //     newest page and merge it, falling back to a re-fetch on a gap.
   const initialSettled = !messageQuery.isPending && !activityQuery.isPending;
   const liveQuery = useQuery({
     queryKey: queryKeys.agentFeedLive(agentId ?? ''),
@@ -72,10 +90,6 @@ export function useActivityFeeds(agentId: string | undefined) {
     refetchInterval: refetchIntervals.agentActivities,
     queryFn: async () => {
       const id = agentId!;
-      const [activitiesResult, messagesResult] = await Promise.allSettled([
-        fetchAgentActivities(id, PAGE_LIMIT),
-        fetchAgentMessages(id, { limit: PAGE_LIMIT }),
-      ]);
       const summary = { activities: 0, messages: 0, refetched: [] as string[] };
       const bridge = (key: readonly unknown[], feed: string) => {
         summary.refetched.push(feed);
@@ -85,40 +99,94 @@ export function useActivityFeeds(agentId: string | undefined) {
       // result is built from the pages captured at fetch start, so anything we
       // merged in the meantime would vanish until the next poll. Skip this
       // poll's merge for that feed instead of producing a flicker; the next
-      // poll picks the items up.
-      if (activitiesResult.status === 'fulfilled') {
-        const activityState = queryClient.getQueryState(activitiesKey);
-        if (activityState?.fetchStatus !== 'fetching') {
-          const prev = queryClient.getQueryData<ActivityData>(activitiesKey);
-          if (!prev && activityState?.status === 'error') {
-            bridge(activitiesKey, 'activities');
-          } else {
-            const merged = mergeLatestActivityPage(prev, activitiesResult.value);
-            if (merged.changed) queryClient.setQueryData<ActivityData>(activitiesKey, merged.data);
-            summary.activities = merged.added + merged.replaced;
-            // More than a page arrived since the last poll: the newest page no
-            // longer overlaps the cache, so a single page cannot bridge it.
-            // Nothing was written; re-fetch the feed. If that re-fetch fails
-            // the cache is unchanged, so the next poll sees the same gap and
-            // asks again until it lands.
-            if (merged.gap) bridge(activitiesKey, 'activities');
-          }
+      // poll picks the items up. The anchor lives in page 0 for the same
+      // reason: a skipped write skips it too.
+      const fetching = (key: readonly unknown[]) => queryClient.getQueryState(key)?.fetchStatus === 'fetching';
+
+      const mergeLatestActivities = (latest: AgentActivityFeedPage) => {
+        if (fetching(activitiesKey)) return;
+        const prev = queryClient.getQueryData<ActivityData>(activitiesKey);
+        if (!prev && queryClient.getQueryState(activitiesKey)?.status === 'error') {
+          bridge(activitiesKey, 'activities');
+          return;
         }
-      }
-      if (messagesResult.status === 'fulfilled') {
-        const messageState = queryClient.getQueryState(messagesKey);
-        if (messageState?.fetchStatus !== 'fetching') {
-          const prev = queryClient.getQueryData<MessageData>(messagesKey);
-          if (!prev && messageState?.status === 'error') {
-            bridge(messagesKey, 'messages');
-          } else {
-            const merged = mergeLatestMessagePage(prev, messagesResult.value);
-            if (merged.changed) queryClient.setQueryData<MessageData>(messagesKey, merged.data);
-            summary.messages = merged.added + merged.replaced;
-            if (merged.gap) bridge(messagesKey, 'messages');
-          }
+        const merged = mergeLatestActivityPage(prev, latest);
+        if (merged.changed) queryClient.setQueryData<ActivityData>(activitiesKey, merged.data);
+        summary.activities = merged.added + merged.replaced;
+        // More than a page arrived since the last poll: the newest page no
+        // longer overlaps the cache, so a single page cannot bridge it.
+        // Nothing was written; re-fetch the feed. If that re-fetch fails
+        // the cache is unchanged, so the next poll sees the same gap and
+        // asks again until it lands.
+        if (merged.gap) bridge(activitiesKey, 'activities');
+      };
+      const mergeLatestMessages = (latest: AgentMessageHistoryPage) => {
+        if (fetching(messagesKey)) return;
+        const prev = queryClient.getQueryData<MessageData>(messagesKey);
+        if (!prev && queryClient.getQueryState(messagesKey)?.status === 'error') {
+          bridge(messagesKey, 'messages');
+          return;
         }
-      }
+        const merged = mergeLatestMessagePage(prev, latest);
+        if (merged.changed) queryClient.setQueryData<MessageData>(messagesKey, merged.data);
+        summary.messages = merged.added + merged.replaced;
+        if (merged.gap) bridge(messagesKey, 'messages');
+      };
+
+      const pollActivities = async () => {
+        const anchor = queryClient.getQueryData<ActivityData>(activitiesKey)?.pages[0]?.headCursor;
+        if (!anchor) {
+          mergeLatestActivities(await fetchAgentActivities(id, PAGE_LIMIT));
+          return;
+        }
+        const read = await readAfterAnchor<Activity, AgentActivityFeedPage>(anchor, async (cursor) => {
+          const page = await fetchAgentActivitiesAfter(id, cursor, PAGE_LIMIT);
+          return 'readAfter' in page ? { after: { ...page, rows: page.events } } : { latest: page };
+        });
+        if (read.kind === 'not-supported') {
+          mergeLatestActivities(read.latest);
+          return;
+        }
+        if (fetching(activitiesKey)) return;
+        if (read.kind !== 'complete') {
+          bridge(activitiesKey, 'activities');
+          return;
+        }
+        const prev = queryClient.getQueryData<ActivityData>(activitiesKey);
+        // Commit only onto the cache the read started from: a refetch that
+        // landed meanwhile carries its own anchor, and the next poll uses it.
+        if (!prev || prev.pages[0]?.headCursor !== anchor || read.rows.length === 0) return;
+        const merged = mergeAfterActivityRows(prev, read.rows, read.cursor);
+        queryClient.setQueryData<ActivityData>(activitiesKey, merged.data);
+        summary.activities = merged.added + merged.replaced;
+      };
+      const pollMessages = async () => {
+        const anchor = queryClient.getQueryData<MessageData>(messagesKey)?.pages[0]?.headCursor;
+        if (!anchor) {
+          mergeLatestMessages(await fetchAgentMessages(id, { limit: PAGE_LIMIT }));
+          return;
+        }
+        const read = await readAfterAnchor<AgentMessageRecord, AgentMessageHistoryPage>(anchor, async (cursor) => {
+          const page = await fetchAgentMessagesAfter(id, cursor, PAGE_LIMIT);
+          return 'readAfter' in page ? { after: { ...page, rows: page.entries } } : { latest: page };
+        });
+        if (read.kind === 'not-supported') {
+          mergeLatestMessages(read.latest);
+          return;
+        }
+        if (fetching(messagesKey)) return;
+        if (read.kind !== 'complete') {
+          bridge(messagesKey, 'messages');
+          return;
+        }
+        const prev = queryClient.getQueryData<MessageData>(messagesKey);
+        if (!prev || prev.pages[0]?.headCursor !== anchor || read.rows.length === 0) return;
+        const merged = mergeAfterMessageRows(prev, read.rows, read.cursor);
+        queryClient.setQueryData<MessageData>(messagesKey, merged.data);
+        summary.messages = merged.added + merged.replaced;
+      };
+
+      const [activitiesResult, messagesResult] = await Promise.allSettled([pollActivities(), pollMessages()]);
       if (activitiesResult.status === 'rejected') throw activitiesResult.reason;
       if (messagesResult.status === 'rejected') throw messagesResult.reason;
       return summary;

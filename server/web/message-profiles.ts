@@ -90,11 +90,11 @@ export async function resolveAvatarsForUsers(
   return avatarByUser;
 }
 
-export async function enrichInboundAvatars(
+export async function enrichInboundAvatars<P extends Pick<AgentMessageHistoryPage, 'entries'>>(
   agentId: string,
-  page: AgentMessageHistoryPage,
+  page: P,
   deps: AvatarEnrichmentDeps = defaultDeps,
-): Promise<AgentMessageHistoryPage> {
+): Promise<P> {
   const userIds = new Set<string>();
   for (const m of page.entries) {
     if (m.direction === 'in' && m.platform !== 'feishu' && m.actorUserId) {
