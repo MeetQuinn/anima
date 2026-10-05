@@ -94,6 +94,12 @@ export function useRuntimeUpgradeAction() {
       try {
         const next = await fetchRuntimeUpgrade();
         if (cancelled) return;
+        // Same steps as cancelThenSetQueryData, inlined so the unmount guard
+        // runs again after the await: a poll that left before this tick must
+        // not land on top of it. A tick fetch that left before a newer poll
+        // can still write the older answer; cancelling cannot order that.
+        await queryClient.cancelQueries({ queryKey: queryKeys.runtimeUpgrade(), exact: true });
+        if (cancelled) return;
         queryClient.setQueryData(queryKeys.runtimeUpgrade(), next);
         if (next.operation.status === 'succeeded' && next.currentVersion === startedTarget) {
           // A fast restart can finish between polls without any failed fetch.

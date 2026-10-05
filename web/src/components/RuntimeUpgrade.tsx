@@ -3,6 +3,7 @@ import { AlertTriangle, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { checkRuntimeUpgrade } from '@/api/system';
 import { useRuntimeUpgradeAction } from '@/hooks/useRuntimeUpgradeAction';
 import { queryKeys } from '@/lib/query-keys';
+import { cancelThenSetQueryData } from '@/lib/query-write';
 import { queryClient } from '@/query-client';
 import { BusyConfirmModal, ProgressOverlay, restartEcho, resumedText } from './restart-shared';
 import type { RuntimeUpgradeOperation } from '@shared/runtime-upgrade';
@@ -48,9 +49,7 @@ export default function RuntimeUpgradeRow() {
   } = useRuntimeUpgradeAction();
   const checkMutation = useMutation({
     mutationFn: checkRuntimeUpgrade,
-    onSuccess: (next) => {
-      queryClient.setQueryData(queryKeys.runtimeUpgrade(), next);
-    },
+    onSuccess: (next) => cancelThenSetQueryData(queryClient, queryKeys.runtimeUpgrade(), next),
   });
 
   // checking — client loading, nothing cached yet
