@@ -52,6 +52,7 @@ const groups = {
     'inbox.test.js',
     'input-trace.test.js',
     'history-pagination.test.js',
+    'history-tail-read.test.js',
     'deferred-wake-retry.test.js',
     'ingest-golden.test.js',
     'interactive-ask.test.js',

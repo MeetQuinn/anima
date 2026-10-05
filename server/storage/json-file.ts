@@ -33,6 +33,11 @@ export function cacheSet(path: string, value: unknown, stat: { mtimeMs: number; 
   }
 }
 
+/** The cached value for `path` whatever its stamp, without refreshing its LRU slot. */
+export function cachePeek<T>(path: string): T | undefined {
+  return cache.get(path)?.value as T | undefined;
+}
+
 export function cacheDelete(path: string): void {
   cache.delete(path);
 }

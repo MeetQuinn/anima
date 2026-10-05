@@ -1,7 +1,7 @@
 import { appendFile, open, readFile, readdir, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-import { cacheDelete, cacheHit, cacheSet, isMissingFile, statOrNull } from './json-file.js';
+import { cacheDelete, cacheHit, cachePeek, cacheSet, isMissingFile, statOrNull } from './json-file.js';
 import { withFileLock } from './lock.js';
 import { currentWriteRoot, ensureParentDirectory } from './write-root.js';
 import { HistoryReadError, type LogPosition } from './history-cursor.js';
@@ -11,6 +11,38 @@ export interface PositionedRecord<T> { record: T; position: LogPosition }
 class SegmentChanged extends Error {}
 
 export const DEFAULT_JSONL_ROTATE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * How page segment reads were served, process-wide. `incremental` parsed only
+ * the bytes appended after a cached read; `full` parsed the whole segment.
+ */
+export const jsonlPageReadStats = { hit: 0, full: 0, incremental: 0 };
+
+interface PageSegmentEntry<T> {
+  records: T[];
+  /** The exact bytes `records` were parsed from; kept for the live file only. */
+  bytes?: Buffer;
+}
+
+/** Live path -> page cache key of the file now at that path. */
+const livePageKeys = new Map<string, string>();
+
+function parseLines<T>(bytes: Buffer): T[] {
+  return bytes.toString('utf8').split(/\r?\n/)
+    .filter((s) => s.trim() !== '').map((s) => JSON.parse(s) as T);
+}
+
+/**
+ * True when `next` holds every byte of `prior` unchanged and then more, and
+ * `prior` ends at a line break. Then parsing `next` equals parsing `prior`
+ * followed by parsing the rest. File metadata cannot show this: an in-place
+ * edit plus an append keeps the inode and grows the size just like an append.
+ */
+function extendsPrior(prior: Buffer, next: Buffer): boolean {
+  return prior.length > 0 && next.length > prior.length
+    && prior[prior.length - 1] === 0x0a
+    && next.compare(prior, 0, prior.length, 0, prior.length) === 0;
+}
 
 export interface JsonlRotationOptions {
   archiveDir?: string;
@@ -227,8 +259,11 @@ export class JsonlAppendLog<T> {
       if (String(info.dev) !== segment.dev || String(info.ino) !== segment.ino) throw new SegmentChanged();
       const cacheKey = `${segment.path}:${segment.dev}:${segment.ino}`;
       const stamp = { size: Number(info.size), mtimeMs: Number(info.mtimeMs) };
-      const hit = cacheHit<T[]>(cacheKey, stamp);
-      if (hit) return hit;
+      const hit = cacheHit<PageSegmentEntry<T>>(cacheKey, stamp);
+      if (hit) {
+        jsonlPageReadStats.hit += 1;
+        return hit.records;
+      }
       // Bind the rows and their line positions to this handle, not a path
       // reopened after rename. A live append cannot extend this read window.
       const bytes = Buffer.alloc(stamp.size);
@@ -238,9 +273,27 @@ export class JsonlAppendLog<T> {
         if (!bytesRead) throw new SegmentChanged();
         offset += bytesRead;
       }
-      const records = bytes.toString('utf8').split(/\r?\n/)
-        .filter((s) => s.trim() !== '').map((s) => JSON.parse(s) as T);
-      cacheSet(cacheKey, records, stamp);
+      // The live file changes on every append. Parse only what follows the
+      // bytes already parsed, after proving each of those bytes is unchanged.
+      const prior = cachePeek<PageSegmentEntry<T>>(cacheKey);
+      let records: T[];
+      if (prior?.bytes && extendsPrior(prior.bytes, bytes)) {
+        records = prior.records.concat(parseLines<T>(bytes.subarray(prior.bytes.length)));
+        jsonlPageReadStats.incremental += 1;
+      } else {
+        records = parseLines<T>(bytes);
+        jsonlPageReadStats.full += 1;
+      }
+      if (segment.path !== this.path) {
+        cacheSet(cacheKey, { records }, stamp);
+        return records;
+      }
+      cacheSet(cacheKey, { records, bytes }, stamp);
+      // A rotated or replaced live file is read under its new path or not at
+      // all; drop its old entry (and bytes) instead of waiting for LRU eviction.
+      const previousKey = livePageKeys.get(segment.path);
+      if (previousKey !== undefined && previousKey !== cacheKey) cacheDelete(previousKey);
+      livePageKeys.set(segment.path, cacheKey);
       return records;
     } catch (error) {
       if (isMissingFile(error)) throw new SegmentChanged();
