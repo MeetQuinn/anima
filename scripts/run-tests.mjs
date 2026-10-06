@@ -34,6 +34,7 @@ const groups = {
     'agent-token-usage.test.js',
     'attention-suggestion-activity.test.js',
     'channel-match.test.js',
+    'claude-background-evidence.test.js',
     'chat-target-options.test.js',
     'chat-target-resolver.test.js',
     'config.test.js',

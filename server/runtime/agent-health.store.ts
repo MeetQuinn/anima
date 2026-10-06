@@ -62,6 +62,19 @@ const ProviderChildHealthSnapshotSchema: z.ZodType<ProviderChildHealthSnapshot> 
 
 const ProviderWorkSnapshotSchema: z.ZodType<ProviderWorkSnapshot> = z.object({
   backgroundTaskCount: z.number().int().nonnegative().optional(),
+  backgroundHookIds: z.array(z.string().min(1).max(128)).max(32).optional(),
+  backgroundHookIdsTruncated: z.boolean().optional(),
+  backgroundEvidence: z.object({
+    snapshotReceivedAt: z.string().datetime(),
+    listedTaskIds: z.array(z.string().min(1).max(128)).max(32),
+    ambientTaskIds: z.array(z.string().min(1).max(128)).max(32),
+    listedTaskIdsTruncated: z.boolean(),
+    terminalNotifications: z.array(z.object({
+      taskId: z.string().min(1).max(128),
+      status: z.enum(['completed', 'failed', 'stopped']),
+      receivedAt: z.string().datetime(),
+    })).max(16),
+  }).optional(),
   state: z.enum(['background', 'working']),
 });
 

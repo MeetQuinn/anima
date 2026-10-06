@@ -68,6 +68,19 @@ export interface ProviderChildHealthSnapshot {
 
 export interface ProviderWorkSnapshot {
   backgroundTaskCount?: number;
+  backgroundHookIds?: string[];
+  backgroundHookIdsTruncated?: boolean;
+  backgroundEvidence?: {
+    snapshotReceivedAt: string;
+    listedTaskIds: string[];
+    ambientTaskIds: string[];
+    listedTaskIdsTruncated: boolean;
+    terminalNotifications: Array<{
+      taskId: string;
+      status: 'completed' | 'failed' | 'stopped';
+      receivedAt: string;
+    }>;
+  };
   state: 'background' | 'working';
 }
 
