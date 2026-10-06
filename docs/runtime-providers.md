@@ -280,6 +280,25 @@ flight. Anima does not create a second scheduler or synthetic `currentItemId` fo
 tasks, hooks, provider turns, and a pending native auto-rewake all keep the controller
 non-quiescent, so graceful close waits for the provider lifecycle to settle.
 
+For diagnosis, `providerWork.backgroundEvidence` keeps the most recently received
+live-list time and up to 32 task IDs, including which are ambient, separately from
+the latest 16 terminal notifications. `backgroundHookIds` lists up to 32 active
+hook IDs. Truncation flags also cover omitted invalid identifiers. No descriptions,
+output paths, task results, or prompts enter these fields. Times describe when
+Anima received a signal, not when the native task actually finished.
+
+Terminal notifications are visible even before the first live list arrives.
+Until then, list fields and `snapshotReceivedAt` are absent. An observed empty
+list contains empty ID arrays and its actual receipt time. This distinction
+survives health persistence; no list time is inferred from a terminal notification.
+
+The displayed count includes non-ambient tasks and active hooks. A terminal
+notification does not subtract from the live list: the two streams can arrive in
+either order. If completed IDs still appear in the last list, this evidence shows
+what Anima received; it does not prove the task is still running or authorize
+killing it. Only native lifecycle signals change quiescence. A new provider child
+starts with empty diagnostic state; elapsed time alone never clears it.
+
 ### Claude credentials
 
 Claude accounts are managed outside Anima (native Claude Code login or your own switcher).

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ClaudeBackgroundEvidence } from './claude-background-evidence.js';
 import { observeInputTrace } from './input-trace.js';
 import { isRecord, stringField } from '../json.js';
 import { classifyProviderFailureReason, ProviderTurnFailedError } from './provider-failure.js';
@@ -241,6 +242,7 @@ class ClaudeStreamJsonController {
   private readonly controllerInstanceId = randomUUID();
   private readonly activeToolUseIds = new Set<string>();
   private readonly activeHookIds = new Set<string>();
+  private readonly backgroundEvidence = new ClaudeBackgroundEvidence();
   private autoRewakePending = false;
   private autoRewakePendingReset?: NodeJS.Timeout;
   private backgroundObserver?: {
@@ -331,14 +333,22 @@ class ClaudeStreamJsonController {
 
   workSnapshot(): ProviderWorkSnapshot | undefined {
     const backgroundTaskCount = this.visibleBackgroundTaskCount + this.activeHookIds.size;
+    const evidence = this.backgroundEvidence.snapshot();
+    const hookIds = [...this.activeHookIds].filter((id) => /^[a-zA-Z0-9_.-]{1,128}$/.test(id)).slice(0, 32);
+    const hooks = this.activeHookIds.size > 0 ? {
+      backgroundHookIds: hookIds,
+      backgroundHookIdsTruncated: hookIds.length < this.activeHookIds.size,
+    } : {};
     if (this.providerTurnActive || this.autoRewakePending || (this.currentTurn?.commands.size ?? 0) > 0) {
       return {
         ...(backgroundTaskCount > 0 ? { backgroundTaskCount } : {}),
+        ...(evidence ? { backgroundEvidence: evidence } : {}),
+        ...hooks,
         state: 'working',
       };
     }
     if (backgroundTaskCount > 0) {
-      return { backgroundTaskCount, state: 'background' };
+      return { backgroundTaskCount, ...(evidence ? { backgroundEvidence: evidence } : {}), ...hooks, state: 'background' };
     }
     return undefined;
   }
@@ -705,6 +715,7 @@ class ClaudeStreamJsonController {
   }
 
   private updateInputGate(value: Record<string, unknown>): void {
+    this.backgroundEvidence.record(value);
     const type = stringField(value, 'type');
     const subtype = stringField(value, 'subtype');
     if (type === 'command_lifecycle') this.updateCommandLifecycle(value);

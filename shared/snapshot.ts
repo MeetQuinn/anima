@@ -68,6 +68,20 @@ export interface ProviderChildHealthSnapshot {
 
 export interface ProviderWorkSnapshot {
   backgroundTaskCount?: number;
+  backgroundHookIds?: string[];
+  backgroundHookIdsTruncated?: boolean;
+  backgroundEvidence?: {
+    // List fields are absent until a list is observed; [] then means an observed empty list.
+    snapshotReceivedAt?: string;
+    listedTaskIds?: string[];
+    ambientTaskIds?: string[];
+    listedTaskIdsTruncated?: boolean;
+    terminalNotifications: Array<{
+      taskId: string;
+      status: 'completed' | 'failed' | 'stopped';
+      receivedAt: string;
+    }>;
+  };
   state: 'background' | 'working';
 }
 

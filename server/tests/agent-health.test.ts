@@ -536,3 +536,57 @@ test('agent health service clears provider_error inside the store lock and keeps
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+test('background list and terminal evidence survive the health store independently of the count', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-background-health-'));
+  try {
+    const at = '2026-10-06T00:00:00.000Z';
+    const work = {
+      state: 'background' as const,
+      backgroundTaskCount: 2,
+      backgroundEvidence: {
+        snapshotReceivedAt: at,
+        listedTaskIds: ['one', 'two'],
+        ambientTaskIds: [],
+        listedTaskIdsTruncated: false,
+        terminalNotifications: [{ taskId: 'one', status: 'completed' as const, receivedAt: at }],
+      },
+    };
+    const store = new AgentHealthStore({ animaHome: stateDir });
+    await store.update('alpha', () => ({
+      state: 'healthy',
+      updatedAt: at,
+      runtime: runtimeSnapshot({ providerWork: work }),
+    }));
+    const reloaded = new AgentHealthStore({ animaHome: stateDir });
+    assert.deepEqual((await reloaded.get('alpha'))?.runtime?.providerWork, work);
+    const notifications = [{ taskId: 'early-task', status: 'completed' as const, receivedAt: at }];
+    for (const evidence of [
+      { terminalNotifications: notifications },
+      {
+        snapshotReceivedAt: at,
+        listedTaskIds: [],
+        ambientTaskIds: [],
+        listedTaskIdsTruncated: false,
+        terminalNotifications: notifications,
+      },
+    ]) {
+      const terminalWork = {
+        state: 'working' as const,
+        backgroundTaskCount: 1,
+        backgroundHookIds: ['keep-working'],
+        backgroundHookIdsTruncated: false,
+        backgroundEvidence: evidence,
+      };
+      await store.update('alpha', () => ({
+        state: 'healthy',
+        updatedAt: at,
+        runtime: runtimeSnapshot({ providerWork: terminalWork }),
+      }));
+      const readback = new AgentHealthStore({ animaHome: stateDir });
+      assert.deepEqual((await readback.get('alpha'))?.runtime?.providerWork, terminalWork);
+    }
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
