@@ -2133,7 +2133,8 @@ test('claude-code exposes separate background list and terminal evidence without
           ['two', 'failed'],
         ],
       );
-      assert.match(work!.backgroundEvidence!.snapshotReceivedAt, /^\d{4}-/);
+      assert.ok(work?.backgroundEvidence?.snapshotReceivedAt);
+      assert.match(work.backgroundEvidence.snapshotReceivedAt, /^\d{4}-/);
       assert.equal(JSON.stringify(work).includes('PRIVATE_'), false);
       await sleep(100);
       assert.ok(
@@ -2152,6 +2153,127 @@ test('claude-code exposes separate background list and terminal evidence without
     });
   } finally {
     await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('claude-code exposes terminal evidence before a list and clears it for a new child', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-terminal-first-'));
+  let runtime: AgentRuntime | undefined;
+  const runs: Array<Promise<unknown>> = [];
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const listPath = join(stateDir, 'list');
+      const releasePath = join(stateDir, 'release');
+      const bootPath = join(stateDir, 'boots');
+      const fakeClaude = join(stateDir, 'claude');
+      await writeFile(
+        fakeClaude,
+        [
+          '#!/usr/bin/env node',
+          "import {existsSync,readFileSync,writeFileSync} from 'node:fs'; import readline from 'node:readline';",
+          "const boot=(existsSync(process.env.BOOT_PATH)?Number(readFileSync(process.env.BOOT_PATH,'utf8')):0)+1;writeFileSync(process.env.BOOT_PATH,String(boot));",
+          "const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');",
+          "readline.createInterface({input:process.stdin}).once('line',()=>{",
+          "if(boot===1)send({type:'system',subtype:'task_notification',task_id:'early-task',status:'completed',summary:'PRIVATE_SENTINEL'});",
+          "send({type:'system',subtype:'hook_started',hook_id:'keep-working'});let listed=false;",
+          "const timer=setInterval(()=>{if(boot===1&&!listed&&existsSync(process.env.LIST_PATH)){listed=true;send({type:'system',subtype:'background_tasks_changed',tasks:[]});}",
+          "if(!existsSync(process.env.RELEASE_PATH)||Number(readFileSync(process.env.RELEASE_PATH,'utf8'))<boot)return;clearInterval(timer);",
+          "send({type:'system',subtype:'hook_response',hook_id:'keep-working',exit_code:0});send({type:'result',subtype:'success',result:'done-'+boot});},5);});",
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeClaude, 0o755);
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-anima',
+          teamId: 'T-demo',
+          text: 'terminal first',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      runtime = createAgentRuntime({
+        kind: 'claude-code',
+        providerChildIdleTimeoutMs: 50,
+        env: runtimeTestEnv(stateDir, {
+          BOOT_PATH: bootPath,
+          LIST_PATH: listPath,
+          RELEASE_PATH: releasePath,
+        }),
+      });
+      const first = runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+      runs.push(first);
+      first.catch(() => {});
+      await waitFor(
+        () => !!runtime?.health?.().providerWork?.backgroundHookIds?.includes('keep-working'),
+        { timeoutMs: 1000, description: 'terminal-first hook control frame' },
+      );
+      const work = runtime.health?.().providerWork;
+      assert.equal(work?.state, 'working');
+      assert.equal(work?.backgroundTaskCount, 1);
+      assert.ok(runtime.health?.().child?.alive);
+      assert.deepEqual(
+        work?.backgroundEvidence?.terminalNotifications.map((x) => [x.taskId, x.status]),
+        [['early-task', 'completed']],
+      );
+      assert.ok(work?.backgroundEvidence);
+      for (const field of [
+        'snapshotReceivedAt',
+        'listedTaskIds',
+        'ambientTaskIds',
+        'listedTaskIdsTruncated',
+      ]) {
+        assert.equal(
+          Object.hasOwn(work.backgroundEvidence, field),
+          false,
+          'unobserved list fields stay absent',
+        );
+      }
+      assert.equal(JSON.stringify(work).includes('PRIVATE_SENTINEL'), false);
+      await writeFile(listPath, '1', 'utf8');
+      await waitFor(
+        () => !!runtime?.health?.().providerWork?.backgroundEvidence?.snapshotReceivedAt,
+        { timeoutMs: 1000, description: 'observed empty list' },
+      );
+      const observed = runtime.health?.().providerWork;
+      assert.deepEqual(observed?.backgroundEvidence?.listedTaskIds, []);
+      assert.deepEqual(
+        observed?.backgroundEvidence?.terminalNotifications,
+        work.backgroundEvidence.terminalNotifications,
+      );
+      assert.equal(
+        observed?.backgroundTaskCount,
+        1,
+        'an empty list does not clear the active hook',
+      );
+      await writeFile(releasePath, '1', 'utf8');
+      assert.equal((await first).text, 'done-1');
+      await waitFor(() => runtime?.health?.().child === undefined, {
+        timeoutMs: 1000,
+        description: 'first child retirement',
+      });
+      const second = runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+      runs.push(second);
+      second.catch(() => {});
+      await waitFor(
+        () => !!runtime?.health?.().providerWork?.backgroundHookIds?.includes('keep-working'),
+        { timeoutMs: 1000, description: 'new child hook' },
+      );
+      const fresh = runtime.health?.().providerWork;
+      assert.equal(fresh?.backgroundTaskCount, 1);
+      assert.equal(
+        fresh?.backgroundEvidence,
+        undefined,
+        'a new child cannot inherit either stream',
+      );
+      assert.equal(await readFile(bootPath, 'utf8'), '2');
+      await writeFile(releasePath, '2', 'utf8');
+      assert.equal((await second).text, 'done-2');
+    });
+  } finally {
+    await runtime?.close?.();
+    await Promise.allSettled(runs);
     await rm(stateDir, { force: true, recursive: true });
   }
 });

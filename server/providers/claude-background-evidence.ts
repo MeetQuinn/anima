@@ -43,12 +43,16 @@ export class ClaudeBackgroundEvidence {
   }
 
   snapshot(): Evidence | undefined {
-    if (!this.receivedAt) return;
+    if (!this.receivedAt && this.notifications.length === 0) return;
     return {
-      snapshotReceivedAt: this.receivedAt,
-      listedTaskIds: [...this.ids],
-      ambientTaskIds: [...this.ambientIds],
-      listedTaskIdsTruncated: this.truncated,
+      ...(this.receivedAt
+        ? {
+            snapshotReceivedAt: this.receivedAt,
+            listedTaskIds: [...this.ids],
+            ambientTaskIds: [...this.ambientIds],
+            listedTaskIdsTruncated: this.truncated,
+          }
+        : {}),
       terminalNotifications: this.notifications.map((notification) => ({ ...notification })),
     };
   }

@@ -560,6 +560,32 @@ test('background list and terminal evidence survive the health store independent
     }));
     const reloaded = new AgentHealthStore({ animaHome: stateDir });
     assert.deepEqual((await reloaded.get('alpha'))?.runtime?.providerWork, work);
+    const notifications = [{ taskId: 'early-task', status: 'completed' as const, receivedAt: at }];
+    for (const evidence of [
+      { terminalNotifications: notifications },
+      {
+        snapshotReceivedAt: at,
+        listedTaskIds: [],
+        ambientTaskIds: [],
+        listedTaskIdsTruncated: false,
+        terminalNotifications: notifications,
+      },
+    ]) {
+      const terminalWork = {
+        state: 'working' as const,
+        backgroundTaskCount: 1,
+        backgroundHookIds: ['keep-working'],
+        backgroundHookIdsTruncated: false,
+        backgroundEvidence: evidence,
+      };
+      await store.update('alpha', () => ({
+        state: 'healthy',
+        updatedAt: at,
+        runtime: runtimeSnapshot({ providerWork: terminalWork }),
+      }));
+      const readback = new AgentHealthStore({ animaHome: stateDir });
+      assert.deepEqual((await readback.get('alpha'))?.runtime?.providerWork, terminalWork);
+    }
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

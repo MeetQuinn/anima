@@ -17,6 +17,23 @@ const terminal = (task_id: string) => ({
   output_file: '/private/sentinel',
 });
 
+test('terminal-only evidence distinguishes an unobserved list from an observed empty list', () => {
+  const e = new ClaudeBackgroundEvidence();
+  e.record(terminal('early-task'), at);
+  assert.deepEqual(e.snapshot(), {
+    terminalNotifications: [{ taskId: 'early-task', status: 'completed', receivedAt: at }],
+  });
+  const later = '2026-10-06T00:00:01.000Z';
+  e.record(level([]), later);
+  assert.deepEqual(e.snapshot(), {
+    snapshotReceivedAt: later,
+    listedTaskIds: [],
+    ambientTaskIds: [],
+    listedTaskIdsTruncated: false,
+    terminalNotifications: [{ taskId: 'early-task', status: 'completed', receivedAt: at }],
+  });
+});
+
 test('background evidence keeps level and terminal streams independent in either order', () => {
   for (const edgesFirst of [true, false]) {
     const e = new ClaudeBackgroundEvidence();
@@ -66,6 +83,7 @@ test('diagnostics are bounded, omit untrusted text and invalid IDs, and cannot b
   for (let i = 0; i < 30; i++) e.record(terminal(`task-${i}`), at);
   e.record(terminal('private/path'), at);
   const s = e.snapshot()!;
+  assert.ok(s.listedTaskIds);
   assert.equal(s.listedTaskIds.length, 32);
   assert.equal(s.listedTaskIdsTruncated, true);
   assert.equal(s.terminalNotifications.length, 16);
@@ -74,13 +92,14 @@ test('diagnostics are bounded, omit untrusted text and invalid IDs, and cannot b
   assert.equal(JSON.stringify(s).includes('private/path'), false);
   s.listedTaskIds.length = 0;
   s.terminalNotifications[0]!.status = 'failed';
-  assert.equal(e.snapshot()?.listedTaskIds.length, 32);
+  assert.equal(e.snapshot()?.listedTaskIds?.length, 32);
   assert.equal(e.snapshot()?.terminalNotifications[0]?.status, 'completed');
 });
 
 test('a new controller evidence instance cannot inherit an earlier process list', () => {
   const previous = new ClaudeBackgroundEvidence();
   previous.record(level(['old-process-task']), at);
+  previous.record(terminal('old-process-task'), at);
   const current = new ClaudeBackgroundEvidence();
   assert.equal(current.snapshot(), undefined);
   current.record({ type: 'system', subtype: 'background_tasks_changed', tasks: null }, at);

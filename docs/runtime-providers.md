@@ -287,6 +287,11 @@ hook IDs. Truncation flags also cover omitted invalid identifiers. No descriptio
 output paths, task results, or prompts enter these fields. Times describe when
 Anima received a signal, not when the native task actually finished.
 
+Terminal notifications are visible even before the first live list arrives.
+Until then, list fields and `snapshotReceivedAt` are absent. An observed empty
+list contains empty ID arrays and its actual receipt time. This distinction
+survives health persistence; no list time is inferred from a terminal notification.
+
 The displayed count includes non-ambient tasks and active hooks. A terminal
 notification does not subtract from the live list: the two streams can arrive in
 either order. If completed IDs still appear in the last list, this evidence shows
