@@ -7,7 +7,10 @@ import type {
   ProviderUsageRow,
 } from "../../shared/provider-usage.js";
 import { record, stringValue, providerHome } from "./providers/common.js";
-import { fetchClaudeUsage } from "./providers/claude.js";
+import {
+  fetchClaudeUsage,
+  fetchClaudeUsageEvidence,
+} from "./providers/claude.js";
 import { normalizedConfigDir } from "./providers/claude-credentials.js";
 import { fetchCodexUsage } from "./providers/codex.js";
 
@@ -123,13 +126,18 @@ export async function fetchClaudeConnectionUsage(
   ) {
     return noQuota(unknown);
   }
-  const usage = await subscriptionUsage({ configDir: usageConfigDir });
+  const { usage, credentialStatus } = options.subscriptionUsage
+    ? {
+        usage: await subscriptionUsage({ configDir: usageConfigDir }),
+        credentialStatus: "found" as const,
+      }
+    : await fetchClaudeUsageEvidence({ configDir: usageConfigDir });
   return {
     ...usage,
     connection:
-      usage.error?.type === "not_configured"
+      credentialStatus === "missing"
         ? connection("unknown", "none", undefined, "not-configured")
-        : usage.error?.type === "unknown"
+        : credentialStatus === "unknown"
           ? unknown
           : connection("subscription", "stored-login", endpoint),
   };

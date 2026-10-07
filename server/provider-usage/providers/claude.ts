@@ -34,14 +34,23 @@ interface ClaudeCredentials {
   subscriptionType?: string;
 }
 
-const claudeUsageInFlight = new Map<
-  string,
-  Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>>
->();
+type ClaudeUsage = Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>;
+interface ClaudeUsageEvidence {
+  credentialStatus: 'found' | 'missing' | 'unknown';
+  usage: ClaudeUsage;
+}
+const claudeUsageInFlight = new Map<string, Promise<ClaudeUsageEvidence>>();
 
 export async function fetchClaudeUsage(
   input: { configDir?: string; accessToken?: string } = {},
-): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
+): Promise<ClaudeUsage> {
+  return (await fetchClaudeUsageEvidence(input)).usage;
+}
+
+/** Keep credential-read evidence independent from downstream quota errors. */
+export async function fetchClaudeUsageEvidence(
+  input: { configDir?: string; accessToken?: string } = {},
+): Promise<ClaudeUsageEvidence> {
   const key = `${normalizedConfigDir(input.configDir) ?? homePath('.claude')}:${input.accessToken ?? ''}`;
   const existing = claudeUsageInFlight.get(key);
   if (existing) return existing;
@@ -54,15 +63,15 @@ export async function fetchClaudeUsage(
 
 async function fetchClaudeUsageOnce(
   input: { configDir?: string; accessToken?: string },
-): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
+): Promise<ClaudeUsageEvidence> {
   const read: CredentialRead = input.accessToken
     ? { status: 'found', credentials: { accessToken: input.accessToken } }
     : await readClaudeCredentials(input.configDir);
   if (read.status === 'unknown') {
-    return unavailable(usageError('unknown', 'Claude Code credentials could not be read.'));
+    return { credentialStatus: 'unknown', usage: unavailable(usageError('unknown', 'Claude Code credentials could not be read.')) };
   }
   if (read.status === 'missing') {
-    return unavailable(usageError('not_configured', 'Claude Code OAuth token not found. Run `claude` to authenticate.'));
+    return { credentialStatus: 'missing', usage: unavailable(usageError('not_configured', 'Claude Code OAuth token not found. Run `claude` to authenticate.')) };
   }
 
   let activeCredentials = read.credentials;
@@ -78,10 +87,10 @@ async function fetchClaudeUsageOnce(
     }
   }
 
-  if (result.error) return unavailable(result.error, activeCredentials.account);
+  if (result.error) return { credentialStatus: 'found', usage: unavailable(result.error, activeCredentials.account) };
   const parsed = parseClaudeUsageResponse(result.data, activeCredentials);
-  if (parsed.error) return unavailable(parsed.error, activeCredentials.account);
-  return available(parsed.windows, parsed.extras, activeCredentials.account);
+  if (parsed.error) return { credentialStatus: 'found', usage: unavailable(parsed.error, activeCredentials.account) };
+  return { credentialStatus: 'found', usage: available(parsed.windows, parsed.extras, activeCredentials.account) };
 }
 
 export function parseClaudeUsageResponse(

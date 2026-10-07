@@ -232,6 +232,33 @@ test(
   },
 );
 
+test("Claude stored-login evidence survives a quota HTTP503 without a credential write", async (t) => {
+  const f = await fixture(t);
+  const path = join(f.home, ".claude", ".credentials.json");
+  const bytes = JSON.stringify({
+    claudeAiOauth: { accessToken: "synthetic-oauth" },
+  });
+  await writeFile(path, bytes);
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (url) => {
+    assert.equal(url, "https://api.anthropic.com/api/oauth/usage");
+    calls++;
+    return new Response("synthetic unavailable", { status: 503 });
+  };
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const row = await fetchClaudeConnectionUsage({ home: f.home, env: {} });
+  assert.equal(calls, 3);
+  assert.equal(row.error?.status, 503);
+  assert.equal(row.error?.type, "unknown");
+  assert.equal(row.connection?.method, "subscription");
+  assert.equal(row.connection?.credential, "stored-login");
+  assert.equal(row.connection?.status, "configured");
+  assert.equal(await readFile(path, "utf8"), bytes);
+});
+
 test("Codex stored API key wins over stale OAuth tokens without a usage call", async (t) => {
   const f = await fixture(t);
   await f.auth({

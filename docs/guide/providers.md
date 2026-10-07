@@ -113,6 +113,7 @@ Codex inspects the default profile/provider and file-based login; keyring, ephem
 unsupported or unreadable configurations remain **Not inspected**.
 
 Credential-store read failures stay unknown; they do not imply a missing login.
+After a credential is found, quota-query errors do not erase that connection evidence.
 The built-in Codex endpoint respects the selected `openai_base_url` override.
 
 Only credential source and a sanitized endpoint origin reach the dashboard. Keys,
