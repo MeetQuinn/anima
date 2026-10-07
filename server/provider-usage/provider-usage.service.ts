@@ -1,6 +1,5 @@
 import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '../../shared/provider-usage.js';
-import { fetchClaudeUsage } from './providers/claude.js';
-import { fetchCodexUsage } from './providers/codex.js';
+import { fetchClaudeConnectionUsage, fetchCodexConnectionUsage } from './connection.js';
 import { fetchGrokUsage } from './providers/grok.js';
 import { fetchKimiUsage } from './providers/kimi.js';
 import { fetchOpenCodeUsage } from './providers/opencode.js';
@@ -211,6 +210,7 @@ function mergeWithLastGood(
       const staleRow: ProviderUsageRow = { ...fallback.row, stale: true };
       if (fresh.accountId !== undefined) staleRow.accountId = fresh.accountId;
       if (fresh.active !== undefined) staleRow.active = fresh.active;
+      if (fresh.connection !== undefined) staleRow.connection = fresh.connection;
       return staleRow;
     }
 
@@ -265,14 +265,14 @@ function providerUsageOutcomeLog(input: {
 export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
   return [
     {
-      // Native ~/.claude only — no multi-account fan-out or registry discovery.
-      fetch: async () => [await fetchClaudeUsage()],
+      // Machine-default connection evidence, no helper execution or account fan-out.
+      fetch: async () => [await fetchClaudeConnectionUsage()],
       label: 'Claude Code',
       provider: 'claude-code',
       source: 'private-api',
     },
     {
-      fetch: async () => [await fetchCodexUsage()],
+      fetch: async () => [await fetchCodexConnectionUsage()],
       label: 'Codex',
       provider: 'codex-cli',
       source: 'private-api',

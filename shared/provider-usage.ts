@@ -1,21 +1,21 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const ProviderUsageKind = z.enum([
-  'claude-code',
-  'codex-cli',
-  'kimi-cli',
-  'grok-cli',
-  'opencode-cli',
-  'pi',
+  "claude-code",
+  "codex-cli",
+  "kimi-cli",
+  "grok-cli",
+  "opencode-cli",
+  "pi",
 ]);
 export type ProviderUsageKind = z.infer<typeof ProviderUsageKind>;
 
 export const ProviderUsageErrorType = z.enum([
-  'network_error',
-  'not_configured',
-  'parse_error',
-  'unauthorized',
-  'unknown',
+  "network_error",
+  "not_configured",
+  "parse_error",
+  "unauthorized",
+  "unknown",
 ]);
 export type ProviderUsageErrorType = z.infer<typeof ProviderUsageErrorType>;
 
@@ -46,18 +46,35 @@ export const ProviderUsageError = z.object({
 });
 export type ProviderUsageError = z.infer<typeof ProviderUsageError>;
 
+// Configuration evidence only, never proof that a request or credential works.
+export const ProviderConnection = z.object({
+  credential: z.enum([
+    "environment",
+    "helper",
+    "stored-login",
+    "stored-key",
+    "none",
+  ]),
+  endpoint: z.string().optional(),
+  method: z.enum(["subscription", "api-key", "cloud", "unknown"]),
+  scope: z.literal("machine-default"),
+  status: z.enum(["configured", "not-configured", "unknown"]),
+});
+export type ProviderConnection = z.infer<typeof ProviderConnection>;
+
 export const ProviderUsageRow = z.object({
   account: z.string().max(320).optional(),
   accountId: z.string().optional(),
   active: z.boolean().optional(),
   checkedAt: z.string(),
+  connection: ProviderConnection.optional(),
   error: ProviderUsageError.optional(),
   extras: z.array(ProviderUsageExtra),
   label: z.string(),
   provider: ProviderUsageKind,
-  source: z.enum(['native', 'private-api']),
+  source: z.enum(["native", "private-api"]),
   stale: z.boolean().optional(),
-  status: z.enum(['available', 'unavailable']),
+  status: z.enum(["available", "unavailable"]),
   windows: z.array(ProviderUsageWindow),
 });
 export type ProviderUsageRow = z.infer<typeof ProviderUsageRow>;

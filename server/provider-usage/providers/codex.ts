@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '../../../shared/provider-usage.js';
 import { bearer, fetchJson } from '../http.js';
 import { available, unavailable, usageError } from '../result.js';
@@ -16,7 +18,6 @@ import {
 const CODEX_USAGE_API = 'https://chatgpt.com/backend-api/wham/usage';
 const CODEX_REFRESH_TOKEN_API = 'https://auth.openai.com/oauth/token';
 const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const CODEX_AUTH_PATH = ['.codex', 'auth.json'];
 const CODEX_HEADERS = {
   Accept: 'application/json',
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -30,8 +31,8 @@ interface CodexCredentials {
   refreshToken?: string;
 }
 
-export async function fetchCodexUsage(): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
-  const credentials = await readCodexCredentials();
+export async function fetchCodexUsage(input: { configDir?: string } = {}): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
+  const credentials = await readCodexCredentials(input.configDir);
   if (!credentials) {
     return unavailable(usageError('not_configured', 'Codex login token not found. Run `codex login` to authenticate.'));
   }
@@ -45,7 +46,7 @@ export async function fetchCodexUsage(): Promise<Omit<ProviderUsageRow, 'checked
 
   let result = await fetchCodexUsageWithToken(activeCredentials.accessToken);
   if (result.error?.type === 'unauthorized' && activeCredentials.refreshToken) {
-    const latestCredentials = await readCodexCredentials();
+    const latestCredentials = await readCodexCredentials(input.configDir);
     if (latestCredentials && latestCredentials.accessToken !== activeCredentials.accessToken) {
       activeCredentials = latestCredentials;
     } else {
@@ -97,8 +98,8 @@ export function parseCodexUsageResponse(
   return { extras, windows };
 }
 
-async function readCodexCredentials(): Promise<CodexCredentials | undefined> {
-  const path = homePath(...CODEX_AUTH_PATH);
+async function readCodexCredentials(configDir?: string): Promise<CodexCredentials | undefined> {
+  const path = configDir ? join(configDir, 'auth.json') : homePath('.codex', 'auth.json');
   const auth = record(await readJsonFile(path));
   const tokens = record(auth?.tokens);
   const accessToken = stringValue(tokens?.access_token);

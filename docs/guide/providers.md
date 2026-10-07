@@ -92,9 +92,32 @@ All Anima agents launched under the same host user can reach the same provider c
 The **Providers** panel shows the account label or identifier when the provider exposes one safely. It never stores or displays access tokens. An unavailable usage check can still show the last account Anima identified from local credentials.
 
 Claude accounts are managed outside Anima (native Claude Code login or your own switcher).
-Anima does not add, switch, or pin Claude accounts in the dashboard. Usage and quota for the
-active native `~/.claude` credential appear in **Providers**. Agents share that host credential;
+Anima does not add, switch, or pin Claude accounts in the dashboard. The **Providers**
+connection card distinguishes subscription login from API key or gateway configuration. Subscription connections can show quota; API connections
+leave usage and billing with the API provider. Agents share that host credential;
 there is no per-agent credential isolation in Anima.
+
+## Read connection status
+
+For Claude Code and Codex, **Providers** distinguishes **Subscription**, **API key**,
+and **Cloud provider** from quota availability. **Configured** means a credential
+or helper is configured; it does not prove a successful request. API key and gateway
+connections do not require subscription login and do not show invented subscription quotas.
+
+This is a machine-default snapshot of the CLI's user settings and Anima's service
+environment, not the authentication of every running agent. Project or managed settings,
+agent launch environment, CLI arguments and custom wrappers can override it. Claude's
+`CLAUDE_CONFIG_DIR` and Codex's `CODEX_HOME` select the inspected native directory.
+Claude key/bearer/helper configuration takes priority over a saved subscription login.
+Codex inspects the default profile/provider and file-based login; keyring, ephemeral,
+unsupported or unreadable configurations remain **Not inspected**.
+
+Only credential source and a sanitized endpoint origin reach the dashboard. Keys,
+tokens, helper commands and URL paths/query strings stay local. Detection never runs a
+credential helper, tests a model request, or writes authentication settings. Existing
+subscription usage readers retain their own behavior; Claude usage remains read-only.
+See the native [Claude authentication rules](https://code.claude.com/docs/en/authentication#authentication-precedence)
+and [Codex authentication options](https://learn.chatgpt.com/docs/auth).
 
 ## Pick the provider for an agent
 
@@ -187,8 +210,8 @@ Open the provider CLI directly under the same host user and complete its login f
 ### The account shown is not the one you expected
 
 The label reflects the provider credential store available to the Anima host user. For Claude Code,
-check both the machine default in **Providers** and the optional account pin on the agent's Profile
-tab. For other providers, resolve the account choice inside the provider CLI. Logging out can clear
+check the machine default in **Providers** and any CLI or launcher overrides. Resolve
+the account choice inside the provider CLI or your external account switcher. Logging out can clear
 shared credentials, configuration, MCP servers, plugins, skills, or history, so review the
 provider's behavior before changing a shared machine login.
 

@@ -9,7 +9,7 @@ import type { ProviderUsageRow } from '@shared/provider-usage';
 import { BrandIcon } from './BrandIcon';
 import { ProviderSignIn } from './ProviderSignIn';
 import { WindowRow } from './WindowRow';
-import { extraValue, formatContextTokens, providerCollapsedSummary, providerUsageErrorMessage, splitExtras } from './format';
+import { extraValue, formatContextTokens, providerCollapsedSummary, providerConnectionSummary, providerUsageErrorMessage, splitExtras } from './format';
 
 // ---------------------------------------------------------------------------
 // Provider unit
@@ -200,7 +200,7 @@ export function ProviderUnit({
             </div>
           )}
 
-          {login && login.state !== 'unsupported' && onLoginStart && onLoginCancel && (
+          {login && login.state !== 'unsupported' && usage?.connection?.method !== 'api-key' && usage?.connection?.method !== 'cloud' && onLoginStart && onLoginCancel && (
             <ProviderSignIn
               busy={loginBusy}
               error={loginError}
@@ -331,9 +331,17 @@ function UsageCard({ now, usage }: { now: Date; usage: ProviderUsageRow }) {
   const errorMessage = providerUsageErrorMessage(usage);
   const { plan, rest } = splitExtras(usage.extras);
   const name = usage.account;
+  const connection = usage.connection;
 
   return (
     <div className="rounded-md border border-border-soft bg-surface-raised px-3.5 py-3 shadow-lift">
+      {connection && (
+        <div className="mb-3 space-y-1">
+          <p className="font-sans text-[12px] text-text">{providerConnectionSummary(connection)}</p>
+          {connection.endpoint && <p className="break-all font-mono text-[11px] text-text-muted">{connection.endpoint}</p>}
+          {connection.credential === 'helper' && <p className="font-sans text-[11px] text-text-subtle">Credential helper configured</p>}
+        </div>
+      )}
       {(name || plan || usage.stale) && (
         <div className="flex min-w-0 items-baseline gap-2">
           {name && (
@@ -349,7 +357,15 @@ function UsageCard({ now, usage }: { now: Date; usage: ProviderUsageRow }) {
           )}
         </div>
       )}
-      {isAvailable ? (
+      {connection && connection.method !== 'subscription' ? (
+        <p className="font-sans text-[11px] leading-relaxed text-text-muted">
+          {connection.method === 'api-key'
+            ? 'Usage is managed by your API provider or gateway.'
+            : connection.method === 'cloud'
+              ? 'Usage and authentication are managed by your cloud provider.'
+              : 'Subscription usage is not available for this configuration.'}
+        </p>
+      ) : isAvailable ? (
         <div className={name || plan ? 'mt-3 space-y-2' : 'space-y-2'}>
           {usage.windows.map((w, i) => (
             <WindowRow key={i} w={w} now={now} />

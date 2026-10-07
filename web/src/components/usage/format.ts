@@ -118,6 +118,9 @@ function windowSummary(windows: ProviderUsageWindow[], max = 2): string {
 export function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
   const active = usages.find((u) => u.active) ?? usages[0];
   if (!active) return 'Not configured';
+  if (active.connection && active.connection.method !== 'subscription') {
+    return providerConnectionSummary(active.connection);
+  }
   if (active.status !== 'available') {
     if (active.error?.type === 'unauthorized') return 'Auth expired';
     if (active.error?.type === 'not_configured') return 'Not configured';
@@ -126,4 +129,13 @@ export function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
   }
   const summary = windowSummary(active.windows, 2) || 'Available';
   return active.stale ? `${summary} · cached` : summary;
+}
+
+export function providerConnectionSummary(connection: NonNullable<ProviderUsageRow['connection']>): string {
+  const method = connection.method === 'api-key' ? 'API key'
+    : connection.method === 'subscription' ? 'Subscription'
+      : connection.method === 'cloud' ? 'Cloud provider' : 'Authentication';
+  const state = connection.status === 'configured' ? 'Configured'
+    : connection.status === 'not-configured' ? 'No credential detected' : 'Not inspected';
+  return `${method} · ${state}`;
 }

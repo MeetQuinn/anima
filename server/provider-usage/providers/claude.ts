@@ -39,9 +39,9 @@ const claudeUsageInFlight = new Map<
 >();
 
 export async function fetchClaudeUsage(
-  input: { configDir?: string } = {},
+  input: { configDir?: string; accessToken?: string } = {},
 ): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
-  const key = normalizedConfigDir(input.configDir) ?? homePath('.claude');
+  const key = `${normalizedConfigDir(input.configDir) ?? homePath('.claude')}:${input.accessToken ?? ''}`;
   const existing = claudeUsageInFlight.get(key);
   if (existing) return existing;
   const pending = fetchClaudeUsageOnce(input).finally(() => {
@@ -52,16 +52,18 @@ export async function fetchClaudeUsage(
 }
 
 async function fetchClaudeUsageOnce(
-  input: { configDir?: string },
+  input: { configDir?: string; accessToken?: string },
 ): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
-  const credentials = await readClaudeCredentials(input.configDir);
+  const credentials = input.accessToken
+    ? { accessToken: input.accessToken } as ClaudeCredentials
+    : await readClaudeCredentials(input.configDir);
   if (!credentials) {
     return unavailable(usageError('not_configured', 'Claude Code OAuth token not found. Run `claude` to authenticate.'));
   }
 
   let activeCredentials = credentials;
   let result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
-  if (result.error?.type === 'unauthorized') {
+  if (result.error?.type === 'unauthorized' && !input.accessToken) {
     // Claude Code is the sole owner of OAuth refresh and credential persistence.
     // Usage is an observational GET: it may adopt a token that Claude Code wrote
     // concurrently, but it must never rotate tokens or write the credential store.
