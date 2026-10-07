@@ -293,6 +293,10 @@ test("Codex native subscription does not invent an API-key endpoint", async (t) 
 test("Codex missing/keyring auth and conflicting forced login remain unknown", async (t) => {
   const f = await fixture(t);
   await f.codex('cli_auth_credentials_store="keyring"');
+  await f.auth({
+    auth_mode: "chatgpt",
+    tokens: { access_token: "stale-file-oauth" },
+  });
   assert.equal(
     (
       await fetchCodexConnectionUsage({
