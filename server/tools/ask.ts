@@ -141,6 +141,7 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
   const hold = await evaluateSendHold({
     agentId,
     teamId,
+    channelKind: targetSummary.channelKind,
     channelId: target.channel.id,
     ...(target.threadTs ? { threadTs: target.threadTs } : {}),
     tool: 'anima.ask',

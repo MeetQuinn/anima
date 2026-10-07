@@ -541,6 +541,11 @@ anima message send --channel C0XXXX --thread-ts 1780000000.000000 <<'MSG'
 MSG
 ```
 
+With cursor delivery enabled, Slack DMs (including group DMs) and threads can return `HELD`
+when unread messages arrived after your last delivered view. The message, question, or file was
+not sent; read the supplied updates, then resend if needed. Channel-top-level sends do not use
+this check and do not advance the read cursor.
+
 For a successful Slack send, keep the returned `message_ts` as the receipt. If local engagement,
 thread subscription, completion audit, or outbox recording fails after Slack accepts the post,
 the command still exits successfully and prints a warning with that receipt. Do not resend the

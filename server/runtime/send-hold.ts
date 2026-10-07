@@ -1,7 +1,8 @@
 // Cut (c): pre-commit send hold on the three irreversible Slack post paths.
 //
-// Same flag as cursor delivery (`cursorDelivery.enabled`) so view + hold enable
-// atomically. Hold runs outside withToolActivity(effectType) — HELD is a local
+// DM and thread holds share the cursor delivery flag (`cursorDelivery.enabled`).
+// Channel-top-level sends do not compare or consume the read cursor.
+// Hold runs outside withToolActivity(effectType) — HELD is a local
 // completed activity with status:held, never an external.effect / outbox row.
 // Confirmed-absent cursor lands without hold; store errors fail closed.
 //
@@ -100,6 +101,7 @@ export async function evaluateSendHold(input: {
   agentId: string;
   teamId: string;
   channelId: string;
+  channelKind: 'channel' | 'dm' | 'mpim';
   threadTs?: string;
   tool: SendHoldTool;
   botUserId?: string;
@@ -107,6 +109,8 @@ export async function evaluateSendHold(input: {
   store?: ObservedConversationStore;
   writeOutput?: (line: string) => void;
 }): Promise<EvaluateSendHoldResult> {
+  if (input.channelKind === 'channel' && !input.threadTs) return { kind: 'allow' };
+
   const enabled = await resolveCursorDeliveryEnabled();
   if (enabled.kind === 'disabled') return { kind: 'disabled' };
   if (enabled.kind === 'error') {

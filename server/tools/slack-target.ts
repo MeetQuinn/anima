@@ -1,6 +1,5 @@
 import type { WebClient } from '@slack/web-api';
 
-import { nowIso } from '../ids.js';
 import {
   type SlackConversationInfo,
   SlackWorkspaceDirectoryService,
@@ -84,7 +83,6 @@ async function slackConversationInfoForTarget(
   channel: ResolvedSlackChannel,
   directory: SlackWorkspaceDirectoryService,
 ): Promise<SlackConversationInfo | undefined> {
-  if (channel.name) return { id: channel.id, name: channel.name, syncedAt: nowIso() };
   try {
     return await directory.getConversation(channel.id);
   } catch {

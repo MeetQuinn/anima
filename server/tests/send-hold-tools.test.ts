@@ -8,7 +8,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
+import { slackSurfaceId } from '../ids.js';
 import { setCursorDeliveryEnabledForTests } from '../runtime/cursor-delivery.js';
+import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
+import { getSlackWorkspaceDirectoryStore } from '../storage/schema/cache.js';
+import { WebClient } from '@slack/web-api';
 import { ObservedConversationStore } from '../storage/schema/observed-conversation.store.js';
 import { runMessageSend } from '../tools/messages.js';
 import { runAsk } from '../tools/ask.js';
@@ -48,6 +52,9 @@ function baseSlackHandlers(posts: unknown[], uploads: string[]) {
     if (method === 'auth.test') {
       return { ok: true, team_id: TEAM, user_id: BOT_USER };
     }
+    if (method === 'users.info') {
+      return { ok: true, user: { id: 'U123', name: 'alice' } };
+    }
     if (method === 'users.list') {
       return { ok: true, members: [{ id: 'U123', name: 'alice' }] };
     }
@@ -60,7 +67,13 @@ function baseSlackHandlers(posts: unknown[], uploads: string[]) {
     if (method === 'conversations.info') {
       return {
         ok: true,
-        channel: { id: CHANNEL, is_channel: true, name: 'product', name_normalized: 'product' },
+        channel: {
+          id: slackRequestBody(body)['channel'],
+          is_im: String(slackRequestBody(body)['channel']).startsWith('D'),
+          is_mpim: String(slackRequestBody(body)['channel']).startsWith('G'),
+          user: 'U123',
+          name: 'product',
+        },
       };
     }
     if (method === 'conversations.members') {
@@ -68,7 +81,7 @@ function baseSlackHandlers(posts: unknown[], uploads: string[]) {
     }
     if (method === 'chat.postMessage') {
       posts.push(slackRequestBody(body));
-      return { ok: true, channel: CHANNEL, ts: '1770000999.000001' };
+      return { ok: true, channel: slackRequestBody(body)['channel'], ts: '1770000999.000001' };
     }
     if (method === 'files.getUploadURLExternal') {
       uploads.push('getUploadURLExternal');
@@ -102,37 +115,43 @@ function baseSlackHandlers(posts: unknown[], uploads: string[]) {
   };
 }
 
-async function plantStaleSurface(agentId: string): Promise<ObservedConversationStore> {
+async function plantStaleSurface(
+  agentId: string,
+  channelId = CHANNEL,
+  threadTs?: string,
+): Promise<ObservedConversationStore> {
   const store = new ObservedConversationStore(agentId);
+  const surfaceId = slackSurfaceId({ teamId: TEAM, channelId, threadTs });
   await store.observe({
-    teamId: TEAM,
-    channelId: CHANNEL,
-    messageTs: '10.0',
-    text: 'topic',
-    userId: 'U_ROOT',
+    teamId: TEAM, channelId, threadTs,
+    messageTs: '10.000001', text: 'topic', userId: 'U_ROOT',
   });
   await store.advanceCursor({
-    surfaceId: `slack:${TEAM}:${CHANNEL}`,
+    surfaceId,
     expected: { status: 'absent' },
     nextDeliveredOrdinal: 1,
-    lastDeliveredEventId: `slack:${TEAM}:${CHANNEL}:10.0`,
-    lastDeliveredMessageTs: '10.0',
+    lastDeliveredEventId: `slack:${TEAM}:${channelId}:10.000001`,
+    lastDeliveredMessageTs: '10.000001',
   });
   await store.observe({
-    teamId: TEAM,
-    channelId: CHANNEL,
-    messageTs: '11.0',
-    text: 'foreign-1',
-    userId: 'U_OTHER',
+    teamId: TEAM, channelId, threadTs,
+    messageTs: '11.0', text: 'foreign-1', userId: 'U_OTHER',
     receivedAt: '2026-01-01T13:44:59.000Z',
   });
   return store;
 }
 
+const protectedTargets = [
+  { channel: 'D-direct', threadTs: undefined },
+  { channel: CHANNEL, threadTs: '10.0' },
+  { channel: 'G-group', threadTs: undefined },
+];
+
 // Serialize: tests mutate process.env + Slack mock URL + cursor flag.
 describe('send-hold real tool seams', { concurrency: 1 }, () => {
 
-test('runMessageSend HELD: exit path, sole HELD stdout, zero chat.postMessage', async () => {
+for (const target of protectedTargets) {
+test(`runMessageSend HELD: exit path, sole HELD stdout, zero chat.postMessage ${target.channel}${target.threadTs ? ' thread' : ''}`, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-msg-'));
   const posts: unknown[] = [];
   const uploads: string[] = [];
@@ -146,9 +165,9 @@ test('runMessageSend HELD: exit path, sole HELD stdout, zero chat.postMessage', 
     process.env.ANIMA_SLACK_API_URL = slackApi.url;
     await withAnimaHome(stateDir, async () => {
       await writeScoutAgent(stateDir);
-      await plantStaleSurface('scout');
+      await plantStaleSurface('scout', target.channel, target.threadTs);
       await runMessageSend(
-        { agent: 'scout', channel: CHANNEL, text: 'would-collide' },
+        { agent: 'scout', channel: target.channel, threadTs: target.threadTs, text: 'would-collide' },
         { writeOutput: (line) => lines.push(line) },
       );
     });
@@ -167,7 +186,9 @@ test('runMessageSend HELD: exit path, sole HELD stdout, zero chat.postMessage', 
   }
 });
 
-test('runMessageSend sent path appends own observation', async () => {
+}
+
+test('runMessageSend channel top-level sends once despite unread messages and journals receipt', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-msg-sent-'));
   const posts: unknown[] = [];
   const uploads: string[] = [];
@@ -181,12 +202,14 @@ test('runMessageSend sent path appends own observation', async () => {
     process.env.ANIMA_SLACK_API_URL = slackApi.url;
     await withAnimaHome(stateDir, async () => {
       await writeScoutAgent(stateDir);
-      // Absent cursor → allow land.
+      const store = await plantStaleSurface('scout');
       await runMessageSend(
         { agent: 'scout', channel: CHANNEL, text: 'hello-land' },
         { writeOutput: (line) => lines.push(line) },
       );
-      const store = new ObservedConversationStore('scout');
+      const cursor = await store.getCursor(`slack:${TEAM}:${CHANNEL}`);
+      assert.ok(cursor.status === 'present');
+      assert.equal(cursor.deliveredOrdinal, 1);
       const journal = await store.readJournal(`slack:${TEAM}:${CHANNEL}`, { limit: 10 });
       assert.ok(
         journal.some((e) => e.messageTs === '1770000999.000001' && e.userId === BOT_USER),
@@ -207,7 +230,8 @@ test('runMessageSend sent path appends own observation', async () => {
   }
 });
 
-test('runAsk HELD: sole HELD stdout, zero chat.postMessage', async () => {
+for (const target of protectedTargets) {
+test(`runAsk HELD: sole HELD stdout, zero chat.postMessage ${target.channel}${target.threadTs ? ' thread' : ''}`, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-ask-'));
   const posts: unknown[] = [];
   const uploads: string[] = [];
@@ -225,9 +249,9 @@ test('runAsk HELD: sole HELD stdout, zero chat.postMessage', async () => {
     process.env.ANIMA_SLACK_API_URL = slackApi.url;
     await withAnimaHome(stateDir, async () => {
       await writeScoutAgent(stateDir);
-      await plantStaleSurface('scout');
+      await plantStaleSurface('scout', target.channel, target.threadTs);
       await runAsk({
-        channel: CHANNEL,
+        channel: target.channel, threadTs: target.threadTs,
         question: 'pick one?',
         option: ['A', 'B'],
         replyHint: true,
@@ -249,7 +273,9 @@ test('runAsk HELD: sole HELD stdout, zero chat.postMessage', async () => {
   }
 });
 
-test('runAsk sent path appends own observation', async () => {
+}
+
+test('runAsk channel top-level sends once despite unread messages and journals receipt', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-ask-sent-'));
   const posts: unknown[] = [];
   const uploads: string[] = [];
@@ -267,14 +293,16 @@ test('runAsk sent path appends own observation', async () => {
     process.env.ANIMA_SLACK_API_URL = slackApi.url;
     await withAnimaHome(stateDir, async () => {
       await writeScoutAgent(stateDir);
-      // Absent cursor → allow land.
+      const store = await plantStaleSurface('scout');
       await runAsk({
         channel: CHANNEL,
         question: 'ship it?',
         option: ['yes', 'no'],
         replyHint: true,
       });
-      const store = new ObservedConversationStore('scout');
+      const cursor = await store.getCursor(`slack:${TEAM}:${CHANNEL}`);
+      assert.ok(cursor.status === 'present');
+      assert.equal(cursor.deliveredOrdinal, 1);
       const journal = await store.readJournal(`slack:${TEAM}:${CHANNEL}`, { limit: 10 });
       assert.ok(
         journal.some((e) => e.messageTs === '1770000999.000001' && e.userId === BOT_USER),
@@ -295,7 +323,8 @@ test('runAsk sent path appends own observation', async () => {
   }
 });
 
-test('runFileSend HELD: sole HELD stdout, zero upload URL/bytes/complete', async () => {
+for (const target of protectedTargets) {
+test(`runFileSend HELD: sole HELD stdout, zero upload URL/bytes/complete ${target.channel}${target.threadTs ? ' thread' : ''}`, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-file-'));
   const posts: unknown[] = [];
   const uploads: string[] = [];
@@ -315,11 +344,11 @@ test('runFileSend HELD: sole HELD stdout, zero upload URL/bytes/complete', async
     await writeFile(filePath, 'hi\n', 'utf8');
     await withAnimaHome(stateDir, async () => {
       await writeScoutAgent(stateDir);
-      await plantStaleSurface('scout');
+      await plantStaleSurface('scout', target.channel, target.threadTs);
       // caption: '' skips stdin read (undefined would hang on open stdin).
       await runFileSend({
         agent: 'scout',
-        channel: CHANNEL,
+        channel: target.channel, threadTs: target.threadTs,
         paths: [filePath],
         caption: '',
       });
@@ -341,7 +370,9 @@ test('runFileSend HELD: sole HELD stdout, zero upload URL/bytes/complete', async
   }
 });
 
-test('runFileSend sent path journals own observation via share ts', async () => {
+}
+
+test('runFileSend channel top-level uploads despite unread messages and journals share receipt', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-file-sent-'));
   const posts: unknown[] = [];
   const uploads: string[] = [];
@@ -384,13 +415,16 @@ test('runFileSend sent path journals own observation via share ts', async () => 
     await writeFile(filePath, 'hi\n', 'utf8');
     await withAnimaHome(stateDir, async () => {
       await writeScoutAgent(stateDir);
+      const store = await plantStaleSurface('scout');
       await runFileSend({
         agent: 'scout',
         channel: CHANNEL,
         paths: [filePath],
         caption: 'file caption',
       });
-      const store = new ObservedConversationStore('scout');
+      const cursor = await store.getCursor(`slack:${TEAM}:${CHANNEL}`);
+      assert.ok(cursor.status === 'present');
+      assert.equal(cursor.deliveredOrdinal, 1);
       const journal = await store.readJournal(`slack:${TEAM}:${CHANNEL}`, { limit: 10 });
       assert.ok(
         journal.some((e) => e.messageTs === '1770000888.000222' && e.userId === BOT_USER),
@@ -412,5 +446,104 @@ test('runFileSend sent path journals own observation via share ts', async () => 
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+
+const namedConversations = [
+  { id: CHANNEL, name: 'product', is_channel: true, is_mpim: false },
+  { id: 'G-private', name: 'private-project', is_group: true, is_mpim: false },
+  { id: 'G-group', name: 'mpdm-alice-bob-1', is_group: true, is_mpim: true },
+];
+
+for (const tool of ['message', 'ask', 'file'] as const) {
+  for (const conversation of namedConversations) {
+    const selectors = conversation.is_mpim ? [conversation.name, conversation.id] : [`#${conversation.name}`];
+    for (const selector of selectors) {
+      test(`${tool} cached ${selector} preserves real conversation kind`, async () => {
+        const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-name-'));
+        const posts: unknown[] = [];
+        const uploads: string[] = [];
+        const calls: string[] = [];
+        const lines: string[] = [];
+        const previousAgent = process.env.ANIMA_AGENT_ID;
+        const previousSlack = process.env.ANIMA_SLACK_API_URL;
+        const originalLog = console.log;
+        const originalFetch = globalThis.fetch;
+        console.log = (value?: unknown) => { if (typeof value === 'string') lines.push(value); };
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+          assert.equal(url, 'http://127.0.0.1/upload-bytes');
+          uploads.push('bytes');
+          return new Response(null, { status: 200 });
+        }) as typeof fetch;
+        const base = baseSlackHandlers(posts, uploads);
+        const slackApi = await startSlackApiMock((method, body) => {
+          calls.push(method);
+          if (method === 'conversations.list') return { ok: true, channels: namedConversations.filter((row) => !row.is_mpim) };
+          if (method === 'users.conversations') return { ok: true, channels: namedConversations.filter((row) => row.is_mpim) };
+          if (method === 'conversations.info') throw new Error('known conversation must use cached metadata');
+          if (method === 'files.getUploadURLExternal') {
+            uploads.push('getUploadURLExternal');
+            return { ok: true, file_id: 'F-upload-1', upload_url: 'http://127.0.0.1/upload-bytes' };
+          }
+          if (method === 'files.info') return {
+            ok: true,
+            file: { id: 'F-upload-1', mimetype: 'text/plain', size: 3, shares: { private: { [conversation.id]: [{ ts: '1770000888.000222' }] } } },
+          };
+          return base(method, body);
+        });
+        setCursorDeliveryEnabledForTests(true);
+        try {
+          process.env.ANIMA_AGENT_ID = 'scout';
+          process.env.ANIMA_SLACK_API_URL = slackApi.url;
+          const path = join(stateDir, 'note.txt');
+          await writeFile(path, 'hi\n');
+          await withAnimaHome(stateDir, async () => {
+            await writeScoutAgent(stateDir);
+            const client = new WebClient('xoxb-test', { slackApiUrl: slackApi.url, retryConfig: { retries: 0 } });
+            const directory = new SlackWorkspaceDirectoryService({ client, teamId: TEAM, botUserId: BOT_USER });
+            // Production writers: full channel collection, then membership refresh adds the group DM.
+            await directory.getConversationByName('product');
+            await directory.getMemberConversations();
+            const cache = await getSlackWorkspaceDirectoryStore(TEAM).read();
+            assert.equal(cache.channels.find((row) => row.id === 'G-group')?.isMpim, true);
+            assert.equal(cache.channels.find((row) => row.id === 'G-private')?.isMpim, false);
+            const store = await plantStaleSurface('scout', conversation.id);
+            if (tool === 'message') await runMessageSend({ agent: 'scout', channel: selector, text: 'draft' }, { writeOutput: (line) => lines.push(line) });
+            if (tool === 'ask') await runAsk({ channel: selector, question: 'pick one?', option: ['A', 'B'], replyHint: true });
+            if (tool === 'file') await runFileSend({ agent: 'scout', channel: selector, paths: [path], caption: '' });
+            const cursor = await store.getCursor(`slack:${TEAM}:${conversation.id}`);
+            assert.ok(cursor.status === 'present');
+            if (conversation.is_mpim) {
+              assert.deepEqual(posts, [], 'group DM must not post');
+              assert.deepEqual(uploads, [], 'group DM must not upload');
+              assert.equal(lines.length, 1);
+              assert.match(lines[0]!, /^HELD:/);
+              assert.equal(cursor.deliveredOrdinal, 2);
+            } else {
+              assert.equal(posts.length, tool === 'file' ? 0 : 1);
+              assert.deepEqual(uploads, tool === 'file' ? ['getUploadURLExternal', 'bytes', 'completeUploadExternal'] : []);
+              assert.doesNotMatch(lines.join('\n'), /^HELD:/m);
+              assert.match(lines.join('\n'), /sent successfully|asked successfully|uploaded successfully/);
+              assert.equal(cursor.deliveredOrdinal, 1, 'channel send must not consume unread updates');
+              const journal = await store.readJournal(`slack:${TEAM}:${conversation.id}`, { limit: 10 });
+              assert.ok(journal.some((row) => row.userId === BOT_USER), 'sent receipt must be observed');
+            }
+          });
+          assert.equal(calls.filter((method) => method === 'conversations.list').length, 1);
+          assert.equal(calls.filter((method) => method === 'users.conversations').length, 1);
+          assert.equal(calls.filter((method) => method === 'conversations.info').length, 0);
+        } finally {
+          setCursorDeliveryEnabledForTests(undefined);
+          console.log = originalLog;
+          globalThis.fetch = originalFetch;
+          if (previousAgent === undefined) delete process.env.ANIMA_AGENT_ID; else process.env.ANIMA_AGENT_ID = previousAgent;
+          if (previousSlack === undefined) delete process.env.ANIMA_SLACK_API_URL; else process.env.ANIMA_SLACK_API_URL = previousSlack;
+          await slackApi.close();
+          await rm(stateDir, { force: true, recursive: true });
+        }
+      });
+    }
+  }
+}
 
 }); // describe concurrency:1
