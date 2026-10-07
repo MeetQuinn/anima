@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -33,15 +34,24 @@ interface ClaudeCredentials {
   subscriptionType?: string;
 }
 
-const claudeUsageInFlight = new Map<
-  string,
-  Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>>
->();
+type ClaudeUsage = Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>;
+interface ClaudeUsageEvidence {
+  credentialStatus: 'found' | 'missing' | 'unknown';
+  usage: ClaudeUsage;
+}
+const claudeUsageInFlight = new Map<string, Promise<ClaudeUsageEvidence>>();
 
 export async function fetchClaudeUsage(
-  input: { configDir?: string } = {},
-): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
-  const key = normalizedConfigDir(input.configDir) ?? homePath('.claude');
+  input: { configDir?: string; accessToken?: string } = {},
+): Promise<ClaudeUsage> {
+  return (await fetchClaudeUsageEvidence(input)).usage;
+}
+
+/** Keep credential-read evidence independent from downstream quota errors. */
+export async function fetchClaudeUsageEvidence(
+  input: { configDir?: string; accessToken?: string } = {},
+): Promise<ClaudeUsageEvidence> {
+  const key = `${normalizedConfigDir(input.configDir) ?? homePath('.claude')}:${input.accessToken ?? ''}`;
   const existing = claudeUsageInFlight.get(key);
   if (existing) return existing;
   const pending = fetchClaudeUsageOnce(input).finally(() => {
@@ -52,30 +62,35 @@ export async function fetchClaudeUsage(
 }
 
 async function fetchClaudeUsageOnce(
-  input: { configDir?: string },
-): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
-  const credentials = await readClaudeCredentials(input.configDir);
-  if (!credentials) {
-    return unavailable(usageError('not_configured', 'Claude Code OAuth token not found. Run `claude` to authenticate.'));
+  input: { configDir?: string; accessToken?: string },
+): Promise<ClaudeUsageEvidence> {
+  const read: CredentialRead = input.accessToken
+    ? { status: 'found', credentials: { accessToken: input.accessToken } }
+    : await readClaudeCredentials(input.configDir);
+  if (read.status === 'unknown') {
+    return { credentialStatus: 'unknown', usage: unavailable(usageError('unknown', 'Claude Code credentials could not be read.')) };
+  }
+  if (read.status === 'missing') {
+    return { credentialStatus: 'missing', usage: unavailable(usageError('not_configured', 'Claude Code OAuth token not found. Run `claude` to authenticate.')) };
   }
 
-  let activeCredentials = credentials;
+  let activeCredentials = read.credentials;
   let result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
-  if (result.error?.type === 'unauthorized') {
+  if (result.error?.type === 'unauthorized' && !input.accessToken) {
     // Claude Code is the sole owner of OAuth refresh and credential persistence.
     // Usage is an observational GET: it may adopt a token that Claude Code wrote
     // concurrently, but it must never rotate tokens or write the credential store.
     const latestCredentials = await readClaudeCredentials(input.configDir);
-    if (latestCredentials && latestCredentials.accessToken !== activeCredentials.accessToken) {
-      activeCredentials = latestCredentials;
+    if (latestCredentials.status === 'found' && latestCredentials.credentials.accessToken !== activeCredentials.accessToken) {
+      activeCredentials = latestCredentials.credentials;
       result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
     }
   }
 
-  if (result.error) return unavailable(result.error, activeCredentials.account);
+  if (result.error) return { credentialStatus: 'found', usage: unavailable(result.error, activeCredentials.account) };
   const parsed = parseClaudeUsageResponse(result.data, activeCredentials);
-  if (parsed.error) return unavailable(parsed.error, activeCredentials.account);
-  return available(parsed.windows, parsed.extras, activeCredentials.account);
+  if (parsed.error) return { credentialStatus: 'found', usage: unavailable(parsed.error, activeCredentials.account) };
+  return { credentialStatus: 'found', usage: available(parsed.windows, parsed.extras, activeCredentials.account) };
 }
 
 export function parseClaudeUsageResponse(
@@ -122,15 +137,25 @@ interface ClaudeAccountProfile {
   organizationType?: string;
 }
 
-async function readClaudeCredentials(configDir?: string): Promise<ClaudeCredentials | undefined> {
+type CredentialRead =
+  | { status: 'found'; credentials: ClaudeCredentials }
+  | { status: 'missing' }
+  | { status: 'unknown' };
+
+async function readClaudeCredentials(configDir?: string): Promise<CredentialRead> {
   const normalizedDir = normalizedConfigDir(configDir);
   const profile = await readClaudeAccountProfile(normalizedDir);
   const filePath = normalizedDir
     ? join(normalizedDir, '.credentials.json')
     : homePath('.claude', '.credentials.json');
-  const fileCredentials = extractClaudeCredentials(await readJsonFile(filePath), profile);
-  if (fileCredentials) return fileCredentials;
-  if (process.platform !== 'darwin') return undefined;
+  let fileStatus: 'missing' | 'unknown' = 'missing';
+  try {
+    const fileCredentials = extractClaudeCredentials(JSON.parse(await readFile(filePath, 'utf8')), profile);
+    if (fileCredentials) return { status: 'found', credentials: fileCredentials };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') fileStatus = 'unknown';
+  }
+  if (process.platform !== 'darwin') return { status: fileStatus };
   const service = claudeKeychainService(normalizedDir);
   try {
     const { stdout } = await execFileAsync(
@@ -138,9 +163,12 @@ async function readClaudeCredentials(configDir?: string): Promise<ClaudeCredenti
       ['find-generic-password', '-s', service, '-w'],
       { encoding: 'utf8', timeout: 5_000 },
     );
-    return extractClaudeCredentials(parseJsonOrHex(stdout), profile);
-  } catch {
-    return undefined;
+    const credentials = extractClaudeCredentials(parseJsonOrHex(stdout), profile);
+    return credentials ? { status: 'found', credentials } : { status: 'unknown' };
+  } catch (error) {
+    // security uses exit 44 for errSecItemNotFound. Denied access, missing tools,
+    // timeouts and invalid stores are not evidence that no login exists.
+    return { status: (error as { code?: unknown }).code === 44 ? fileStatus : 'unknown' };
   }
 }
 

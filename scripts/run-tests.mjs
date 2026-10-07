@@ -88,6 +88,7 @@ const groups = {
     'provider-login.test.js',
     'provider-runtime-commands.test.js',
     'provider-usage.test.js',
+    'provider-connection.test.js',
     'grok-launch-args.test.js',
     'grok-tool-summary.test.js',
     'inbox-slack-events.test.js',
