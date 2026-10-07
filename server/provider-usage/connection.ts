@@ -129,7 +129,9 @@ export async function fetchClaudeConnectionUsage(
     connection:
       usage.error?.type === "not_configured"
         ? connection("unknown", "none", undefined, "not-configured")
-        : connection("subscription", "stored-login", endpoint),
+        : usage.error?.type === "unknown"
+          ? unknown
+          : connection("subscription", "stored-login", endpoint),
   };
 }
 
@@ -150,7 +152,11 @@ export async function fetchCodexConnectionUsage(
   const id = stringValue(selected.model_provider) ?? "openai";
   const provider = record(record(config.model_providers)?.[id]);
   if (id !== "openai" && !provider) return noQuota(unknown);
-  const baseUrl = provider?.base_url ?? env.OPENAI_BASE_URL;
+  const baseUrl =
+    provider?.base_url ??
+    (id === "openai"
+      ? (selected.openai_base_url ?? env.OPENAI_BASE_URL)
+      : undefined);
   const endpoint = stringValue(baseUrl)
     ? connectionOrigin(baseUrl)
     : id === "openai"

@@ -112,6 +112,9 @@ Claude key/bearer/helper configuration takes priority over a saved subscription 
 Codex inspects the default profile/provider and file-based login; keyring, ephemeral,
 unsupported or unreadable configurations remain **Not inspected**.
 
+Credential-store read failures stay unknown; they do not imply a missing login.
+The built-in Codex endpoint respects the selected `openai_base_url` override.
+
 Only credential source and a sanitized endpoint origin reach the dashboard. Keys,
 tokens, helper commands and URL paths/query strings stay local. Detection never runs a
 credential helper, tests a model request, or writes authentication settings. Existing

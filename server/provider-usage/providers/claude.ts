@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -54,22 +55,25 @@ export async function fetchClaudeUsage(
 async function fetchClaudeUsageOnce(
   input: { configDir?: string; accessToken?: string },
 ): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
-  const credentials = input.accessToken
-    ? { accessToken: input.accessToken } as ClaudeCredentials
+  const read: CredentialRead = input.accessToken
+    ? { status: 'found', credentials: { accessToken: input.accessToken } }
     : await readClaudeCredentials(input.configDir);
-  if (!credentials) {
+  if (read.status === 'unknown') {
+    return unavailable(usageError('unknown', 'Claude Code credentials could not be read.'));
+  }
+  if (read.status === 'missing') {
     return unavailable(usageError('not_configured', 'Claude Code OAuth token not found. Run `claude` to authenticate.'));
   }
 
-  let activeCredentials = credentials;
+  let activeCredentials = read.credentials;
   let result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
   if (result.error?.type === 'unauthorized' && !input.accessToken) {
     // Claude Code is the sole owner of OAuth refresh and credential persistence.
     // Usage is an observational GET: it may adopt a token that Claude Code wrote
     // concurrently, but it must never rotate tokens or write the credential store.
     const latestCredentials = await readClaudeCredentials(input.configDir);
-    if (latestCredentials && latestCredentials.accessToken !== activeCredentials.accessToken) {
-      activeCredentials = latestCredentials;
+    if (latestCredentials.status === 'found' && latestCredentials.credentials.accessToken !== activeCredentials.accessToken) {
+      activeCredentials = latestCredentials.credentials;
       result = await fetchClaudeUsageWithToken(activeCredentials.accessToken);
     }
   }
@@ -124,15 +128,25 @@ interface ClaudeAccountProfile {
   organizationType?: string;
 }
 
-async function readClaudeCredentials(configDir?: string): Promise<ClaudeCredentials | undefined> {
+type CredentialRead =
+  | { status: 'found'; credentials: ClaudeCredentials }
+  | { status: 'missing' }
+  | { status: 'unknown' };
+
+async function readClaudeCredentials(configDir?: string): Promise<CredentialRead> {
   const normalizedDir = normalizedConfigDir(configDir);
   const profile = await readClaudeAccountProfile(normalizedDir);
   const filePath = normalizedDir
     ? join(normalizedDir, '.credentials.json')
     : homePath('.claude', '.credentials.json');
-  const fileCredentials = extractClaudeCredentials(await readJsonFile(filePath), profile);
-  if (fileCredentials) return fileCredentials;
-  if (process.platform !== 'darwin') return undefined;
+  let fileStatus: 'missing' | 'unknown' = 'missing';
+  try {
+    const fileCredentials = extractClaudeCredentials(JSON.parse(await readFile(filePath, 'utf8')), profile);
+    if (fileCredentials) return { status: 'found', credentials: fileCredentials };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') fileStatus = 'unknown';
+  }
+  if (process.platform !== 'darwin') return { status: fileStatus };
   const service = claudeKeychainService(normalizedDir);
   try {
     const { stdout } = await execFileAsync(
@@ -140,9 +154,12 @@ async function readClaudeCredentials(configDir?: string): Promise<ClaudeCredenti
       ['find-generic-password', '-s', service, '-w'],
       { encoding: 'utf8', timeout: 5_000 },
     );
-    return extractClaudeCredentials(parseJsonOrHex(stdout), profile);
-  } catch {
-    return undefined;
+    const credentials = extractClaudeCredentials(parseJsonOrHex(stdout), profile);
+    return credentials ? { status: 'found', credentials } : { status: 'unknown' };
+  } catch (error) {
+    // security uses exit 44 for errSecItemNotFound. Denied access, missing tools,
+    // timeouts and invalid stores are not evidence that no login exists.
+    return { status: (error as { code?: unknown }).code === 44 ? fileStatus : 'unknown' };
   }
 }
 

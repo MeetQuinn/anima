@@ -189,6 +189,49 @@ test("Claude malformed settings and profile auth remain unknown, not a false log
   );
 });
 
+test(
+  "Claude distinguishes denied Keychain reads from verified absence",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const f = await fixture(t);
+    const bin = join(f.home, "bin");
+    await mkdir(bin);
+    const original = process.env.PATH;
+    process.env.PATH = `${bin}:${original ?? ""}`;
+    t.after(() => {
+      process.env.PATH = original;
+    });
+    const fake = async (exit: number) =>
+      writeFile(
+        join(bin, "security"),
+        `#!/bin/sh\nprintf called > "$0.called"\nexit ${exit}\n`,
+        { mode: 0o755 },
+      );
+    await fake(36);
+    const denied = await fetchClaudeConnectionUsage({ home: f.home, env: {} });
+    assert.equal(
+      await readFile(join(bin, "security.called"), "utf8"),
+      "called",
+    );
+    assert.equal(denied.connection?.status, "unknown");
+    assert.equal(denied.error?.type, "unknown");
+    await fake(44);
+    const absent = await fetchClaudeConnectionUsage({ home: f.home, env: {} });
+    assert.equal(absent.connection?.status, "not-configured");
+    assert.equal(absent.error?.type, "not_configured");
+    await writeFile(join(f.home, ".claude", ".credentials.json"), "{invalid");
+    const malformed = await fetchClaudeConnectionUsage({
+      home: f.home,
+      env: {},
+    });
+    assert.equal(
+      malformed.connection?.status,
+      "unknown",
+      "bad file plus absent Keychain is still unknown",
+    );
+  },
+);
+
 test("Codex stored API key wins over stale OAuth tokens without a usage call", async (t) => {
   const f = await fixture(t);
   await f.auth({
@@ -204,6 +247,41 @@ test("Codex stored API key wins over stale OAuth tokens without a usage call", a
   assert.equal(row.connection?.method, "api-key");
   assert.equal(row.connection?.status, "configured");
   assert.equal(JSON.stringify(row).includes("synthetic-secret"), false);
+});
+
+test("Codex built-in endpoint uses selected root/profile override without leaking URL secrets", async (t) => {
+  const f = await fixture(t);
+  await f.auth({ auth_mode: "apikey", OPENAI_API_KEY: "synthetic-secret" });
+  await f.codex(
+    'openai_base_url = "https://user:pass@root.example.test/v1?secret=1#secret"\n',
+  );
+  const root = await fetchCodexConnectionUsage({
+    home: f.home,
+    env: {},
+    subscriptionUsage: forbidden,
+  });
+  assert.equal(root.connection?.endpoint, "https://root.example.test");
+  await f.codex(
+    'profile = "fleet"\nopenai_base_url = "https://root.example.test/v1"\n[profiles.fleet]\nopenai_base_url = "https://user:pass@profile.example.test/v1?secret=1#secret"\n',
+  );
+  const profile = await fetchCodexConnectionUsage({
+    home: f.home,
+    env: {},
+    subscriptionUsage: forbidden,
+  });
+  assert.equal(profile.connection?.endpoint, "https://profile.example.test");
+  assert.equal(JSON.stringify(profile).includes("secret"), false);
+  await f.codex('openai_base_url = "not a URL with secret"\n');
+  assert.equal(
+    (
+      await fetchCodexConnectionUsage({
+        home: f.home,
+        env: {},
+        subscriptionUsage: forbidden,
+      })
+    ).connection?.endpoint,
+    undefined,
+  );
 });
 
 test("Codex custom profile env_key is configured only when its named credential exists", async (t) => {
