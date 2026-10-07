@@ -155,6 +155,7 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
   const hold = await evaluateSendHold({
     agentId,
     teamId,
+    channelKind: target.channelKind,
     channelId: channel.id,
     ...(threadTs ? { threadTs } : {}),
     tool: 'anima.file.send',
