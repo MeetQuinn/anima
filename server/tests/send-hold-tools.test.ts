@@ -10,6 +10,9 @@ import { describe, test } from 'node:test';
 
 import { slackSurfaceId } from '../ids.js';
 import { setCursorDeliveryEnabledForTests } from '../runtime/cursor-delivery.js';
+import { SlackWorkspaceDirectoryService } from '../slack/workspace-directory.service.js';
+import { getSlackWorkspaceDirectoryStore } from '../storage/schema/cache.js';
+import { WebClient } from '@slack/web-api';
 import { ObservedConversationStore } from '../storage/schema/observed-conversation.store.js';
 import { runMessageSend } from '../tools/messages.js';
 import { runAsk } from '../tools/ask.js';
@@ -443,5 +446,104 @@ test('runFileSend channel top-level uploads despite unread messages and journals
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+
+const namedConversations = [
+  { id: CHANNEL, name: 'product', is_channel: true, is_mpim: false },
+  { id: 'G-private', name: 'private-project', is_group: true, is_mpim: false },
+  { id: 'G-group', name: 'mpdm-alice-bob-1', is_group: true, is_mpim: true },
+];
+
+for (const tool of ['message', 'ask', 'file'] as const) {
+  for (const conversation of namedConversations) {
+    const selectors = conversation.is_mpim ? [conversation.name, conversation.id] : [`#${conversation.name}`];
+    for (const selector of selectors) {
+      test(`${tool} cached ${selector} preserves real conversation kind`, async () => {
+        const stateDir = await mkdtemp(join(tmpdir(), 'anima-hold-name-'));
+        const posts: unknown[] = [];
+        const uploads: string[] = [];
+        const calls: string[] = [];
+        const lines: string[] = [];
+        const previousAgent = process.env.ANIMA_AGENT_ID;
+        const previousSlack = process.env.ANIMA_SLACK_API_URL;
+        const originalLog = console.log;
+        const originalFetch = globalThis.fetch;
+        console.log = (value?: unknown) => { if (typeof value === 'string') lines.push(value); };
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+          assert.equal(url, 'http://127.0.0.1/upload-bytes');
+          uploads.push('bytes');
+          return new Response(null, { status: 200 });
+        }) as typeof fetch;
+        const base = baseSlackHandlers(posts, uploads);
+        const slackApi = await startSlackApiMock((method, body) => {
+          calls.push(method);
+          if (method === 'conversations.list') return { ok: true, channels: namedConversations.filter((row) => !row.is_mpim) };
+          if (method === 'users.conversations') return { ok: true, channels: namedConversations.filter((row) => row.is_mpim) };
+          if (method === 'conversations.info') throw new Error('known conversation must use cached metadata');
+          if (method === 'files.getUploadURLExternal') {
+            uploads.push('getUploadURLExternal');
+            return { ok: true, file_id: 'F-upload-1', upload_url: 'http://127.0.0.1/upload-bytes' };
+          }
+          if (method === 'files.info') return {
+            ok: true,
+            file: { id: 'F-upload-1', mimetype: 'text/plain', size: 3, shares: { private: { [conversation.id]: [{ ts: '1770000888.000222' }] } } },
+          };
+          return base(method, body);
+        });
+        setCursorDeliveryEnabledForTests(true);
+        try {
+          process.env.ANIMA_AGENT_ID = 'scout';
+          process.env.ANIMA_SLACK_API_URL = slackApi.url;
+          const path = join(stateDir, 'note.txt');
+          await writeFile(path, 'hi\n');
+          await withAnimaHome(stateDir, async () => {
+            await writeScoutAgent(stateDir);
+            const client = new WebClient('xoxb-test', { slackApiUrl: slackApi.url, retryConfig: { retries: 0 } });
+            const directory = new SlackWorkspaceDirectoryService({ client, teamId: TEAM, botUserId: BOT_USER });
+            // Production writers: full channel collection, then membership refresh adds the group DM.
+            await directory.getConversationByName('product');
+            await directory.getMemberConversations();
+            const cache = await getSlackWorkspaceDirectoryStore(TEAM).read();
+            assert.equal(cache.channels.find((row) => row.id === 'G-group')?.isMpim, true);
+            assert.equal(cache.channels.find((row) => row.id === 'G-private')?.isMpim, false);
+            const store = await plantStaleSurface('scout', conversation.id);
+            if (tool === 'message') await runMessageSend({ agent: 'scout', channel: selector, text: 'draft' }, { writeOutput: (line) => lines.push(line) });
+            if (tool === 'ask') await runAsk({ channel: selector, question: 'pick one?', option: ['A', 'B'], replyHint: true });
+            if (tool === 'file') await runFileSend({ agent: 'scout', channel: selector, paths: [path], caption: '' });
+            const cursor = await store.getCursor(`slack:${TEAM}:${conversation.id}`);
+            assert.ok(cursor.status === 'present');
+            if (conversation.is_mpim) {
+              assert.deepEqual(posts, [], 'group DM must not post');
+              assert.deepEqual(uploads, [], 'group DM must not upload');
+              assert.equal(lines.length, 1);
+              assert.match(lines[0]!, /^HELD:/);
+              assert.equal(cursor.deliveredOrdinal, 2);
+            } else {
+              assert.equal(posts.length, tool === 'file' ? 0 : 1);
+              assert.deepEqual(uploads, tool === 'file' ? ['getUploadURLExternal', 'bytes', 'completeUploadExternal'] : []);
+              assert.doesNotMatch(lines.join('\n'), /^HELD:/m);
+              assert.match(lines.join('\n'), /sent successfully|asked successfully|uploaded successfully/);
+              assert.equal(cursor.deliveredOrdinal, 1, 'channel send must not consume unread updates');
+              const journal = await store.readJournal(`slack:${TEAM}:${conversation.id}`, { limit: 10 });
+              assert.ok(journal.some((row) => row.userId === BOT_USER), 'sent receipt must be observed');
+            }
+          });
+          assert.equal(calls.filter((method) => method === 'conversations.list').length, 1);
+          assert.equal(calls.filter((method) => method === 'users.conversations').length, 1);
+          assert.equal(calls.filter((method) => method === 'conversations.info').length, 0);
+        } finally {
+          setCursorDeliveryEnabledForTests(undefined);
+          console.log = originalLog;
+          globalThis.fetch = originalFetch;
+          if (previousAgent === undefined) delete process.env.ANIMA_AGENT_ID; else process.env.ANIMA_AGENT_ID = previousAgent;
+          if (previousSlack === undefined) delete process.env.ANIMA_SLACK_API_URL; else process.env.ANIMA_SLACK_API_URL = previousSlack;
+          await slackApi.close();
+          await rm(stateDir, { force: true, recursive: true });
+        }
+      });
+    }
+  }
+}
 
 }); // describe concurrency:1
