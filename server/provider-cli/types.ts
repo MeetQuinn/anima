@@ -16,6 +16,7 @@ export interface ProviderInspection {
   binaryPath?: string;
   installSource: ProviderCliInstallSource;
   installedVersion?: string;
+  launcherFingerprint?: string;
   label: string;
   manualCommand?: string;
   npmPath?: string;

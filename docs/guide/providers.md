@@ -180,6 +180,20 @@ Only one machine-wide provider update runs at a time, and new provider children 
 install and self-check finish. Use the row's running-version state to distinguish the installed
 binary from a child that is still using the previous version.
 
+Claude Code custom launchers can also offer **Update** when `claude doctor` identifies a native
+version in the host's Claude versions directory, and that binary reports the same version as the
+launcher. This requires Claude Code 2.1.207 or later, which preserves custom launchers during native
+updates. Anima runs the verified native updater with its private update profile, then checks the
+version through the original launcher and verifies that the launcher has not changed. The launcher
+and its account settings remain operator-owned. See the official
+[custom launcher update behavior](https://code.claude.com/docs/en/setup#auto-updates).
+
+A launcher with `CLAUDE_PIN_VERSION` stays manual; Anima does not remove or rewrite that setting.
+Other launcher-specific pins can prevent the new version from becoming active. If the original
+entry still reports the old version after installation, the update fails its self-check. An
+unrecognized `doctor` response or native path also leaves the row manual. Custom launchers do not
+receive an automatic reinstall command, because Anima has not verified how to restore that entry.
+
 ## Limit Kimi and Grok context cost
 
 The **Providers** panel includes one machine-wide **Context limit** control for Kimi Code and Grok

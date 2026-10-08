@@ -162,6 +162,13 @@ export class ProviderCliService {
             `${inspection.label} command path changed from ${inspection.binaryPath} to ${verified.binaryPath ?? 'missing'}`,
           );
         }
+        if (
+          inspection.launcherFingerprint
+          && (verified.realPath !== inspection.realPath
+            || verified.launcherFingerprint !== inspection.launcherFingerprint)
+        ) {
+          throw new Error(`${inspection.label} custom launcher changed during update`);
+        }
         const verifiedVersion = verified.installedVersion;
         const reachedTarget =
           provider === 'claude-code'
