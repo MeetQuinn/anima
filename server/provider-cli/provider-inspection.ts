@@ -1,10 +1,13 @@
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 import { PROVIDER_CATALOG, type ProviderKind } from '../../shared/provider-catalog.js';
 import { errorMessage } from '../ids.js';
+import { compareRuntimeVersions } from '../runtime-management/runtime-release.js';
 import type { ProviderCliCommandRunner, ProviderInspection, ResolvedExecutable } from './types.js';
 
 const CHECK_TIMEOUT_MS = 10_000;
@@ -85,28 +88,71 @@ async function inspectClaude(
   runCommand: ProviderCliCommandRunner,
 ): Promise<ProviderInspection> {
   const native = /[/\\]\.local[/\\]share[/\\]claude[/\\]versions[/\\][^/\\]+$/.test(executable.realPath);
-  if (!native) {
-    return {
-      binaryPath: executable.path,
-      installSource: 'unknown',
-      installedVersion,
-      label,
-      manualCommand: 'claude update',
-      provider: 'claude-code',
-      realPath: executable.realPath,
-      sourceDetail: 'The active Claude Code binary is not a recognized native install',
-      updateMode: 'manual',
-    };
+  const manual: ProviderInspection = {
+    binaryPath: executable.path,
+    installSource: 'unknown',
+    installedVersion,
+    label,
+    manualCommand: 'claude update',
+    provider: 'claude-code',
+    realPath: executable.realPath,
+    sourceDetail: 'The active Claude Code binary is not a recognized native install',
+    updateMode: 'manual',
+  };
+  if (!native && compareRuntimeVersions(installedVersion, '2.1.207') < 0) {
+    manual.sourceDetail = 'This Claude version does not preserve custom launchers during updates';
+    return manual;
+  }
+  if (!native && env.CLAUDE_PIN_VERSION?.trim()) {
+    manual.sourceDetail = 'The Claude launcher has a fixed version. Change that setting before updating';
+    return manual;
   }
   const doctor = await runCommand(executable.path, ['doctor'], {
     env,
     timeout: 30_000,
   })
-    .then(({ stdout, stderr }) => `${stdout}\n${stderr}`)
+    .then(({ stdout, stderr }) => stripVTControlCharacters(`${stdout}\n${stderr}`))
     .catch(() => '');
+  let updateBinary = executable.path;
+  let launcherFingerprint: string | undefined;
+  if (!native) {
+    const running = [...doctor.matchAll(/^\s*Running:\s+native\s+\(([^)]+)\)\s*$/gm)];
+    const paths = [...doctor.matchAll(/^\s*Path:\s+(.+)$/gm)];
+    const reportedVersion = running.length === 1 ? running[0]?.[1] : undefined;
+    const reportedPath = paths.length === 1 ? paths[0]?.[1]?.trim() : undefined;
+    const dataHome = env.XDG_DATA_HOME || join(env.HOME || homedir(), '.local', 'share');
+    const versions = isAbsolute(dataHome)
+      ? await realpath(join(dataHome, 'claude', 'versions')).catch(() => undefined)
+      : undefined;
+    const binary =
+      reportedPath && isAbsolute(reportedPath)
+        ? await realpath(reportedPath).catch(() => undefined)
+        : undefined;
+    if (
+      reportedVersion !== installedVersion
+      || !versions
+      || !binary
+      || binary !== join(versions, installedVersion)
+      || !(await isAccessible(binary, constants.X_OK))
+    ) {
+      manual.sourceDetail = 'The native Claude installation behind this launcher could not be verified';
+      return manual;
+    }
+    const binaryVersion = await commandVersion(binary, runCommand, env).catch(() => undefined);
+    if (binaryVersion !== installedVersion) {
+      manual.sourceDetail = 'The Claude launcher and its native binary report different versions';
+      return manual;
+    }
+    if (executable.realPath !== binary) {
+      const launcher = await readFile(executable.realPath).catch(() => undefined);
+      if (!launcher) return manual;
+      launcherFingerprint = createHash('sha256').update(launcher).digest('hex');
+    }
+    updateBinary = binary;
+  }
   const autoUpdates = doctor.match(/^Auto-updates:\s+(enabled|disabled)$/m)?.[1];
   const channel = doctor.match(/^Auto-update channel:\s+(.+)$/m)?.[1]?.trim();
-  return {
+  const inspection: ProviderInspection = {
     ...(channel ? { autoUpdateChannel: channel } : {}),
     ...(autoUpdates ? { autoUpdatesEnabled: autoUpdates === 'enabled' } : {}),
     binaryPath: executable.path,
@@ -115,11 +161,15 @@ async function inspectClaude(
     label,
     provider: 'claude-code',
     realPath: executable.realPath,
-    restoreCommand: `curl -fsSL https://claude.ai/install.sh | bash -s ${installedVersion}`,
-    sourceDetail: 'Native install',
-    updateCommand: { args: ['update'], command: executable.path },
+    sourceDetail: launcherFingerprint ? 'Verified native install via custom launcher' : 'Native install',
+    updateCommand: { args: ['update'], command: updateBinary },
     updateMode: 'managed',
   };
+  if (launcherFingerprint) inspection.launcherFingerprint = launcherFingerprint;
+  if (!launcherFingerprint) {
+    inspection.restoreCommand = `curl -fsSL https://claude.ai/install.sh | bash -s ${installedVersion}`;
+  }
+  return inspection;
 }
 
 interface NpmGlobalPackageSpec {

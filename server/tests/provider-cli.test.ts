@@ -13,6 +13,7 @@ import {
   ProviderCliConflictError,
   ProviderCliOperationStore,
   ProviderCliService,
+  defaultProviderCliCommandRunner,
   type ProviderCliCommandRunner,
 } from '../provider-cli/provider-cli.service.js';
 import { claudeKeychainService } from '../provider-usage/providers/claude-credentials.js';
@@ -128,6 +129,233 @@ test('Codex updates use the npm paired with the active binary and block new laun
   } finally {
     await rm(root, { force: true, recursive: true });
   }
+});
+
+interface ClaudeLauncherFixture {
+  activeCredentials: string;
+  command: string;
+  env: NodeJS.ProcessEnv;
+  launcher: string;
+  nativeBinary: string;
+  root: string;
+  updates: string;
+}
+
+async function withClaudeLauncher(
+  options: { hardPin?: boolean; mutate?: 'content' | 'entry'; version?: string; xdg?: boolean },
+  body: (fixture: ClaudeLauncherFixture) => Promise<void>,
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'anima-claude-launcher-'));
+  const home = join(root, 'home');
+  const dataHome = options.xdg ? join(root, 'data') : join(home, '.local', 'share');
+  const versions = join(dataHome, 'claude', 'versions');
+  const bin = join(root, 'bin');
+  const launcher = join(root, 'launcher');
+  const command = join(bin, 'claude');
+  const version = options.version ?? '2.1.285';
+  const nativeBinary = join(versions, version);
+  const nextBinary = join(versions, '2.1.293');
+  const template = join(root, 'next-binary');
+  const updates = join(root, 'updates');
+  const activeProfile = join(home, 'active-profile');
+  const activeCredentials = join(activeProfile, '.credentials.json');
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  await mkdir(versions, { recursive: true });
+  await mkdir(bin, { recursive: true });
+  await mkdir(activeProfile, { recursive: true });
+  await writeFile(activeCredentials, 'synthetic account sentinel');
+  const fakeBinary = (current: string, path: string) => `#!/bin/sh
+case "$1" in
+  --version) printf '%s\\n' ${quote(current)} ;;
+  doctor) printf '%s\\n' ${quote(`Running: native (${current})`)} ${quote(`Path: ${path}`)} 'Auto-updates: enabled' 'Auto-update channel: latest' ;;
+  update)
+    printf '%s\\n' "$CLAUDE_CONFIG_DIR" >> ${quote(updates)}
+    /bin/mkdir -p "$CLAUDE_CONFIG_DIR"
+    printf '%s' 'synthetic updater sentinel' > "$CLAUDE_CONFIG_DIR/.credentials.json"
+    /bin/cp ${quote(template)} ${quote(nextBinary)}
+    /bin/chmod 755 ${quote(nextBinary)}
+    ${options.mutate === 'content' ? `printf '\\n# changed during update\\n' >> ${quote(launcher)}` : ':'}
+    ${options.mutate === 'entry' ? `/bin/rm ${quote(command)}; /bin/ln -s ${quote(nextBinary)} ${quote(command)}` : ':'}
+    ;;
+  *) exit 2 ;;
+esac
+`;
+  await writeFile(template, fakeBinary('2.1.293', nextBinary));
+  await writeFile(nativeBinary, fakeBinary(version, nativeBinary));
+  await chmod(nativeBinary, 0o755);
+  await writeFile(launcher, `#!/bin/sh
+export CLAUDE_CONFIG_DIR=${quote(activeProfile)}
+if [ "$1" = update ]; then exit 73; fi
+versions=${quote(versions)}
+pin=${options.hardPin ? quote(version) : '"\u0024{CLAUDE_PIN_VERSION:-}"'}
+if [ -n "$pin" ] && [ -x "$versions/$pin" ]; then
+  binary="$versions/$pin"
+else
+  binary=$(/usr/bin/find "$versions" -type f | /usr/bin/sort -V | /usr/bin/tail -n 1)
+fi
+exec "$binary" "$@"
+`);
+  await chmod(launcher, 0o755);
+  await symlink(launcher, command);
+  const env: NodeJS.ProcessEnv = {
+    CLAUDE_CONFIG_DIR: activeProfile,
+    DISABLE_AUTOUPDATER: '1',
+    HOME: home,
+    PATH: bin,
+  };
+  if (options.xdg) env.XDG_DATA_HOME = dataHome;
+  try {
+    await body({ activeCredentials, command, env, launcher, nativeBinary, root, updates });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+}
+
+function launcherService(fixture: ClaudeLauncherFixture): ProviderCliService {
+  return new ProviderCliService({
+    checkStore: new ProviderCliCheckStore(),
+    env: fixture.env,
+    fetch: async () => new Response('2.1.293', { status: 200 }),
+    listAgentConfigs: async () => [],
+    listStatuses: async () => [],
+    operationStore: new ProviderCliOperationStore(),
+  });
+}
+
+test('custom Claude launcher updates its verified native binary and rechecks the original entry', async () => {
+  await withClaudeLauncher({}, async (fixture) => {
+    const before = await readFile(fixture.launcher);
+    const inspection = await inspectProvider('claude-code', fixture.env, defaultProviderCliCommandRunner);
+    assert.equal(inspection.updateMode, 'managed');
+    assert.equal(inspection.installSource, 'claude-native');
+    assert.equal(inspection.restoreCommand, undefined);
+    assert.deepEqual(inspection.updateCommand, { args: ['update'], command: await realpath(fixture.nativeBinary) });
+    assert.match(inspection.launcherFingerprint ?? '', /^[a-f0-9]{64}$/);
+    await withAnimaHome(fixture.root, async () => {
+      const service = launcherService(fixture);
+      const checked = await service.checkNow('claude-code');
+      const row = checked.providers.find((provider) => provider.provider === 'claude-code');
+      assert.equal(row?.updateMode, 'managed');
+      assert.equal(row?.sourceDetail, 'Verified native install via custom launcher');
+      assert.equal(Object.hasOwn(row ?? {}, 'launcherFingerprint'), false);
+      const updated = await service.apply('claude-code');
+      assert.equal(updated.ok, true);
+      assert.equal(updated.installedVersion, '2.1.293');
+      const profile = join(fixture.root, 'runtime', 'provider-cli', 'claude-update-profile');
+      assert.equal(await readFile(fixture.updates, 'utf8'), `${profile}\n`);
+      assert.equal(await readFile(join(profile, '.credentials.json'), 'utf8'), 'synthetic updater sentinel');
+      assert.equal((await stat(profile)).mode & 0o777, 0o700);
+    });
+    assert.equal(await realpath(fixture.command), await realpath(fixture.launcher));
+    assert.deepEqual(await readFile(fixture.launcher), before);
+    assert.equal(await readFile(fixture.activeCredentials, 'utf8'), 'synthetic account sentinel');
+    assert.equal((await defaultProviderCliCommandRunner(fixture.command, ['--version'], { env: fixture.env })).stdout.trim(), '2.1.293');
+  });
+});
+
+test('custom Claude launcher supports the native XDG data directory', async () => {
+  await withClaudeLauncher({ xdg: true }, async (fixture) => {
+    const inspection = await inspectProvider('claude-code', fixture.env, defaultProviderCliCommandRunner);
+    assert.equal(inspection.updateMode, 'managed');
+    assert.equal(inspection.updateCommand?.command, await realpath(fixture.nativeBinary));
+  });
+});
+
+test('a native Claude binary in XDG data is not fingerprinted as a custom launcher', async () => {
+  await withClaudeLauncher({ xdg: true }, async (fixture) => {
+    await rm(fixture.command);
+    await symlink(fixture.nativeBinary, fixture.command);
+    const inspection = await inspectProvider('claude-code', fixture.env, defaultProviderCliCommandRunner);
+    assert.equal(inspection.updateMode, 'managed');
+    assert.equal(inspection.sourceDetail, 'Native install');
+    assert.equal(inspection.launcherFingerprint, undefined);
+    assert.match(inspection.restoreCommand ?? '', /2.1.285/);
+  });
+});
+
+test('custom Claude launcher with an explicit fixed version stays manual without executing update', async () => {
+  await withClaudeLauncher({}, async (fixture) => {
+    fixture.env.CLAUDE_PIN_VERSION = '2.1.285';
+    await withAnimaHome(fixture.root, async () => {
+      const service = launcherService(fixture);
+      const checked = await service.checkNow('claude-code');
+      const row = checked.providers.find((provider) => provider.provider === 'claude-code');
+      assert.equal(row?.updateMode, 'manual');
+      assert.match(row?.sourceDetail ?? '', /fixed version/);
+      await assert.rejects(() => service.apply('claude-code'), /must be updated manually/);
+    });
+    await assert.rejects(() => readFile(fixture.updates), { code: 'ENOENT' });
+    assert.equal(fixture.env.CLAUDE_PIN_VERSION, '2.1.285');
+  });
+});
+
+test('custom Claude launchers before 2.1.207 stay manual', async () => {
+  await withClaudeLauncher({ version: '2.1.206' }, async (fixture) => {
+    const inspection = await inspectProvider('claude-code', fixture.env, defaultProviderCliCommandRunner);
+    assert.equal(inspection.updateMode, 'manual');
+    assert.match(inspection.sourceDetail ?? '', /does not preserve/);
+    assert.equal(inspection.updateCommand, undefined);
+  });
+});
+
+test('custom Claude launcher rejects unverified, ambiguous or inconsistent native evidence', async (context) => {
+  await withClaudeLauncher({}, async (fixture) => {
+    const canonical = await realpath(fixture.nativeBinary);
+    const validDoctor = `Running: native (2.1.285)\nPath: ${canonical}\n`;
+    const cases = [
+      { name: 'missing doctor', doctor: '' },
+      { name: 'non-native doctor', doctor: `Running: npm (2.1.285)\nPath: ${canonical}\n` },
+      { name: 'outside native directory', doctor: `Running: native (2.1.285)\nPath: ${fixture.launcher}\n` },
+      { name: 'ambiguous path', doctor: `${validDoctor}Path: ${canonical}\n` },
+      { name: 'doctor version mismatch', doctor: `Running: native (2.1.284)\nPath: ${canonical}\n` },
+      { name: 'native version mismatch', doctor: validDoctor, nativeVersion: '2.1.284' },
+      { name: 'relative XDG directory', doctor: validDoctor, xdg: 'relative' },
+    ];
+    for (const entry of cases) {
+      await context.test(entry.name, async () => {
+        const runner: ProviderCliCommandRunner = async (command, args) => {
+          if (args[0] === 'doctor') return { stderr: '', stdout: entry.doctor };
+          if (command === canonical && entry.nativeVersion) return { stderr: '', stdout: entry.nativeVersion };
+          return defaultProviderCliCommandRunner(command, args, { env: fixture.env });
+        };
+        const env = { ...fixture.env };
+        if (entry.xdg) env.XDG_DATA_HOME = entry.xdg;
+        const inspection = await inspectProvider('claude-code', env, runner);
+        assert.equal(inspection.updateMode, 'manual');
+        assert.equal(inspection.updateCommand, undefined);
+      });
+    }
+  });
+});
+
+for (const mutate of ['content', 'entry'] as const) {
+  test(`custom Claude launcher self-check rejects changed ${mutate} after update`, async () => {
+    await withClaudeLauncher({ mutate }, async (fixture) => {
+      await withAnimaHome(fixture.root, async () => {
+        const service = launcherService(fixture);
+        await assert.rejects(() => service.apply('claude-code'), /custom launcher changed/);
+        const snapshot = await service.status();
+        assert.equal(snapshot.operation?.status, 'failed');
+        assert.match(snapshot.operation?.error ?? '', /custom launcher changed/);
+      });
+      assert.equal((await readFile(fixture.updates, 'utf8')).split('\n').filter(Boolean).length, 1);
+      assert.equal(await readFile(fixture.activeCredentials, 'utf8'), 'synthetic account sentinel');
+    });
+  });
+}
+
+test('custom Claude launcher with a hidden pin cannot report success from the updater alone', async () => {
+  await withClaudeLauncher({ hardPin: true }, async (fixture) => {
+    const before = await readFile(fixture.launcher);
+    await withAnimaHome(fixture.root, async () => {
+      const service = launcherService(fixture);
+      await assert.rejects(() => service.apply('claude-code'), /self-check returned 2.1.285/);
+      assert.equal((await service.status()).operation?.status, 'failed');
+    });
+    assert.deepEqual(await readFile(fixture.launcher), before);
+    assert.equal((await defaultProviderCliCommandRunner(fixture.command, ['--version'], { env: fixture.env })).stdout.trim(), '2.1.285');
+    assert.equal(await readFile(fixture.activeCredentials, 'utf8'), 'synthetic account sentinel');
+  });
 });
 
 test('OpenCode Homebrew installs use the paired brew and never invoke authentication commands', async () => {
