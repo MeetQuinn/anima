@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowUp, ChevronDown, Copy } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, Copy } from 'lucide-react';
 
 import type { ProviderCliRow } from '@shared/provider-cli';
 import type { ProviderContextLimitRow } from '@shared/provider-context-limits';
@@ -46,7 +46,7 @@ export function ProviderUnit({
   management: ProviderCliRow;
   now: Date;
   onApply: () => void;
-  onCopyCommand: () => void;
+  onCopyCommand: () => void | Promise<void>;
   onToggleExpanded: () => void;
   usages: ProviderUsageRow[];
   contextLimit?: ProviderContextLimitRow;
@@ -63,6 +63,20 @@ export function ProviderUnit({
   onLoginStart?: (mode: ProviderLoginMode) => void;
   onLoginCancel?: () => void;
 }) {
+  const [commandCopy, setCommandCopy] = useState<{ command: string; status: 'copied' | 'failed' }>();
+  const copyStatus = commandCopy?.command === management.manualCommand ? commandCopy?.status : undefined;
+
+  async function copyCommand(): Promise<void> {
+    const command = management.manualCommand!;
+    setCommandCopy(undefined);
+    try {
+      await onCopyCommand();
+      setCommandCopy({ command, status: 'copied' });
+    } catch {
+      setCommandCopy({ command, status: 'failed' });
+    }
+  }
+
   const storedRuntimeCommand = runtimeCommand.command ?? '';
   const storedRuntimeArgs = runtimeCommand.args.join('\n');
   const [runtimeCommandEdit, setRuntimeCommandEdit] = useState({
@@ -172,15 +186,27 @@ export function ProviderUnit({
                     management.manualCommand && (
                       <button
                         type="button"
-                        onClick={onCopyCommand}
-                        className="flex min-h-[44px] min-w-0 items-center gap-1.5 text-left font-mono text-[10px] text-text-muted hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:min-h-0"
+                        onClick={() => void copyCommand()}
+                        className="flex h-[44px] shrink-0 items-center gap-1 rounded-sm bg-accent px-3 font-sans text-[10px] font-semibold text-white hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent md:h-6 md:px-2"
                         title="Copy update command"
                       >
-                        <Copy className="h-3 w-3 shrink-0" />
-                        <span className="truncate">{management.manualCommand}</span>
+                        {copyStatus === 'copied' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                        {copyStatus === 'copied' ? 'Copied command' : 'Copy update command'}
                       </button>
                     )
                   )}
+                </div>
+              )}
+              {manualUpdate && management.manualCommand && (
+                <div className="space-y-1 font-sans text-[11px] leading-relaxed text-text-muted">
+                  <p>
+                    Run <code className="break-all font-mono text-text select-text">{management.manualCommand}</code> in this machine’s terminal to update.
+                  </p>
+                  {management.sourceDetail && <p className="text-text-subtle">{management.sourceDetail}</p>}
+                  {copyStatus === 'failed' && (
+                    <p role="alert" className="text-health-error">Could not copy. Select the command and copy it manually.</p>
+                  )}
+                  {copyStatus === 'copied' && <p role="status">Command copied.</p>}
                 </div>
               )}
               {staleSessions && (

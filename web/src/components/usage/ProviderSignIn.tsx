@@ -1,6 +1,8 @@
-import { Copy, ExternalLink } from 'lucide-react';
+import { useState } from 'react';
+import { Check, Copy, ExternalLink } from 'lucide-react';
 
 import type { ProviderLoginMode, ProviderLoginRow } from '@shared/provider-login';
+import { copyTextToClipboard } from '@/lib/clipboard';
 
 // Sign-in block for one provider. Anima only relays what the provider CLI
 // prints: a link (browser flow, completes on this machine) or a link plus a
@@ -22,6 +24,19 @@ export function ProviderSignIn({
   onStart: (mode: ProviderLoginMode) => void;
 }) {
   const operation = login.operation;
+  const [codeCopy, setCodeCopy] = useState<{ code: string; status: 'copied' | 'failed' }>();
+  const copyStatus = codeCopy?.code === operation.code ? codeCopy?.status : undefined;
+
+  async function copyCode(): Promise<void> {
+    const code = operation.code!;
+    setCodeCopy(undefined);
+    try {
+      await copyTextToClipboard(code);
+      setCodeCopy({ code, status: 'copied' });
+    } catch {
+      setCodeCopy({ code, status: 'failed' });
+    }
+  }
   const running = operation.status === 'running';
   // Signed-in providers show only the status line (totoday 08-29). When the
   // credential expires the CLI reports signed_out and the controls return.
@@ -75,15 +90,16 @@ export function ProviderSignIn({
               <button
                 type="button"
                 className="flex min-h-[44px] md:min-h-[36px] items-center gap-1 rounded-sm border border-border-soft px-2.5 font-sans text-[11px] text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                onClick={() => {
-                  if (operation.code) void navigator.clipboard.writeText(operation.code);
-                }}
+                onClick={() => void copyCode()}
                 title="Copy code"
               >
-                <Copy className="h-3 w-3" />
-                Copy
+                {copyStatus === 'copied' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                {copyStatus === 'copied' ? 'Copied' : 'Copy'}
               </button>
             </div>
+          )}
+          {copyStatus === 'failed' && (
+            <p role="alert" className="font-sans text-[11px] text-health-error">Could not copy. Select and copy the code manually.</p>
           )}
           <div className="flex flex-wrap items-center justify-between gap-2">
             {expires ? (

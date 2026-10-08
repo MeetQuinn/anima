@@ -15,6 +15,7 @@ import {
 } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { cancelThenSetQueryData } from '@/lib/query-write';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { useNow } from '@/hooks/useNow';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useProviderCliStatus } from '@/hooks/useProviderCliStatus';
@@ -277,7 +278,7 @@ export default function ProvidersPage() {
                         now={now}
                         onApply={() => requestApply(row)}
                         onCopyCommand={() => {
-                          if (row.manualCommand) void navigator.clipboard.writeText(row.manualCommand);
+                          if (row.manualCommand) return copyTextToClipboard(row.manualCommand);
                         }}
                         onToggleExpanded={() => toggleProviderExpanded(row.provider)}
                         usages={usageByProvider.get(row.provider) ?? []}
