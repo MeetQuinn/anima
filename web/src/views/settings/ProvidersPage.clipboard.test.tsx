@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProviderCliRow } from '@shared/provider-cli';
 import type { ProviderLoginRow } from '@shared/provider-login';
+import { queryKeys } from '@/lib/query-keys';
 import ProvidersPage from './ProvidersPage';
 
 const api = vi.hoisted(() => ({ apply: vi.fn(), login: vi.fn() }));
@@ -86,6 +87,10 @@ describe('ProvidersPage clipboard actions', () => {
       JSON.stringify({ 'claude-code': true, 'codex-cli': true }),
     );
     vi.clearAllMocks();
+    // Browsers focus the temporary textarea on select(); jsdom does not.
+    vi.spyOn(HTMLTextAreaElement.prototype, 'select').mockImplementation(function (this: HTMLTextAreaElement) {
+      this.focus();
+    });
     api.login.mockResolvedValue({ providers: [] });
     vi.stubGlobal(
       'navigator',
@@ -108,11 +113,14 @@ describe('ProvidersPage clipboard actions', () => {
     });
     useLegacyCopy(exec);
     const client = mountPage();
-    fireEvent.click(await screen.findByTitle('Copy update command'));
+    const button = await screen.findByTitle('Copy update command');
+    button.focus();
+    fireEvent.click(button);
     await screen.findByRole('button', { name: 'Copied command' });
     expect(texts).toEqual(['claude update']);
     expect(exec).toHaveBeenCalledExactlyOnceWith('copy');
     expect(document.querySelector('textarea[readonly]')).toBeNull();
+    expect(document.activeElement).toBe(button);
     expect(api.apply).not.toHaveBeenCalled();
     expect(screen.getByText(/in this machine’s terminal/)).toBeTruthy();
     expect(screen.getByText(/not a recognized native install/)).toBeTruthy();
@@ -150,10 +158,13 @@ describe('ProvidersPage clipboard actions', () => {
     const exec = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
     useLegacyCopy(exec);
     const client = mountPage();
-    fireEvent.click(await screen.findByTitle('Copy update command'));
+    const button = await screen.findByTitle('Copy update command');
+    button.focus();
+    fireEvent.click(button);
     expect((await screen.findByRole('alert')).textContent).toMatch(/copy it manually/);
     expect(screen.queryByRole('button', { name: 'Copied command' })).toBeNull();
     expect(document.querySelector('textarea[readonly]')).toBeNull();
+    expect(document.activeElement).toBe(button);
     fireEvent.click(screen.getByTitle('Copy update command'));
     await screen.findByRole('button', { name: 'Copied command' });
     expect(screen.queryByRole('alert')).toBeNull();
@@ -167,6 +178,50 @@ describe('ProvidersPage clipboard actions', () => {
     expect(await screen.findByText('Update Codex CLI?')).toBeTruthy();
     expect(api.apply).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Copied command' })).toBeNull();
+    client.clear();
+  });
+
+  it('does not apply an old copy result to a replacement update command', async () => {
+    let finish!: () => void;
+    const writeText = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    vi.stubGlobal('navigator', Object.create(navigator, { clipboard: { value: { writeText } } }));
+    const client = mountPage();
+    fireEvent.click(await screen.findByTitle('Copy update command'));
+    act(() => {
+      client.setQueryData(queryKeys.providerCliStatus(), {
+        operation: { status: 'idle' },
+        providers: [{ ...rows[0], manualCommand: 'claude update stable' }, rows[1]],
+        upgradeLocked: false,
+      });
+    });
+    await screen.findByText('claude update stable');
+    await act(async () => { finish(); });
+    expect(screen.queryByRole('button', { name: 'Copied command' })).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith('claude update');
+    client.clear();
+  });
+
+  it('does not apply an old copy result to a replacement device code', async () => {
+    let finish!: () => void;
+    const writeText = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    vi.stubGlobal('navigator', Object.create(navigator, { clipboard: { value: { writeText } } }));
+    const login: ProviderLoginRow = {
+      command: 'claude', provider: 'claude-code', state: 'signed_out',
+      operation: { status: 'running', mode: 'device', code: 'SYNTH-OLD', startedAt: '2026-10-08T04:00:00Z' },
+    };
+    api.login.mockResolvedValue({ providers: [login] });
+    const client = mountPage();
+    fireEvent.click(await screen.findByTitle('Copy code'));
+    act(() => {
+      client.setQueryData(queryKeys.providerLogin(), {
+        providers: [{ ...login, operation: { ...login.operation, code: 'SYNTH-NEW' } }],
+      });
+    });
+    await screen.findByText('SYNTH-NEW');
+    await act(async () => { finish(); });
+    expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith('SYNTH-OLD');
     client.clear();
   });
 
@@ -193,11 +248,14 @@ describe('ProvidersPage clipboard actions', () => {
         }),
       );
       const client = mountPage();
-      fireEvent.click(await screen.findByTitle('Copy code'));
+      const button = await screen.findByTitle('Copy code');
+      button.focus();
+      fireEvent.click(button);
       if (succeeds) await screen.findByRole('button', { name: 'Copied' });
       else expect((await screen.findByRole('alert')).textContent).toMatch(/copy the code manually/);
       await waitFor(() => expect(texts).toEqual(['SYNTH-1234']));
       expect(document.querySelector('textarea[readonly]')).toBeNull();
+      expect(document.activeElement).toBe(button);
       expect(api.apply).not.toHaveBeenCalled();
       client.clear();
     });

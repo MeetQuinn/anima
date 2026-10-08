@@ -15,6 +15,7 @@ export async function copyTextToClipboard(text: string): Promise<void> {
     }
   }
 
+  const focused = document.activeElement;
   const textarea = document.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', 'true');
@@ -29,5 +30,6 @@ export async function copyTextToClipboard(text: string): Promise<void> {
     }
   } finally {
     document.body.removeChild(textarea);
+    if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
   }
 }
