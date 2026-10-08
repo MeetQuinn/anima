@@ -166,7 +166,10 @@ latest check, update state, affected agents, and usage information when those so
 
 Anima offers an **Update** action only when it can prove that the active installation channel can be
 updated in place without changing PATH ownership or requiring elevated privileges. Other rows show a
-manual command and the reason automation is unavailable.
+**Copy update command** action and the reason automation is unavailable. Copying a command does
+not install an update: run the displayed command in this machine’s terminal. Copy actions support
+plain HTTP dashboards and show whether copying succeeded; if copying is blocked, select the
+displayed command manually.
 
 A provider update:
 
