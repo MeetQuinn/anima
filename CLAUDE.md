@@ -10,9 +10,9 @@ Anima is a local runtime that turns a code-agent runtime (Codex, Claude Code, Ki
 
 ```bash
 pnpm build           # rm -rf dist, tsc, build UI; produces dist/server and dist/web
-pnpm build:server    # rebuild dist/server, dist/shared, and dist/tests only; skips Vite
+pnpm build:server    # rebuild dist/server (including tests) and dist/shared; skips Vite
 pnpm typecheck       # tsc --noEmit, no UI
-pnpm test            # default fast gate: server build + unit/api tests
+pnpm test            # default fast gate: server/web build + unit/api tests
 pnpm test:fast:dist  # run the fast gate against an already-built dist
 pnpm test:runtime    # heavier CLI/provider/service subprocess integration tests
 pnpm test:all        # full build + every compiled test file
@@ -21,8 +21,8 @@ pnpm test:all        # full build + every compiled test file
 Run a single test (after `pnpm build:server`):
 
 ```bash
-node --test dist/tests/runtime.test.js
-node --test --test-name-pattern='primary session' dist/tests/runtime.test.js
+node --test dist/server/tests/runtime.test.js
+node --test --test-name-pattern='primary session' dist/server/tests/runtime.test.js
 ```
 
 Services. `animactl services` is an environment-neutral supervisor. Target an environment by setting `ANIMA_HOME`; the web app port comes from that environment's `config.json` `dashboardPort` (default 4174).
@@ -46,7 +46,7 @@ Global flag on `animactl`: `--agent <id>` goes **before** the subcommand. The An
 
 ## Architecture
 
-The repo is one TypeScript Node ESM project (`"type": "module"`, NodeNext, strict, `noUncheckedIndexedAccess`). Source under `server/`, tests under `tests/`, both compiled to `dist/`. The Vite/React web app is a separate package under `web/`.
+The repo is one TypeScript Node ESM project (`"type": "module"`, NodeNext, strict, `noUncheckedIndexedAccess`). Source and tests are under `server/` (`server/tests/` for tests), compiled to `dist/server/`; shared code compiles to `dist/shared/`. The Vite/React web app is a separate package under `web/`.
 
 ### Event flow
 
@@ -158,7 +158,7 @@ Keep design and code simple and direct. Bias toward fewer concepts, fewer files,
 - **Error handling only where action is possible.** Retry, degrade, or surface a useful message — otherwise let the exception bubble. Don't wrap-and-rethrow with no added information.
 - **Service layer does not touch HTTP.** Response construction (`ServerResponse`, `writeHead`, `reply.send`) belongs in routes/CLI entrypoints. Services return data or throw; callers decide how to write to the wire.
 - **Conditional properties: assign, don't spread.** `if (x) result.x = x` is clearer than `...(x && { x })`, and avoids type-inference headaches.
-- **Test helpers stay out of business code.** If a factory/constructor has one business caller but many test callers, inline it into the business path and keep a test-only version under `tests/helpers/`.
+- **Test helpers stay out of business code.** If a factory/constructor has one business caller but many test callers, inline it into the business path and keep a test-only version under `server/tests/helpers/`.
 - **No planning, analysis, or summary markdown files** unless explicitly asked. Work from conversation context.
 - **No half-finished implementations.** If a feature isn't wired all the way through, don't leave a stub that pretends it is.
 
@@ -171,8 +171,8 @@ Before non-trivial changes, propose the plan in chat (what you'll touch, why, th
 ## Repo conventions
 
 - **Imports use `.js` suffixes** in TypeScript source (NodeNext ESM): `import { foo } from './bar.js'` even though the source is `bar.ts`.
-- Tests live in `tests/*.test.ts` and run from `dist/tests/*.test.js` via the Node test runner (`node --test`). No Jest or Vitest in `server/`.
-- The default `pnpm test` is intentionally the fast gate (`unit + api`) and skips the Vite build; use `pnpm test:runtime` for CLI/provider/service subprocess coverage, and `pnpm test:all` for the full local/CI-style sweep.
+- Tests live in `server/tests/*.test.ts` and run from `dist/server/tests/*.test.js` via the Node test runner (`node --test`). No Jest or Vitest in `server/`.
+- The default `pnpm test` is intentionally the fast gate (`unit + api`) and builds the server and web app; use `pnpm test:runtime` for CLI/provider/service subprocess coverage, and `pnpm test:all` for the full local/CI-style sweep.
 - The web package (`web/`) has its own `package.json` and Vite/React/ESLint config; do not mix it with the Node CLI.
 - The `dist/` directory is committed-ignored output; `pnpm build` always rebuilds from scratch.
 
