@@ -53,6 +53,7 @@ const groups = {
     'inbox.test.js',
     'linear-identity.test.js',
     'linear-intake.test.js',
+    'linear-listener-status.test.js',
     'linear-session.test.js',
     'linear-runtime.test.js',
     'input-trace.test.js',

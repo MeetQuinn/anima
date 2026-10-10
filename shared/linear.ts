@@ -27,6 +27,15 @@ export const LinearInstallRequest = z.object({
 }).strict();
 export type LinearInstallRequest = z.infer<typeof LinearInstallRequest>;
 
+export const LinearListenerFailure = z.enum(['address_in_use', 'permission_denied', 'address_unavailable', 'other']);
+export type LinearListenerFailure = z.infer<typeof LinearListenerFailure>;
+
+export interface LinearListenerStatus {
+  state: 'listening' | 'failed' | 'stopped' | 'unknown';
+  observedAt?: string;
+  reason?: LinearListenerFailure;
+}
+
 export interface LinearStatus {
   state: 'not_configured' | 'installing' | 'connected' | 'revoked';
   clientId?: string;
@@ -36,6 +45,7 @@ export interface LinearStatus {
   signatureFailures: number;
   lastError?: string;
   listener?: LinearListenerConfig;
+  listenerStatus?: LinearListenerStatus;
 }
 
 export const LinearActivityKind = z.enum(['response', 'elicitation', 'error']);

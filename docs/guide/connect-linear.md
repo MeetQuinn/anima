@@ -38,6 +38,15 @@ Installation uses PKCE and a state tied to the current dashboard session. It exp
 connection and prepare a new one. There is no separate CLI installation flow.
 
 **App installed** records the verified app identity. It does not prove that ingress is reachable.
+**Local listener** separately reports a recent runtime observation: listening locally,
+bind failed or stopped. Bind failures show a coarse reason: port in use, permission denied,
+address unavailable or other. No current observation is shown if the record is missing,
+unreadable, future-dated, 90 seconds old or older, from an exited process or for a different configured
+address. The runtime refreshes this small record during reconciliation. An observation write
+failure does not stop intake; it can leave an earlier observation visible until it expires.
+These states do not check your public HTTPS ingress. Check your local address and runtime
+logs when binding fails, and check the tunnel or reverse proxy separately.
+
 The setting shows the last verified, signed webhook received and the number of rejected
 signature claims naming this app. The count is saved in a separate small diagnostic file,
 at most once a minute and when the listener stops. Unknown app claims are not counted;

@@ -6,6 +6,13 @@ import { refreshAgentData } from '@/api/agents';
 import { Button } from '@/components/ui/button';
 import { Section } from './Primitives';
 
+const listenerFailures = {
+  address_in_use: 'The port is already in use. Free it or choose a different listener port.',
+  permission_denied: 'Permission to bind was denied. Check the listener address and port permissions.',
+  address_unavailable: 'The bind address is unavailable. Check that it belongs to this machine.',
+  other: 'The listener could not bind. Check the runtime logs and listener settings.',
+};
+
 export function LinearSection({ agentId }: { agentId: string }) {
   const status = useQuery({ queryKey: ['agent', agentId, 'linear'], queryFn: () => fetchLinearStatus(agentId), refetchInterval: 5000, retry: false });
   const [formOpen, setFormOpen] = useState(false);
@@ -21,6 +28,9 @@ export function LinearSection({ agentId }: { agentId: string }) {
   useEffect(() => { if (data?.state === 'connected' || data?.state === 'revoked') refreshAgentData(agentId); }, [data?.state, agentId]);
   const connected = data?.state === 'connected';
   const configured = Boolean(data && data.state !== 'not_configured');
+  const listener = data?.listenerStatus;
+  const listenerLabel = listener?.state === 'listening' ? 'Listening locally'
+    : listener?.state === 'failed' ? 'Bind failed' : listener?.state === 'stopped' ? 'Stopped' : 'Not observed';
 
   async function install(event: FormEvent) {
     event.preventDefault();
@@ -48,6 +58,10 @@ export function LinearSection({ agentId }: { agentId: string }) {
       {!configured && <Button variant="outline" onClick={() => setFormOpen(!formOpen)} aria-expanded={formOpen} disabled={status.isPending || status.isError}>{formOpen ? 'Close setup' : 'Add Linear app'}</Button>}
       {configured && <Button variant="outline" onClick={() => void remove()} disabled={busy}>{busy ? 'Removing…' : 'Remove connection'}</Button>}
     </div>
+    {configured && listener?.state === 'failed' && <div role="alert" className="mt-3 rounded-sm border border-health-error/30 bg-health-error/5 px-3 py-3 font-sans text-[13px] leading-relaxed text-health-error">
+      <p className="font-medium">Local webhook listener failed</p>
+      <p>{listenerFailures[listener.reason ?? 'other']}</p>
+    </div>}
     {status.isPending && <p role="status" className="mt-3 font-sans text-[13px] text-text-muted">Loading Linear settings…</p>}
     {status.isError && <p role="alert" className="mt-3 font-sans text-[13px] text-health-error">Linear settings could not be read. <button type="button" className="underline" onClick={() => void status.refetch()}>Retry</button></p>}
     {data && configured && <dl className="mt-4 grid gap-x-6 gap-y-3 border-t border-border-soft pt-4 sm:grid-cols-2">
@@ -55,6 +69,9 @@ export function LinearSection({ agentId }: { agentId: string }) {
       <div><dt className="chrome text-[11px] text-text-muted">Last signed webhook received</dt><dd className="mt-1 font-sans text-[13px] text-text">{data.lastSignedWebhookAt ? new Date(data.lastSignedWebhookAt).toLocaleString() : 'None received'}</dd></div>
       <div><dt className="chrome text-[11px] text-text-muted">Rejected signature claims</dt><dd className="mt-1 font-sans text-[13px] text-text">{data.signatureFailures}</dd></div>
       <div className="min-w-0"><dt className="chrome text-[11px] text-text-muted">Configured listener address</dt><dd className="mt-1 break-all font-mono text-[12px] text-text">{data.listener ? `${data.listener.host}:${data.listener.port}/webhook` : 'Not configured'}</dd></div>
+      <div className="min-w-0 sm:col-span-2"><dt className="chrome text-[11px] text-text-muted">Local listener</dt><dd className={`mt-1 font-sans text-[13px] ${listener?.state === 'failed' ? 'text-health-error' : 'text-text'}`}>{listenerLabel}
+        {listener?.observedAt && <span className="ml-2 text-text-muted">Observed {new Date(listener.observedAt).toLocaleString()}</span>}
+      </dd><dd className="mt-1 font-sans text-[12px] leading-relaxed text-text-muted">{listener?.state === 'unknown' || !listener ? 'No current observation from the runtime. ' : ''}This shared local listener state does not verify your public HTTPS ingress.</dd></div>
     </dl>}
     {data?.lastError && <p role="alert" className="mt-3 font-sans text-[13px] text-health-error">{data.lastError}</p>}
     {data?.signatureFailures ? <p className="mt-3 font-sans text-[13px] text-health-warn">Requests claiming this app failed signature verification. Counts are saved at most once a minute and when the listener stops; a crash can lose unsaved counts. This is not a connection health check.</p> : null}
