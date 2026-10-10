@@ -60,3 +60,33 @@ it('unreadable settings cannot start an installation', async () => {
   expect((screen.getByRole('button', { name: 'Add Linear app' }) as HTMLButtonElement).disabled).toBe(true);
   expect(api.install).not.toHaveBeenCalled();
 });
+
+it.each([
+  ['address_in_use', 'The port is already in use.'],
+  ['permission_denied', 'Permission to bind was denied.'],
+  ['address_unavailable', 'The bind address is unavailable.'],
+  ['other', 'The listener could not bind.'],
+] as const)('keeps app identity while prominently showing bind failure %s', async (reason, message) => {
+  api.status.mockResolvedValue({ ...base, state: 'connected', clientId: 'synthetic-client', listener: { host: '127.0.0.1', port: 14175 },
+    listenerStatus: { state: 'failed', reason, observedAt: '2026-10-11T00:00:00Z' } });
+  mount(); await screen.findByText('App installed');
+  const alert = screen.getByRole('alert');
+  expect(alert.textContent).toContain('Local webhook listener failed'); expect(alert.textContent).toContain(message);
+  expect(alert.compareDocumentPosition(screen.getByText('Client ID')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByText('Bind failed')).toBeTruthy(); expect(screen.getByText('127.0.0.1:14175/webhook')).toBeTruthy();
+  expect(screen.queryByText(/sentinel/)).toBeNull();
+});
+
+it.each([
+  [{ state: 'unknown' }, 'Not observed'],
+  [undefined, 'Not observed'],
+  [{ state: 'listening', observedAt: '2026-10-11T00:00:00Z' }, 'Listening locally'],
+  [{ state: 'stopped', observedAt: '2026-10-11T00:00:00Z' }, 'Stopped'],
+])('shows local listener facts with no public reachability verdict: %s', async (listenerStatus, label) => {
+  api.status.mockResolvedValue({ ...base, state: 'connected', clientId: 'synthetic-client', listenerStatus });
+  mount(); await screen.findByText(label);
+  expect(screen.getByText(/does not verify your public HTTPS ingress/)).toBeTruthy(); expect(screen.queryByRole('alert')).toBeNull();
+  if (!listenerStatus || listenerStatus.state === 'unknown') {
+    expect(screen.getByText(/No current observation/)).toBeTruthy(); expect(screen.queryByText(/Observed \d/)).toBeNull();
+  }
+});

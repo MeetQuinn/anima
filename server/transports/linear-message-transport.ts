@@ -1,6 +1,7 @@
 import { withAnimaHome } from '../anima-home.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AgentConfig } from '../../shared/agent-config.js';
+import type { LinearListenerConfig, LinearListenerFailure } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { signatureMatches, verifyLinearWebhook } from '../linear/webhook.js';
@@ -8,6 +9,7 @@ import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.sto
 import { LinearStore } from '../storage/schema/linear.store.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
 import { AgentStore } from '../storage/schema/agent.store.js';
+import { LinearListenerStore, type LinearListenerObservation } from '../storage/schema/linear-listener.store.js';
 
 export class LinearMessageTransport {
   private app?: FastifyInstance;
@@ -17,6 +19,9 @@ export class LinearMessageTransport {
   private readonly rejectedClaims = new Map<string, { installationId: string; count: number }>();
   private nextDiagnosticsFlushAt = 0;
   private tickInFlight?: Promise<void>;
+  private observation?: LinearListenerObservation;
+  private pendingObservation?: LinearListenerObservation;
+  private observationWrite?: Promise<void>;
   constructor(private readonly animaHome: string, private readonly logger: Pick<Console, 'error'> = console) {}
 
   async reconcile(agents: AgentConfig[]): Promise<void> {
@@ -33,14 +38,27 @@ export class LinearMessageTransport {
     for (const agentId of this.rejectedClaims.keys()) if (!services.has(agentId)) this.rejectedClaims.delete(agentId);
     const config = (await new ServerConfigStore(this.animaHome).read()).linearWebhook;
     const key = this.services.size && config ? JSON.stringify(config) : undefined;
-    if (key === this.listenerKey) return;
-    await this.stop();
-    if (!key || !config) return;
+    if (key === this.listenerKey) {
+      this.observeListener(this.app?.server.listening ? 'listening' : 'stopped', config);
+      return;
+    }
+    await this.closeListener();
+    if (!key || !config) { this.observeListener('stopped', config); return; }
     const app = this.buildApp();
     try { await app.listen({ host: config.host, port: config.port }); }
-    catch { await app.close(); this.logger.error('Linear webhook listener could not bind its configured host/port.'); return; }
+    catch (error) {
+      await app.close();
+      const code = (error as NodeJS.ErrnoException).code;
+      const reason: LinearListenerFailure = code === 'EADDRINUSE' ? 'address_in_use'
+        : code === 'EACCES' || code === 'EPERM' ? 'permission_denied'
+        : code === 'EADDRNOTAVAIL' || code === 'ENOTFOUND' || code === 'EAI_AGAIN' ? 'address_unavailable' : 'other';
+      this.observeListener('failed', config, reason);
+      this.logger.error('Linear webhook listener could not bind its configured host/port.');
+      return;
+    }
     this.app = app;
     this.listenerKey = key;
+    this.observeListener('listening', config);
     this.timer = setInterval(() => this.tick(), 1000);
     this.timer.unref();
     this.tick();
@@ -95,14 +113,46 @@ export class LinearMessageTransport {
   }
 
   async stop(): Promise<void> {
+    await this.closeListener();
+    if (this.observationWrite) await this.observationWrite;
+  }
+
+  private async closeListener(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     const app = this.app;
     this.app = undefined;
     this.listenerKey = undefined;
     if (app) await app.close();
+    this.observeListener('stopped', this.observation?.address);
     if (this.tickInFlight) await this.tickInFlight;
     await this.flushDiagnostics(true);
+  }
+
+  private observeListener(state: LinearListenerObservation['state'], address?: LinearListenerConfig, reason?: LinearListenerFailure): void {
+    if (!address) return;
+    const observation: LinearListenerObservation = { state, address, processId: process.pid, observedAt: new Date().toISOString() };
+    if (reason) observation.reason = reason;
+    this.observation = observation;
+    this.pendingObservation = observation;
+    this.flushListenerObservation();
+  }
+
+  private flushListenerObservation(): void {
+    if (this.observationWrite) return;
+    // Observations never gate binding or intake. Keep only the latest pending fact
+    // while a write is slow, and preserve transition order across the web process.
+    this.observationWrite = (async () => {
+      while (this.pendingObservation) {
+        const next = this.pendingObservation;
+        this.pendingObservation = undefined;
+        try { await new LinearListenerStore(this.animaHome).write(next); }
+        catch { this.logger.error('Linear listener observation could not be saved.'); }
+      }
+    })().finally(() => {
+      this.observationWrite = undefined;
+      if (this.pendingObservation) this.flushListenerObservation();
+    });
   }
 
   private async flushDiagnostics(stopping = false): Promise<void> {

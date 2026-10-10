@@ -8,6 +8,8 @@ import { AgentStore } from '../storage/schema/agent.store.js';
 import { serverConfigStore } from '../storage/schema/server.store.js';
 import { LinearStore, type LinearInstallation } from '../storage/schema/linear.store.js';
 import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
+import { LinearListenerStore } from '../storage/schema/linear-listener.store.js';
+import { processAlive } from '../runtime/item-state.js';
 import { LinearApiError, LinearClient } from './client.js';
 
 const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.literal(true) }), organization: z.object({ id: z.string().uuid() }),
@@ -48,6 +50,18 @@ export class LinearIdentityService {
     else if (file.pending && file.pending.expiresAt <= Date.now()) result.lastError = 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.';
     const listener = (await serverConfigStore.read()).linearWebhook;
     if (listener) result.listener = listener;
+    result.listenerStatus = { state: 'unknown' };
+    // The dashboard outlives the daemon. A saved bind is only a recent local
+    // observation, and cannot establish public ingress reachability.
+    const observation = await new LinearListenerStore(this.store.animaHome).read().catch(() => undefined);
+    if (observation) {
+      const age = Date.now() - Date.parse(observation.observedAt);
+      const sameAddress = observation.address?.host === listener?.host && observation.address?.port === listener?.port;
+      if (age >= 0 && age < 90_000 && sameAddress && processAlive(observation.processId)) {
+        result.listenerStatus = { state: observation.state, observedAt: observation.observedAt };
+        if (observation.reason) result.listenerStatus.reason = observation.reason;
+      }
+    }
     return result;
   }
 
