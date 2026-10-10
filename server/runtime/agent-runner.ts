@@ -1,3 +1,5 @@
+import { LinearIdentityService } from '../linear/identity.service.js';
+import { LinearSessionService } from '../linear/session.service.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { errorMessage } from '../ids.js';
 import { InboxSubscriber } from '../inbox/subscriber.js';
@@ -51,6 +53,7 @@ export interface RunningAgentHandle {
 export async function startRunningAgent(options: RunningAgentOptions): Promise<RunningAgentHandle> {
   await agentTokenUsageServiceForAgent(options.agentId).initialize();
   const queue = wakeQueueServiceForAgent(options.agentId);
+  const linear = new LinearSessionService(new LinearIdentityService(options.agentId));
   const reactionClient = options.botToken ? slackReactionClient(options.botToken) : undefined;
   const feishuMessageClient = options.feishu?.connected ? createFeishuMessageClient(options.feishu) : undefined;
   const feishuClient = feishuMessageClient && options.feishu
@@ -63,10 +66,14 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
       agentRuntime: options.agentRuntime,
       ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
       onItemStarted: async (context) => {
+        await linear.markStarted(context.item, context.item.id);
         await addProcessingReaction({ context, logger: console, reactionClient });
         await addFeishuProcessingReaction({ context, feishuClient, logger: console });
       },
+      onItemAborted: async (context) => { await linear.finishRun(context.item.id, 'This run was interrupted. It may include other accepted messages; check any actions before continuing.'); },
       onItemFailed: async (context, failure) => {
+        await linear.finishRun(context.item.id, 'The model run failed. Some actions may already have run; inspect progress before sending a new prompt.')
+          .catch(() => console.error('Linear run ended; its final notice could not be confirmed.'));
         await postRuntimeFailureNotice({
           agentId: context.agentId,
           failure,
@@ -78,6 +85,9 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
         });
       },
       onItemSettled: async (context) => {
+        await linear.markSettled(context.item);
+        await linear.completeRun(context.item.id)
+          .catch(() => console.error('Linear run ended; its final notice could not be confirmed.'));
         // Keep the legacy lifetime diagnostic populated while the exact daily
         // ledger becomes the source for the new usage surfaces.
         await recordLifetimeTokenUsageForItem(context.agentId, context.item.id).catch((error: unknown) => {
@@ -86,7 +96,8 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
         await removeProcessingReactions({ context, logger: console, reactionClient });
         await removeFeishuProcessingReaction({ context, feishuClient, logger: console });
       },
-      onItemFollowupAppended: async (_activeContext, context) => {
+      onItemFollowupAppended: async (activeContext, context) => {
+        await linear.markStarted(context.item, activeContext.item.id);
         await addProcessingReaction({ context, logger: console, reactionClient });
         await addFeishuProcessingReaction({ context, feishuClient, logger: console });
       },

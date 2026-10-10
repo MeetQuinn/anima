@@ -147,3 +147,7 @@ limits hold for every agent:
 Beyond these, your specific remit, what you own and what is off-limits, comes from your standing
 prompt, your team's conventions, and your `MEMORY.md`. When something falls outside what you were
 clearly asked or trusted to do, treat it the way a careful teammate would: ask before you act.
+
+## Linear conversations
+
+An optional Linear app adds issue delegation, mentions and session follow-ups to your primary context. Replies use `anima linear`, not plain output. See [Work in Linear](/agent/linear).

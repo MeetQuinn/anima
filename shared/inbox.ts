@@ -233,8 +233,22 @@ export const ChoiceResponseInboxItem = InboxItemBase.extend({
 
 export type ChoiceResponseInboxItem = z.infer<typeof ChoiceResponseInboxItem>;
 
+export const LinearInboxItem = InboxItemBase.extend({
+  kind: z.literal('linear'),
+  installationId: z.string(),
+  sessionId: z.string(),
+  organizationId: z.string(),
+  issueId: z.string().optional(),
+  humanRequested: z.boolean(),
+  issueUrl: z.string().optional(),
+  actorName: z.string().optional(),
+  text: z.string(),
+});
+export type LinearInboxItem = z.infer<typeof LinearInboxItem>;
+
 export const InboxItemSchema = z.discriminatedUnion('kind', [
   SlackInboxItem,
+  LinearInboxItem,
   FeishuInboxItem,
   FeishuOnboardingInboxItem,
   ReminderInboxItem,

@@ -70,6 +70,7 @@ interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   /** Terminal failure (retries exhausted or non-retryable): tell the requester. */
   onItemFailed?: (context: RuntimeItemContext, failure: RuntimeItemFailure) => Promise<void>;
   onItemFollowupAppended?: (activeContext: RuntimeItemContext, context: RuntimeItemContext) => Promise<void>;
+  onItemAborted?: (context: RuntimeItemContext, reason: ItemStopReason) => Promise<void>;
   onItemSettled?: (context: RuntimeItemContext) => Promise<void>;
   pollIntervalMs?: number;
   providerRetry?: ProviderRetryOptions;
@@ -471,6 +472,7 @@ export class AgentRuntimeWorker {
             ...(slackIdentity ? { slackIdentity } : {}),
             transports: {
               feishu: agentConfig.feishu.connected,
+              linear: agentConfig.linear?.connected === true,
               slack: agentConfig.slack.connected,
             },
           },
@@ -781,6 +783,7 @@ export class AgentRuntimeWorker {
     }
     await this.queue.fail(context.item.id);
     await this.queue.failAppendedTo(context.item.id);
+    await this.options.onItemAborted?.(context, abortReason).catch(() => this.logger.error('Runtime worker abort hook failed.'));
     return true;
   }
 }

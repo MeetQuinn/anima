@@ -559,3 +559,14 @@ describe('buildMessageFeed', () => {
     expect(reactionOut.surface).toEqual({ channelId: 'C123', kind: 'channel', label: '#build' });
   });
 });
+
+it('Linear input and reply remain Linear session surfaces without Slack links', () => {
+  const pages: AgentMessageHistoryPage[] = [{ nextCursor: null, entries: [
+    { direction: 'in', kind: 'message', messageId: 'linear-in', platform: 'linear', channelId: 'session-uuid', threadTs: 'session-uuid', source: { id: 'linear:installation:created:session', kind: 'inbox' }, text: 'Request', timestamp: '2026-10-10T06:00:00Z' },
+    { direction: 'out', kind: 'message', messageId: 'linear-out', platform: 'linear', channelId: 'session-uuid', threadTs: 'session-uuid', source: { id: 'activity', kind: 'activity' }, text: 'Response', timestamp: '2026-10-10T06:01:00Z' },
+  ] }];
+  const result = buildMessageFeed(pages[0]!);
+  expect(result).toHaveLength(2);
+  expect(result.every((row) => (row.kind === 'message-in' || row.kind === 'message-out') && row.surface?.label === 'Linear session')).toBe(true);
+  expect(JSON.stringify(result)).not.toContain('slack.com');
+});

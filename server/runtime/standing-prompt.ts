@@ -21,6 +21,7 @@ export interface AnimaRuntimeProfile {
   };
   transports: {
     feishu: boolean;
+    linear?: boolean;
     slack: boolean;
   };
 }
@@ -32,6 +33,7 @@ export function buildAnimaRuntimeProfile(profile: AnimaRuntimeProfile): string {
   return renderPromptTemplate(readBundledTemplate(), {
     docsPath: referencePaths.docsPath ?? '',
     feishu: profile.transports.feishu,
+    linear: profile.transports.linear === true,
     hasDocs: Boolean(referencePaths.docsPath),
     hasLocalSource: Boolean(referencePaths.sourcePath),
     hasSlackIdentity: Boolean(profile.slackIdentity?.userId),

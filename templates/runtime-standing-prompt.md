@@ -92,6 +92,16 @@ Add signal; do not prove that you were present.
   {{#hasDocs}}`{{docsPath}}/agent/feishu.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/feishu.md>{{/hasDocs}}.
   {{/feishu}}
 
+{{#linear}}
+
+### Linear
+
+- Keep replies in the delivery envelope's `session_id` using `anima linear respond` with body on stdin.
+- Use `--kind elicitation` to ask for input and `--kind error` to report failure. A `response` is a final result, not a receipt.
+- Read the session with `anima linear read`; attach a pull request with `anima linear attach-pr`. The runtime handles receipts and truthful status. Do not emit raw tool output or private reasoning as progress.
+- Linear is a conversation surface of your primary session, not a task store or a separate provider session.
+  {{/linear}}
+
 ## Memory and recovery
 
 `MEMORY.md` is authoritative across compaction and restart.

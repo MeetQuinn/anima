@@ -22,8 +22,9 @@ export type OutboundEffectClassification =
   | { kind: 'file' }
   | { kind: 'reaction' };
 
-const MESSAGE_TOOLS = new Set(['anima.message.send', 'anima.message.update']);
+const MESSAGE_TOOLS = new Set(['anima.message.send', 'anima.message.update', 'anima.linear.respond']);
 const MESSAGE_EFFECTS = new Set([
+  'linear.activity.create',
   'feishu.message.send',
   'feishu.message.update',
   'slack.message.send',

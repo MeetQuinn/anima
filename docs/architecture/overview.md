@@ -190,3 +190,16 @@ For a team champion deciding whether Anima fits, the architectural questions are
 - [Provider layer](../runtime-providers.md) explains provider process protocols, sessions, health, and restart behavior.
 - [Activity events](../activity-events.md) defines what the activity trail records and how emitter coverage is kept exhaustive.
 - [Work with one agent](../guide/working-with-your-agent.md) covers teammate-facing handoffs, attention, corrections, and durable context.
+
+### Optional Linear ingress
+
+Each enabled agent can add a separate Linear OAuth app. A runtime-owned listener accepts
+bounded raw webhook bodies only after HMAC, timestamp and installation identity validation.
+It mounts only `/webhook`; the existing authenticated dashboard owns PKCE installation and
+its callback. Public HTTPS ingress is operator-managed. No complete identity means no listener.
+
+A private credential/receipt journal feeds the durable wake queue and existing primary
+provider session. Receipt/status maintenance is independent of model capacity and provider
+idle tracking. Session-scoped activity receipts preserve accepted/unknown outcomes through
+local bookkeeping failures. This is protocol recovery, not a task store or full workspace
+reconciliation. See [Connect Linear](../guide/connect-linear.md) for delivery-gap limits.

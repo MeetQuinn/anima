@@ -55,6 +55,7 @@ export class JsonFile<T> {
     readonly path: string,
     private readonly empty: () => T,
     writeRoot: string = currentWriteRoot(),
+    private readonly mode?: number,
   ) {
     this.writeRoot = writeRoot;
   }
@@ -74,7 +75,7 @@ export class JsonFile<T> {
 
   async write(value: T): Promise<void> {
     await withFileLock(this.path, this.writeRoot, async () => {
-      await writeAtomic(this.path, value, this.writeRoot);
+      await writeAtomic(this.path, value, this.writeRoot, this.mode);
       await this.refreshCache(value);
     });
   }
@@ -84,7 +85,7 @@ export class JsonFile<T> {
       const current = await this.readUnlocked();
       const next = await op(current);
       if (next === current) return next;
-      await writeAtomic(this.path, next, this.writeRoot);
+      await writeAtomic(this.path, next, this.writeRoot, this.mode);
       await this.refreshCache(next);
       return next;
     });
@@ -112,11 +113,11 @@ export class JsonFile<T> {
 // Defense in depth. Every public caller reaches withFileLock's guard first, so
 // this one is unreachable as the operative check today. It is here for a future
 // caller that writes outside the lock.
-async function writeAtomic(path: string, value: unknown, writeRoot: string): Promise<void> {
+async function writeAtomic(path: string, value: unknown, writeRoot: string, mode?: number): Promise<void> {
   await ensureParentDirectory(path, writeRoot);
   const tempPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   try {
-    await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode });
     await rename(tempPath, path);
   } catch (error) {
     await rm(tempPath, { force: true });

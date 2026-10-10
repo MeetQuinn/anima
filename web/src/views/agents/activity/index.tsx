@@ -385,17 +385,17 @@ export function ActivityStatusSummary({
 // moment the first real activity arrives (filteredItems.length > 0).
 // ---------------------------------------------------------------------------
 
-function FirstRunHero({ agentName, platform }: { agentName?: string; platform: 'feishu' | 'slack' }) {
-  const platformLabel = platform === 'feishu' ? 'Feishu' : 'Slack';
+function FirstRunHero({ agentName, platform }: { agentName?: string; platform: 'feishu' | 'slack' | 'linear' }) {
+  const platformLabel = platform === 'linear' ? 'Linear' : platform === 'feishu' ? 'Feishu' : 'Slack';
   return (
     <div className="mt-20 flex flex-col items-center px-6 text-center animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 motion-reduce:animate-none">
       <span className="relative mb-5 flex h-2 w-2" aria-hidden="true">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-activity-outbound opacity-60 motion-reduce:animate-none" />
         <span className="relative inline-flex h-2 w-2 rounded-full bg-activity-outbound" />
       </span>
-      <p className="font-serif text-[19px] leading-tight text-text">Your agent is live.</p>
+      <p className="font-serif text-[19px] leading-tight text-text">{platform === 'linear' ? 'Start in Linear.' : 'Your agent is live.'}</p>
       <p className="mt-1.5 font-serif text-[15px] leading-snug text-text-muted">
-        Say hi to {agentName ? <span className="font-medium text-text">{agentName}</span> : 'it'} in{' '}
+        {platform === 'linear' ? 'Delegate an issue to ' : 'Say hi to '}{agentName ? <span className="font-medium text-text">{agentName}</span> : 'it'} in{' '}
         {platformLabel}.
       </p>
     </div>
@@ -653,11 +653,11 @@ export default function Activity() {
   // First-run hero gating. Show the live-moment invite in place of the generic
   // empty text only when the feed is empty (a brand-new agent). Needs a known
   // connected platform to phrase the invite honestly.
-  const connectedPlatform: 'feishu' | 'slack' | undefined = agent?.feishu?.connected
+  const connectedPlatform: 'feishu' | 'slack' | 'linear' | undefined = agent?.feishu?.connected
     ? 'feishu'
     : agent?.slack?.connected
       ? 'slack'
-      : undefined;
+      : agent?.linear?.connected ? 'linear' : undefined;
   const heroPlatform = previewFirstRunHero ?? connectedPlatform;
   const showFirstRunHero =
     previewFirstRunHero !== undefined ||
@@ -675,7 +675,7 @@ export default function Activity() {
     dismissRecommendedPermissionsBanner,
     showHelloBanner,
     shouldCheckRecommendedPermissions,
-  } = useFeishuOnboardingBanners({ agentId, feishuConnKey, connectedPlatform });
+  } = useFeishuOnboardingBanners({ agentId, feishuConnKey, connectedPlatform: connectedPlatform === 'linear' ? undefined : connectedPlatform });
   const { data: feishuScopeStatus } = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId ?? ''),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId!),
