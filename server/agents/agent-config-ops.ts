@@ -40,6 +40,7 @@ export function isAgentRunnable(agent: AgentConfig): boolean {
     && (
       (agent.slack.connected && agent.slack.appToken && agent.slack.botToken)
       || agent.feishu.connected
+      || agent.linear?.connected === true
     ),
   );
 }

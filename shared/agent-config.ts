@@ -1,3 +1,4 @@
+import { LinearConfig } from './linear.js';
 // API contract and disk schema for agent configuration. Consumed by server and web.
 
 import { z } from 'zod';
@@ -632,12 +633,15 @@ export function agentConfigSchema(fallbackId: string) {
         owner: AgentOwner.optional(),
         provider: AgentProviderConfig.optional(),
         feishu: FeishuConfig.optional(),
+        linear: LinearConfig.optional(),
         slack: SlackConfig.optional(),
         homePath: z.string().optional(),
         teamId: z.string().optional(),
       })
       .transform((raw) => {
         const id = raw.id ?? fallbackId;
+        const linear: { linear?: LinearConfig } = {};
+        if (raw.linear) linear.linear = raw.linear;
         return {
           createdAt: raw.createdAt ?? new Date().toISOString(),
           enabled: raw.enabled ?? true,
@@ -649,6 +653,7 @@ export function agentConfigSchema(fallbackId: string) {
           ...(raw.owner ? { owner: raw.owner } : {}),
           provider: raw.provider ?? AgentProviderConfig.parse({}),
           feishu: raw.feishu ?? FeishuConfig.parse({}),
+          ...linear,
           slack: raw.slack ?? SlackConfig.parse({}),
           homePath: raw.homePath ?? defaultAgentHomePath(id),
           // Backfill: a legacy agent (no team field) or a blank teamId reads as the default

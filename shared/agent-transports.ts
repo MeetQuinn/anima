@@ -1,4 +1,5 @@
 export interface AgentTransportSnapshot {
+  linear?: { connected: boolean; clientId: string; organizationId: string; appUserId: string };
   feishu?: {
     appId?: string;
     avatarUrl?: string;
@@ -16,12 +17,13 @@ export interface AgentTransportSnapshot {
   };
 }
 
-export type AgentTransportKind = 'slack' | 'feishu';
-export type AgentPlatformLabel = 'Slack' | 'Feishu';
+export type AgentTransportKind = 'slack' | 'feishu' | 'linear';
+export type AgentPlatformLabel = 'Slack' | 'Feishu' | 'Linear';
 
 const TRANSPORT_LABELS: Record<AgentTransportKind, AgentPlatformLabel> = {
   feishu: 'Feishu',
   slack: 'Slack',
+  linear: 'Linear',
 };
 
 export function agentSlackConnected(agent: AgentTransportSnapshot): boolean {
@@ -33,7 +35,7 @@ export function agentFeishuConnected(agent: AgentTransportSnapshot): boolean {
 }
 
 export function agentHasConnectedTransport(agent: AgentTransportSnapshot): boolean {
-  return agentSlackConnected(agent) || agentFeishuConnected(agent);
+  return agentSlackConnected(agent) || agentFeishuConnected(agent) || agent.linear?.connected === true;
 }
 
 export function agentPrimaryTransportKind(agent: AgentTransportSnapshot): AgentTransportKind | undefined {
@@ -42,6 +44,7 @@ export function agentPrimaryTransportKind(agent: AgentTransportSnapshot): AgentT
   // implementation detail out of the user-facing platform label.
   if (agentFeishuConnected(agent)) return 'feishu';
   if (agentSlackConnected(agent)) return 'slack';
+  if (agent.linear?.connected) return 'linear';
   return undefined;
 }
 

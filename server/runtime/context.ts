@@ -1,3 +1,5 @@
+import { LinearIdentityService } from '../linear/identity.service.js';
+import { LinearSessionService } from '../linear/session.service.js';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
@@ -18,6 +20,7 @@ export async function runtimeContextForItemId(
 ): Promise<RuntimeItemContext> {
   const item = await queue.find(itemId);
   if (!item) throw new Error(`Wake queue item ${itemId} was not found.`);
+  if (item.kind === 'linear') await new LinearSessionService(new LinearIdentityService(config.agentId)).assertRunnable(item);
   return {
     agentId: config.agentId,
     item,

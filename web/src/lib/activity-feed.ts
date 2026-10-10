@@ -602,6 +602,7 @@ function surfaceChipForInboundMessage(message: AgentMessageRecord): SurfaceChip 
     return { kind: 'reminder', label: 'Reminder' };
   }
   if (message.kind === 'choice_response') return surfaceChipForChoiceMessage(message);
+  if (message.platform === 'linear') return { kind: 'thread', label: 'Linear session' };
   if (message.platform === 'feishu') return surfaceChipForFeishuMessage(message);
   return surfaceChipForSlackMessage(message);
 }
@@ -732,6 +733,7 @@ function outboundSurfaceChip(fields: OutboundSurfaceFields): SurfaceChip {
     threadTs: payloadThreadTs,
   } = fields;
 
+  if (platform === 'linear') return { kind: 'thread', label: 'Linear session' };
   if (platform === 'feishu') {
     const kind = payloadChannelKind || (payloadChannel.startsWith('oc_') ? 'group' : 'chat');
     if (kind === 'open_id') {

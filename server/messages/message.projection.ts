@@ -15,6 +15,12 @@ import type {
 } from '../../shared/inbox.js';
 
 export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | undefined {
+  if (item.kind === 'linear') return {
+    actor: item.actorName ?? 'Linear user', direction: 'in', kind: 'message',
+    messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.sessionId,
+    channelKind: 'linear_session', threadTs: item.sessionId, source: { id: item.id, kind: 'inbox' },
+    text: item.text, timestamp: item.receivedAt,
+  };
   if (item.kind === 'slack') return slackInboxMessage(item);
   if (item.kind === 'feishu') return feishuInboxMessage(item);
   if (item.kind === 'reminder') {

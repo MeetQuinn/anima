@@ -1,3 +1,4 @@
+import { LinearMessageTransport } from '../transports/linear-message-transport.js';
 import { existsSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 
@@ -132,6 +133,7 @@ export async function startRuntimeHost(opts: RuntimeHostOptions = {}): Promise<v
 }
 
 export class RuntimeHost {
+  private readonly linear: LinearMessageTransport;
   private readonly agents = new Map<string, ManagedAgent>();
   private readonly animaHome: string;
   private readonly loadAgents: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
@@ -165,6 +167,7 @@ export class RuntimeHost {
     deps: RuntimeHostDependencies = {},
   ) {
     this.animaHome = deps.animaHome ?? resolveAnimaHome();
+    this.linear = new LinearMessageTransport(this.animaHome, deps.logger ?? console);
     this.loadAgents = deps.loadAgents ?? loadRuntimeAgents;
     const settings = new ServerSettingsService(new ServerConfigStore(this.animaHome));
     this.loadMaxConcurrentAgentRuns = deps.loadMaxConcurrentAgentRuns
@@ -233,6 +236,7 @@ export class RuntimeHost {
       clearTimeout(this.configWatchDebounce);
       this.configWatchDebounce = undefined;
     }
+    await this.linear.stop();
     this.closeConfigWatchers();
     this.closeRestartCommandWatcher();
     await this.reconcile?.catch((error: unknown) => {
@@ -274,6 +278,7 @@ export class RuntimeHost {
       this.loadProviderArgs(),
       this.loadProviderCommands(),
     ]);
+    await this.linear.reconcile(agents);
     this.runLimiter.setLimit(maxConcurrentAgentRuns);
     await this.cleanupExpiredHandoffs(agents);
     await this.initializeBootHealth(agents);
@@ -1023,6 +1028,7 @@ function runtimeAuthorityFingerprint(
     providerEnv: agent.provider.env,
     providerCommand,
     providerArgs,
+    linear: agent.linear,
     slack: {
       appToken: agent.slack.appToken,
       botToken: agent.slack.botToken,
@@ -1054,6 +1060,7 @@ function runtimeFingerprint(
     provider: agent.provider,
     providerArgs,
     providerCommand,
+    linear: agent.linear,
     feishu: {
       appId: agent.feishu.appId,
       appSecret: agent.feishu.appSecret,
@@ -1116,7 +1123,7 @@ async function validateSlackConnectionForStart(
 function agentSkipStatus(agent: AgentConfig): string | undefined {
   if (!agent.enabled) return 'disabled';
   if (isAgentRunnable(agent)) return undefined;
-  if (!agent.slack.connected && !agent.feishu.connected) return 'idle / awaiting platform connection';
+  if (!agent.slack.connected && !agent.feishu.connected && !agent.linear?.connected) return 'idle / awaiting platform connection';
   return 'idle / incomplete config';
 }
 

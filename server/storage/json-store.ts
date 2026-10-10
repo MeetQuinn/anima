@@ -2,6 +2,7 @@ import { JsonFile } from './json-file.js';
 
 export interface JsonStoreOptions<T> {
   empty: () => T;
+  mode?: number;
   parse: (value: unknown) => T;
   path: () => string;
   /**
@@ -68,7 +69,7 @@ export class JsonStore<T> {
     if (existing) return existing;
     // `writeRoot` undefined -> JsonFile falls back to the ambient root, captured
     // now, at first use of this path, and held from here on.
-    const created = new JsonFile<T>(path, this.options.empty, this.options.writeRoot?.());
+    const created = new JsonFile<T>(path, this.options.empty, this.options.writeRoot?.(), this.options.mode);
     this.files.set(path, created);
     return created;
   }

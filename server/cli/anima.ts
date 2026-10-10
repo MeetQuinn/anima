@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { registerLinearCommands } from '../tools/linear-cli.js';
 import { Command } from 'commander';
 
 import { registerAskCommands } from '../tools/ask.js';
@@ -27,6 +28,7 @@ export function createCliProgram(): Command {
     .configureOutput({ writeErr: () => undefined });
 
   registerMessageCommands(program);
+  registerLinearCommands(program);
   registerMessageHistoryCommands(program);
   registerOrientationCommands(program);
   registerEnvCommands(program);

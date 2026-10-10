@@ -593,3 +593,7 @@ error anima.no_agent_context (not retryable): Pass --agent <id> or set ANIMA_AGE
 
 `anima.unexpected` means the failure did not match any known shape; stop and show the operator the
 detail line rather than retrying blind.
+
+## Linear
+
+An installed identity can read its accepted session, send a response/elicitation/error, and attach a PR. See [Work in Linear](/agent/linear) for command syntax and result-unknown rules.

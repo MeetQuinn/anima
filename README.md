@@ -128,7 +128,7 @@ The product claim is not just that an agent can answer a prompt. It is that a te
 
 |                    | Supported                                           |
 | ------------------ | --------------------------------------------------- |
-| **Team chat**      | Slack; Feishu is also supported                     |
+| **Team surfaces**  | Slack, Feishu, and optional per-agent Linear apps   |
 | **Coding agents**  | Claude Code, Codex, Kimi Code, Grok Build, OpenCode |
 | **Host**           | macOS or Linux                                      |
 | **Operator UI**    | Local dashboard at `127.0.0.1:4174`                 |

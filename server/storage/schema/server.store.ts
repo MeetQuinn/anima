@@ -1,3 +1,4 @@
+import { LinearListenerConfig } from '../../../shared/linear.js';
 // Disk schema for ANIMA_HOME/config.json.
 // This is server-level configuration shared by all agents in one Anima home.
 
@@ -34,6 +35,7 @@ const ServerConfigFields = z
     dashboardPort: z.number().int().positive().max(65535).optional(),
     doNotContact: z.record(z.string().regex(/^T[A-Z0-9]+$/), z.array(z.string().regex(/^U[A-Z0-9]+$/))).optional(),
     memoryCoherence: MemoryCoherenceConfig.optional(),
+    linearWebhook: LinearListenerConfig.optional(),
     providerContextLimits: ProviderContextLimitsConfig.optional(),
     providerArgs: ProviderRuntimeArgsConfig.optional(),
     providerCommands: ProviderRuntimeCommandsConfig.optional(),

@@ -60,6 +60,10 @@ export class AgentStore {
     return agent;
   }
 
+  update(op: (agent: AgentConfig) => AgentConfig): Promise<AgentConfig> {
+    return this.file.update(op);
+  }
+
   async remove(): Promise<void> {
     await rm(agentPath(this.agentId), { force: true, recursive: true });
   }

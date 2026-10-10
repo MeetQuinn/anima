@@ -1,3 +1,4 @@
+import { registerAgentLinearRoutes } from './agent-linear-routes.js';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 
@@ -90,6 +91,7 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
 
   registerAgentSlackRoutes(fastify);
   registerAgentFeishuRoutes(fastify);
+  registerAgentLinearRoutes(fastify);
 
   // -------------------------------------------------------------------------
   // Status
