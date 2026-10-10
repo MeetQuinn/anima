@@ -28,6 +28,10 @@ async function post(port: number, payload: unknown, signature?: string, path = '
   });
 }
 const sign = (event: unknown, secret = install.signingSecret) => createHmac('sha256', secret).update(JSON.stringify(event)).digest('hex');
+async function stopAndDrain(transport: LinearMessageTransport): Promise<void> {
+  await transport.stop();
+  await (transport as unknown as { observationWrite?: Promise<void> }).observationWrite;
+}
 
 test('dedicated port rejects unsigned, stale, cross-app and dashboard routes; accepted duplicate wakes once', async (t) => withTempAnimaHome(async (home) => {
   const { agentStore, fake, store, identity } = await seedLinear(home); t.mock.method(globalThis, 'fetch', fake.fetch);
@@ -66,7 +70,7 @@ test('dedicated port rejects unsigned, stale, cross-app and dashboard routes; ac
     await assert.rejects(post(port, event, sign(event)));
     await transport.reconcile([await agentStore.read()]);
     await assert.rejects(post(port, event, sign(event)));
-  } finally { await transport.stop(); }
+  } finally { await stopAndDrain(transport); }
 }));
 
 test('incomplete credentials never bind; durable receipt recovers a queue write failure once', async (t) => withTempAnimaHome(async (home) => {
@@ -84,7 +88,7 @@ test('incomplete credentials never bind; durable receipt recovers a queue write 
     assert.equal((await new WakeQueueService('scout').list()).length, 0);
     enqueue.mock.restore(); await service.tick(); await service.receive(event, install); await service.tick();
     assert.equal((await new WakeQueueService('scout').list()).length, 1); assert.equal(fake.posts.length, 1);
-  } finally { await transport.stop(); }
+  } finally { await stopAndDrain(transport); }
 }));
 
 test('revocation and session/type consistency are enforced using signed identity, not routing hints', async (t) => withTempAnimaHome(async (home) => {
@@ -101,7 +105,7 @@ test('revocation and session/type consistency are enforced using signed identity
     assert.equal((await identity.status()).state, 'revoked');
     assert.equal((await new WakeQueueService('scout').list()).length, 0);
     await transport.reconcile([await agentStore.read()]); await assert.rejects(post(port, created()));
-  } finally { await transport.stop(); }
+  } finally { await stopAndDrain(transport); }
 }));
 
 for (const matching of [false, true]) test(`unsigned claims use a bounded small journal, matching=${matching}`, async (t) => withTempAnimaHome(async (home) => {
@@ -174,5 +178,5 @@ for (const matching of [false, true]) test(`unsigned claims use a bounded small 
     assert.equal((await new LinearDiagnosticsStore('scout').read()).signatureFailures, matching ? 180 : 0);
     await store.update((file) => ({ ...file, installation: { ...install, id: 'replacement-installation' } }));
     assert.equal((await identity.status()).signatureFailures, 0, 'New installation must not inherit old diagnostic counts');
-  } finally { await app.close(); await transport.stop(); }
+  } finally { await app.close(); await stopAndDrain(transport); }
 }));

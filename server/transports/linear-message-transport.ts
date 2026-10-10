@@ -42,7 +42,7 @@ export class LinearMessageTransport {
       this.observeListener(this.app?.server.listening ? 'listening' : 'stopped', config);
       return;
     }
-    await this.closeListener();
+    await this.stop();
     if (!key || !config) { this.observeListener('stopped', config); return; }
     const app = this.buildApp();
     try { await app.listen({ host: config.host, port: config.port }); }
@@ -113,11 +113,6 @@ export class LinearMessageTransport {
   }
 
   async stop(): Promise<void> {
-    await this.closeListener();
-    if (this.observationWrite) await this.observationWrite;
-  }
-
-  private async closeListener(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     const app = this.app;
@@ -140,7 +135,7 @@ export class LinearMessageTransport {
 
   private flushListenerObservation(): void {
     if (this.observationWrite) return;
-    // Observations never gate binding or intake. Keep only the latest pending fact
+    // Observations never gate binding, intake or shutdown. Keep the latest pending fact
     // while a write is slow, and preserve transition order across the web process.
     this.observationWrite = (async () => {
       while (this.pendingObservation) {

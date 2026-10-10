@@ -35,6 +35,10 @@ function acceptedPost(port: number): Promise<number> {
   const event = created();
   return post(port, event, createHmac('sha256', install.signingSecret).update(JSON.stringify(event)).digest('hex'));
 }
+async function stopAndDrain(transport: LinearMessageTransport): Promise<void> {
+  await transport.stop();
+  await (transport as unknown as { observationWrite?: Promise<void> }).observationWrite;
+}
 
 test('real API separates an installed identity from bind failure, recovery, refreshed observation and stopped listener', async (t) => withTempAnimaHome(async (home) => {
   const { agentStore, fake } = await seedLinear(home); t.mock.method(globalThis, 'fetch', fake.fetch);
@@ -68,16 +72,17 @@ test('real API separates an installed identity from bind failure, recovery, refr
     const path = join(home, 'run/linear-listener.json');
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.ok((await stat(path)).size < 400); assert.doesNotMatch(await readFile(path, 'utf8'), /sentinel|accessToken|refreshToken|signingSecret/);
-    await transport.stop(); assert.equal((await status()).listenerStatus.state, 'stopped');
+    await transport.stop();
+    await waitFor(async () => (await status()).listenerStatus?.state === 'stopped');
     await assert.rejects(unsignedPost(reserved.address.port));
     const replacement = new LinearMessageTransport(home, { error() {} });
     try {
       await replacement.reconcile([await agentStore.read()]);
       await waitFor(async () => (await status()).listenerStatus?.state === 'listening');
       assert.equal(await unsignedPost(reserved.address.port), 403);
-    } finally { await replacement.stop(); }
+    } finally { await stopAndDrain(replacement); }
     assert.equal((await new WakeQueueService('scout').list()).length, 0); assert.equal(fake.calls.length, 0);
-  } finally { await transport.stop(); await web.close(); if (reserved.server.listening) await reserved.close(); }
+  } finally { await stopAndDrain(transport); await web.close(); if (reserved.server.listening) await reserved.close(); }
 }));
 
 test('incomplete identity never binds and revocation closes a previously observed listener', async (t) => withTempAnimaHome(async (home) => {
@@ -96,7 +101,7 @@ test('incomplete identity never binds and revocation closes a previously observe
     await identity.revoke(install.id); await transport.reconcile([await agentStore.read()]);
     await waitFor(async () => (await identity.status()).listenerStatus?.state === 'stopped');
     assert.equal((await identity.status()).state, 'revoked'); await assert.rejects(unsignedPost(reserved.address.port));
-  } finally { await transport.stop(); }
+  } finally { await stopAndDrain(transport); }
 }));
 
 test('refresh observes the actual closed socket rather than a retained app handle', async (t) => withTempAnimaHome(async (home) => {
@@ -111,7 +116,7 @@ test('refresh observes the actual closed socket rather than a retained app handl
     await app.close(); await transport.reconcile([await agentStore.read()]);
     await waitFor(async () => (await identity.status()).listenerStatus?.state === 'stopped');
     await assert.rejects(unsignedPost(reserved.address.port));
-  } finally { await transport.stop(); }
+  } finally { await stopAndDrain(transport); }
 }));
 
 for (const [code, reason] of [['EACCES', 'permission_denied'], ['EPERM', 'permission_denied'], ['EADDRNOTAVAIL', 'address_unavailable'], ['ENOTFOUND', 'address_unavailable'], ['EAI_AGAIN', 'address_unavailable'], ['EOTHER', 'other']] as const) {
@@ -128,7 +133,7 @@ for (const [code, reason] of [['EACCES', 'permission_denied'], ['EPERM', 'permis
       const status = await identity.status(); assert.equal(status.listenerStatus?.reason, reason);
       assert.doesNotMatch(JSON.stringify([status, logs, await new LinearListenerStore(home).read()]), /sentinel|Error:|stack/);
       assert.equal(status.state, 'connected');
-    } finally { await transport.stop(); }
+    } finally { await stopAndDrain(transport); }
   }));
 }
 
@@ -174,11 +179,14 @@ test('a slow observation write never blocks bind or intake and coalesces the lat
     assert.equal(await withTimeout(acceptedPost(reserved.address.port), 500), 200);
     assert.equal((await new WakeQueueService('scout').list()).length, 1);
     for (let n = 0; n < 4; n++) await transport.reconcile([await agentStore.read()]);
-    assert.equal(writes, 1); release();
-    await waitFor(async () => (await identity.status()).listenerStatus?.state === 'listening');
+    assert.equal(writes, 1);
+    await waitFor(() => fake.posts.length === 1, { timeoutMs: 3000 });
+    await withTimeout(transport.stop(), 500);
+    await assert.rejects(unsignedPost(reserved.address.port));
+    release();
+    await waitFor(async () => (await identity.status()).listenerStatus?.state === 'stopped');
     assert.equal(writes, 2, 'slow write retains one latest pending observation');
-    await waitFor(() => fake.posts.length === 1);
-  } finally { release(); await reconciliation; await transport.stop(); }
+  } finally { release(); await reconciliation; await stopAndDrain(transport); }
 }));
 
 test('observation write failure leaves unknown without failing binding, intake or later recovery', async (t) => withTempAnimaHome(async (home) => {
@@ -196,5 +204,5 @@ test('observation write failure leaves unknown without failing binding, intake o
     failure.mock.restore(); await transport.reconcile([await agentStore.read()]);
     await waitFor(async () => (await identity.status()).listenerStatus?.state === 'listening');
     await waitFor(() => fake.posts.length === 1);
-  } finally { await transport.stop(); }
+  } finally { await stopAndDrain(transport); }
 }));
