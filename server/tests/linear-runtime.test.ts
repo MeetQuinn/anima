@@ -11,6 +11,8 @@ import { SessionStore } from '../storage/schema/session.store.js';
 import { withTempAnimaHome, waitFor } from './helpers/harness.js';
 import { created, install, seedLinear, sessionId, prompted } from './helpers/linear.js';
 import { makeSlackEvent } from './helpers/slack.js';
+import { LinearSessionService } from '../linear/session.service.js';
+import { LinearStore } from '../storage/schema/linear.store.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 
 for (const queued of [false, true]) test(`Linear-only runtime and registered CLI report through the existing primary session, queued=${queued}`, async (t) => withTempAnimaHome(async (home) => {
@@ -81,3 +83,67 @@ test('a completed provider turn without a platform reply ends the Linear session
     assert.equal(fake.posts.length, 1);
   } finally { await runner.stop(); }
 }));
+
+for (const shared of [false, true]) for (const outcome of ['completed', 'failed', 'interrupted'] as const) for (const fault of [false, true]) {
+  test(`accepted Linear ownership survives start journal failure: shared=${shared}, ${outcome}, fault=${fault}`, async (t) => withTempAnimaHome(async (home) => {
+    const { service, fake, agentStore, store } = await seedLinear(home);
+    t.mock.method(globalThis, 'fetch', fake.fetch);
+    t.mock.method(console, 'log', () => {}); t.mock.method(console, 'error', () => {});
+    let injected = false, completions = 0, runs = 0, appends = 0;
+    const completeRun = LinearSessionService.prototype.completeRun;
+    t.mock.method(LinearSessionService.prototype, 'completeRun', async function (this: LinearSessionService, runItemId: string) {
+      try { return await completeRun.call(this, runItemId); } finally { completions++; }
+    });
+    const update = LinearStore.prototype.update;
+    t.mock.method(LinearStore.prototype, 'update', function (this: LinearStore, op: Parameters<LinearStore['update']>[0]) {
+      return update.call(this, async (file) => {
+        const next = await op(file);
+        const ownershipWrite = Object.entries(next.receipts).some(([id, r]) => r.runItemId && !file.receipts[id]?.runItemId);
+        if (fault && !injected && ownershipWrite) { injected = true; throw new Error('Synthetic ownership journal unavailable once'); }
+        return next;
+      });
+    });
+    const queue = new WakeQueueService('scout');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let actualRoot!: string;
+    const runtime = {
+      kind: 'synthetic',
+      async run(input: AgentRuntimeInput) {
+        runs++; actualRoot = input.itemId;
+        await Promise.race([gate, new Promise<never>((_resolve, reject) => {
+          input.signal!.addEventListener('abort', () => reject(new Error('Synthetic interrupted run')), { once: true });
+        })]);
+        if (outcome === 'failed') throw new Error('Synthetic provider failure');
+        return { text: 'Synthetic completion without platform response' };
+      },
+      async appendToActiveRun() { appends++; return { accepted: true }; },
+      async close() { release(); },
+    };
+    if (shared) await queue.enqueue(makeSlackEvent({ eventId: 'synthetic-root', channelId: 'D-control', userId: 'U-control', ts: '1770000020.000001', text: 'Synthetic root', teamId: 'T-control' }));
+    else { await service.receive(created(), install); await service.tick(); }
+    const runner = await startRunningAgent({ agentId: 'scout', agentRuntime: runtime, animaHome: home, stateDir: home,
+      homePath: (await agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
+    try {
+      await waitFor(() => runs === 1);
+      if (shared) { await service.receive(created(), install); await service.tick(); await waitFor(() => appends === 1); }
+      await waitFor(async () => fault ? injected : Object.values((await store.read()).receipts).some((r) => r.runItemId));
+      if (shared) assert.equal((await queue.list()).find((i) => i.kind === 'linear')!.handling.appendedToItemId, actualRoot);
+      if (outcome === 'interrupted') await queue.requestStop(actualRoot); else release();
+      await waitFor(() => completions >= 1, { timeoutMs: 3000 });
+      await waitFor(async () => Object.values((await store.read()).receipts).every((r) => r.settled), { timeoutMs: 3000 });
+      await service.tick();
+      await waitFor(async () => (await queue.list()).length === 0, { timeoutMs: 3000 });
+      const receipt = Object.values((await store.read()).receipts)[0]!;
+      const notices = fake.posts.filter((p) => p.content.type === 'error');
+      assert.equal(injected, fault); assert.equal(runs, 1); assert.equal(appends, shared ? 1 : 0);
+      assert.equal(notices.length, 1, 'Accepted input must receive a final notice despite a transient ownership write failure');
+      assert.match(notices[0]!.content.body, outcome === 'completed' ? /ended without a confirmed/ : outcome === 'failed' ? /model run failed/ : /interrupted/);
+      assert.equal(receipt.runItemId, actualRoot); assert.equal(receipt.answered, true);
+      assert.equal(receipt.item, undefined);
+      const posts = fake.posts.length;
+      await service.receive(created(), install); await service.tick();
+      assert.equal((await queue.list()).length, 0); assert.equal(fake.posts.length, posts); assert.equal(runs, 1);
+    } finally { release(); await runner.stop(); }
+  }));
+}

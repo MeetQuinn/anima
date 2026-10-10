@@ -24,6 +24,9 @@ const IssueUpdated = z.object({ issueUpdate: z.object({ success: z.literal(true)
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
 
 export class LinearSessionService {
+  // Worker hooks are best effort. Keep the actual accepted owner until its journal
+  // write succeeds, even when the queue has already removed the settled input.
+  private readonly pendingOwners = new Map<string, { installationId: string; runItemId: string }>();
   constructor(readonly identity: LinearIdentityService) {}
   get agentId(): string { return this.identity.agentId; }
 
@@ -75,11 +78,14 @@ export class LinearSessionService {
 
   async markStarted(item: InboxItem, runItemId: string): Promise<void> {
     if (item.kind !== 'linear') return;
+    const owner = { installationId: item.installationId, runItemId };
+    this.pendingOwners.set(item.id, owner);
     const startedFile = await this.identity.store.update((file) => {
       const receipt = file.receipts[item.id];
       if (!receipt || receipt.stopped || file.installation?.id !== item.installationId) return file;
       return { ...file, receipts: { ...file.receipts, [item.id]: { ...receipt, runItemId } } };
     });
+    if (this.pendingOwners.get(item.id) === owner) this.pendingOwners.delete(item.id);
     if (startedFile.receipts[item.id]?.stopped || startedFile.receipts[item.id]?.runItemId !== runItemId) return;
     if (item.issueId && item.humanRequested) {
       const result = await this.identity.graphql(item.installationId,
@@ -98,11 +104,15 @@ export class LinearSessionService {
     // A deferred/restart wake remains queued. It is not a completed turn.
     const queued = await wakeQueueServiceForAgent(this.agentId).find(item.id);
     if (queued && !queued.handling.settledAt) return;
+    const owner = this.pendingOwners.get(item.id);
     await this.identity.store.update((file) => {
       const receipt = file.receipts[item.id];
       if (!receipt || file.installation?.id !== item.installationId) return file;
-      return { ...file, receipts: { ...file.receipts, [item.id]: { ...receipt, settled: true, item: undefined } } };
+      const settled = { ...receipt, settled: true, item: undefined };
+      if (owner?.installationId === item.installationId) settled.runItemId = owner.runItemId;
+      return { ...file, receipts: { ...file.receipts, [item.id]: settled } };
     });
+    if (this.pendingOwners.get(item.id) === owner) this.pendingOwners.delete(item.id);
   }
 
   async stop(sessionId: string): Promise<void> {
@@ -128,12 +138,17 @@ export class LinearSessionService {
   }
 
   async finishRun(runItemId: string, body: string): Promise<void> {
-    if (!Object.values((await this.identity.store.read()).receipts).some((r) => r.runItemId === runItemId && !r.answered)) return;
+    const pending = [...this.pendingOwners].filter(([, owner]) => owner.runItemId === runItemId);
+    if (!pending.length && !Object.values((await this.identity.store.read()).receipts).some((r) => r.runItemId === runItemId && !r.answered)) return;
     const file = await this.identity.store.update((current) => {
       const receipts = { ...current.receipts };
+      for (const [id, owner] of pending) {
+        if (current.installation?.id === owner.installationId && receipts[id]) receipts[id] = { ...receipts[id], runItemId: owner.runItemId };
+      }
       for (const [id, r] of Object.entries(receipts)) if (r.runItemId === runItemId) receipts[id] = { ...r, settled: true, item: undefined };
       return { ...current, receipts };
     });
+    for (const [id, owner] of pending) if (this.pendingOwners.get(id) === owner) this.pendingOwners.delete(id);
     const sessions = new Set(Object.values(file.receipts).filter((r) => r.runItemId === runItemId && !r.answered).map((r) => r.sessionId));
     const results = await Promise.allSettled([...sessions].map((session) => this.respond(session, 'error', body, runItemId, 'failed')));
     if (results.some((r) => r.status === 'rejected')) throw new Error('Linear run ended; one or more final notices could not be confirmed.');

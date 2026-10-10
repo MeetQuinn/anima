@@ -1,5 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { JsonFile } from '../storage/json-file.js';
+import { LinearSessionService } from '../linear/session.service.js';
+import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
 import { createHmac } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
 import { LinearMessageTransport } from '../transports/linear-message-transport.js';
@@ -49,7 +54,7 @@ test('dedicated port rejects unsigned, stale, cross-app and dashboard routes; ac
     assert.equal((await new WakeQueueService('scout').list()).length, 1);
     assert.equal(Object.keys((await store.read()).receipts).length, 1);
     assert.ok((await identity.status()).lastSignedWebhookAt);
-    assert.equal((await identity.status()).signatureFailures, 2);
+    await waitFor(async () => (await identity.status()).signatureFailures === 2, { timeoutMs: 3000 });
     await agentStore.update((agent) => ({ ...agent, enabled: false }));
     const disabled = created(install.id);
     assert.equal((await post(port, disabled, sign(disabled))).status, 503);
@@ -97,4 +102,72 @@ test('revocation and session/type consistency are enforced using signed identity
     assert.equal((await new WakeQueueService('scout').list()).length, 0);
     await transport.reconcile([await agentStore.read()]); await assert.rejects(post(port, created()));
   } finally { await transport.stop(); }
+}));
+
+for (const matching of [false, true]) test(`unsigned claims use a bounded small journal, matching=${matching}`, async (t) => withTempAnimaHome(async (home) => {
+  const { service, fake, agentStore, store, identity } = await seedLinear(home);
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  const event = created(); event.promptContext = 'Synthetic large context. '.repeat(3000);
+  await service.receive(event, install); await service.tick();
+  const realNow = Date.now.bind(Date); let offset = 0; t.mock.method(Date, 'now', () => realNow() + offset);
+  const port = await unusedPort(); await new ServerConfigStore().update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
+  let ticks = 0;
+  const tick = LinearSessionService.prototype.tick;
+  t.mock.method(LinearSessionService.prototype, 'tick', async function (this: LinearSessionService) {
+    await tick.call(this); ticks++;
+  });
+  const transport = new LinearMessageTransport(home, { error() {} });
+  const app = transport.buildApp();
+  try {
+    await transport.reconcile([await agentStore.read()]); await waitFor(() => ticks === 1);
+    const journalPath = join(home, 'agents/scout/linear.json');
+    const journal = await readFile(journalPath);
+    assert.ok(journal.byteLength > 50_000);
+    let credentialWrites = 0, diagnosticWrites = 0;
+    const update = JsonFile.prototype.update;
+    t.mock.method(JsonFile.prototype, 'update', function (this: JsonFile<unknown>, op: Parameters<JsonFile<unknown>['update']>[0]) {
+      return update.call(this, async (file) => {
+        const next = await op(file);
+        if (next !== file && this.path.endsWith('/linear.json')) credentialWrites++;
+        if (next !== file && this.path.endsWith('/linear-diagnostics.json')) diagnosticWrites++;
+        return next;
+      });
+    });
+    const rejectBurst = async (count: number) => {
+      for (let n = 0; n < count; n++) {
+        const result = await app.inject({ method: 'POST', url: '/webhook', headers: { 'content-type': 'application/json' },
+          payload: JSON.stringify({ oauthClientId: matching ? install.clientId : 'unknown-client' }) });
+        assert.equal(result.statusCode, 403);
+      }
+    };
+    await rejectBurst(100);
+    const before = ticks; await waitFor(() => ticks > before, { timeoutMs: 3000 });
+    if (matching) await waitFor(async () => (await identity.status()).signatureFailures === 100);
+    assert.equal(diagnosticWrites, matching ? 1 : 0);
+    await rejectBurst(80);
+    const second = ticks; await waitFor(() => ticks > second, { timeoutMs: 3000 });
+    assert.equal(diagnosticWrites, matching ? 1 : 0, 'A burst must not trigger another write inside the one-minute window');
+    assert.equal((await identity.status()).signatureFailures, matching ? 100 : 0);
+    offset += 60_001;
+    const third = ticks; await waitFor(() => ticks > third, { timeoutMs: 3000 });
+    if (matching) await waitFor(async () => (await identity.status()).signatureFailures === 180);
+    assert.equal(diagnosticWrites, matching ? 2 : 0);
+    assert.equal(credentialWrites, 0); assert.deepEqual(await readFile(journalPath), journal);
+    assert.equal((await new WakeQueueService('scout').list()).length, 1);
+    if (matching) {
+      const path = join(home, 'agents/scout/linear-diagnostics.json');
+      const diagnostic = await readFile(path, 'utf8');
+      assert.ok(Buffer.byteLength(diagnostic) < 150); assert.equal((await stat(path)).mode & 0o777, 0o600);
+      assert.doesNotMatch(diagnostic, /access|refresh|secret|Synthetic large context/);
+    }
+    await rejectBurst(7);
+    await identity.remove(); await transport.reconcile([await agentStore.read()]);
+    const countAfterRemoval = diagnosticWrites;
+    await app.inject({ method: 'POST', url: '/webhook', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ oauthClientId: install.clientId }) });
+    await transport.stop();
+    assert.equal(diagnosticWrites, countAfterRemoval); assert.equal((await identity.status()).signatureFailures, 0);
+    assert.equal((await new LinearDiagnosticsStore('scout').read()).signatureFailures, matching ? 180 : 0);
+    await store.update((file) => ({ ...file, installation: { ...install, id: 'replacement-installation' } }));
+    assert.equal((await identity.status()).signatureFailures, 0, 'New installation must not inherit old diagnostic counts');
+  } finally { await app.close(); await transport.stop(); }
 }));

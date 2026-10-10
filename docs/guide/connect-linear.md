@@ -39,7 +39,9 @@ connection and prepare a new one. There is no separate CLI installation flow.
 
 **App installed** records the verified app identity. It does not prove that ingress is reachable.
 The setting shows the last verified, signed webhook received and the number of rejected
-signature claims naming this app. These are facts, not a health or availability verdict.
+signature claims naming this app. The count is saved in a separate small diagnostic file,
+at most once a minute and when the listener stops. Unknown app claims are not counted;
+a crash can lose the unsaved batch. These are facts, not a health or availability verdict.
 
 ## Receive and report work
 

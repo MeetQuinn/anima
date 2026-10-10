@@ -39,7 +39,6 @@ const LinearFile = z.object({
   receipts: z.record(z.string(), Receipt).default({}),
   operations: z.record(z.string(), Operation).default({}),
   lastSignedWebhookAt: z.string().optional(),
-  signatureFailures: z.number().int().nonnegative().default(0),
   lastError: z.string().optional(),
 });
 type LinearFile = z.infer<typeof LinearFile>;
@@ -52,7 +51,7 @@ export class LinearStore {
       path: () => join(animaHome, 'agents', agentId, 'linear.json'),
       writeRoot: () => animaHome,
       mode: 0o600,
-      empty: () => ({ receipts: {}, operations: {}, signatureFailures: 0 }),
+      empty: () => ({ receipts: {}, operations: {} }),
       parse: (value) => LinearFile.parse(value),
     });
   }

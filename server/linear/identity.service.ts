@@ -7,6 +7,7 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { AgentStore } from '../storage/schema/agent.store.js';
 import { serverConfigStore } from '../storage/schema/server.store.js';
 import { LinearStore, type LinearInstallation } from '../storage/schema/linear.store.js';
+import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
 import { LinearApiError, LinearClient } from './client.js';
 
 const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.literal(true) }), organization: z.object({ id: z.string().uuid() }),
@@ -32,9 +33,10 @@ export class LinearIdentityService {
   async status(): Promise<LinearStatus> {
     await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
     const file = await this.store.read();
+    const diagnostics = await new LinearDiagnosticsStore(this.agentId, this.store.animaHome).read();
     const result: LinearStatus = {
       state: file.installation ? (file.installation.revoked ? 'revoked' : 'connected') : file.pending && file.pending.expiresAt > Date.now() ? 'installing' : 'not_configured',
-      signatureFailures: file.signatureFailures,
+      signatureFailures: diagnostics.installationId === file.installation?.id ? diagnostics.signatureFailures : 0,
     };
     if (file.installation) {
       result.clientId = file.installation.clientId;
@@ -119,7 +121,7 @@ export class LinearIdentityService {
   async remove(): Promise<void> {
     await this.store.update(async () => {
       await new AgentStore(this.agentId).update((agent) => ({ ...agent, linear: undefined }));
-      return { receipts: {}, operations: {}, signatureFailures: 0 };
+      return { receipts: {}, operations: {} };
     });
   }
 
