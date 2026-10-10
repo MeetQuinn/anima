@@ -118,8 +118,13 @@ for (const matching of [false, true]) test(`unsigned claims use a bounded small 
   });
   const transport = new LinearMessageTransport(home, { error() {} });
   const app = transport.buildApp();
+  const waitForTransportTick = async (after: number) => {
+    await waitFor(() => ticks > after, { timeoutMs: 3000 });
+    // Service completion precedes diagnostics; assert only after the entire transport batch.
+    await (transport as unknown as { tickInFlight?: Promise<void> }).tickInFlight;
+  };
   try {
-    await transport.reconcile([await agentStore.read()]); await waitFor(() => ticks === 1);
+    await transport.reconcile([await agentStore.read()]); await waitForTransportTick(0);
     const journalPath = join(home, 'agents/scout/linear.json');
     const journal = await readFile(journalPath);
     assert.ok(journal.byteLength > 50_000);
@@ -141,15 +146,15 @@ for (const matching of [false, true]) test(`unsigned claims use a bounded small 
       }
     };
     await rejectBurst(100);
-    const before = ticks; await waitFor(() => ticks > before, { timeoutMs: 3000 });
+    const before = ticks; await waitForTransportTick(before);
     if (matching) await waitFor(async () => (await identity.status()).signatureFailures === 100);
     assert.equal(diagnosticWrites, matching ? 1 : 0);
     await rejectBurst(80);
-    const second = ticks; await waitFor(() => ticks > second, { timeoutMs: 3000 });
+    const second = ticks; await waitForTransportTick(second);
     assert.equal(diagnosticWrites, matching ? 1 : 0, 'A burst must not trigger another write inside the one-minute window');
     assert.equal((await identity.status()).signatureFailures, matching ? 100 : 0);
     offset += 60_001;
-    const third = ticks; await waitFor(() => ticks > third, { timeoutMs: 3000 });
+    const third = ticks; await waitForTransportTick(third);
     if (matching) await waitFor(async () => (await identity.status()).signatureFailures === 180);
     assert.equal(diagnosticWrites, matching ? 2 : 0);
     assert.equal(credentialWrites, 0); assert.deepEqual(await readFile(journalPath), journal);
