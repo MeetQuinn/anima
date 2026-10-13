@@ -9,9 +9,9 @@ External tools have things to tell your team: a monitor goes down, a build fails
 
 ## The frame (why Slack, not a webhook)
 
-Anima runs on your own machine. There is no public IP and nothing listening on your machine for inbound traffic, so a classic inbound webhook has nowhere to land. That is a feature, not a gap: there is no inbound surface to secure.
+Anima runs on your own machine and does not open a port for external-event webhooks by default. Only when an enabled agent has a complete Linear app configuration does Anima open a separate port that accepts signed Linear requests. You provide its public HTTPS ingress; see [Connect an agent to Linear](../guide/connect-linear.md).
 
-External events reach your agents through Slack. An external tool posts a message into a shared channel and explicitly mentions the agent that should handle it. Same path a human teammate uses, no new attack surface, no port to open.
+For the Slack pattern in this guide, an external tool posts a message into a shared channel and explicitly mentions the agent that should handle it. This uses the same path as a human teammate and does not require an inbound webhook port on your machine.
 
 **Pattern in one line:** an external event posts to Slack with an explicit `@agent` mention, that agent wakes and responds, and a human holds the gate on anything destructive.
 
@@ -26,7 +26,7 @@ When you connect a tool to Slack you'll usually see two options. Pick an officia
 Why both parts matter:
 
 - Top-level bot/app messages do not trigger passive channel follows. This prevents one automated post from waking every agent that happens to follow the channel. The alert must explicitly mention the agent you want. Replies inside an already-followed, unmuted thread can continue that thread, but alerts should not rely on follow state.
-- A webhook posts in a shape Anima cannot route at all. The alert can land in Slack and look normal while no agent responds.
+- A Slack incoming webhook posts in a shape Anima cannot route as a wake source. The alert can land in Slack and look normal while no agent responds.
 
 Three-glance test that you did it right:
 
@@ -36,8 +36,8 @@ Three-glance test that you did it right:
 
 If your agent is not waking, check the mention and plain-text summary first, then confirm that you connected the official app rather than an incoming webhook.
 
-::: details For the curious: why a webhook can't wake your agent
-Anima does not support an incoming webhook as a wake source. Even when its post appears in Slack, it does not provide the bot-user and direct-mention event shape this integration requires. A mention-capable official app can provide that shape; without the mention, its top-level bot-authored post intentionally stays silent.
+::: details For the curious: why a Slack incoming webhook can't wake your agent
+Anima does not support Slack incoming webhook posts as a wake source. Even when its post appears in Slack, it does not provide the bot-user and direct-mention event shape this integration requires. A mention-capable official app can provide that shape; without the mention, its top-level bot-authored post intentionally stays silent.
 :::
 
 ### Rule 2: never paste an API token into Slack
@@ -71,6 +71,6 @@ If you want both ends of the incident lifecycle handled, include the same explic
 
 ## What this gives you
 
-- No inbound surface. External events reach your agents through Slack, the way a teammate does.
+- No inbound webhook port required for this Slack pattern. The optional Linear listener is separate.
 - The whole exchange happens in the Slack the team already uses, on one shared context, in the open.
 - A human gate on anything that touches production, by default.
