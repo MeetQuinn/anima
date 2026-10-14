@@ -299,6 +299,28 @@ what Anima received; it does not prove the task is still running or authorize
 killing it. Only native lifecycle signals change quiescence. A new provider child
 starts with empty diagnostic state; elapsed time alone never clears it.
 
+### Claude subagent activity attribution
+
+Child transcripts supply tool ownership and model information when streamed
+activity lacks enough linkage. Explicit root or child ownership takes precedence.
+Fallback lookup matches structured tool IDs, so an ID mentioned in text does not
+claim ownership. The reader lives in `server/providers/claude-subagent-transcript.ts`;
+`claude-events.ts` emits the resulting activities.
+
+The fallback index belongs to one activity mapper and separates projects and native
+sessions. Its first ambiguous lookup reads retained child history once. Later
+lookups list and stat files, but unchanged transcripts require no body reads.
+New files and appends make previously missing IDs discoverable; incomplete JSON or
+UTF-8 tails and failed reads remain retryable.
+
+A growing file can also have been truncated and rewritten at the same inode.
+Anima verifies the complete cached prefix before retaining its ownership, model
+and offset. A changed prefix rebuilds that file; a valid append parses only the
+new tail. This verification reads and hashes the old prefix of growing files,
+while unchanged historical files keep their cached index. Activity mapping is
+awaited in the stdout pipeline, so filesystem work here can delay activity and
+completion recording even after the native provider has progressed.
+
 ### Claude credentials
 
 Claude accounts are managed outside Anima (native Claude Code login or your own switcher).
