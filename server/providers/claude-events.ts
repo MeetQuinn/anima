@@ -97,7 +97,7 @@ function createJsonlActivityMapper(
     pendingUnlinkedTexts: [],
     pendingUnlinkedToolsById: new Map(),
     providerToolsById: new Map(),
-    subagentIdByToolId: new Map(),
+    subagentTranscriptIndexesByDir: new Map(),
     subagentMetadataByKey: new Map(),
   };
   return {
