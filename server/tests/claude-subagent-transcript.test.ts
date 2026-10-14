@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 
+import { createClaudeJsonlActivityMapper } from '../providers/claude-events.js';
 import {
   claudeSubagentsDir,
   subagentActivityLinkageFromClaudeJson,
@@ -124,16 +125,19 @@ test('unique misses and hits reuse indexed history without rereading transcript 
 
 test('appends and new files invalidate misses and update the child model', async (t) => {
   const f = await fixture(t);
+  await f.writeChild('unchanged-history', row('historical-tool'));
   await f.writeChild('child', JSON.stringify({ type: 'user', message: {
     content: [{ type: 'tool_result', tool_use_id: 'early-tool' }],
   } }) + '\n');
   assert.equal((await f.lookup('early-tool'))['model'], undefined);
   assert.deepEqual(await f.lookup('late-tool'), {});
   const before = f.io.bytes;
+  const oldSize = (await fs.stat(join(f.dir, 'agent-child.jsonl'))).size;
   const appended = row('late-tool', 'late-model');
   await fs.appendFile(join(f.dir, 'agent-child.jsonl'), appended);
   assert.equal((await f.lookup('late-tool'))['subRunId'], 'child');
-  assert.equal(f.io.bytes - before, Buffer.byteLength(appended));
+  // Verify only the changed file's old prefix, then parse its appended bytes.
+  assert.equal(f.io.bytes - before, oldSize + Buffer.byteLength(appended));
   assert.equal((await f.lookup('early-tool'))['model'], 'late-model');
 
   assert.deepEqual(await f.lookup('new-file-tool'), {});
@@ -213,3 +217,75 @@ test('indexes are isolated by project and native session', async (t) => {
   assert.equal(second['model'], 'model-two');
   assert.equal((await f.lookup('shared-tool'))['model'], 'model-one');
 });
+
+async function activityConsumer() {
+  const tools: Record<string, unknown>[] = [];
+  const mapper = createClaudeJsonlActivityMapper({
+    persistProviderSession: async () => {},
+    recordAgentText: async () => {},
+    recordEvent: async () => {},
+    recordOutput: async () => {},
+    recordUsage: async () => {},
+    recordRuntime: async () => {},
+    recordToolFailed: async () => {},
+    recordToolStarted: async (tool) => { tools.push(tool); },
+  }, 'synthetic');
+  await mapper.accept(JSON.stringify({
+    type: 'system', subtype: 'init', cwd: '/test/project', session_id: 'session-one',
+  }) + '\n');
+  return {
+    async lookup(toolId: string) {
+      await mapper.accept(row(toolId));
+      const tool = tools.slice().reverse().find(tool => tool['providerToolId'] === toolId);
+      assert.ok(tool);
+      return {
+        subRunId: tool['subRunId'], parentToolCallId: tool['parentToolCallId'], model: tool['model'],
+      };
+    },
+  };
+}
+
+for (const transition of ['append', 'visible truncation', 'rewrite larger', 'rewrite middle'] as const) {
+  test(`activity mapper warm/cold ownership agrees after ${transition}`, async (t) => {
+    const f = await fixture(t);
+    // For the middle rewrite, retain both ends of the old prefix to rule out a
+    // sampled head/tail fingerprint as an append guarantee.
+    const padding = JSON.stringify({ type: 'assistant', message: {
+      content: [{ type: 'text', text: 'x'.repeat(80_000) }],
+    } }) + '\n';
+    const original = transition === 'rewrite middle'
+      ? padding + row('old-tool', 'old-child-model') + padding
+      : row('old-tool', 'old-child-model');
+    await f.writeChild('child', original);
+    const path = join(f.dir, 'agent-child.jsonl');
+    const before = await fs.stat(path);
+    const warm = await activityConsumer();
+    assert.equal((await warm.lookup('missing-prime'))['subRunId'], undefined);
+
+    if (transition === 'visible truncation') {
+      await fs.truncate(path, 0);
+      assert.equal((await warm.lookup('observe-empty'))['subRunId'], undefined);
+      await fs.appendFile(path, row('new-tool', 'new-child-model'));
+    } else if (transition === 'append') {
+      await fs.appendFile(path, row('new-tool', 'old-child-model'));
+    } else {
+      const current = transition === 'rewrite middle'
+        ? padding + row('new-tool', 'new-child-model') + padding + padding
+        : row('new-tool', 'new-child-model') + padding;
+      await fs.writeFile(path, current);
+      await fs.utimes(path, new Date('2026-01-01'), new Date('2026-01-01'));
+      const after = await fs.stat(path);
+      assert.equal(after.dev, before.dev);
+      assert.equal(after.ino, before.ino);
+      assert.ok(after.size > before.size);
+      assert.notEqual(after.mtimeMs, before.mtimeMs);
+      assert.deepEqual(await f.lookup('old-tool'), {});
+    }
+    const expected = {
+      subRunId: 'child', parentToolCallId: 'parent-child',
+      model: transition === 'append' ? 'old-child-model' : 'new-child-model',
+    };
+    assert.deepEqual(await warm.lookup('new-tool'), expected);
+    assert.deepEqual(await (await activityConsumer()).lookup('new-tool'), expected);
+  });
+}

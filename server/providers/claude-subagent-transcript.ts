@@ -7,6 +7,7 @@
 // it never emits activities. The emitting orchestration (ingest/record/flush)
 // lives in claude-events.ts, which imports from here.
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +40,7 @@ interface ClaudeSubagentTranscriptFile {
   ino: number;
   size: number;
   mtimeMs: number;
+  contentHash: string;
   offset: number;
   info: ClaudeSubagentInfo;
   toolIds: Set<string>;
@@ -361,22 +363,41 @@ async function refreshClaudeSubagentTranscriptFile(
     const handle = await fs.open(path, 'r');
     try {
       const current = await handle.stat();
-      const file = previous && previous.dev === current.dev && previous.ino === current.ino &&
-        previous.size < current.size ? previous : {
-          dev: current.dev,
-          ino: current.ino,
-          size: 0,
-          mtimeMs: 0,
-          offset: 0,
-          info: { agentId },
-          toolIds: new Set<string>(),
-        };
       const buffer = Buffer.alloc(64 * 1024);
+      let hash = createHash('sha256');
+      let append = false;
+      if (previous && previous.dev === current.dev && previous.ino === current.ino && previous.size < current.size) {
+        // The same inode can be truncated and rewritten to a larger size. Verify
+        // the entire cached prefix before retaining its tool IDs, model or offset.
+        let position = 0;
+        while (position < previous.size) {
+          const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, previous.size - position), position);
+          if (bytesRead === 0) throw new Error('Subagent transcript changed during prefix verification');
+          hash.update(buffer.subarray(0, bytesRead));
+          position += bytesRead;
+        }
+        append = hash.copy().digest('hex') === previous.contentHash;
+      }
+      const hashOffset = append && previous ? previous.size : 0;
+      if (!append) hash = createHash('sha256');
+      const file = previous && append ? previous : {
+        dev: current.dev,
+        ino: current.ino,
+        size: 0,
+        mtimeMs: 0,
+        contentHash: '',
+        offset: 0,
+        info: { agentId },
+        toolIds: new Set<string>(),
+      };
       let position = file.offset;
       let pending: Buffer[] = [];
       while (position < current.size) {
         const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, current.size - position), position);
-        if (bytesRead === 0) break;
+        if (bytesRead === 0) throw new Error('Subagent transcript changed during indexing');
+        if (position + bytesRead > hashOffset) {
+          hash.update(buffer.subarray(Math.max(0, hashOffset - position), bytesRead));
+        }
         let start = 0;
         for (let end = buffer.indexOf(10, start); end >= 0 && end < bytesRead; end = buffer.indexOf(10, start)) {
           const segment = buffer.subarray(start, end);
@@ -395,6 +416,7 @@ async function refreshClaudeSubagentTranscriptFile(
       if (pending.length > 0) indexClaudeSubagentTranscriptLine(Buffer.concat(pending).toString('utf8'), file);
       file.size = current.size;
       file.mtimeMs = current.mtimeMs;
+      file.contentHash = hash.digest('hex');
       index.files.set(name, file);
       index.dirty = true;
     } finally {
