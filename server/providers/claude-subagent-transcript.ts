@@ -7,7 +7,7 @@
 // it never emits activities. The emitting orchestration (ingest/record/flush)
 // lives in claude-events.ts, which imports from here.
 
-import { readFile, readdir } from 'node:fs/promises';
+import fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,6 +29,27 @@ interface PendingClaudeAgentText {
   text: string;
 }
 
+interface ClaudeSubagentInfo {
+  agentId: string;
+  model?: string;
+}
+
+interface ClaudeSubagentTranscriptFile {
+  dev: number;
+  ino: number;
+  size: number;
+  mtimeMs: number;
+  offset: number;
+  info: ClaudeSubagentInfo;
+  toolIds: Set<string>;
+}
+
+interface ClaudeSubagentTranscriptIndex {
+  files: Map<string, ClaudeSubagentTranscriptFile>;
+  byToolId: Map<string, ClaudeSubagentInfo>;
+  dirty: boolean;
+}
+
 export interface ClaudeJsonlMapperState {
   context: ClaudeJsonlMapperContext;
   emittedSubagentTextKeys: Set<string>;
@@ -39,8 +60,8 @@ export interface ClaudeJsonlMapperState {
   pendingUnlinkedTexts: PendingClaudeAgentText[];
   pendingUnlinkedToolsById: Map<string, Record<string, unknown>>;
   providerToolsById: Map<string, Record<string, unknown>>;
-  subagentIdByToolId: Map<string, { agentId: string; model?: string }>;
-  subagentMetadataByKey: Map<string, Record<string, unknown> | undefined>;
+  subagentTranscriptIndexesByDir: Map<string, ClaudeSubagentTranscriptIndex>;
+  subagentMetadataByKey: Map<string, Record<string, unknown>>;
 }
 
 export function hasSubagentLinkage(payload: Record<string, unknown>): boolean {
@@ -120,13 +141,23 @@ export async function subagentActivityLinkageFromClaudeJson(
 ): Promise<Record<string, unknown>> {
   if (!isRecord(value)) return {};
   const toolUseResult = isRecord(value['toolUseResult']) ? value['toolUseResult'] : undefined;
-  const subagentInfo = await claudeSubagentInfoFromToolIds(value, state);
-  const agentId =
+  const explicitAgentId =
     stringField(value, 'agentId') ??
     stringField(value, 'agent_id') ??
     stringField(toolUseResult, 'agentId') ??
-    stringField(toolUseResult, 'agent_id') ??
-    subagentInfo?.agentId;
+    stringField(toolUseResult, 'agent_id');
+  const explicitLinkage = claudeSubagentLinkage(value, explicitAgentId, undefined);
+  // Claude stream-json marks root messages with a null parent; native transcript
+  // rows use isSidechain=false. Neither needs a historical ownership search.
+  if (!explicitAgentId && !hasSubagentLinkage(explicitLinkage) && (
+    value['parent_tool_use_id'] === null || value['isSidechain'] === false
+  )) return {};
+
+  const knownAgentId = explicitAgentId ?? stringField(explicitLinkage, 'subRunId');
+  const subagentInfo = knownAgentId
+    ? await claudeSubagentInfoForAgent(value, knownAgentId, state)
+    : await claudeSubagentInfoFromToolIds(value, state);
+  const agentId = knownAgentId ?? subagentInfo?.agentId;
   const metadata = await claudeSubagentMetadata(value, agentId, state);
   const linkage = claudeSubagentLinkage(value, agentId, metadata);
   if (subagentInfo?.model) linkage['model'] = subagentInfo.model;
@@ -194,26 +225,47 @@ async function claudeSubagentMetadata(
   const cacheKey = `${cwd}\u0000${sessionId}\u0000${agentId}`;
   if (state.subagentMetadataByKey.has(cacheKey)) return state.subagentMetadataByKey.get(cacheKey);
   const metadata = await readClaudeSubagentMetadata(cwd, sessionId, agentId);
-  state.subagentMetadataByKey.set(cacheKey, metadata);
+  if (metadata) state.subagentMetadataByKey.set(cacheKey, metadata);
   return metadata;
+}
+
+async function claudeSubagentInfoForAgent(
+  value: Record<string, unknown>,
+  agentId: string,
+  state: ClaudeJsonlMapperState,
+): Promise<ClaudeSubagentInfo> {
+  const message = isRecord(value['message']) ? value['message'] : undefined;
+  const model = stringField(message, 'model') ?? stringField(value, 'model');
+  // toolUseResult.agentId identifies a delegated child; the enclosing message's
+  // model can still be the parent's, so only trust an explicitly child-owned row.
+  if (model && (stringField(value, 'agentId') === agentId ||
+    stringField(value, 'agent_id') === agentId ||
+    hasSubagentLinkage(claudeSubagentLinkage(value, undefined, undefined)))) return { agentId, model };
+  const cwd = stringField(value, 'cwd') ?? state.context.cwd;
+  const sessionId = stringField(value, 'sessionId') ?? stringField(value, 'session_id') ?? state.context.sessionId;
+  if (!cwd || !sessionId) return { agentId };
+  const dir = claudeSubagentsDir(cwd, sessionId);
+  const index = claudeSubagentTranscriptIndex(dir, state);
+  const name = `agent-${agentId}.jsonl`;
+  await refreshClaudeSubagentTranscriptFile(dir, name, agentId, index);
+  return index.files.get(name)?.info ?? { agentId };
 }
 
 async function claudeSubagentInfoFromToolIds(
   value: Record<string, unknown>,
   state: ClaudeJsonlMapperState,
-): Promise<{ agentId: string; model?: string } | undefined> {
+): Promise<ClaudeSubagentInfo | undefined> {
   const cwd = stringField(value, 'cwd') ?? state.context.cwd;
   const sessionId = stringField(value, 'sessionId') ?? stringField(value, 'session_id') ?? state.context.sessionId;
   if (!cwd || !sessionId) return undefined;
-  for (const toolId of claudeToolIdsFromJson(value)) {
-    const cacheKey = `${cwd}\u0000${sessionId}\u0000${toolId}`;
-    const cached = state.subagentIdByToolId.get(cacheKey);
-    if (cached) return cached;
-    const info = await readClaudeSubagentInfoForToolId(cwd, sessionId, toolId);
-    if (info) {
-      state.subagentIdByToolId.set(cacheKey, info);
-      return info;
-    }
+  const toolIds = claudeToolIdsFromJson(value);
+  if (toolIds.length === 0) return undefined;
+  const dir = claudeSubagentsDir(cwd, sessionId);
+  const index = claudeSubagentTranscriptIndex(dir, state);
+  await refreshClaudeSubagentTranscriptIndex(dir, index);
+  for (const toolId of toolIds) {
+    const info = index.byToolId.get(toolId);
+    if (info) return info;
   }
   return undefined;
 }
@@ -224,7 +276,9 @@ function claudeToolIdsFromJson(value: Record<string, unknown>): string[] {
   const ids: string[] = [];
   for (const item of message['content']) {
     if (!isRecord(item)) continue;
-    const id = stringField(item, 'id') ?? stringField(item, 'tool_use_id');
+    const type = stringField(item, 'type');
+    const id = type === 'tool_use' ? stringField(item, 'id')
+      : type === 'tool_result' ? stringField(item, 'tool_use_id') : undefined;
     if (id) ids.push(id);
   }
   return ids;
@@ -237,37 +291,128 @@ export async function readClaudeSubagentMetadata(
 ): Promise<Record<string, unknown> | undefined> {
   const path = join(claudeSubagentsDir(cwd, sessionId), `agent-${agentId}.meta.json`);
   try {
-    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
+    const parsed: unknown = JSON.parse(await fs.readFile(path, 'utf8'));
     return isRecord(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
 }
 
-async function readClaudeSubagentInfoForToolId(
-  cwd: string,
-  sessionId: string,
-  toolId: string,
-): Promise<{ agentId: string; model?: string } | undefined> {
+function claudeSubagentTranscriptIndex(
+  dir: string,
+  state: ClaudeJsonlMapperState,
+): ClaudeSubagentTranscriptIndex {
+  let index = state.subagentTranscriptIndexesByDir.get(dir);
+  if (!index) {
+    index = { files: new Map(), byToolId: new Map(), dirty: false };
+    state.subagentTranscriptIndexesByDir.set(dir, index);
+  }
+  return index;
+}
+
+async function refreshClaudeSubagentTranscriptIndex(
+  dir: string,
+  index: ClaudeSubagentTranscriptIndex,
+): Promise<void> {
+  const names = new Set<string>();
   try {
-    const dir = claudeSubagentsDir(cwd, sessionId);
-    const entries = await readdir(dir, { withFileTypes: true });
+    const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isFile()) continue;
       const match = /^agent-(.+)\.jsonl$/.exec(entry.name);
       if (!match) continue;
       const agentId = match[1];
       if (!agentId) continue;
-      const path = join(dir, entry.name);
-      const contents = await readFile(path, 'utf8');
-      if (contents.includes(toolId)) {
-        return { agentId, model: claudeSubagentModelFromContents(contents) };
-      }
+      names.add(entry.name);
+      await refreshClaudeSubagentTranscriptFile(dir, entry.name, agentId, index);
     }
   } catch {
-    return undefined;
+    if (index.files.size > 0) index.dirty = true;
+    index.files.clear();
   }
-  return undefined;
+  for (const name of index.files.keys()) {
+    if (!names.has(name)) {
+      index.files.delete(name);
+      index.dirty = true;
+    }
+  }
+  // An absent ID is a miss against this snapshot, not a permanent negative:
+  // stat/new-file checks above make later appends visible without rereading history.
+  if (!index.dirty) return;
+  index.byToolId.clear();
+  for (const file of index.files.values()) {
+    for (const toolId of file.toolIds) index.byToolId.set(toolId, file.info);
+  }
+  index.dirty = false;
+}
+
+async function refreshClaudeSubagentTranscriptFile(
+  dir: string,
+  name: string,
+  agentId: string,
+  index: ClaudeSubagentTranscriptIndex,
+): Promise<void> {
+  const path = join(dir, name);
+  try {
+    const previous = index.files.get(name);
+    const snapshot = await fs.stat(path);
+    if (previous && previous.dev === snapshot.dev && previous.ino === snapshot.ino &&
+      previous.size === snapshot.size && previous.mtimeMs === snapshot.mtimeMs) return;
+    const handle = await fs.open(path, 'r');
+    try {
+      const current = await handle.stat();
+      const file = previous && previous.dev === current.dev && previous.ino === current.ino &&
+        previous.size < current.size ? previous : {
+          dev: current.dev,
+          ino: current.ino,
+          size: 0,
+          mtimeMs: 0,
+          offset: 0,
+          info: { agentId },
+          toolIds: new Set<string>(),
+        };
+      const buffer = Buffer.alloc(64 * 1024);
+      let position = file.offset;
+      let pending: Buffer[] = [];
+      while (position < current.size) {
+        const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, current.size - position), position);
+        if (bytesRead === 0) break;
+        let start = 0;
+        for (let end = buffer.indexOf(10, start); end >= 0 && end < bytesRead; end = buffer.indexOf(10, start)) {
+          const segment = buffer.subarray(start, end);
+          const line = pending.length === 0 ? segment.toString('utf8')
+            : Buffer.concat([...pending, segment]).toString('utf8');
+          indexClaudeSubagentTranscriptLine(line, file);
+          pending = [];
+          start = end + 1;
+          file.offset = position + start;
+        }
+        if (start < bytesRead) pending.push(Buffer.from(buffer.subarray(start, bytesRead)));
+        position += bytesRead;
+      }
+      // Keep the byte offset before the trailing line: a writer can leave JSON
+      // (or a multibyte character) incomplete until the next append.
+      if (pending.length > 0) indexClaudeSubagentTranscriptLine(Buffer.concat(pending).toString('utf8'), file);
+      file.size = current.size;
+      file.mtimeMs = current.mtimeMs;
+      index.files.set(name, file);
+      index.dirty = true;
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    // A missing/unreadable file must not poison other files or cache a failed read.
+    if (index.files.delete(name)) index.dirty = true;
+  }
+}
+
+function indexClaudeSubagentTranscriptLine(line: string, file: ClaudeSubagentTranscriptFile): void {
+  const parsed = parseClaudeJsonlLine(line);
+  if (!parsed) return;
+  const message = isRecord(parsed['message']) ? parsed['message'] : undefined;
+  const model = stringField(message, 'model') ?? stringField(parsed, 'model');
+  if (!file.info.model && model) file.info.model = model;
+  for (const toolId of claudeToolIdsFromJson(parsed)) file.toolIds.add(toolId);
 }
 
 export function claudeSubagentsDir(cwd: string, sessionId: string): string {
