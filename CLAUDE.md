@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Anima is a local runtime that turns a code-agent runtime (Codex, Claude Code, Kimi Code, Grok Build, or OpenCode) into a durable teammate in Slack or Feishu. One agent identity maps to one **primary provider session** that spans every DM, channel, chat, and thread - not one session per thread. See `docs/architecture/overview.md` for the architecture and `README.md` for the user-facing pitch.
+Anima is a local runtime that turns a code-agent runtime (Codex, Claude Code, Kimi Code, Grok Build, or OpenCode) into a durable teammate in Slack or Feishu, with optional Linear app sessions. One agent identity maps to one **primary provider session** that spans every DM, channel, chat, and thread - not one session per thread. See `docs/architecture/overview.md` for the architecture and `README.md` for the user-facing pitch.
 
 ## Commands
 
@@ -53,6 +53,7 @@ The repo is one TypeScript Node ESM project (`"type": "module"`, NodeNext, stric
 ```
 Slack Socket Mode ──┐
 Feishu events/WS ───┼──► transports/inbox ──► Runtime worker ──► Codex / Claude / Kimi / Grok / OpenCode CLI
+Linear webhooks ────┤
 Reminder scheduler ─┘                                                    │
                                                                          ▼
                                                           anima CLI tools (messages,
@@ -66,13 +67,14 @@ The chat transports, reminder scheduler, and agent worker all run in one `agent`
 ### Key modules
 
 - **`server/agents/`** — Agent config and lifecycle service. `agent.service.ts` owns create/patch/delete/list/status-facing config behavior; `agent-slack.service.ts` and `agent-feishu.service.ts` own platform connection/display info and owner onboarding.
-- **`server/transports/`** — Inbound platform transport lifecycle. `MessageTransportRunner` starts/stops Slack and Feishu transports. Keep this about connection/event ingestion; do not grow it into an outbound message API.
+- **`server/transports/`** — Inbound platform transport lifecycle. `MessageTransportRunner` starts/stops Slack and Feishu transports; `RuntimeHost` separately owns the optional `LinearMessageTransport`. Keep this about connection/event ingestion; do not grow it into an outbound message API.
 - **`server/inbox/`** — Inbox business layer and wake routing. Slack and Feishu event normalization, subscription eligibility, reminder wake ingestion, and wake queue lifecycle orchestration live here.
 - **`server/storage/schema/wake-queue.store.ts`** — Wake queue persistence store. It owns queued/running/settled inbox item state plus direct single-store operations (`find`, `list`, `insertIfAbsent`, `replaceItem`, `claimQueued`, `complete`, `fail`, `requeue`, `requestStop`). It does not own cross-store business flow.
 - **`server/storage/schema/activity.store.ts`** — Per-agent append-only activity store. Runtime events, provider tool rows, platform tool rows, reminders, and subscription ops write through this path.
 - **`server/messages/`** — Per-agent message ledger and projections. It projects inbox items and activity rows into `messages.jsonl`, backs `anima inbox/outbox/search`, and is agent-visible history, not workspace-wide platform search.
 - **`server/slack/`** — Slack API/data helpers only. SDK client creation, pure Slack formatting helpers, and workspace directory/cache logic live here. Agent attention and inbox semantics belong in `inbox/`.
 - **`server/feishu/`** — Feishu API/data helpers: SDK client creation, event normalization, directory lookup, message content conversion, file/resource handling, and scope/auth helpers. Keep Feishu protocol mechanics here; agent attention and wake decisions still belong in `inbox/`.
+- **`server/linear/`** — Optional Linear app identity and session services: OAuth installation, signed-webhook validation, durable receipts, and outbound session activities. The listener lifecycle stays in `transports/`; accepted work joins the existing wake queue and primary provider context.
 - **`server/slack-interactions/`** — Slack shortcut and interactive modal handling. This is an inbound interaction surface that currently coordinates with `inbox/` (message handoff) and reads runtime status for the read-only Home view; be careful not to deepen cycles between it and `inbox/`.
 - **`server/tools/`** — Agent-facing `anima ...` command implementations: message/read/react/file/ask/subscription/env tool behavior and CLI registration. New business semantics should move into services instead of growing command files.
 - **`server/asks/`** — Interactive ask persistence and answer handling. Today the interactive UI path is Slack-specific; keep durable ask state separate from platform rendering.
@@ -90,15 +92,15 @@ The chat transports, reminder scheduler, and agent worker all run in one `agent`
 - **`server/activities/`** — Activity service and formatting helpers shared by runtime, tools, diagnostics, and UI feed projection.
 - **`server/web/`** — Web API backend and static app host. Route modules parse HTTP input, call services, redact secrets, and return view data. UI package under `web/` builds to `dist/web/`.
 - **`server/runtime/host.ts`** — The agent service host. It wires runnable agents, chat transports, reminder subscribers, wake queues, runtime workers, and provider adapters into one foreground `agent` process.
-- **`server/cli/anima.ts`** — Agent-facing CLI entry. Registers `anima message`, `anima ask`, `anima reminder`, `anima subscription`, `anima file`, and `anima reaction`.
+- **`server/cli/anima.ts`** — Agent-facing CLI entry. Registers `anima message`, `anima ask`, `anima reminder`, `anima subscription`, `anima file`, `anima reaction`, and `anima linear`.
 - **`server/cli/animactl.ts`** — Operator CLI entry (`server`, `web`, `services`).
 
 ### Vocabulary
 
 - **Agent** — durable teammate identity, defined in config and connected to one or more chat platforms.
 - **Session** — long-lived primary working context (`agent:<agentId>:primary`). **Not** one-per-thread.
-- **Chat surface** — the DM, channel, thread, Feishu chat, or Feishu topic a message came from.
-- **Inbox item** — inbound Slack/Feishu message, reminder wake, ask choice, or user/system item queued for an agent.
+- **Chat surface** — the DM, channel, thread, Feishu chat, Feishu topic, or Linear agent session a message came from.
+- **Inbox item** — inbound Slack/Feishu/Linear message, reminder wake, ask choice, or user/system item queued for an agent.
 - **Activity** — timestamped worker/tool entry for an agent.
 - **Message ledger** — `messages.jsonl`, the local per-agent projection of messages the agent saw or sent. It is not a full workspace history.
 
