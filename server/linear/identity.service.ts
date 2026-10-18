@@ -16,11 +16,6 @@ const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.lit
   applicationInfo: z.object({ clientId: z.string() }),
 });
 
-const Workspace = Identity.pick({ organization: true });
-// One background lookup per installed identity, with a bounded retry rate. Local
-// listener/identity facts remain readable while Linear is slow or unavailable.
-const workspaceLookups = new Map<string, { installationId: string; nextAttemptAt: number; pending: boolean }>();
-
 export class LinearIdentityService {
   readonly store: LinearStore;
   constructor(readonly agentId: string, readonly client = new LinearClient(), store = new LinearStore(agentId)) {
@@ -50,7 +45,6 @@ export class LinearIdentityService {
       result.organizationId = file.installation.organizationId;
       result.appUserId = file.installation.appUserId;
       if (file.installation.workspaceName) result.workspaceName = file.installation.workspaceName;
-      else if (!file.installation.revoked) this.backfillWorkspaceName(file.installation);
     } else if (file.pending) result.clientId = file.pending.clientId;
     if (file.lastSignedWebhookAt) result.lastSignedWebhookAt = file.lastSignedWebhookAt;
     if (file.lastError) result.lastError = file.lastError;
@@ -70,27 +64,6 @@ export class LinearIdentityService {
       }
     }
     return result;
-  }
-
-  private backfillWorkspaceName(installation: LinearInstallation): void {
-    const key = join(this.store.animaHome, 'agents', this.agentId);
-    const previous = workspaceLookups.get(key);
-    if (previous?.installationId === installation.id && (previous.pending || previous.nextAttemptAt > Date.now())) return;
-    const lookup = { installationId: installation.id, nextAttemptAt: Date.now() + 5 * 60_000, pending: true };
-    workspaceLookups.set(key, lookup);
-    void (async () => {
-      const workspace = await this.graphql(installation.id, 'query { organization { id name } }', {}, Workspace);
-      if (workspace.organization.id !== installation.organizationId) throw new Error('Linear workspace identity mismatch.');
-      await this.store.update((current) => {
-        if (current.installation?.id !== installation.id || current.installation.revoked || current.installation.workspaceName) {
-          throw new Error('Linear installation changed during workspace lookup.');
-        }
-        return { ...current, installation: { ...current.installation, workspaceName: workspace.organization.name } };
-      });
-    })().catch(() => {
-      // Display metadata is optional. Never replace identity/listener evidence or
-      // surface a remote error body just because its name could not be loaded.
-    }).finally(() => { lookup.pending = false; });
   }
 
   async begin(input: LinearInstallRequest, binding: string): Promise<{ authorizationUrl: string }> {

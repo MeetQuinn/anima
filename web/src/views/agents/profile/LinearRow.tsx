@@ -115,7 +115,7 @@ export function LinearRow({ agentId }: { agentId: string }) {
         <div className="flex min-w-0 items-center gap-3">
           <div className="min-w-0">
             <p className={`break-words ${configured ? 'font-serif text-[15px] text-text' : 'font-sans text-[13px] text-text-muted'}`}>
-              {data?.workspaceName ?? (status.isPending ? 'Loading…' : connected ? 'Workspace name unavailable' : 'Not connected')}
+              {data?.workspaceName ?? (status.isPending ? 'Loading…' : !data ? 'Unknown' : connected ? 'Workspace name unavailable' : 'Not connected')}
             </p>
             {(status.isError || data?.state === 'revoked' || data?.state === 'installing' || listener?.state === 'failed' || data?.lastError) && (
               <p className="mt-0.5 font-sans text-[12px] text-health-error">

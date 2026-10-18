@@ -44,7 +44,6 @@ export class FakeLinear {
     if (this.quotaUnauthorized) return new Response('{}', { status: 401 });
     let data: unknown;
     if (query.includes('viewer')) data = { viewer: { id: install.appUserId, app: true }, organization: { id: install.organizationId, name: install.workspaceName }, applicationInfo: { clientId: variables.clientId } };
-    else if (query.includes('organization {')) data = { organization: { id: install.organizationId, name: install.workspaceName } };
     else if (query.includes('agentActivityCreate')) {
       if (this.failMutation) throw new Error('synthetic-network-error-secret');
       this.posts.push(variables.input);

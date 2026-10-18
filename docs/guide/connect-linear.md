@@ -37,9 +37,9 @@ Installation uses PKCE and a state tied to the current dashboard session. It exp
 10 minutes and can be used once. If authorization fails or expires, remove the pending
 connection and prepare a new one. There is no separate CLI installation flow.
 
-The row shows the saved workspace name. Older installations load the name in the background;
-if that lookup fails, the name stays unavailable and retries at most once every five minutes.
-Connection and listener details remain in the settings dialog.
+The row shows the workspace name saved during installation. If an older installation has no
+saved name, it shows “Workspace name unavailable”. Reading settings does not fetch the name
+or refresh credentials. Connection and listener details remain in the settings dialog.
 
 **App installed** records the verified app identity. It does not prove that ingress is reachable.
 **Local listener** separately reports a recent runtime observation: listening locally,

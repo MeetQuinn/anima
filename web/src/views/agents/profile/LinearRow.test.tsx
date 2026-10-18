@@ -61,7 +61,10 @@ it('installation and read errors stay visible without echoing server credential 
 
 it('unreadable settings cannot start an installation', async () => {
   api.status.mockRejectedValue(new Error('unavailable'));
-  mount(); await screen.findByText('Settings unavailable'); await openSettings();
+  mount(); await screen.findByText('Settings unavailable');
+  expect(screen.queryByText('Not connected')).toBeNull();
+  expect(screen.getByText('Unknown')).toBeTruthy();
+  await openSettings();
   await screen.findByText(/Linear settings could not be read/);
   expect(screen.queryByRole('button', { name: 'Prepare authorization' })).toBeNull();
   expect(api.install).not.toHaveBeenCalled();
