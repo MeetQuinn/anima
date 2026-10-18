@@ -22,7 +22,7 @@ public domain. Forward only the public webhook URL to the configured local liste
 
 ## Install from the dashboard
 
-1. Open the agent's **Profile**, then **Linear → Add Linear app**.
+1. Open the agent's **Profile**. In **Setup**, select **Configure** on the **Linear** row to open its settings.
 2. Enter the app's client ID and webhook signing secret. Do not paste the secret into chat.
 3. Register the displayed **OAuth callback URL** in the Linear app. The callback uses the
    existing dashboard, not the webhook port; it must be reachable from your browser.
