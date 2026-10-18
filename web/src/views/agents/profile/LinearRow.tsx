@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, X } from 'lucide-react';
+import { ExternalLink, Settings2, X } from 'lucide-react';
 import { fetchLinearStatus, installLinear, removeLinear } from '@/api/linear';
 import { refreshAgentData } from '@/api/agents';
 import { Button } from '@/components/ui/button';
@@ -32,7 +32,11 @@ export function LinearRow({ agentId }: { agentId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [authorizationUrl, setAuthorizationUrl] = useState('');
+  const authorizationLink = useRef<HTMLAnchorElement>(null);
   const data = status.data;
+  useEffect(() => {
+    if (open && authorizationUrl && !busy) authorizationLink.current?.focus();
+  }, [open, authorizationUrl, busy]);
   useEffect(() => {
     if (data?.state === 'connected' || data?.state === 'revoked') refreshAgentData(agentId);
   }, [data?.state, agentId]);
@@ -109,38 +113,30 @@ export function LinearRow({ agentId }: { agentId: string }) {
     <>
       <Field label="Linear">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <p
-              className={`font-serif text-[15px] ${status.isError || data?.state === 'revoked' ? 'text-health-error' : 'text-text'}`}
-            >
-              {status.isPending
-                ? 'Loading…'
-                : status.isError
-                  ? 'Settings unavailable'
-                  : identityLabel}
+          <div className="min-w-0">
+            <p className={`break-words ${configured ? 'font-serif text-[15px] text-text' : 'font-sans text-[13px] text-text-muted'}`}>
+              {data?.workspaceName ?? (status.isPending ? 'Loading…' : connected ? 'Workspace name unavailable' : 'Not connected')}
             </p>
-            {configured && (
-              <p
-                className={`mt-0.5 font-sans text-[12px] ${listener?.state === 'failed' || data?.lastError ? 'text-health-error' : 'text-text-muted'}`}
-              >
-                {listener?.state === 'failed'
-                  ? 'Local listener failed'
-                  : data?.lastError
-                    ? 'Needs attention'
-                    : listenerLabel}
+            {(status.isError || data?.state === 'revoked' || data?.state === 'installing' || listener?.state === 'failed' || data?.lastError) && (
+              <p className="mt-0.5 font-sans text-[12px] text-health-error">
+                {status.isError ? 'Settings unavailable' : data?.state === 'revoked' ? 'Authorization revoked'
+                  : listener?.state === 'failed' ? 'Local listener failed'
+                    : data?.state === 'installing' ? 'Awaiting authorization' : 'Needs attention'}
               </p>
             )}
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="min-h-[44px] md:min-h-[32px] md:h-8"
-            aria-label="Configure Linear"
-            aria-haspopup="dialog"
-            onClick={() => setOpen(true)}
-          >
-            Configure
-          </Button>
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-accent md:h-7 md:w-7"
+              aria-label="Configure Linear"
+              title="Configure Linear"
+              aria-haspopup="dialog"
+              onClick={() => setOpen(true)}
+            >
+              <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </Field>
       {open && (
@@ -243,7 +239,7 @@ export function LinearRow({ agentId }: { agentId: string }) {
               not a connection health check.
             </p>
           ) : null}
-          {data && !configured && !status.isError && (
+          {data && !configured && (
             <form onSubmit={(event) => void install(event)} className="space-y-4">
               <p className="font-sans text-[13px] leading-relaxed text-text-muted">
                 Create a separate OAuth app for this agent in{' '}
@@ -328,13 +324,14 @@ export function LinearRow({ agentId }: { agentId: string }) {
                 webhooks at /webhook; the dashboard handles OAuth separately. Secrets stay in
                 runtime storage and are never shown back.
               </p>
-              <Button type="submit" className="min-h-[44px]" disabled={busy}>
+              <Button type="submit" className="min-h-[44px]" disabled={busy || status.isError}>
                 {busy ? 'Preparing…' : 'Prepare authorization'}
               </Button>
             </form>
           )}
           {authorizationUrl && !connected && (
             <a
+              ref={authorizationLink}
               href={authorizationUrl}
               target="_blank"
               rel="noreferrer"

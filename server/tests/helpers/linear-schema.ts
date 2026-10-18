@@ -18,7 +18,7 @@ const schema = buildSchema(`
     agentSessionUpdate(id: String!, input: AgentSessionUpdateInput!): Success!
   }
   type User { id: ID!, app: Boolean! }
-  type Organization { id: ID! }
+  type Organization { id: ID!, name: String! }
   type Application { clientId: String! }
   type Success { success: Boolean! }
   type ActivityPayload { success: Boolean!, agentActivity: AgentActivity! }

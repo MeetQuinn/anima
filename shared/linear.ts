@@ -41,6 +41,7 @@ export interface LinearStatus {
   clientId?: string;
   organizationId?: string;
   appUserId?: string;
+  workspaceName?: string;
   lastSignedWebhookAt?: string;
   signatureFailures: number;
   lastError?: string;

@@ -33,6 +33,7 @@ test('real dashboard guard protects Linear credentials, install/remove and bound
     assert.equal(completed.statusCode, 200); assert.equal(fake.tokenCalls, 1);
     const status = await app.inject({ url: '/api/agents/scout/linear', headers: { cookie } });
     assert.equal(status.statusCode, 200); assert.equal(status.json().state, 'connected');
+    assert.equal(status.json().workspaceName, 'Synthetic workspace');
     for (const secret of [install.signingSecret, 'new-access-sentinel', 'new-refresh-sentinel', 'synthetic-code']) assert.ok(!status.body.includes(secret));
     assert.equal((await app.inject({ method: 'DELETE', url: '/api/agents/scout/linear', headers: { cookie } })).statusCode, 200);
     assert.equal((await new LinearStore('scout').read()).installation, undefined);

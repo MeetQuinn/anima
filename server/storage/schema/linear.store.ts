@@ -8,6 +8,7 @@ import { AGENT_ID } from './agent.store.js';
 const Installation = z.object({
   id: z.string(), clientId: z.string(), signingSecret: z.string(),
   organizationId: z.string(), appUserId: z.string(), accessToken: z.string(),
+  workspaceName: z.string().trim().min(1).max(256).optional(),
   refreshToken: z.string(), expiresAt: z.number(), revoked: z.boolean(),
 });
 export type LinearInstallation = z.infer<typeof Installation>;
