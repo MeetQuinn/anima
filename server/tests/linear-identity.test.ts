@@ -33,6 +33,7 @@ test('Linear dashboard OAuth uses app actor, single-use PKCE state and private a
   for (const secret of [install.signingSecret, 'new-access-sentinel', 'new-refresh-sentinel', 'synthetic-code']) assert.equal(publicData.includes(secret), false);
   assert.equal((await stat(join(home, 'agents/scout/linear.json'))).mode & 0o777, 0o600);
   assert.equal((await readFile(join(home, 'agents/scout/config.json'), 'utf8')).includes(install.signingSecret), false);
+  assert.equal((await identity.status()).workspaceName, 'Synthetic workspace');
   await identity.remove(); await assert.rejects(identity.accessToken((await identity.store.read()).installation?.id ?? install.id));
   assert.equal((await identity.status()).state, 'not_configured');
 }));

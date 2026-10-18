@@ -33,7 +33,7 @@ import { SlackConnectStepper } from './SlackConnectStepper';
 import { FeishuConnectStepper } from './FeishuConnectStepper';
 import { FeishuScopeStatusCard } from './FeishuScopeStatusCard';
 import { SlackManifestUpdateCard } from './SlackManifestUpdateCard';
-import { LinearSection } from './LinearSection';
+import { LinearRow } from './LinearRow';
 import { SkillsSection } from './SkillsSection';
 import { ProfileActionsRail } from './ActionsRail';
 import { AgentUsageSection } from '@/components/token-usage/AgentUsageSection';
@@ -443,6 +443,7 @@ export default function Profile() {
                 )}
               </Field>
             )}
+            <LinearRow key={agentId} agentId={agentId} />
           </div>
           {slackConnected && (
             <div className="mt-4">
@@ -455,8 +456,6 @@ export default function Profile() {
             </div>
           )}
         </Section>
-
-        <LinearSection key={agentId} agentId={agentId} />
 
         {/* Owner picker modal */}
         {ownerPickerOpen && slackConnected && (

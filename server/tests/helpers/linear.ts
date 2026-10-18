@@ -9,7 +9,7 @@ import type { LinearWebhook } from '../../linear/webhook.js';
 import { linearQueryErrors } from './linear-schema.js';
 
 export const install: LinearInstallation = { id: randomUUID(), clientId: 'a123456789012345678901234567890b5', organizationId: randomUUID(), appUserId: randomUUID(),
-  signingSecret: 'synthetic-signing-secret-sentinel', accessToken: 'synthetic-access-sentinel', refreshToken: 'synthetic-refresh-sentinel', expiresAt: Date.now() + 24 * 60 * 60_000, revoked: false };
+  workspaceName: 'Synthetic workspace', signingSecret: 'synthetic-signing-secret-sentinel', accessToken: 'synthetic-access-sentinel', refreshToken: 'synthetic-refresh-sentinel', expiresAt: Date.now() + 24 * 60 * 60_000, revoked: false };
 export const sessionId = randomUUID();
 export const created = (session: string = sessionId): Extract<LinearWebhook, { type: 'AgentSessionEvent' }> => ({ type: 'AgentSessionEvent', action: 'created',
   organizationId: install.organizationId, oauthClientId: install.clientId, appUserId: install.appUserId, webhookTimestamp: Date.now(),
@@ -43,7 +43,7 @@ export class FakeLinear {
     if (errors.length) return new Response(JSON.stringify({ errors: errors.map((message) => ({ message })) }), { status: 400 });
     if (this.quotaUnauthorized) return new Response('{}', { status: 401 });
     let data: unknown;
-    if (query.includes('viewer')) data = { viewer: { id: install.appUserId, app: true }, organization: { id: install.organizationId }, applicationInfo: { clientId: variables.clientId } };
+    if (query.includes('viewer')) data = { viewer: { id: install.appUserId, app: true }, organization: { id: install.organizationId, name: install.workspaceName }, applicationInfo: { clientId: variables.clientId } };
     else if (query.includes('agentActivityCreate')) {
       if (this.failMutation) throw new Error('synthetic-network-error-secret');
       this.posts.push(variables.input);

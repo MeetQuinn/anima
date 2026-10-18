@@ -22,7 +22,7 @@ public domain. Forward only the public webhook URL to the configured local liste
 
 ## Install from the dashboard
 
-1. Open the agent's **Profile**, then **Linear → Add Linear app**.
+1. Open the agent's **Profile**. In **Setup**, select the **Configure Linear** icon on the **Linear** row to open its settings.
 2. Enter the app's client ID and webhook signing secret. Do not paste the secret into chat.
 3. Register the displayed **OAuth callback URL** in the Linear app. The callback uses the
    existing dashboard, not the webhook port; it must be reachable from your browser.
@@ -36,6 +36,10 @@ public domain. Forward only the public webhook URL to the configured local liste
 Installation uses PKCE and a state tied to the current dashboard session. It expires after
 10 minutes and can be used once. If authorization fails or expires, remove the pending
 connection and prepare a new one. There is no separate CLI installation flow.
+
+The row shows the workspace name saved during installation. If an older installation has no
+saved name, it shows “Workspace name unavailable”. Reading settings does not fetch the name
+or refresh credentials. Connection and listener details remain in the settings dialog.
 
 **App installed** records the verified app identity. It does not prove that ingress is reachable.
 **Local listener** separately reports a recent runtime observation: listening locally,
