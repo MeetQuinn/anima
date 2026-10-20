@@ -26,6 +26,17 @@ export interface StoredProviderUsage {
   totalTokens?: number;
 }
 
+/** The fields a usage summary reads from each row. */
+export type StoredUsageCounts = Pick<StoredProviderUsage,
+  | 'occurredAt'
+  | 'status'
+  | 'inputTokens'
+  | 'cacheReadInputTokens'
+  | 'cacheCreationInputTokens'
+  | 'outputTokens'
+  | 'reasoningOutputTokens'
+  | 'totalTokens'>;
+
 interface StoredCoverage {
   coverageStartedAt?: string;
 }
@@ -45,6 +56,16 @@ interface SqliteUsageRow {
   reasoning_output_tokens: number | null;
   total_tokens: number | null;
 }
+
+type SqliteUsageCountsRow = Pick<SqliteUsageRow,
+  | 'occurred_at'
+  | 'status'
+  | 'input_tokens'
+  | 'cache_read_input_tokens'
+  | 'cache_creation_input_tokens'
+  | 'output_tokens'
+  | 'reasoning_output_tokens'
+  | 'total_tokens'>;
 
 export class AgentTokenUsageStore {
   private readonly path: string;
@@ -103,21 +124,25 @@ export class AgentTokenUsageStore {
     });
   }
 
+  /**
+   * Usage counts of the rows that occurred from `fromUtc` through `throughUtc`,
+   * in no particular order: a summary only adds them up by day. Selecting just
+   * these columns, with no sort, halves the query on a year of usage.
+   */
   async listBetween(fromUtc: string, throughUtc: string): Promise<{
     coverageStartedAt?: string;
-    records: StoredProviderUsage[];
+    records: StoredUsageCounts[];
   }> {
     if (!(await pathExists(this.path))) return { records: [] };
     return this.withDatabase((db) => ({
       ...this.readCoverageFrom(db),
       records: (db.prepare(`
-        SELECT event_id, occurred_at, item_id, runtime_kind, model, account_id, status,
+        SELECT occurred_at, status,
           input_tokens, cache_read_input_tokens, cache_creation_input_tokens,
           output_tokens, reasoning_output_tokens, total_tokens
         FROM provider_usage
         WHERE occurred_at >= ? AND occurred_at <= ?
-        ORDER BY occurred_at ASC, event_id ASC
-      `).all(fromUtc, throughUtc) as unknown as SqliteUsageRow[]).map(fromSqliteRow),
+      `).all(fromUtc, throughUtc) as unknown as SqliteUsageCountsRow[]).map(fromSqliteCountsRow),
     }));
   }
 
@@ -176,19 +201,14 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function fromSqliteRow(row: SqliteUsageRow): StoredProviderUsage {
+function fromSqliteCountsRow(row: SqliteUsageCountsRow): StoredUsageCounts {
   return {
-    accountId: row.account_id ?? undefined,
     cacheCreationInputTokens: row.cache_creation_input_tokens ?? undefined,
     cacheReadInputTokens: row.cache_read_input_tokens ?? undefined,
-    eventId: row.event_id,
     inputTokens: row.input_tokens ?? undefined,
-    itemId: row.item_id,
-    model: row.model ?? undefined,
     occurredAt: row.occurred_at,
     outputTokens: row.output_tokens ?? undefined,
     reasoningOutputTokens: row.reasoning_output_tokens ?? undefined,
-    runtimeKind: row.runtime_kind,
     status: row.status,
     totalTokens: row.total_tokens ?? undefined,
   };

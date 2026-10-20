@@ -15,7 +15,9 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import {
   AgentTokenUsageStore,
   type StoredProviderUsage,
+  type StoredUsageCounts,
 } from '../storage/schema/agent-token-usage.store.js';
+import { localDateReader } from './local-date.js';
 
 export class AgentTokenUsageService {
   constructor(
@@ -127,12 +129,13 @@ function summarizeAgent(
   agentId: string,
   agentName: string,
   coverageStartedAt: string | undefined,
-  records: StoredProviderUsage[],
+  records: StoredUsageCounts[],
   timezone: string,
 ): AgentTokenUsageSummary {
+  const localDate = localDateReader(timezone);
   const days = new Map<string, AgentTokenUsageDay>();
   for (const record of records) {
-    const date = DateTime.fromISO(record.occurredAt, { setZone: true }).setZone(timezone).toISODate();
+    const date = localDate(record.occurredAt);
     if (!date) continue;
     const day = days.get(date) ?? {
       ...EMPTY_TOKEN_USAGE_TOTALS,
@@ -158,7 +161,7 @@ function summarizeAgent(
   };
 }
 
-function addRecord(target: TokenUsageTotals, record: StoredProviderUsage): void {
+function addRecord(target: TokenUsageTotals, record: StoredUsageCounts): void {
   target.cacheCreationInputTokens += record.cacheCreationInputTokens ?? 0;
   target.cacheReadInputTokens += record.cacheReadInputTokens ?? 0;
   target.inputTokens += record.inputTokens ?? 0;

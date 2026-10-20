@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Fastify from 'fastify';
+import { DateTime } from 'luxon';
 
 import { providerUsageFromStats } from '../providers/provider-usage.js';
 import { agentTokenUsageReport, agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
+import { localDateReader } from '../usage/local-date.js';
 import { registerAgentTokenUsageRoutes } from '../web/agent-token-usage-routes.js';
 import { registerErrorHandler } from '../web/http.js';
 import { defaultAgentConfig, withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
@@ -179,4 +181,67 @@ test('token usage API validates the local-day range and returns an agent-scoped 
       await fastify.close();
     }
   });
+});
+
+test('local dates match Luxon in every zone, around each local midnight', () => {
+  const luxonDate = (iso: string, timezone: string) =>
+    DateTime.fromISO(iso, { setZone: true }).setZone(timezone).toISODate();
+  const zones = [
+    ...Intl.supportedValuesOf('timeZone'),
+    'Asia/Calcutta',
+    'UTC',
+    'utc',
+    'UTC+3',
+    'UTC-9:30',
+    'system',
+    'not-a-zone',
+  ];
+  // Local midnights through both 2026 offset-change seasons, and in 1900, when
+  // many zones kept local mean time (offsets with seconds). In a zone that skips
+  // midnight, startOf('day') is the day's first instant.
+  const days = [
+    ...Array.from({ length: 3 }, (_, i) => DateTime.utc(1900, 1, 1).plus({ days: i })),
+    ...Array.from({ length: 50 }, (_, i) => DateTime.utc(2026, 3, 1).plus({ days: i })),
+    ...Array.from({ length: 50 }, (_, i) => DateTime.utc(2026, 9, 15).plus({ days: i })),
+  ];
+  const fixed = [
+    // Fallback: not in toISOString form, or not a time.
+    '2026-03-08T01:59:59-05:00',
+    '2026-03-08T07:00:00Z',
+    '2026-03-08T06:59:59.999+00:00',
+    '2026-02-30T00:00:00.000Z',
+    'not a time',
+    '',
+    // Fallback: within 2^29 ms of 1970.
+    '1970-01-01T00:44:30.000Z',
+    '1970-01-07T05:00:00.000Z',
+    // Years the fast path cannot write in four digits. Intl shows year -1000
+    // (1001 BC) as 1001, with no era.
+    '-001000-06-15T12:00:00.000Z',
+    '+010000-01-01T00:00:00.000Z',
+    '0999-12-31T23:59:59.999Z',
+    '1000-01-01T00:00:00.000Z',
+    '0000-01-01T00:00:00.000Z',
+    '9999-12-31T23:59:59.999Z',
+    // Monrovia's local midnight in 1960, at -0:44:30.
+    '1960-06-15T00:44:30.000Z',
+  ];
+  let compared = 0;
+  for (const timezone of zones) {
+    const localDate = localDateReader(timezone);
+    const instants = [...fixed];
+    for (const day of days) {
+      const midnight = DateTime.fromObject(
+        { year: day.year, month: day.month, day: day.day },
+        { zone: timezone },
+      ).startOf('day');
+      if (!midnight.isValid) continue;
+      for (const delta of [-1, 0, 1]) instants.push(new Date(midnight.toMillis() + delta).toISOString());
+    }
+    for (const iso of instants) {
+      assert.equal(localDate(iso), luxonDate(iso, timezone), `${timezone} ${iso}`);
+      compared += 1;
+    }
+  }
+  assert.ok(compared > 100_000);
 });
