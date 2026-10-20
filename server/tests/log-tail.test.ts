@@ -49,6 +49,10 @@ test('the last log lines match a whole-file read, and the byte cap keeps only li
     const path = join(dir, 'agent.log');
     assert.deepEqual(await readLastLogLines(path, 5), []);
 
+    // A cap one byte short of the file: the first line starts outside it.
+    await writeFile(path, 'a\nb\n');
+    assert.deepEqual(await readLastLogLines(path, 5, { maxReadBytes: 3 }), ['b']);
+
     const contents = [
       Buffer.alloc(0),
       Buffer.from('\n\n\r\n'),
@@ -68,7 +72,9 @@ test('the last log lines match a whole-file read, and the byte cap keeps only li
           );
           compared += 1;
         }
-        for (const maxReadBytes of [1, 2, 5, 40, 300]) {
+        // Caps just below, at and above the file size, and one byte inside it.
+        const caps = [1, 2, 5, 40, 300, content.length - 1, content.length, content.length + 1].filter((cap) => cap > 0);
+        for (const maxReadBytes of caps) {
           assert.deepEqual(
             await readLastLogLines(path, limit, { firstReadBytes: 3, maxReadBytes }),
             linesStartingInLast(content, maxReadBytes, limit),
@@ -78,7 +84,7 @@ test('the last log lines match a whole-file read, and the byte cap keeps only li
         }
       }
     }
-    assert.equal(compared, contents.length * 3 * 11);
+    assert.ok(compared > contents.length * 3 * 11, `${compared} comparisons`);
   } finally {
     await rm(dir, { force: true, recursive: true });
   }

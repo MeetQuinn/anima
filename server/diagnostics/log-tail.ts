@@ -37,7 +37,7 @@ export async function readLastLogLines(path: string, limit: number, options: Log
       const buffer = Buffer.alloc(size - from);
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, from);
       const lines = buffer.toString('utf8', 0, bytesRead).split(/\r?\n/);
-      if (from > 0) lines.shift();
+      if (start > 0) lines.shift();
       const kept = lines.filter(Boolean);
       if (kept.length >= limit || start === 0 || span >= maxReadBytes) return kept.slice(-limit);
       span = Math.min(span * 4, maxReadBytes);
