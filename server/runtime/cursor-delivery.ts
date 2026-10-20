@@ -1163,9 +1163,7 @@ async function findObservationByEventId(
   eventId: string,
 ): Promise<ObservedConversationEntry | undefined> {
   // The trigger is almost always among the newest rows; widen only on a miss.
-  // observe() dedupes within 2,000 rows, so a hit in either window is the same row.
-  const newest = await store.readTail(surfaceId, 32);
-  const newestHit = newest.find((row) => row.eventId === eventId);
+  const newestHit = await store.findAmongNewest(surfaceId, eventId, 32);
   if (newestHit) return newestHit;
   const recent = await store.readTail(surfaceId, 2_000);
   const hit = recent.find((row) => row.eventId === eventId);

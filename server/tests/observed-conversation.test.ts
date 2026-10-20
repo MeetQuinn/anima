@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import fsPromises, { mkdtemp, readdir, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises';
+import fsPromises, { appendFile, mkdtemp, readdir, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -381,6 +381,73 @@ test('cursor snapshot and dedupe hold when the index is ahead of the journal', a
     const repeat = await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: '300.002', text: 'again', userId: 'U1' });
     assert.equal(repeat.appended, false);
     assert.equal((await store.readJournal(surfaceId)).length, 6);
+  });
+});
+
+test('bounded reads fall back to the full window after an out-of-order append', async () => {
+  await withAgentStore(async (store, agentId) => {
+    const surfaceId = 'slack:T1:D1';
+    const observe = (messageTs: string, text: string) =>
+      store.observe({ teamId: 'T1', channelId: 'D1', messageTs, text, userId: 'U1' });
+    const middle = await observe('100.002', 'middle');
+    assert.equal(middle.appended, true);
+    if (!middle.appended) return;
+    await observe('100.003', 'high');
+
+    // An observer whose index lock was taken over as stale (lock.ts) resumes:
+    // it appends the ordinal it planned before and writes its own index.
+    const journalPath = join(observedConversationsDir(agentId), `${observedConversationFileStem(surfaceId)}.jsonl`);
+    const delayed = { ...middle.entry, eventId: 'slack:T1:D1:100.001', messageTs: '100.001', ordinal: 1, text: 'delayed' };
+    await appendFile(journalPath, `${JSON.stringify(delayed)}\n`, 'utf8');
+    await store.writeIndexForTest({
+      lastEventId: delayed.eventId,
+      lastMessageTs: delayed.messageTs,
+      surfaceId,
+      tailOrdinal: 1,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const snapshotEvents = async (afterOrdinal: number) => {
+      const snapshot = await store.readCursorDeliverySnapshot(surfaceId, { afterOrdinal, limit: 100 });
+      return { tail: snapshot.capturedTailOrdinal, events: snapshot.candidates.map((row) => row.messageTs) };
+    };
+    assert.equal((await store.getIndexReconciled(surfaceId))?.tailOrdinal, 2);
+    assert.deepEqual(await snapshotEvents(1), { tail: 2, events: ['100.003'] });
+    // The newest row repeats ordinal 1, so the trigger lookup searches wider.
+    assert.equal(await store.findAmongNewest(surfaceId, delayed.eventId, 32), undefined);
+
+    const repaired = await observe('100.004', 'repaired');
+    assert.equal(repaired.appended && repaired.entry.ordinal, 3);
+    assert.deepEqual((await store.readJournal(surfaceId)).map((row) => row.ordinal), [1, 2, 1, 3]);
+    assert.deepEqual(await snapshotEvents(1), { tail: 3, events: ['100.003', '100.004'] });
+    assert.deepEqual(await snapshotEvents(2), { tail: 3, events: ['100.004'] });
+    assert.equal(
+      (await store.advanceCursor({ expected: { status: 'absent' }, nextDeliveredOrdinal: 3, surfaceId })).advanced,
+      true,
+    );
+  });
+});
+
+test('trigger lookup among the newest rows matches the first row for an event', async () => {
+  await withAgentStore(async (store, agentId) => {
+    const surfaceId = 'slack:T1:D1';
+    for (let i = 1; i <= 60; i += 1) {
+      await store.observe({ teamId: 'T1', channelId: 'D1', messageTs: `200.${String(i).padStart(3, '0')}`, text: `m${i}`, userId: 'U1' });
+    }
+    const rows = await store.readJournal(surfaceId);
+    const ordinalOf = async (row: { eventId: string }) => (await store.findAmongNewest(surfaceId, row.eventId, 32))?.ordinal;
+    assert.equal(await ordinalOf(rows[59]!), 60);
+    assert.equal(await ordinalOf(rows[28]!), 29);
+    // Older than the newest 32 rows (one only checks order): a miss, so the caller widens.
+    assert.equal(await ordinalOf(rows[27]!), undefined);
+    assert.equal(await ordinalOf(rows[2]!), undefined);
+
+    // A resumed observer that missed row 59 appends a second row for its event.
+    const journalPath = join(observedConversationsDir(agentId), `${observedConversationFileStem(surfaceId)}.jsonl`);
+    await appendFile(journalPath, `${JSON.stringify(rows[58]!)}\n`, 'utf8');
+    assert.equal(await ordinalOf(rows[58]!), undefined);
+    // Every lookup over rows that do not rise widens.
+    assert.equal(await ordinalOf(rows[59]!), undefined);
   });
 });
 
