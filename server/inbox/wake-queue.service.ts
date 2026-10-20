@@ -134,6 +134,15 @@ export class WakeQueueService {
     return this.store.abandonStaged(itemId);
   }
 
+  /**
+   * True when the id is queued, running, or settled with a seen marker. Unlike
+   * `hasSeen`, this never consults the message ledger, so it only reads the
+   * wake-queue file.
+   */
+  has(itemId: string): Promise<boolean> {
+    return this.store.has(itemId);
+  }
+
   async hasSeen(itemId: string): Promise<boolean> {
     if (await this.store.has(itemId)) return true;
     try {

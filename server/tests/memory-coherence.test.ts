@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import fsPromises, { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +26,8 @@ import {
   memoryCoherenceDigest,
   memoryCoherenceSummary,
 } from '../memory/memory-coherence-outcome.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { messageServiceForAgent } from '../messages/message.service.js';
 import { MessageStore } from '../storage/schema/message.store.js';
 import { withAnimaHome } from './anima-home.js';
 
@@ -152,6 +155,53 @@ test('memory coherence scheduler scopes agents and respects active memory cap', 
   assert.equal(queues.itemsForAgent('iris').length, 1);
   assert.equal(queues.itemsForAgent('nora').length, 0);
   assert.equal(queues.itemsForAgent('tess').length, 0);
+});
+
+test('memory coherence scheduler skips the activity gate for a slot the wake queue already has', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-settled-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      let gateReads = 0;
+      const scheduler = new MemoryCoherenceScheduler({
+        hasMeaningfulActivitySinceLastPass: async () => {
+          gateReads += 1;
+          return true;
+        },
+        now: () => new Date('2026-06-22T08:00:00.000Z'),
+        readServerConfig: async () => ({
+          memoryCoherence: {
+            enabled: true,
+            maxConcurrent: 10,
+            scopeAgentIds: [],
+            timezone: 'UTC',
+            windowDurationMinutes: 60,
+            windowStart: '05:00',
+          },
+        }),
+        timezoneForAgent: () => 'UTC',
+      });
+      const queue = new WakeQueueService('aria');
+      const memoryItems = async () => (await queue.list()).filter((item) => item.kind === 'memory_coherence');
+
+      await scheduler.reconcile([agent('aria')]);
+      assert.equal(gateReads, 1);
+      const [queued] = await memoryItems();
+      assert.ok(queued);
+
+      // Still queued: the next tick neither reads the gate nor enqueues again.
+      await scheduler.reconcile([agent('aria')]);
+      assert.equal(gateReads, 1);
+      assert.equal((await memoryItems()).length, 1);
+
+      // Settled to a seen marker: the slot is still done for the day.
+      await queue.complete(queued.id);
+      await scheduler.reconcile([agent('aria')]);
+      assert.equal(gateReads, 1);
+      assert.deepEqual(await memoryItems(), []);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('memory coherence scheduler never catches up a slot that predates the agent', async () => {
@@ -483,6 +533,65 @@ test('memory coherence activity gate requires a message after the latest memory 
   }
 });
 
+test('memory coherence activity gate reads the latest message from the end of the ledger', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-ledger-tail-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await new MessageStore('aria').appendManyIfAbsent([
+        ...Array.from({ length: 20 }, (_, index) => messageRecord(`older-${index}`, '2026-06-22T04:00:00.000Z')),
+        messageRecord('newest', '2026-06-22T06:00:00.000Z'),
+      ]);
+      // Corrupt the oldest row. A read that parsed the whole ledger would throw.
+      const path = join(stateDir, 'agents', 'aria', 'messages.jsonl');
+      const lines = (await readFile(path, 'utf8')).split('\n');
+      lines[0] = '{not-json}';
+      await writeFile(path, lines.join('\n'), 'utf8');
+      const changed = new Date(Date.now() + 60_000);
+      await utimes(path, changed, changed);
+
+      assert.equal(await messageServiceForAgent('aria').latestMessageAt(), '2026-06-22T06:00:00.000Z');
+      assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('latestMessageAt reads the new ledger when it rotates between the size check and the read', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-tail-rotation-'));
+  const realOpen = fsPromises.open;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await new MessageStore('aria').appendManyIfAbsent(
+        Array.from({ length: 20 }, (_, index) => messageRecord(`before-${index}`, '2026-06-22T04:00:00.000Z')),
+      );
+      const path = join(stateDir, 'agents', 'aria', 'messages.jsonl');
+      const changed = new Date(Date.now() + 60_000);
+      await utimes(path, changed, changed); // miss the cache so the read goes to disk
+
+      // Rotate just before the tail read opens the file: the live path now
+      // names a new, much smaller file than the one the size check saw.
+      let rotations = 0;
+      fsPromises.open = (async (...args: Parameters<typeof realOpen>) => {
+        if (rotations === 0 && String(args[0]) === path) {
+          rotations += 1;
+          await rename(path, `${path}.rotated`);
+          await writeFile(path, `${JSON.stringify(messageRecord('after', '2026-06-22T07:00:00.000Z'))}\n`, 'utf8');
+        }
+        return realOpen(...args);
+      }) as typeof realOpen;
+      syncBuiltinESMExports();
+
+      assert.equal(await messageServiceForAgent('aria').latestMessageAt(), '2026-06-22T07:00:00.000Z');
+      assert.equal(rotations, 1);
+    });
+  } finally {
+    fsPromises.open = realOpen;
+    syncBuiltinESMExports();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('memory coherence activity gate matches legacy decisions across rotated logs', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-rotated-gate-test-'));
   try {
@@ -581,6 +690,7 @@ class TestMemoryQueues {
         items.push(item);
         return { duplicate: false, queued: true };
       },
+      has: async (itemId: string) => items.some((candidate) => candidate.id === itemId),
       list: async () => items,
     };
   }

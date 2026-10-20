@@ -81,10 +81,12 @@ export class JsonFile<T> {
   }
 
   /**
-   * Read, transform and write under the file lock. When the result serializes
-   * to the bytes already on disk, the file is left untouched: its mtime stays,
-   * so every process's cached copy stays valid. A missing file is written. A
-   * store with a file mode always rewrites, so each write still reapplies it.
+   * Read, transform and write under the file lock. An op that returns the
+   * object it was given writes nothing. A new object (what every JsonStore
+   * passes, since it re-parses each result) is written unless it serializes
+   * to the bytes already on disk; then the mtime stays and every process's
+   * cached copy stays valid. For a new object, a missing file is always
+   * written, and a store with a file mode always rewrites to reapply it.
    */
   async update(op: (current: T) => T | Promise<T>): Promise<T> {
     return withFileLock(this.path, this.writeRoot, async () => {
