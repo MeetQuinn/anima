@@ -19,6 +19,17 @@ import {
 } from '../storage/schema/agent-token-usage.store.js';
 import { localDateReader } from './local-date.js';
 
+/**
+ * The latest summary of each ledger, by ledger path, with the ledger stamp and
+ * request it answers. The Usage page and agent profiles ask for the same 52
+ * weeks every 30 seconds, and most ledgers have not changed since.
+ */
+const summaryCache = new Map<string, {
+  request: string;
+  stamp: string;
+  summary: AgentTokenUsageSummary;
+}>();
+
 export class AgentTokenUsageService {
   constructor(
     private readonly agentId: string,
@@ -55,8 +66,18 @@ export class AgentTokenUsageService {
     timezone: string;
   }): Promise<AgentTokenUsageSummary> {
     const range = utcRange(input.from, input.through, input.timezone);
+    const request = `${range.fromUtc}\0${range.throughUtc}\0${input.timezone}`;
+    // Stamp before reading rows. A commit in between leaves a newer summary
+    // under the older stamp, so the next request misses rather than hits.
+    const stamp = await this.store.contentStamp();
+    const cached = stamp === undefined ? undefined : summaryCache.get(this.store.path);
+    if (cached && cached.stamp === stamp && cached.request === request) {
+      return { ...structuredClone(cached.summary), agentName: input.agentName };
+    }
     const { coverageStartedAt, records } = await this.store.listBetween(range.fromUtc, range.throughUtc);
-    return summarizeAgent(this.agentId, input.agentName, coverageStartedAt, records, input.timezone);
+    const summary = summarizeAgent(this.agentId, input.agentName, coverageStartedAt, records, input.timezone);
+    if (stamp !== undefined) summaryCache.set(this.store.path, { request, stamp, summary: structuredClone(summary) });
+    return summary;
   }
 }
 

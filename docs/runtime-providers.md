@@ -310,8 +310,8 @@ claim ownership. The reader lives in `server/providers/claude-subagent-transcrip
 The fallback index is shared by every activity mapper in the process. There is one
 index per native session's `subagents` directory, so projects and native sessions
 stay separate. The process keeps the 8 most recently used directories; a dropped
-directory rebuilds from its files on next use. Uses of one directory run one at a
-time, because a refresh updates its index in place. The first ambiguous lookup for
+directory rebuilds from its files on next use. Uses of one cached index run one at
+a time, because a refresh updates the index in place. The first ambiguous lookup for
 a directory reads retained child history once, and later runs reuse that index.
 Later lookups list and stat files, but unchanged transcripts require no body reads.
 New files and appends make previously missing IDs discoverable; incomplete JSON or

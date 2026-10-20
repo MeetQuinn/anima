@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
+import { rename } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import Fastify from 'fastify';
 import { DateTime } from 'luxon';
 
 import { providerUsageFromStats } from '../providers/provider-usage.js';
-import { agentTokenUsageReport, agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
+import { AgentTokenUsageStore } from '../storage/schema/agent-token-usage.store.js';
+import {
+  AgentTokenUsageService,
+  agentTokenUsageReport,
+  agentTokenUsageServiceForAgent,
+} from '../usage/agent-token-usage.service.js';
 import { localDateReader } from '../usage/local-date.js';
 import { registerAgentTokenUsageRoutes } from '../web/agent-token-usage-routes.js';
 import { registerErrorHandler } from '../web/http.js';
@@ -122,6 +129,97 @@ test('a late provider usage payload upgrades the same unknown run', async () => 
     assert.equal(report.totalTokens, 42);
     assert.equal(report.reportedRuns, 1);
     assert.equal(report.unknownRuns, 0);
+  });
+});
+
+test('a summary reads ledger rows again only after the ledger or the request changes', async () => {
+  await withTempAnimaHome(async (stateDir) => {
+    await writeAgentConfigs(stateDir);
+    class CountingStore extends AgentTokenUsageStore {
+      reads = 0;
+      override async listBetween(fromUtc: string, throughUtc: string) {
+        this.reads += 1;
+        return super.listBetween(fromUtc, throughUtc);
+      }
+    }
+    const store = new CountingStore('anima');
+    const usage = new AgentTokenUsageService('anima', store);
+    const request = { agentName: 'Anima', from: '2026-08-04', through: '2026-08-05', timezone: 'UTC' };
+    await usage.record('item-1', 'codex-cli', {
+      occurredAt: '2026-08-04T00:00:00.000Z',
+      sourceId: 'turn-1',
+      totalTokens: 10,
+    });
+    await usage.record('item-2', 'codex-cli', { occurredAt: '2026-08-04T01:00:00.000Z', sourceId: 'turn-2' });
+    await usage.record('item-4', 'codex-cli', {
+      occurredAt: '2026-08-05T23:30:00.000Z',
+      sourceId: 'turn-4',
+      totalTokens: 0,
+    });
+
+    const first = await usage.summary(request);
+    assert.equal(first.totalTokens, 10);
+    assert.equal(first.unknownRuns, 1);
+    assert.equal(store.reads, 1);
+
+    // Same ledger and request: the cached summary, under the caller's name. A
+    // caller changing a returned summary does not change the cached one.
+    first.days[0]!.totalTokens = 999;
+    const renamed = await usage.summary({ ...request, agentName: 'Renamed' });
+    assert.equal(store.reads, 1);
+    assert.equal(renamed.agentName, 'Renamed');
+    assert.equal(renamed.days[0]!.totalTokens, 10);
+    renamed.days[0]!.totalTokens = 555;
+    assert.equal((await usage.summary(request)).days[0]!.totalTokens, 10);
+    assert.equal(store.reads, 1);
+
+    // Each ledger keeps only its latest request. Over a year, London and UTC
+    // give the same UTC range, but London puts a summer 23:30Z on the next day.
+    const year = { ...request, from: '2026-01-01', through: '2026-12-31' };
+    const utcDates = (await usage.summary(year)).days.map((day) => day.date);
+    const londonDates = (await usage.summary({ ...year, timezone: 'Europe/London' })).days.map((day) => day.date);
+    assert.deepEqual([utcDates, londonDates], [['2026-08-04', '2026-08-05'], ['2026-08-04', '2026-08-06']]);
+    assert.equal(store.reads, 3);
+    await usage.summary(request);
+    assert.equal(store.reads, 4);
+
+    // A new run, a late payload upgrade, and a write from another connection
+    // each give a new stamp.
+    await usage.record('item-3', 'codex-cli', {
+      occurredAt: '2026-08-05T00:00:00.000Z',
+      sourceId: 'turn-3',
+      totalTokens: 5,
+    });
+    assert.equal((await usage.summary(request)).totalTokens, 15);
+    assert.equal(store.reads, 5);
+    await usage.record('item-2', 'codex-cli', {
+      occurredAt: '2026-08-04T01:00:00.000Z',
+      sourceId: 'turn-2',
+      totalTokens: 7,
+    });
+    const upgraded = await usage.summary(request);
+    assert.deepEqual([upgraded.totalTokens, upgraded.unknownRuns, store.reads], [22, 0, 6]);
+    const db = new DatabaseSync(store.path);
+    try {
+      db.exec("UPDATE provider_usage SET total_tokens = total_tokens + 100 WHERE item_id = 'item-1'");
+    } finally {
+      db.close();
+    }
+    assert.equal((await usage.summary(request)).totalTokens, 122);
+    assert.equal(store.reads, 7);
+    assert.equal((await usage.summary(request)).totalTokens, 122);
+    assert.equal(store.reads, 7);
+
+    // A ledger file replaced by another.
+    const other = new AgentTokenUsageService('other');
+    await other.record('item-9', 'codex-cli', {
+      occurredAt: '2026-08-04T00:00:00.000Z',
+      sourceId: 'turn-9',
+      totalTokens: 3,
+    });
+    await rename(new AgentTokenUsageStore('other').path, store.path);
+    assert.equal((await usage.summary(request)).totalTokens, 3);
+    assert.equal(store.reads, 8);
   });
 });
 

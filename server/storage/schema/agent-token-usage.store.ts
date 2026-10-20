@@ -1,7 +1,7 @@
 // Exact provider usage ledger for one agent. SQLite gives us a durable UNIQUE
 // event id and range scans without loading/re-writing an ever-growing JSON file.
 
-import { stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -68,7 +68,7 @@ type SqliteUsageCountsRow = Pick<SqliteUsageRow,
   | 'total_tokens'>;
 
 export class AgentTokenUsageStore {
-  private readonly path: string;
+  readonly path: string;
   private readonly writeRoot: string;
 
   constructor(agentId: string) {
@@ -146,6 +146,37 @@ export class AgentTokenUsageStore {
     }));
   }
 
+  /**
+   * A stamp of the ledger's current contents: a new commit or a replaced file
+   * gives a new stamp. Undefined when there is no ledger, or its header is not
+   * a rollback-journal SQLite database.
+   *
+   * In rollback-journal mode, which `withDatabase` sets on every open, SQLite
+   * increments the header's change counter on each commit. The stamp also holds
+   * the file's identity, size and mtime.
+   */
+  async contentStamp(): Promise<string | undefined> {
+    let handle;
+    try {
+      handle = await open(this.path, 'r');
+    } catch (error) {
+      if (isNotFound(error)) return undefined;
+      throw error;
+    }
+    try {
+      const header = Buffer.alloc(100);
+      const { bytesRead } = await handle.read(header, 0, header.length, 0);
+      const rollbackJournal = header[18] === 1 && header[19] === 1;
+      if (bytesRead < header.length || header.toString('latin1', 0, 16) !== 'SQLite format 3\0' || !rollbackJournal) {
+        return undefined;
+      }
+      const stats = await handle.stat({ bigint: true });
+      return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${header.readUInt32BE(24)}`;
+    } finally {
+      await handle.close();
+    }
+  }
+
   private async withDatabase<T>(op: (db: DatabaseSync) => T): Promise<T> {
     await ensureParentDirectory(this.path, this.writeRoot);
     const db = new DatabaseSync(this.path);
@@ -199,6 +230,10 @@ async function pathExists(path: string): Promise<boolean> {
     if (typeof error === 'object' && error !== null && 'code' in error && error.code !== 'ENOENT') throw error;
     return false;
   }
+}
+
+function isNotFound(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
 function fromSqliteCountsRow(row: SqliteUsageCountsRow): StoredUsageCounts {
