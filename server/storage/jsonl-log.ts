@@ -157,15 +157,29 @@ export class JsonlAppendLog<T> {
     return this.readTailFromDisk(n);
   }
 
-  async readNewestMatching(n: number, matches: (record: T) => boolean): Promise<T[]> {
-    if (n <= 0) return [];
+  /**
+   * Up to `n` matching records, newest first. With `withinNewest`, only that
+   * many of the newest records are checked, so older segments are not read.
+   */
+  async readNewestMatching(
+    n: number,
+    matches: (record: T) => boolean,
+    options: { withinNewest?: number } = {},
+  ): Promise<T[]> {
+    const withinNewest = options.withinNewest ?? Infinity;
+    if (n <= 0 || withinNewest <= 0) return [];
     const segments = this.rotationEnabled()
       ? await this.segmentPaths()
       : (await statOrNull(this.path)) ? [this.path] : [];
     const out: T[] = [];
+    let checked = 0;
     for (const path of segments.reverse()) {
+      // Stop before reading a segment the budget no longer reaches.
+      if (checked >= withinNewest) return out;
       const records = await this.readAllFromPath(path);
       for (let index = records.length - 1; index >= 0; index -= 1) {
+        if (checked >= withinNewest) return out;
+        checked += 1;
         const record = records[index];
         if (record !== undefined && matches(record)) out.push(record);
         if (out.length >= n) return out;

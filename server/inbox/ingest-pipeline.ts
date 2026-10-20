@@ -31,14 +31,17 @@ export interface RunIngestPipelineHooks<Item extends InboxItem, Decision extends
     item: Item;
     result: WakeQueueEnqueueResult & { item: Item };
   }): void;
-  queue: Pick<WakeQueueService, 'enqueue' | 'hasSeen'>;
+  queue: Pick<WakeQueueService, 'enqueue' | 'hasSeenRecently'>;
   surfaceLog(input: IngestSurfaceLogInput<Item, Decision>): object;
 }
 
 export async function runIngestPipeline<Item extends InboxItem, Decision extends IngestRuntimeDecision>(
   hooks: RunIngestPipelineHooks<Item, Decision>,
 ): Promise<void> {
-  const duplicate = Boolean(await hooks.queue.hasSeen(hooks.itemId));
+  // In the Slack and Feishu decisions, `duplicate` only skips subscription
+  // bookkeeping; `enqueue` decides whether to wake. So check the same recent
+  // window that `enqueue` dedupes against.
+  const duplicate = Boolean(await hooks.queue.hasSeenRecently(hooks.itemId));
   const decision = await hooks.decide({ duplicate });
   if (!decision.shouldStartRuntime) {
     console.log(JSON.stringify(hooks.surfaceLog({ decision, outcome: 'ignored' }), null, 2));

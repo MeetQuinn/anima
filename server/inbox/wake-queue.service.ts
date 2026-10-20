@@ -21,6 +21,7 @@ export interface WakeQueueEnqueueResult {
 
 export interface WakeQueueMessageRecorder {
   hasInboxItem?(itemId: string): Promise<boolean>;
+  hasRecentInboxItem?(itemId: string): Promise<boolean>;
   recordInboxItem(item: InboxItem): Promise<{ inserted: boolean } | undefined>;
 }
 
@@ -145,12 +146,18 @@ export class WakeQueueService {
 
   async hasSeen(itemId: string): Promise<boolean> {
     if (await this.store.has(itemId)) return true;
-    try {
-      return Boolean(await this.messages.hasInboxItem?.(itemId));
-    } catch (error) {
-      this.logger.warn(`Wake queue message ledger lookup failed for item ${itemId}: ${errorMessage(error)}`);
-      return false;
-    }
+    return this.ledgerHas(itemId, (id) => this.messages.hasInboxItem?.(id));
+  }
+
+  /**
+   * True when `enqueue` would treat the id as a duplicate: it is queued,
+   * running, or has a seen marker, or its message row is in the ledger window
+   * that `enqueue`'s own dedupe checks. Unlike `hasSeen`, older ledger history
+   * is not read, so the cost does not grow with the ledger.
+   */
+  async hasSeenRecently(itemId: string): Promise<boolean> {
+    if (await this.store.has(itemId)) return true;
+    return this.ledgerHas(itemId, (id) => this.messages.hasRecentInboxItem?.(id));
   }
 
   find(itemId: string): Promise<InboxItem | undefined> {
@@ -308,6 +315,18 @@ export class WakeQueueService {
     workerId: string;
   }): Promise<InboxItem | undefined> {
     return this.store.markSettled(input);
+  }
+
+  private async ledgerHas(
+    itemId: string,
+    lookup: (itemId: string) => Promise<boolean> | undefined,
+  ): Promise<boolean> {
+    try {
+      return Boolean(await lookup(itemId));
+    } catch (error) {
+      this.logger.warn(`Wake queue message ledger lookup failed for item ${itemId}: ${errorMessage(error)}`);
+      return false;
+    }
   }
 
   private async recordMessage(item: InboxItem): Promise<{ inserted: boolean } | undefined> {
