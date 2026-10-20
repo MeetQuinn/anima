@@ -105,14 +105,18 @@ class ProgressThenWaitRuntime implements AgentRuntime {
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
     this.calls.push(input);
+    // Register the finish before recording progress. Progress clears the
+    // provider failure as soon as it starts, so the test can call finishNext()
+    // (or close()) while the tool-start record is still being written.
+    const finished = new Promise<void>((resolve) => {
+      this.resolvers.push(resolve);
+    });
     await input.effects.recordToolStarted({
       providerToolId: 'tool-progress',
       providerToolName: 'Bash',
       tool: 'claude.Bash',
     });
-    await new Promise<void>((resolve) => {
-      this.resolvers.push(resolve);
-    });
+    await finished;
     this.completed += 1;
     return { text: `completed ${input.itemId}` };
   }
