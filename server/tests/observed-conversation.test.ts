@@ -20,6 +20,7 @@ import {
   surfaceIdForObservation,
 } from '../storage/schema/observed-conversation.store.js';
 import { writeAgentConfigs, defaultAgentConfig } from './helpers/harness.js';
+import { observeAcrossClockStep } from './helpers/observed-journal.js';
 
 async function withAgentStore<T>(
   body: (store: ObservedConversationStore, agentId: string) => Promise<T>,
@@ -426,6 +427,36 @@ test('bounded reads fall back to the full window after an out-of-order append', 
       true,
     );
   });
+});
+
+test('bounded reads stay in the live file when archives sort out of append order', async () => {
+  await withAgentStore(async (store, agentId) => {
+    const surfaceId = 'slack:T1:D1';
+    const rows = await observeAcrossClockStep(store, agentId, 'D1');
+    const tail = rows.at(-1)!.ordinal;
+    const snapshotOrdinals = async (afterOrdinal: number) => {
+      const snapshot = await store.readCursorDeliverySnapshot(surfaceId, { afterOrdinal, limit: 100 });
+      assert.equal(snapshot.capturedTailOrdinal, rows.at(-1)!.ordinal);
+      return snapshot.candidates.map((row) => row.ordinal);
+    };
+    // Rows tail-2 and tail-1 sit in the archive that now sorts first.
+    assert.deepEqual(await snapshotOrdinals(tail - 3), [tail - 2, tail - 1, tail]);
+    assert.equal((await store.getIndexReconciled(surfaceId))?.tailOrdinal, tail);
+    // The newest rows reach an archive, so the lookup leaves the event to the wider search.
+    assert.equal(await store.findAmongNewest(surfaceId, rows.at(-1)!.eventId, 32), undefined);
+
+    // Once the live file holds the rows a read needs, reads stay in it again.
+    for (let i = 1; i <= 40; i += 1) {
+      const result = await store.observe({
+        teamId: 'T1', channelId: 'D1', messageTs: `200.${String(i).padStart(4, '0')}`, text: `live-${i}`, userId: 'U1',
+      });
+      assert.equal(result.appended, true);
+      if (result.appended) rows.push(result.entry);
+    }
+    const newest = rows.at(-1)!.ordinal;
+    assert.deepEqual(await snapshotOrdinals(newest - 2), [newest - 1, newest]);
+    assert.equal((await store.findAmongNewest(surfaceId, rows.at(-5)!.eventId, 32))?.ordinal, newest - 4);
+  }, { maxBytes: 16_384, maxArchives: 4 });
 });
 
 test('trigger lookup among the newest rows matches the first row for an event', async () => {

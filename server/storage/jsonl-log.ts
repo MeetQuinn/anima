@@ -158,6 +158,23 @@ export class JsonlAppendLog<T> {
   }
 
   /**
+   * The newest `n` records when the live file holds them all, or the whole log
+   * when it has no archive. Undefined when the newest `n` reach into an archive.
+   *
+   * Lines in one file are in append order, but archives are named by the clock,
+   * so after the clock steps back they can sort out of append order. A caller
+   * that relies on the order of the records it gets can use this instead of
+   * `readTail`.
+   */
+  async readLiveTail(n: number): Promise<T[] | undefined> {
+    if (n <= 0) return [];
+    const records = await this.readTailFromPath(this.path, n);
+    if (records.length >= n || !this.rotationEnabled()) return records;
+    // List archives after reading: a rotation between the two leaves one to find.
+    return (await this.archivePaths()).length === 0 ? records : undefined;
+  }
+
+  /**
    * Up to `n` matching records, newest first. With `withinNewest`, only that
    * many of the newest records are checked, so older segments are not read.
    */

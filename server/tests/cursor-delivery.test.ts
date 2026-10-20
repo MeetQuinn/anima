@@ -32,18 +32,20 @@ import {
 import type { SlackInboxItem } from '../../shared/inbox.js';
 import { withAnimaHome } from './anima-home.js';
 import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
+import { observeAcrossClockStep } from './helpers/observed-journal.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { makeSlackEvent } from './helpers/slack.js';
 
 async function withEnabledStore<T>(
   body: (store: ObservedConversationStore, agentId: string, queue: WakeQueueService) => Promise<T>,
+  storeOptions?: { maxArchives?: number; maxBytes?: number },
 ): Promise<T> {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cursor-del-'));
   setCursorDeliveryEnabledForTests(true);
   try {
     await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
     return await withAnimaHome(stateDir, async () => {
-      const store = new ObservedConversationStore('anima');
+      const store = new ObservedConversationStore('anima', storeOptions);
       const queue = new WakeQueueService('anima');
       return body(store, 'anima', queue);
     });
@@ -1467,6 +1469,38 @@ test('a wake whose row precedes an out-of-order append is delivered, not coalesc
     const cursor = await store.getCursor(surfaceId);
     assert.equal(cursor.status === 'present' ? cursor.deliveredOrdinal : undefined, 3);
   });
+});
+
+test('a wake whose row sits in an archive that sorts out of order is delivered, not coalesced', async () => {
+  await withEnabledStore(async (store, agentId, queue) => {
+    const surfaceId = 'slack:T1:D1';
+    const rows = await observeAcrossClockStep(store, agentId, 'D1');
+    const tail = rows.at(-1)!.ordinal;
+    await store.writeCursorForTest({ surfaceId, deliveredOrdinal: tail - 3, updatedAt: new Date().toISOString() });
+    const wake = (row: (typeof rows)[number], id: string) =>
+      slackItem({ id, channelId: 'D1', messageTs: row.messageTs, text: row.text });
+    const archived = wake(rows.at(-2)!, 'wake-archived');
+    const latest = wake(rows.at(-1)!, 'wake-latest');
+    await queue.enqueue(archived);
+    await queue.enqueue(latest);
+
+    const prepared = await prepareCursorDelivery({ agentId, item: latest, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    assert.deepEqual(
+      prepared.plan.surfaces.flatMap((surface) => surface.entries.map((row) => row.ordinal)),
+      [tail - 2, tail - 1, tail],
+    );
+    const { coalescedItemIds } = await commitCursorDelivery({
+      plan: prepared.plan,
+      queue,
+      store,
+      excludeItemIds: [latest.id],
+    });
+    assert.deepEqual(coalescedItemIds, ['wake-archived']);
+    const cursor = await store.getCursor(surfaceId);
+    assert.equal(cursor.status === 'present' ? cursor.deliveredOrdinal : undefined, tail);
+  }, { maxBytes: 16_384, maxArchives: 4 });
 });
 
 test('readCursorDeliverySnapshot filters journal through captured tail under lock', async () => {

@@ -34,6 +34,10 @@ export const OBSERVED_CONVERSATION_DEDUPE_RECENT = 2_000;
  * Older rows a bounded journal read takes beyond the rows it needs, to check
  * that ordinals still rise in file order.
  *
+ * A bounded read takes rows from the live file only (`readLiveTail`), where
+ * file order is append order. Archives are named by the clock and can sort out
+ * of append order, so when the rows it needs reach an archive, it falls back.
+ *
  * observe() numbers each row one past the reconciled tail, so they rise, with
  * one exception: lock.ts takes over a lock held for five minutes even when its
  * holder is alive. When that holder resumes, it appends the ordinal it planned
@@ -473,10 +477,13 @@ export class ObservedConversationStore {
 
   /**
    * The row for `eventId` among the newest `newest` journal rows. Undefined
-   * when it is not there, or when ordinals do not rise across those rows and
-   * the order-check rows; the caller then searches a wider window. A second
-   * row for an event comes from an observer that missed the first, so the
-   * rows between break the rise, and a hit is the row a wider search finds first.
+   * when it is not there, when those rows and the order-check rows reach an
+   * archive, or when their ordinals do not rise; the caller then searches a
+   * wider window. A second row for an event comes from an observer that missed
+   * the first, so the rows between break the rise, and a hit is the row a
+   * wider search finds first. The exception is a resumed append that lands in
+   * an archive after newer rows: then the hit is the event's later row, whose
+   * ordinal is higher.
    */
   async findAmongNewest(
     surfaceId: string,
@@ -484,8 +491,8 @@ export class ObservedConversationStore {
     newest: number,
   ): Promise<ObservedConversationEntry | undefined> {
     const count = newest + OBSERVED_CONVERSATION_ORDER_CHECK_ROWS;
-    const rows = await this.journal(surfaceId).readTail(count);
-    if (!ordinalsRise(rows)) return undefined;
+    const rows = await this.journal(surfaceId).readLiveTail(count);
+    if (!rows || !ordinalsRise(rows)) return undefined;
     // Fewer rows than asked for is the whole journal: no older row exists.
     const searched = rows.length < count ? rows : rows.slice(OBSERVED_CONVERSATION_ORDER_CHECK_ROWS);
     return searched.find((row) => row.eventId === eventId);
@@ -631,16 +638,16 @@ export class ObservedConversationStore {
 
   /**
    * The newest `needed` journal rows plus the order-check rows. Undefined when
-   * their ordinals do not rise or the newest is behind the index; the caller
-   * then reads the full dedupe window.
+   * they reach an archive, their ordinals do not rise, or the newest is behind
+   * the index; the caller then reads the full dedupe window.
    */
   private async newestRowsInOrder(
     surfaceId: string,
     index: ConversationIndex,
     needed: number,
   ): Promise<ObservedConversationEntry[] | undefined> {
-    const rows = await this.journal(surfaceId).readTail(needed + OBSERVED_CONVERSATION_ORDER_CHECK_ROWS);
-    if (!ordinalsRise(rows)) return undefined;
+    const rows = await this.journal(surfaceId).readLiveTail(needed + OBSERVED_CONVERSATION_ORDER_CHECK_ROWS);
+    if (!rows || !ordinalsRise(rows)) return undefined;
     if ((rows.at(-1)?.ordinal ?? 0) < index.tailOrdinal) return undefined;
     return rows;
   }
