@@ -125,6 +125,10 @@ recovery; the completion report does not claim it drained cleanly.
 This is not a distributed exactly-once boundary. A shell command, Git push, chat delivery, or API
 request that completed before the restart cannot be rolled back by requeuing an inbox item.
 
+Provider background work that outlived its inbox item, such as Claude background subagents, is not
+drained. The restart lists the agents that have it and stops it with the provider process. After the
+restart, Anima wakes each affected agent with a background-interrupted notice so it can reconcile.
+
 Use `--force` only for an explicit incident decision. It bypasses the normal gate and can abort the
 active provider turn.
 

@@ -2,6 +2,8 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
 import { isAppendedRunningInboxItem } from '../../shared/inbox.js';
 import { clearRestartDrain, requestRestartDrain } from './restart-drain.js';
+import { defaultAgentHealthStore, type AgentHealthStore } from '../runtime/agent-health.store.js';
+import { interruptedBackgroundWork } from '../runtime/background-interrupted.js';
 
 export const DEFAULT_RESTART_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 export const DEFAULT_RESTART_DRAIN_TIMEOUT_MS = 15 * 1000;
@@ -138,6 +140,44 @@ export async function listRestartBlockers(options: {
   return blockers.sort((a, b) =>
     blockerSortKey(a).localeCompare(blockerSortKey(b)),
   );
+}
+
+const BACKGROUND_WORK_SNAPSHOT_MAX_AGE_MS = 60_000;
+
+export interface BackgroundProviderWork {
+  agentId: string;
+  backgroundTaskCount?: number;
+}
+
+/**
+ * Provider background work that a full restart would stop, from the running
+ * server's last published health snapshots. Reported, not waited on: the
+ * restarted runtime queues a background_interrupted notice for each agent.
+ */
+export async function listBackgroundProviderWork(
+  store: Pick<AgentHealthStore, 'list'> = defaultAgentHealthStore,
+  now = Date.now(),
+): Promise<BackgroundProviderWork[]> {
+  const snapshots = await store.list();
+  return Object.entries(snapshots)
+    .flatMap(([agentId, snapshot]) => {
+      // Running agents republish every few seconds; older rows describe a stopped runtime.
+      const updatedAt = Date.parse(snapshot.updatedAt);
+      if (!Number.isFinite(updatedAt) || now - updatedAt > BACKGROUND_WORK_SNAPSHOT_MAX_AGE_MS) return [];
+      const work = interruptedBackgroundWork(snapshot.runtime, snapshot.updatedAt);
+      if (!work) return [];
+      return [{ agentId, ...(work.backgroundTaskCount ? { backgroundTaskCount: work.backgroundTaskCount } : {}) }];
+    })
+    .sort((a, b) => a.agentId.localeCompare(b.agentId));
+}
+
+export function formatBackgroundProviderWorkWarning(work: BackgroundProviderWork[]): string | undefined {
+  if (work.length === 0) return undefined;
+  const agents = work.map((entry) => entry.backgroundTaskCount
+    ? `${entry.agentId} (${entry.backgroundTaskCount} background task${entry.backgroundTaskCount === 1 ? '' : 's'})`
+    : `${entry.agentId} (background provider turn)`);
+  return `Background provider work is running for ${agents.join(', ')}. A restart stops any of it still running; `
+    + 'affected agents are woken with a background-interrupted notice after the restart.';
 }
 
 export async function recoverInterruptedRestartItems(blockers: RestartBlocker[]): Promise<number> {

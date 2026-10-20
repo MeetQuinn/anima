@@ -199,6 +199,23 @@ export const MemoryCoherenceInboxItem = InboxItemBase.extend({
 
 export type MemoryCoherenceInboxItem = z.infer<typeof MemoryCoherenceInboxItem>;
 
+/**
+ * Runtime-generated wake: provider background work (subagents, background
+ * tasks or a native background turn) was alive when its provider process was
+ * stopped by a server or operator restart. Not projected into the message ledger.
+ */
+export const BackgroundInterruptedInboxItem = InboxItemBase.extend({
+  backgroundTaskCount: z.number().int().nonnegative().optional(),
+  cause: z.enum(['agent_restart', 'server_restart']),
+  kind: z.literal('background_interrupted'),
+  lastObservedAt: z.string(),
+  providerState: z.enum(['background', 'working']),
+  taskIds: z.array(z.string().min(1).max(128)).max(32).optional(),
+  taskIdsTruncated: z.boolean().optional(),
+});
+
+export type BackgroundInterruptedInboxItem = z.infer<typeof BackgroundInterruptedInboxItem>;
+
 export const OnboardingInboxItem = InboxItemBase.extend({
   channelId: z.string(),
   kind: z.literal('onboarding'),
@@ -253,6 +270,7 @@ export const InboxItemSchema = z.discriminatedUnion('kind', [
   FeishuOnboardingInboxItem,
   ReminderInboxItem,
   MemoryCoherenceInboxItem,
+  BackgroundInterruptedInboxItem,
   OnboardingInboxItem,
   ChoiceResponseInboxItem,
 ]);

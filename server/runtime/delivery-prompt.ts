@@ -32,6 +32,7 @@ import {
   providerTransientRetryNote,
   RUNTIME_RESTART_CONTINUATION_NOTE,
 } from './delivery-notes.js';
+import { buildBackgroundInterruptedDeliveryPrompt } from './background-interrupted.js';
 import { restartSubtaskPrompt, type RestartSubtaskObservation } from './restart-subtasks.js';
 
 export interface CodeAgentPromptContext {
@@ -101,6 +102,7 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   }
   if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
   if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event, context.memoryCoherence);
+  if (event.kind === 'background_interrupted') return buildBackgroundInterruptedDeliveryPrompt(event);
   if (event.kind === 'choice_response') return buildChoiceResponseDeliveryPrompt(event);
   if (event.kind === 'onboarding') return buildSlackOnboardingDeliveryPrompt(event);
   if (event.kind === 'feishu_onboarding') return buildFeishuOnboardingDeliveryPrompt(event);

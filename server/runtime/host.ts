@@ -43,6 +43,13 @@ import {
 } from './agent-restart-command.store.js';
 import { AgentHealthStore } from './agent-health.store.js';
 import {
+  backgroundInterruptedInboxItem,
+  bootInterruptedBackgroundWork,
+  interruptedBackgroundWork,
+  type BackgroundInterruptedCause,
+  type InterruptedBackgroundWork,
+} from './background-interrupted.js';
+import {
   AgentHealthService,
   isProviderFailureReason,
   isStaleRunningItem,
@@ -402,6 +409,12 @@ export class RuntimeHost {
         .filter((agent) => agent.enabled !== false && agentHasConnectedTransport(agent) && isAgentRunnable(agent))
         .map(async (agent) => {
           const previous = await this.health.get(agent.id);
+          // Read before the starting write below replaces the previous process's runtime snapshot.
+          const interrupted = bootInterruptedBackgroundWork(previous, process.pid);
+          if (interrupted && previous) {
+            await this.enqueueBackgroundInterrupted(agent.id, 'server_restart', interrupted,
+              `${interrupted.processId ?? 'unknown'}:${previous.updatedAt}`);
+          }
           if (previous?.state === 'unhealthy' && isProviderFailureReason(previous.reason)) return;
           await this.health.writeHealth({
             agentId: agent.id,
@@ -429,16 +442,22 @@ export class RuntimeHost {
       return;
     }
     this.logger.log(`Agent ${agent.id}: restart requested by operator (${command.requestId}).`);
-    await this.writeRestartPending(agent.id, command, running?.handle.health?.());
+    const runtimeBeforeRestart = running?.handle.health?.();
+    await this.writeRestartPending(agent.id, command, runtimeBeforeRestart);
     try {
       await this.resolveStaleRestartItem(agent.id, running?.handle.health?.());
       if (running) {
+        // Stopping the handle kills provider background work that outlived its Anima item.
+        const interrupted = interruptedBackgroundWork(running.handle.health?.() ?? runtimeBeforeRestart, nowIso());
         await running.handle.stop(
           command.whenIdle
             ? { drainActive: true, forceAfterMs: this.forceRestartTimeoutMs }
             : { abortReason: command.reason, forceAfterMs: this.forceRestartTimeoutMs },
         );
         record.running = undefined;
+        if (interrupted) {
+          await this.enqueueBackgroundInterrupted(agent.id, 'agent_restart', interrupted, command.requestId);
+        }
       }
       await this.startAndStore(
         agent,
@@ -785,6 +804,28 @@ export class RuntimeHost {
       state: 'unhealthy',
       updatedAt: nowIso(),
     });
+  }
+
+  private async enqueueBackgroundInterrupted(
+    agentId: string,
+    cause: BackgroundInterruptedCause,
+    work: InterruptedBackgroundWork,
+    interruptionKey: string,
+  ): Promise<void> {
+    try {
+      const result = await wakeQueueServiceForAgent(agentId).enqueue(backgroundInterruptedInboxItem({
+        agentId,
+        cause,
+        interruptionKey,
+        now: nowIso(),
+        work,
+      }));
+      if (result.queued) {
+        this.logger.log(`Agent ${agentId}: queued background-interrupted notice (${cause}).`);
+      }
+    } catch (error) {
+      this.logger.error(`Agent ${agentId}: background-interrupted notice failed: ${errorMessage(error)}`);
+    }
   }
 
   private async writeRestartPending(

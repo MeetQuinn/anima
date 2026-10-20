@@ -13,6 +13,8 @@ import {
   DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
   DEFAULT_RESTART_IDLE_TIMEOUT_MS,
   countRequeuedItems,
+  formatBackgroundProviderWorkWarning,
+  listBackgroundProviderWork,
   listRestartBlockers,
   recoverInterruptedRestartItems,
   RestartBlockedError,
@@ -294,7 +296,9 @@ async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions
     cleanup: async () => {},
     result: idleServicesRestartResult(),
   };
-  if (!agentSpec || opts.force || !(await isServiceRunning(agentSpec))) return noop;
+  if (!agentSpec || !(await isServiceRunning(agentSpec))) return noop;
+  await warnBackgroundProviderWork();
+  if (opts.force) return noop;
 
   if (opts.drainActive || opts.resumeRunning) {
     let trackedItems: RestartBlocker[] = [];
@@ -322,6 +326,15 @@ async function prepareRestartGate(specs: ServiceSpec[], opts: ServicesCliOptions
     throw restartBlockedError(finalBlockers, 'Agents became busy before restart.', 'became_busy');
   }
   return noop;
+}
+
+async function warnBackgroundProviderWork(): Promise<void> {
+  try {
+    const warning = formatBackgroundProviderWorkWarning(await listBackgroundProviderWork());
+    if (warning) console.error(warning);
+  } catch {
+    // Advisory only: an unreadable health snapshot must not block a restart.
+  }
 }
 
 async function refreshRestartGateResult(gate: RestartGateLease | undefined): Promise<void> {
