@@ -420,8 +420,10 @@ test('pi aborts a hung bash tool after the Anima default timeout', async () => {
         model: 'deepseek/deepseek-v4-flash',
       });
       const runPromise = runtime.run(await runtimeInput(runtime, ctx, await loadState()));
+      // Assert the rejection before polling: the turn can settle before the poll sees the abort.
+      const runRejected = assert.rejects(withTimeout(runPromise, 5_000));
       await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"type":"abort"')).catch(() => false));
-      await assert.rejects(withTimeout(runPromise, 5_000));
+      await runRejected;
       const calls = await readJsonLines(callsPath);
       assert.deepEqual(calls.map((call) => call.type), ['get_state', 'prompt', 'abort']);
       const activities = allActivities(await loadState());
@@ -632,8 +634,10 @@ test('pi bash timeout does not abort a later turn after the timed-out turn settl
         model: 'deepseek/deepseek-v4-flash',
       });
       const hangPromise = runtime.run(await runtimeInput(runtime, hangCtx, await loadState()));
+      // Assert the rejection before polling: the turn can settle before the poll sees the abort.
+      const hangRejected = assert.rejects(withTimeout(hangPromise, 5_000));
       await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"type":"abort"')).catch(() => false));
-      await assert.rejects(withTimeout(hangPromise, 5_000));
+      await hangRejected;
 
       const nextCtx = await ingestPiEvent(stateDir, 'Next turn.', '1786000031.000002');
       const nextResult = await withTimeout(
