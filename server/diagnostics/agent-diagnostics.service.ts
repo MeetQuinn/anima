@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +15,7 @@ import { resolveAnimaHome } from '../anima-home.js';
 import { nowIso } from '../ids.js';
 import { defaultRuntimeService } from '../runtime/runtime.service.js';
 import { defaultSystemService } from '../services/system.service.js';
+import { readLastLogLines } from './log-tail.js';
 
 const LOG_LINE_CAP = 80;
 const ACTIVITY_CAP = 12;
@@ -313,19 +313,13 @@ async function safeLogTail(agentId: string): Promise<AgentDiagnosticsLogLine[]> 
     'runtime-upgrade.log',
   ] as const;
   const linesBySource = await Promise.all(sourceFiles.map(async (source) => {
-    const lines = await tailLines(join(logsDir, source), LOG_TAIL_READ_LIMIT);
+    const lines = await readLastLogLines(join(logsDir, source), LOG_TAIL_READ_LIMIT);
     return lines.flatMap((line) => safeLogLine(source, agentId, line));
   }));
   return linesBySource
     .flat()
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
     .slice(-LOG_LINE_CAP);
-}
-
-async function tailLines(path: string, limit: number): Promise<string[]> {
-  const content = await readFile(path, 'utf8').catch(() => '');
-  if (!content) return [];
-  return content.split(/\r?\n/).filter(Boolean).slice(-limit);
 }
 
 function safeLogLine(
