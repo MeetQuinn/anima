@@ -410,13 +410,16 @@ export class JsonlAppendLog<T> {
     let fd: FileHandle | undefined;
     try {
       fd = await open(path, 'r');
-      let readSize = estimatedBytes;
+      // Size the reads from the opened file, not the stat above: a rotation in
+      // between leaves `path` naming a new, smaller live file.
+      const size = (await fd.stat()).size;
+      if (size === 0) return [];
+      let readSize = Math.min(size, estimatedBytes);
       for (let attempt = 0; attempt < 5; attempt++) {
-        const start = Math.max(0, fileStat.size - readSize);
-        const bufLen = fileStat.size - start;
-        const buf = Buffer.allocUnsafe(bufLen);
-        await fd.read(buf, 0, bufLen, start);
-        const text = buf.toString('utf8');
+        const start = Math.max(0, size - readSize);
+        const buf = Buffer.allocUnsafe(size - start);
+        const { bytesRead } = await fd.read(buf, 0, buf.length, start);
+        const text = buf.subarray(0, bytesRead).toString('utf8');
         // First line may be a partial record if we started mid-file — drop it.
         const rawLines = text.split(/\r?\n/).filter((l) => l.trim() !== '');
         const lines = start > 0 ? rawLines.slice(1) : rawLines;
@@ -424,7 +427,7 @@ export class JsonlAppendLog<T> {
           return lines.slice(-n).map((l) => JSON.parse(l) as T);
         }
         // Not enough lines — double the read window and retry.
-        readSize = Math.min(fileStat.size, readSize * 2);
+        readSize = Math.min(size, readSize * 2);
       }
       // Should not reach here — fallback to readAll.
       return (await this.readAllFromPath(path)).slice(-n);

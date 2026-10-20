@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import fsPromises, { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -552,6 +553,41 @@ test('memory coherence activity gate reads the latest message from the end of th
       assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
     });
   } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('latestMessageAt reads the new ledger when it rotates between the size check and the read', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-tail-rotation-'));
+  const realOpen = fsPromises.open;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await new MessageStore('aria').appendManyIfAbsent(
+        Array.from({ length: 20 }, (_, index) => messageRecord(`before-${index}`, '2026-06-22T04:00:00.000Z')),
+      );
+      const path = join(stateDir, 'agents', 'aria', 'messages.jsonl');
+      const changed = new Date(Date.now() + 60_000);
+      await utimes(path, changed, changed); // miss the cache so the read goes to disk
+
+      // Rotate just before the tail read opens the file: the live path now
+      // names a new, much smaller file than the one the size check saw.
+      let rotations = 0;
+      fsPromises.open = (async (...args: Parameters<typeof realOpen>) => {
+        if (rotations === 0 && String(args[0]) === path) {
+          rotations += 1;
+          await rename(path, `${path}.rotated`);
+          await writeFile(path, `${JSON.stringify(messageRecord('after', '2026-06-22T07:00:00.000Z'))}\n`, 'utf8');
+        }
+        return realOpen(...args);
+      }) as typeof realOpen;
+      syncBuiltinESMExports();
+
+      assert.equal(await messageServiceForAgent('aria').latestMessageAt(), '2026-06-22T07:00:00.000Z');
+      assert.equal(rotations, 1);
+    });
+  } finally {
+    fsPromises.open = realOpen;
+    syncBuiltinESMExports();
     await rm(stateDir, { force: true, recursive: true });
   }
 });
