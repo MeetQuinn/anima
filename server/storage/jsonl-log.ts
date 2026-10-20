@@ -69,11 +69,22 @@ export class JsonlAppendLog<T> {
   }
 
   async append(record: T): Promise<void> {
-    await withFileLock(this.path, this.writeRoot, async () => {
+    await this.appendBuilt(() => record);
+  }
+
+  /**
+   * Append a record built while the file lock is held. A timestamp taken in
+   * `build` therefore follows every record already appended by any process,
+   * so append order matches timestamp order.
+   */
+  async appendBuilt(build: () => T): Promise<T> {
+    return withFileLock(this.path, this.writeRoot, async () => {
+      const record = build();
       await this.rotateIfNeeded();
       await ensureParentDirectory(this.path, this.writeRoot);
       await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
       cacheDelete(this.path);
+      return record;
     });
   }
 

@@ -18,6 +18,32 @@ export async function activitiesForInboxItemWindow(agentId: string, itemId: stri
   return sortActivities(current);
 }
 
+/**
+ * How far before an item's creation the settle-time read keeps scanning.
+ * Rows are stamped under the activity log's file lock, so append order is
+ * `createdAt` order. The margin absorbs what that cannot rule out: a wall-clock
+ * step, a lock broken as stale (held past five minutes), or a row from a
+ * runtime that still stamps before taking the lock.
+ */
+const ITEM_ACTIVITY_SCAN_MARGIN_MS = 10 * 60 * 1000;
+
+/**
+ * Activities tagged to an item that may already have left the wake queue (the
+ * settle hooks run after `complete`). Nothing tagged to the item is stamped
+ * before its creation, so the read stops a margin before that instead of
+ * parsing every archive segment.
+ */
+export async function activitiesTaggedToItem(agentId: string, item: InboxItem): Promise<Activity[]> {
+  const createdMs = Date.parse(item.handling.createdAt);
+  const stopBefore = Number.isFinite(createdMs)
+    ? new Date(createdMs - ITEM_ACTIVITY_SCAN_MARGIN_MS).toISOString()
+    : undefined;
+  const newestFirst = await activityServiceForAgent(agentId)
+    .readNewestUntil((activity) => stopBefore !== undefined && activity.createdAt < stopBefore);
+  // Back to append order first, so rows stamped in the same millisecond keep it.
+  return sortActivities(newestFirst.reverse().filter((activity) => taggedToItem(activity, item.id)));
+}
+
 function taggedToItem(activity: Activity, itemId: string): boolean {
   return activity.payload?.['itemId'] === itemId || activity.payload?.['activeItemId'] === itemId;
 }

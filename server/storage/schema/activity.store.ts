@@ -17,15 +17,18 @@ export interface ActivityRecordInput {
 export class ActivityStore {
   constructor(private readonly agentId: string) {}
 
+  /**
+   * Rows are stamped under the log's file lock, so concurrent writers
+   * (daemon, CLI) append them in `createdAt` order. Bounded newest-first
+   * reads such as `activitiesTaggedToItem` rely on this.
+   */
   async record(input: ActivityRecordInput): Promise<Activity> {
-    const activity: Activity = {
+    return this.log().appendBuilt(() => ({
       activityId: makeId('actv'),
       createdAt: input.createdAt ?? nowIso(),
       ...(input.payload && { payload: input.payload }),
       type: input.type,
-    };
-    await this.log().append(activity);
-    return activity;
+    }));
   }
 
   async readAll(): Promise<Activity[]> {

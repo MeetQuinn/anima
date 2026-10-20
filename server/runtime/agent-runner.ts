@@ -90,7 +90,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
           .catch(() => console.error('Linear run ended; its final notice could not be confirmed.'));
         // Keep the legacy lifetime diagnostic populated while the exact daily
         // ledger becomes the source for the new usage surfaces.
-        await recordLifetimeTokenUsageForItem(context.agentId, context.item.id).catch((error: unknown) => {
+        await recordLifetimeTokenUsageForItem(context.agentId, context.item).catch((error: unknown) => {
           console.error(`Lifetime token usage update failed for item ${context.item.id}: ${errorMessage(error)}`);
         });
         await removeProcessingReactions({ context, logger: console, reactionClient });

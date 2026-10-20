@@ -1,4 +1,5 @@
 import type { Activity } from '../../shared/activity.js';
+import type { InboxItem } from '../../shared/inbox.js';
 import type { ProviderSessionStatsSummary } from '../../shared/snapshot.js';
 import { nowIso } from '../ids.js';
 import { numberField, stringField } from '../json.js';
@@ -10,7 +11,7 @@ import {
   type ProviderSession,
   type Session,
 } from '../storage/schema/session.store.js';
-import { activitiesForInboxItemWindow } from './item-activities.js';
+import { activitiesTaggedToItem } from './item-activities.js';
 import { claudeAutoCompactWindowFor } from '../providers/claude-launch.js';
 import { codexAutoCompactTokenLimitFor } from '../providers/codex.js';
 import type { ProviderSessionRecord } from '../providers/contract.js';
@@ -153,8 +154,8 @@ export class RuntimeSessionService {
     return validTokenCount(usage.totalTokens);
   }
 
-  async recordLifetimeTokenUsageForItem(itemId: string): Promise<number | undefined> {
-    const activities = await activitiesForInboxItemWindow(this.agentId, itemId);
+  async recordLifetimeTokenUsageForItem(item: InboxItem): Promise<number | undefined> {
+    const activities = await activitiesTaggedToItem(this.agentId, item);
     if (!activities.some((activity) => activity.type === 'runtime.completed')) return undefined;
 
     const delta = tokenDeltaForActivities(activities);
