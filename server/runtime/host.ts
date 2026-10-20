@@ -55,6 +55,7 @@ import {
 } from './background-interrupted.store.js';
 import {
   AgentHealthService,
+  type HealthWriteInput,
   isProviderFailureReason,
   isStaleRunningItem,
   restartStatus,
@@ -747,15 +748,26 @@ export class RuntimeHost {
 
   private async publishKnownHealthSnapshots(): Promise<void> {
     if (this.healthPublish) return this.healthPublish;
-    const publish = Promise.allSettled(
-      [...this.agents.values()].map((record) => this.publishHealthForAgent(record)),
-    ).then((results) => {
+    const publish = (async () => {
+      const results = await Promise.allSettled(
+        [...this.agents.values()].map((record) => this.healthWriteForAgent(record)),
+      );
+      const writes: HealthWriteInput[] = [];
       for (const result of results) {
         if (result.status === 'rejected') {
           this.logger.error(`Runtime host health publish failed: ${errorMessage(result.reason)}`);
+        } else if (result.value) {
+          writes.push(result.value);
         }
       }
-    });
+      // Every agent shares one snapshot file: write the round in one locked
+      // rewrite instead of one per agent.
+      try {
+        await this.health.writeHealthMany(writes);
+      } catch (error) {
+        this.logger.error(`Runtime host health publish failed: ${errorMessage(error)}`);
+      }
+    })();
     this.healthPublish = publish;
     try {
       await publish;
@@ -768,17 +780,21 @@ export class RuntimeHost {
     record: ManagedAgent,
     recoveredCommand?: AgentRestartCommand,
   ): Promise<void> {
+    const write = await this.healthWriteForAgent(record, recoveredCommand);
+    if (write) await this.health.writeHealth(write);
+  }
+
+  private async healthWriteForAgent(
+    record: ManagedAgent,
+    recoveredCommand?: AgentRestartCommand,
+  ): Promise<HealthWriteInput | undefined> {
     const agent = record.config;
     const skipStatus = agentSkipStatus(agent);
     const running = record.running;
     if (skipStatus) {
-      if (!running) await this.writeUnknownHealth(agent.id);
-      return;
+      return running ? undefined : unknownHealthWrite(agent.id);
     }
-    if (!running) {
-      await this.resolveMissingHandleHealth(agent.id);
-      return;
-    }
+    if (!running) return this.missingHandleHealthWrite(agent.id);
 
     const runtime = running.handle.health?.();
     const health = runtimeHandleHealth(runtime, await this.health.get(agent.id), nowIso());
@@ -787,42 +803,32 @@ export class RuntimeHost {
         ? restartStatus(recoveredCommand, 'recovered', nowIso(), runtime)
         : restartStatus(recoveredCommand, 'failed', nowIso(), runtime, health.reason ?? 'restart_failed')
       : undefined;
-    await this.health.writeHealth({
+    return {
       agentId: agent.id,
       ...(health.reason ? { reason: health.reason } : {}),
       ...(restart ? { restart } : {}),
       ...(runtime ? { runtime } : {}),
       state: health.state,
       updatedAt: health.updatedAt,
-    });
+    };
   }
 
-  private async resolveMissingHandleHealth(agentId: string): Promise<void> {
+  private async missingHandleHealthWrite(agentId: string): Promise<HealthWriteInput | undefined> {
     const snapshot = await this.health.get(agentId);
-    if (!snapshot) {
-      await this.writeUnknownHealth(agentId);
-      return;
-    }
+    if (!snapshot) return unknownHealthWrite(agentId);
     const timedOut = startingTimeoutHealth(snapshot, nowIso());
-    if (timedOut) {
-      await this.health.writeHealth({ agentId, ...timedOut });
-      return;
-    }
+    if (timedOut) return { agentId, ...timedOut };
     if (
       snapshot.state === 'unhealthy' &&
       (snapshot.reason === 'start_failed' || snapshot.reason === 'restart_failed')
     ) {
-      return;
+      return undefined;
     }
-    await this.writeUnknownHealth(agentId);
+    return unknownHealthWrite(agentId);
   }
 
   private async writeUnknownHealth(agentId: string): Promise<void> {
-    await this.health.writeHealth({
-      agentId,
-      state: 'unknown',
-      updatedAt: nowIso(),
-    });
+    await this.health.writeHealth(unknownHealthWrite(agentId));
   }
 
   private async writeFailedHealth(agentId: string, reason: AgentHealthReason): Promise<void> {
@@ -1232,6 +1238,10 @@ async function validateSlackConnectionForStart(
   } catch (error) {
     throw new Error(`Agent ${agentId}: app token apps.connections.open failed: ${errorMessage(error)}`);
   }
+}
+
+function unknownHealthWrite(agentId: string): HealthWriteInput {
+  return { agentId, state: 'unknown', updatedAt: nowIso() };
 }
 
 function agentSkipStatus(agent: AgentConfig): string | undefined {

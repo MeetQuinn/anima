@@ -172,6 +172,24 @@ export class AgentHealthStore {
     });
   }
 
+  // Several agents' updates in one locked read-modify-write, applied in order.
+  async updateMany(
+    updates: ReadonlyArray<{
+      agentId: string;
+      apply: (previous: AgentRuntimeHealthSummary | undefined) => AgentRuntimeHealthSummary | undefined;
+    }>,
+  ): Promise<void> {
+    if (updates.length === 0) return;
+    await this.store.update((current) => {
+      let snapshots = current.snapshots;
+      for (const { agentId, apply } of updates) {
+        const next = apply(snapshots[agentId]);
+        if (next) snapshots = { ...snapshots, [agentId]: next };
+      }
+      return snapshots === current.snapshots ? current : { snapshots };
+    });
+  }
+
   async clear(agentId: string): Promise<void> {
     await this.store.update((current) => {
       if (!current.snapshots[agentId]) return current;
