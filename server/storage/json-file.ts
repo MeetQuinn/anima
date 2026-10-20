@@ -75,17 +75,25 @@ export class JsonFile<T> {
 
   async write(value: T): Promise<void> {
     await withFileLock(this.path, this.writeRoot, async () => {
-      await writeAtomic(this.path, value, this.writeRoot, this.mode);
+      await writeAtomic(this.path, serializeJson(value), this.writeRoot, this.mode);
       await this.refreshCache(value);
     });
   }
 
+  /**
+   * Read, transform and write under the file lock. When the result serializes
+   * to the bytes already on disk, the file is left untouched: its mtime stays,
+   * so every process's cached copy stays valid. A missing file is written. A
+   * store with a file mode always rewrites, so each write still reapplies it.
+   */
   async update(op: (current: T) => T | Promise<T>): Promise<T> {
     return withFileLock(this.path, this.writeRoot, async () => {
-      const current = await this.readUnlocked();
+      const { text, value: current } = await this.readUnlockedText();
       const next = await op(current);
       if (next === current) return next;
-      await writeAtomic(this.path, next, this.writeRoot, this.mode);
+      const serialized = serializeJson(next);
+      if (serialized === text && this.mode === undefined) return next;
+      await writeAtomic(this.path, serialized, this.writeRoot, this.mode);
       await this.refreshCache(next);
       return next;
     });
@@ -101,23 +109,34 @@ export class JsonFile<T> {
   }
 
   private async readUnlocked(): Promise<T> {
+    return (await this.readUnlockedText()).value;
+  }
+
+  /** `text` is the file's exact bytes, or undefined when the file is missing. */
+  private async readUnlockedText(): Promise<{ text?: string; value: T }> {
+    let text: string;
     try {
-      return JSON.parse(await readFile(this.path, 'utf8')) as T;
+      text = await readFile(this.path, 'utf8');
     } catch (error) {
-      if (isMissingFile(error)) return this.empty();
+      if (isMissingFile(error)) return { value: this.empty() };
       throw error;
     }
+    return { text, value: JSON.parse(text) as T };
   }
+}
+
+function serializeJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
 }
 
 // Defense in depth. Every public caller reaches withFileLock's guard first, so
 // this one is unreachable as the operative check today. It is here for a future
 // caller that writes outside the lock.
-async function writeAtomic(path: string, value: unknown, writeRoot: string, mode?: number): Promise<void> {
+async function writeAtomic(path: string, serialized: string, writeRoot: string, mode?: number): Promise<void> {
   await ensureParentDirectory(path, writeRoot);
   const tempPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   try {
-    await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode });
+    await writeFile(tempPath, serialized, { encoding: 'utf8', mode });
     await rename(tempPath, path);
   } catch (error) {
     await rm(tempPath, { force: true });

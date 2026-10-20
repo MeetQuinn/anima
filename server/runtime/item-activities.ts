@@ -21,9 +21,12 @@ export async function activitiesForInboxItemWindow(agentId: string, itemId: stri
 /**
  * How far before an item's creation the settle-time read keeps scanning.
  * Rows are stamped under the activity log's file lock, so append order is
- * `createdAt` order. The margin absorbs what that cannot rule out: a wall-clock
- * step, a lock broken as stale (held past five minutes), or a row from a
- * runtime that still stamps before taking the lock.
+ * `createdAt` order as long as the wall clock does not step backwards. The
+ * margin is a finite tolerance, not a guarantee: it covers a row stamped up to
+ * ten minutes out of order (a small clock step, a lock broken as stale after
+ * five minutes, a runtime that still stamps before taking the lock). A larger
+ * backwards clock step or a writer stalled past the margin can still land a
+ * row the read never reaches.
  */
 const ITEM_ACTIVITY_SCAN_MARGIN_MS = 10 * 60 * 1000;
 
