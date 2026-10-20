@@ -177,6 +177,7 @@ test('JsonlAppendLog rotates active files and reads archives chronologically', a
 test('JsonlAppendLog tail read of long rows reads the file about once', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-tail-window-'));
   const realOpen = fsPromises.open;
+  const realReadFile = fsPromises.readFile;
   try {
     // Rows of about 2KB, several times the 300-byte guess, as in real ledgers.
     const path = join(dir, 'messages.jsonl');
@@ -195,6 +196,12 @@ test('JsonlAppendLog tail read of long rows reads the file about once', async ()
       };
       return handle;
     }) as typeof realOpen;
+    // The whole-file fallback reads through readFile; count it too.
+    fsPromises.readFile = (async (...args: Parameters<typeof realReadFile>) => {
+      const data = await realReadFile(...args);
+      bytesRead += typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
+      return data;
+    }) as typeof realReadFile;
     syncBuiltinESMExports();
 
     const tail = await new JsonlAppendLog<{ id: number }>(path).readTail(900);
@@ -203,6 +210,7 @@ test('JsonlAppendLog tail read of long rows reads the file about once', async ()
     assert.ok(bytesRead <= fileBytes + 64 * 1024, `read ${bytesRead} bytes of a ${fileBytes}-byte file`);
   } finally {
     fsPromises.open = realOpen;
+    fsPromises.readFile = realReadFile;
     syncBuiltinESMExports();
     await rm(dir, { force: true, recursive: true });
   }
