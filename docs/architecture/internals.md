@@ -47,7 +47,7 @@ The shared decision skeleton is `server/inbox/ingest-pipeline.ts`.
 
 `runIngestPipeline` executes the same ordered hooks for Slack and Feishu:
 
-1. `hasSeen` dedupe check against the wake queue and legacy message ledger;
+1. `hasSeenRecently` dedupe check against the wake queue and the newest 10,000 message ledger rows, the window `enqueue` dedupes against;
 2. `decide`, which returns a reason and whether to start the runtime;
 3. `enrich`, which builds the final inbox item;
 4. tag the item with `attentionSuggestion` and parsed `wakeReason`;

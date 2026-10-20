@@ -44,6 +44,16 @@ export class MessageStore {
     return (await this.log().readNewestMatching(1, (entry) => entry.messageId === messageId)).length > 0;
   }
 
+  /** Whether the id is among the newest records, the window `appendIfAbsent` dedupes against. */
+  async hasRecentMessageId(messageId: string): Promise<boolean> {
+    const found = await this.log().readNewestMatching(
+      1,
+      (entry) => entry.messageId === messageId,
+      { withinNewest: MESSAGE_DEDUPE_RECENT_LIMIT },
+    );
+    return found.length > 0;
+  }
+
   async readPage(input: {
     before?: string;
     cursor?: string;

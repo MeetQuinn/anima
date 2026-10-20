@@ -82,6 +82,11 @@ export class MessageService {
   hasInboxItem(itemId: string): Promise<boolean> {
     return this.store.hasMessageId(`msg_inbox:${itemId}`);
   }
+
+  /** Whether the item's row is in the window `recordInboxItem` dedupes against. */
+  hasRecentInboxItem(itemId: string): Promise<boolean> {
+    return this.store.hasRecentMessageId(`msg_inbox:${itemId}`);
+  }
 }
 
 export function messageServiceForAgent(agentId: string): MessageService {
