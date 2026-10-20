@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import fsPromises, { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -169,6 +170,48 @@ test('JsonlAppendLog rotates active files and reads archives chronologically', a
     assert.deepEqual(await log.readTail(2), [{ id: 'b' }, { id: 'c' }]);
   } finally {
     Date.now = realNow;
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonlAppendLog tail read of long rows reads the file about once', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-tail-window-'));
+  const realOpen = fsPromises.open;
+  const realReadFile = fsPromises.readFile;
+  try {
+    // Rows of about 2KB, several times the 300-byte guess, as in real ledgers.
+    const path = join(dir, 'messages.jsonl');
+    const pad = 'x'.repeat(2_000);
+    await writeFile(path, Array.from({ length: 1_000 }, (_, id) => `${JSON.stringify({ id, pad })}\n`).join(''), 'utf8');
+    const fileBytes = (await stat(path)).size;
+
+    let bytesRead = 0;
+    fsPromises.open = (async (...args: Parameters<typeof realOpen>) => {
+      const handle = await realOpen(...args);
+      const read = handle.read.bind(handle) as (...readArgs: unknown[]) => Promise<{ bytesRead: number }>;
+      (handle as unknown as { read: typeof read }).read = async (...readArgs: unknown[]) => {
+        const result = await read(...readArgs);
+        bytesRead += result.bytesRead;
+        return result;
+      };
+      return handle;
+    }) as typeof realOpen;
+    // The whole-file fallback reads through readFile; count it too.
+    fsPromises.readFile = (async (...args: Parameters<typeof realReadFile>) => {
+      const data = await realReadFile(...args);
+      bytesRead += typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
+      return data;
+    }) as typeof realReadFile;
+    syncBuiltinESMExports();
+
+    const tail = await new JsonlAppendLog<{ id: number }>(path).readTail(900);
+    assert.deepEqual(tail.map((row) => row.id), Array.from({ length: 900 }, (_, index) => index + 100));
+    // One small window to measure the rows, then the rest of the file.
+    assert.ok(bytesRead <= fileBytes + 64 * 1024, `read ${bytesRead} bytes of a ${fileBytes}-byte file`);
+  } finally {
+    fsPromises.open = realOpen;
+    fsPromises.readFile = realReadFile;
+    syncBuiltinESMExports();
     await rm(dir, { force: true, recursive: true });
   }
 });

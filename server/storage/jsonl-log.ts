@@ -27,6 +27,11 @@ interface PageSegmentEntry<T> {
 /** Live path -> page cache key of the file now at that path. */
 const livePageKeys = new Map<string, string>();
 
+/** The first tail window is at most this large; it measures the row length. */
+const TAIL_PROBE_BYTES = 64 * 1024;
+/** The next window covers the missing rows at the measured length, times this. */
+const TAIL_WINDOW_MARGIN = 1.25;
+
 function parseLines<T>(bytes: Buffer): T[] {
   return bytes.toString('utf8').split(/\r?\n/)
     .filter((s) => s.trim() !== '').map((s) => JSON.parse(s) as T);
@@ -406,7 +411,9 @@ export class JsonlAppendLog<T> {
       return all.slice(-n);
     }
 
-    // Large file — seek from the end, doubling the window until we have n lines.
+    // Large file — seek from the end. The 300-byte guess can be several times
+    // too small, and doubling from it read most of the file twice. So read a
+    // small window first, then size the next one from the rows it holds.
     let fd: FileHandle | undefined;
     try {
       fd = await open(path, 'r');
@@ -414,7 +421,7 @@ export class JsonlAppendLog<T> {
       // between leaves `path` naming a new, smaller live file.
       const size = (await fd.stat()).size;
       if (size === 0) return [];
-      let readSize = Math.min(size, estimatedBytes);
+      let readSize = Math.min(size, estimatedBytes, TAIL_PROBE_BYTES);
       for (let attempt = 0; attempt < 5; attempt++) {
         const start = Math.max(0, size - readSize);
         const buf = Buffer.allocUnsafe(size - start);
@@ -426,8 +433,11 @@ export class JsonlAppendLog<T> {
         if (lines.length >= n || start === 0) {
           return lines.slice(-n).map((l) => JSON.parse(l) as T);
         }
-        // Not enough lines — double the read window and retry.
-        readSize = Math.min(size, readSize * 2);
+        // Not enough lines. Grow by the missing rows at the length measured so
+        // far, plus a margin, and at least double.
+        const bytesPerLine = bytesRead / Math.max(1, lines.length);
+        const missingBytes = Math.ceil((n - lines.length) * bytesPerLine * TAIL_WINDOW_MARGIN);
+        readSize = Math.min(size, Math.max(readSize * 2, readSize + missingBytes));
       }
       // Should not reach here — fallback to readAll.
       return (await this.readAllFromPath(path)).slice(-n);
