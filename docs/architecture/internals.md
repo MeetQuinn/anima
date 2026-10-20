@@ -140,6 +140,8 @@ Activities are append-only per-agent records.
 
 Runtime events, provider output/tool rows, platform tool rows, reminders, subscriptions, and attention suggestions all record through this path. The web Activity view reads the feed through server web routes under `server/web/` and renders it in `web/src/views/agents/activity/`.
 
+`ActivityStore.record` stamps `activityId` and `createdAt` while it holds the log's file lock (`JsonlAppendLog.appendBuilt`). Append order across processes is therefore `createdAt` order, provided the wall clock does not step backwards. Readers that stop early on `createdAt`, such as the settle-time usage read in `server/runtime/item-activities.ts`, rely on this and keep only a finite ten-minute margin for rows out of order.
+
 ## State And Storage
 
 The selected Anima home comes from `server/anima-home.ts`: `ANIMA_HOME`, then a local `./.anima` directory if present, then `~/.anima`.
@@ -163,7 +165,7 @@ run/
 
 Agent config files are managed by `server/storage/schema/agent.store.ts`. The default agent home path helper is in `shared/agent-home.ts`, but the runtime state directory above is the Anima home, not the provider working directory.
 
-The storage layer starts with `server/storage/json-file.ts`, which provides atomic JSON writes, file locks, and a small process-local cache. `server/storage/json-store.ts` adds schema parsing and validation. JSONL append/read/rotation is in `server/storage/jsonl-log.ts`.
+The storage layer starts with `server/storage/json-file.ts`, which provides atomic JSON writes, file locks, and a small process-local cache. `JsonFile.update` leaves the file untouched when the new value serializes to the bytes already on disk, so a no-op update keeps the file's mtime and every process's cached copy. Files with a mode (the 0600 Linear stores) always rewrite, to reapply it. `server/storage/json-store.ts` adds schema parsing and validation. JSONL append/read/rotation is in `server/storage/jsonl-log.ts`.
 
 Typed stores live in `server/storage/schema/`. Examples:
 

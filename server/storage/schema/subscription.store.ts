@@ -15,8 +15,9 @@ import { z } from 'zod';
 const SubscriptionBase = z.object({
   channelId: z.string(),
   // Legacy subscriptions carried expiresAt/remainingMessages. The attention
-  // model is permanent-follow + explicit mute, but keep legacy fields readable
-  // so existing subscription.json files migrate on the next write.
+  // model is follow + explicit mute, with a 30-day lapse for idle thread
+  // follows (threadFollowLapsed). Keep the legacy fields readable so existing
+  // subscription.json files migrate on the next write.
   expiresAt: z.string().optional(),
   lastActivityAt: z.string().optional(),
   lastNudgeAt: z.string().optional(),
@@ -130,6 +131,12 @@ function isSlackDmThread(subscription: Subscription): boolean {
   return platform === 'slack' && subscription.channelId.startsWith('D');
 }
 
+/**
+ * Drop thread records that can no longer wake the agent: lapsed unmuted
+ * follows, and every Slack DM thread record. The DM case includes muted
+ * records, because a DM wakes directly and never consults the mute. Channel
+ * records and channel-thread mutes are kept.
+ */
 function withoutDeadThreadRecords(stored: StoredSubscriptions, nowMs: number): StoredSubscriptions {
   let kept: StoredSubscriptions | undefined;
   for (const [subscriptionId, subscription] of Object.entries(stored)) {

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,9 @@ import assert from 'node:assert/strict';
 import { JsonFile } from '../storage/json-file.js';
 import { JsonlAppendLog } from '../storage/jsonl-log.js';
 import { withFileLock } from '../storage/lock.js';
+import { WakeQueueStore } from '../storage/schema/wake-queue.store.js';
+import { withAnimaHome } from './anima-home.js';
+import { makeReminderInboxItem } from './helpers/inbox.js';
 
 const JSON_FILE_CACHE_ENTRY_CAP = 256;
 
@@ -403,6 +406,75 @@ test('JsonFile update skips same-reference writes and persists new objects', asy
     assert.ok(afterWriteStat.mtimeMs > afterNoopStat.mtimeMs);
     assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { count: 2 });
     assert.deepEqual(await file.read(), { count: 2 });
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonFile update leaves the file untouched when a new object has the same bytes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-update-same-bytes-'));
+  try {
+    const path = join(dir, 'value.json');
+    const file = new JsonFile<{ count: number }>(path, () => ({ count: 0 }));
+    await file.write({ count: 1 });
+    const warmMtime = new Date(1_700_000_000_000);
+    await utimes(path, warmMtime, warmMtime);
+    const before = await stat(path);
+
+    // A fresh object with equal content, which is what a schema re-parse returns.
+    assert.deepEqual(await file.update((current) => ({ ...current })), { count: 1 });
+    const after = await stat(path);
+    assert.equal(after.mtimeMs, before.mtimeMs, 'an equal value must not rewrite the file');
+    assert.equal(after.ino, before.ino, 'an equal value must not replace the file');
+    assert.deepEqual(await file.read(), { count: 1 });
+
+    // Equal content in a different layout is rewritten in the canonical form.
+    await writeFile(path, '{"count":1}', 'utf8');
+    await file.update((current) => ({ ...current }));
+    assert.equal(await readFile(path, 'utf8'), `${JSON.stringify({ count: 1 }, null, 2)}\n`);
+
+    // A missing file is written even when the value equals the empty default.
+    const missingPath = join(dir, 'missing.json');
+    await new JsonFile<{ count: number }>(missingPath, () => ({ count: 0 })).update((current) => ({ ...current }));
+    assert.deepEqual(JSON.parse(await readFile(missingPath, 'utf8')), { count: 0 });
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('JsonFile update with a file mode still rewrites an equal value to reapply the mode', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-update-mode-'));
+  try {
+    const path = join(dir, 'secret.json');
+    const file = new JsonFile<{ token: string }>(path, () => ({ token: '' }), dir, 0o600);
+    await file.write({ token: 'synthetic' });
+    await chmod(path, 0o644);
+
+    await file.update((current) => ({ ...current }));
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('a duplicate wake-queue insert leaves wake-queue.json untouched', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-wake-queue-noop-'));
+  try {
+    await withAnimaHome(dir, async () => {
+      const store = new WakeQueueStore('anima');
+      const item = makeReminderInboxItem({ reminderId: 'rem_noop_write' });
+      assert.equal((await store.insertIfAbsent(item)).inserted, true);
+      const path = join(dir, 'agents', 'anima', 'wake-queue.json');
+      const warmMtime = new Date(1_700_000_000_000);
+      await utimes(path, warmMtime, warmMtime);
+      const before = await stat(path);
+
+      assert.equal((await store.insertIfAbsent(item)).inserted, false);
+      const after = await stat(path);
+      assert.equal(after.mtimeMs, before.mtimeMs, 'a duplicate insert must not rewrite the queue');
+      assert.equal(after.ino, before.ino, 'a duplicate insert must not replace the queue');
+      assert.equal((await store.find(item.id))?.id, item.id);
+    });
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
