@@ -18,6 +18,18 @@ export async function activitiesForInboxItemWindow(agentId: string, itemId: stri
   return sortActivities(current);
 }
 
+/**
+ * Activities tagged to an item that may already have left the wake queue (the
+ * settle hooks run after `complete`). Activity rows are stamped at append, so
+ * nothing tagged to the item predates its creation: the read stops there
+ * instead of parsing every archive segment.
+ */
+export async function activitiesTaggedToItem(agentId: string, item: InboxItem): Promise<Activity[]> {
+  const activities = await activityServiceForAgent(agentId)
+    .readNewestUntil((activity) => activity.createdAt < item.handling.createdAt);
+  return sortActivities(activities.filter((activity) => taggedToItem(activity, item.id)));
+}
+
 function taggedToItem(activity: Activity, itemId: string): boolean {
   return activity.payload?.['itemId'] === itemId || activity.payload?.['activeItemId'] === itemId;
 }

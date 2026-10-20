@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -418,8 +418,8 @@ test('web snapshot exposes persisted lifetime token usage', async () => {
       await recordRuntimeActivity({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', 'runtime.completed');
       await new WakeQueueService('anima').complete(ctx.item.id);
 
-      await recordLifetimeTokenUsageForItem('anima', ctx.item.id);
-      await recordLifetimeTokenUsageForItem('anima', ctx.item.id);
+      await recordLifetimeTokenUsageForItem('anima', ctx.item);
+      await recordLifetimeTokenUsageForItem('anima', ctx.item);
 
       const animaSessionTokens = await agentService('anima').getSession();
       assert.equal(animaSessionTokens?.lifetimeTokens, 250);
@@ -430,6 +430,55 @@ test('web snapshot exposes persisted lifetime token usage', async () => {
       assert.equal(usage.totalTokens, 250);
     });
   } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('lifetime token usage for a settled item reads only activity since the item was created', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('root ignores file modes');
+    return;
+  }
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-lifetime-window-test-'));
+  const archiveDir = join(stateDir, 'agents', 'anima', 'activity.archive');
+  try {
+    await writeAgentConfigs(stateDir);
+    await withAnimaHome(stateDir, async () => {
+      // An older archive segment the settle path must not open: reading it fails.
+      await mkdir(archiveDir, { recursive: true });
+      const archivePath = join(archiveDir, '1000000000000-activity-000.jsonl');
+      await writeFile(archivePath, `${JSON.stringify({ createdAt: '2020-01-01T00:00:00.000Z', id: 'old', payload: {}, type: 'runtime.event' })}\n`);
+      await chmod(archivePath, 0o000);
+      await recordRuntimeEvent({ agentId: 'anima', itemId: 'earlier-item' }, 'codex-cli', undefined, {
+        eventType: 'codex.session.stats',
+        inputTokens: 999,
+        runtimeKind: 'codex-cli',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-demo',
+          teamId: 'T-demo',
+          text: 'Record windowed lifetime usage.',
+          ts: '1770000000.000005',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      await recordRuntimeEvent({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', undefined, {
+        eventType: 'codex.session.stats',
+        inputTokens: 40,
+        outputTokens: 2,
+        runtimeKind: 'codex-cli',
+      });
+      await recordRuntimeActivity({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', 'runtime.completed');
+      await new WakeQueueService('anima').complete(ctx.item.id);
+      await assert.rejects(activityServiceForAgent('anima').readAll());
+
+      assert.equal(await recordLifetimeTokenUsageForItem('anima', ctx.item), 42);
+    });
+  } finally {
+    await chmod(join(archiveDir, '1000000000000-activity-000.jsonl'), 0o600).catch(() => {});
     await rm(stateDir, { force: true, recursive: true });
   }
 });
