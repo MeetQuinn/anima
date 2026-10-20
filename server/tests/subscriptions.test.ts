@@ -23,6 +23,7 @@ import { feishuRuntimeDecision } from '../inbox/feishu-subscription.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { loadState } from './helpers/state.js';
 import { SubscriptionStore, type SubscriptionRecord } from '../storage/schema/subscription.store.js';
+import { JsonFile } from '../storage/json-file.js';
 import type { FeishuInboxItem } from '../../shared/inbox.js';
 
 test('Slack routing replies to DMs without mention', () => {
@@ -939,6 +940,49 @@ test('subscription writes drop lapsed thread follows and Slack DM thread records
         threadSubscriptionId('scout', 'C123', '9.000001'),
         threadSubscriptionId('scout', 'oc_group', 'omt_topic'),
       ].sort());
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('a new SubscriptionStore for the same agent does not re-parse an unchanged file', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-subscription-parse-memo-test-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const subscriptionId = threadSubscriptionId('scout', 'C123', '1.000001');
+      await new SubscriptionStore('scout').replace({
+        agentId: 'scout',
+        channelId: 'C123',
+        kind: 'thread',
+        subscriptionId,
+        threadTs: '1.000001',
+        updatedAt: new Date().toISOString(),
+      });
+      assert.equal((await new SubscriptionStore('scout').find(subscriptionId))?.channelId, 'C123');
+
+      // The file cache hands every reader the same object for an unchanged
+      // file. Count reads of one field on it: a schema parse reads every field.
+      const cached = await new JsonFile<Record<string, Record<string, unknown>>>(
+        join(stateDir, 'agents', 'scout', 'subscription.json'),
+        () => ({}),
+      ).read();
+      const record = cached[subscriptionId];
+      assert.ok(record);
+      let channelIdReads = 0;
+      Object.defineProperty(record, 'channelId', {
+        configurable: true,
+        enumerable: true,
+        get: () => {
+          channelIdReads += 1;
+          return 'C123';
+        },
+      });
+
+      for (let event = 0; event < 3; event += 1) {
+        assert.equal((await new SubscriptionStore('scout').find(subscriptionId))?.channelId, 'C123');
+      }
+      assert.equal(channelIdReads, 0);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
