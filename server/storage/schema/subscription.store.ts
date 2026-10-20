@@ -55,12 +55,22 @@ export type StoredSubscriptions = Record<string, Subscription>;
 export type SubscriptionStatus = 'following' | 'muted';
 export type SubscriptionRecord = Subscription & { agentId: string; subscriptionId: string };
 
+// One file store per agent for the life of the process. A JsonStore memoizes
+// its schema parse by the cached file object, so an unchanged file is parsed
+// once. Ingress builds a SubscriptionStore for every event; with a fresh
+// JsonStore each time, every event re-parsed the whole file.
+const subscriptionFileStores = new Map<string, JsonStore<StoredSubscriptions>>();
+
 function getSubscriptionFileStore(agentId: string): JsonStore<StoredSubscriptions> {
-  return new JsonStore<StoredSubscriptions>({
+  const existing = subscriptionFileStores.get(agentId);
+  if (existing) return existing;
+  const created = new JsonStore<StoredSubscriptions>({
     empty: () => ({}),
     parse: SubscriptionsFileSchema.parse,
     path: () => join(agentsDir(), agentId, 'subscription.json'),
   });
+  subscriptionFileStores.set(agentId, created);
+  return created;
 }
 
 export class SubscriptionStore {
