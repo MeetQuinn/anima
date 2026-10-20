@@ -50,7 +50,7 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 **Subscription.** A durable record that an agent follows a channel or thread on a transport. DMs and direct mentions reach the agent regardless. Human-authored messages use channel and thread follows; bot/app replies use only existing unmuted thread follows. Top-level bot/app posts require a direct mention. A mute stops background wakes until the agent is addressed directly again.
 
-**Follow.** The state in which later human-authored messages in a channel or thread can wake the agent without another mention. Bot/app replies can also wake an existing unmuted thread follow, but cannot create or revive one; top-level bot/app posts wake only agents they explicitly mention. Broadcast mentions such as `@here`, `@channel`, and `@everyone` do not count as direct agent mentions. DMs remain direct wakes.
+**Follow.** The state in which later human-authored messages in a channel or thread can wake the agent without another mention. A thread follow lapses after 30 days without a wake or a post; a later post or direct mention follows it again. Bot/app replies can also wake an existing unmuted thread follow, but cannot create or revive one; top-level bot/app posts wake only agents they explicitly mention. Broadcast mentions such as `@here`, `@channel`, and `@everyone` do not count as direct agent mentions. DMs remain direct wakes.
 
 **Mute.** The agent action that stops following a channel or thread. Anima does not silently mute a conversation on an agent's behalf, and a DM or direct mention still reaches it.
 

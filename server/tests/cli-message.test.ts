@@ -473,6 +473,10 @@ test('message send output describes DM targets', async () => {
       completed?.payload?.['permalink'],
       'https://slack.com/app_redirect?channel=D-alice&message_ts=1770000200.000125',
     );
+    // A DM always reaches the agent, so a DM sent by channel id follows nothing.
+    assert.equal(completed?.payload?.['threadSubscription'], undefined);
+    const state = await loadState();
+    assert.equal(Object.values(state.subscriptions).some((subscription) => subscription.channelId === 'D-alice'), false);
     });
   } finally {
     await slackApi.close();
@@ -1011,6 +1015,51 @@ test('message send only targets a thread when explicitly requested', async () =>
         text: 'Top-level by default.',
       },
     ]);
+  } finally {
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('message send follows the thread Slack actually posted the reply in', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-posted-thread-test-'));
+  const responses = [
+    // A normal reply: Slack reports the thread root.
+    { message: { thread_ts: '1770000200.000001', ts: '1770000200.000140' }, ts: '1770000200.000140' },
+    // A requested reply that Slack posted top-level: no thread_ts.
+    { message: { ts: '1770000200.000141' }, ts: '1770000200.000141' },
+  ];
+  const slackApi = await startSlackApiMock((method) => {
+    if (method === 'conversations.info') {
+      return {
+        channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' },
+        ok: true,
+      };
+    }
+    if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
+    const response = responses.shift();
+    if (!response) throw new Error('unexpected extra post');
+    return { ok: true, channel: 'C-product', ...response };
+  });
+  try {
+    await writeSlackConfig(stateDir);
+    const itemId = await ingestSlackThread(stateDir);
+    for (const text of ['In the thread.', 'Landed top-level.']) {
+      const send = await runNode([cliPath, 'message', 'send', '--channel', 'C-product', '--thread-ts', '1770000200.000001'], {
+        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
+        input: text,
+      });
+      assert.equal(send.status, 0, send.stderr || send.stdout);
+    }
+
+    await withAnimaHome(stateDir, async () => {
+      const followed = Object.values((await loadState()).subscriptions)
+        .filter((subscription) => subscription.kind === 'thread' && subscription.channelId === 'C-product')
+        .map((subscription) => subscription.kind === 'thread' && subscription.threadTs)
+        .sort();
+      // The root, and the top-level post as its own root; never a reply's ts.
+      assert.deepEqual(followed, ['1770000200.000001', '1770000200.000141']);
+    });
   } finally {
     await slackApi.close();
     await rm(stateDir, { force: true, recursive: true });

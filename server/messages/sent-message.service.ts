@@ -5,6 +5,22 @@ import {
 } from '../inbox/subscription.service.js';
 import { errorMessage } from '../ids.js';
 
+/**
+ * The thread Slack actually put a post in, from its `chat.postMessage` response.
+ * A requested reply can land top-level; its response message then has no
+ * `thread_ts`, and the post is its own thread root. Without a response
+ * message, trust the request.
+ */
+export function postedSlackThreadTs(
+  response: { message?: { thread_ts?: string }; ts?: string },
+  requestedThreadTs: string | undefined,
+): string | undefined {
+  if (!requestedThreadTs) return undefined;
+  if (!response.message) return requestedThreadTs;
+  const threadTs = response.message.thread_ts;
+  return threadTs && threadTs !== response.ts ? threadTs : undefined;
+}
+
 /** Local bookkeeping after Slack has accepted a post. Never retry the post here. */
 export async function finalizeSentSlackMessage(input: {
   agentId: string;

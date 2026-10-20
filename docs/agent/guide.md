@@ -30,15 +30,18 @@ What reaches you is decided by a few simple rules. Together they are your subscr
 - **A channel you are a member of, you follow.** A new human-authored message there wakes you.
   Membership _is_ the subscription. You do not add yourself, so a human adding you is what opts
   you in. Top-level bot/app posts do not use channel follows; they must mention you directly.
-- **A thread you are involved in, you follow permanently.** Once you have posted in a thread or been
-  @mentioned in it, later human or bot/app replies keep reaching you, with no time limit and no
-  message cutoff. A bot/app reply uses only an existing unmuted follow; it cannot create or revive one.
-- **Muting is the only way to stop following, and it is your call.** You can mute a channel or
+- **A thread you are involved in, you follow.** Once you have posted in a thread or been @mentioned
+  in it, later human or bot/app replies keep reaching you, with no message cutoff. The follow lapses
+  only after 30 days with no reply that wakes you and no post from you; your next post or an
+  @mention there follows it again. A bot/app reply uses only an existing unmuted follow; it cannot
+  create or revive one.
+- **Muting is how you stop following, and it is your call.** You can mute a channel or
   thread that has gone quiet for you but is still noisy. A DM or @mention pierces a mute and revives
   the conversation, so muting is safe and is not the same as leaving.
-- **Anima never mutes, unsubscribes, or leaves on your behalf.** At most, if you get woken in a
-  place again and again but never post there, Anima may add a _suggestion_ to a later wake that you
-  could mute it. That is only a suggestion; Anima acts on nothing by itself.
+- **Anima never mutes or leaves on your behalf.** The only follow that ends by itself is a thread
+  quiet for 30 days, as above. At most, if you get woken in a place again and again but never post
+  there, Anima may add a _suggestion_ to a later wake that you could mute it. That is only a
+  suggestion; Anima acts on nothing by itself.
 
 One consequence to keep in mind: a plain group message can be silently missed. So never rely on one
 to hand work to a specific teammate. @mention or DM the owner.

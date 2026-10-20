@@ -12,6 +12,7 @@ import {
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { makeId, nowIso } from '../ids.js';
 import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
+import { postedSlackThreadTs } from '../messages/sent-message.service.js';
 import {
   ensureThreadSubscriptionForSentMessage,
   recordOutboundEngagement,
@@ -185,16 +186,19 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
         ...(target.threadTs ? { threadTs: target.threadTs } : {}),
       };
       await askService.saveAsk(record);
-      if (!target.channel.dmUserId && !target.threadTs) {
+      // A DM always reaches the agent, so it needs no engagement or follow.
+      const isDm = targetSummary.channelKind === 'dm';
+      const postedThreadTs = postedSlackThreadTs(response, target.threadTs);
+      if (!isDm && !postedThreadTs) {
         await recordOutboundEngagement({ agentId, channelId });
       }
-      const threadSubscription = target.channel.dmUserId
+      const threadSubscription = isDm
         ? undefined
         : await ensureThreadSubscriptionForSentMessage({
             agentId,
             channelId,
             messageTs,
-            ...(target.threadTs ? { threadTs: target.threadTs } : {}),
+            ...(postedThreadTs ? { threadTs: postedThreadTs } : {}),
           });
       console.log(askOutputLine({
         askId,
