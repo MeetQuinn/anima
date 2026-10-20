@@ -116,6 +116,37 @@ test('anima ask posts Block Kit buttons, stores the ask, and subscribes to typed
   }
 });
 
+test('anima ask in a DM by channel id follows no thread', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-dm-cli-'));
+  const slackApi = await startSlackApiMock((method) => {
+    if (method === 'conversations.info') {
+      return { channel: { id: 'D-alice', is_im: true, user: 'U-alice' }, ok: true };
+    }
+    if (method === 'users.info') {
+      return { ok: true, user: { id: 'U-alice', name: 'alice', profile: { display_name: 'Alice' } } };
+    }
+    if (method !== 'chat.postMessage') throw new Error(`unexpected method ${method}`);
+    return { channel: 'D-alice', ok: true, ts: '1770000400.000124' };
+  });
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeAgentConfig('scout', {
+        slack: { appToken: 'xapp-test', botToken: 'xoxb-test', teamId: 'T-demo' },
+      });
+      const run = await runNode(
+        [cliPath, 'ask', '--channel', 'D-alice', '--question', 'Ship this change?', '--option', 'Approve', '--option', 'Hold'],
+        { env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_SLACK_API_URL: slackApi.url } },
+      );
+      assert.equal(run.status, 0, run.stderr || run.stdout);
+      // A DM always reaches the agent, so the ask needs no follow.
+      assert.deepEqual(await new SubscriptionStore('scout').list(), []);
+    });
+  } finally {
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('interactive ask answer enqueues one choice_response with envelope context', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-answer-'));
   await withAnimaHome(stateDir, async () => {

@@ -1,5 +1,5 @@
 import { slackEventMentionsUserId } from '../slack/message-text.js';
-import { SubscriptionStore } from '../storage/schema/subscription.store.js';
+import { SubscriptionStore, threadFollowLapsed } from '../storage/schema/subscription.store.js';
 import type { SlackRawMessageEvent } from './slack-events.js';
 import {
   channelSubscriptionId,
@@ -109,7 +109,10 @@ async function consumeThreadFollow(
 
   const store = new SubscriptionStore(agentId);
   const subscription = await store.find(threadSubscriptionId(agentId, event.channel, event.thread_ts));
-  if (!subscription || subscription.kind !== 'thread') return { reason: 'not_addressed', shouldStartRuntime: false };
+  const nowMs = options.nowMs ?? Date.now();
+  if (!subscription || subscription.kind !== 'thread' || threadFollowLapsed(subscription, nowMs)) {
+    return { reason: 'not_addressed', shouldStartRuntime: false };
+  }
   if (subscription.mutedAt) {
     return {
       reason: 'muted',
@@ -118,7 +121,6 @@ async function consumeThreadFollow(
     };
   }
 
-  const nowMs = options.nowMs ?? Date.now();
   const { next, suggestion } = noteInboundWake(subscription, nowMs);
   if (!options.duplicate) await store.replace(next);
   return {

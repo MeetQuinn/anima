@@ -6,7 +6,7 @@ import { markdownToFeishuPost } from '../feishu/markdown-to-feishu-post.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
-import { finalizeSentSlackMessage } from '../messages/sent-message.service.js';
+import { finalizeSentSlackMessage, postedSlackThreadTs } from '../messages/sent-message.service.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { SLACK_NO_UNFURL, slackMessageContentForText } from './slack-message-format.js';
@@ -183,12 +183,13 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
         });
       }
       const permalink = slackMessageRedirectLink({ channelId, messageTs: response.ts });
+      const postedThreadTs = postedSlackThreadTs(response, threadTs);
       const finalization = await finalizeSentSlackMessage({
         agentId,
         channelId,
-        isDm: Boolean(channel.dmUserId),
+        isDm: target.channelKind === 'dm',
         messageTs: response.ts,
-        ...(threadTs ? { threadTs } : {}),
+        ...(postedThreadTs ? { threadTs: postedThreadTs } : {}),
       });
       warnings.push(...finalization.warnings);
       return {

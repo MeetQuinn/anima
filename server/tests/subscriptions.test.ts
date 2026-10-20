@@ -557,7 +557,7 @@ test('new subscription records carry platform while legacy records round-trip wi
   }
 });
 
-test('thread follows are permanent and mute is revived by mention', async () => {
+test('thread follows last through quiet weeks and mute is revived by mention', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-thread-follow-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -810,7 +810,7 @@ test('sent messages follow only threads, not whole channels', async () => {
   }
 });
 
-test('sent replies also follow their own message thread root', async () => {
+test('sent replies follow only their thread root', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-sent-reply-thread-follow-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -824,28 +824,121 @@ test('sent replies also follow their own message thread root', async () => {
       assert.equal(sentSubscription?.kind, 'thread');
       assert.equal(sentSubscription?.threadTs, '1770000010.000001');
       const state = await loadState();
-      assert.equal(Object.values(state.subscriptions).some((subscription) => subscription.kind === 'channel'), false);
-      assert.ok(Object.values(state.subscriptions).some(
-        (subscription) => subscription.kind === 'thread' && subscription.threadTs === '1770000010.000001',
-      ));
-      assert.ok(Object.values(state.subscriptions).some(
-        (subscription) => subscription.kind === 'thread' && subscription.threadTs === '1770000020.000123',
-      ));
+      // Slack threads are one level deep, so the reply's own ts is never a thread root.
+      assert.deepEqual(
+        Object.values(state.subscriptions).map((subscription) => subscription.kind === 'thread' && subscription.threadTs),
+        ['1770000010.000001'],
+      );
 
-      const replyToSentReply = await slackRuntimeDecision(
+      const reply = await slackRuntimeDecision(
         {
           channel: 'C123',
           channel_type: 'channel',
-          text: 'replying to the agent reply as its own thread',
-          thread_ts: '1770000020.000123',
+          text: 'replying in the thread the agent replied in',
+          thread_ts: '1770000010.000001',
           ts: '1770000021.000001',
           type: 'message',
           user: 'U456',
         },
         { agentId: 'scout', nowMs: 2_000 },
       );
-      assert.equal(replyToSentReply.shouldStartRuntime, true);
-      assert.equal(replyToSentReply.reason, 'thread_follow');
+      assert.equal(reply.shouldStartRuntime, true);
+      assert.equal(reply.reason, 'thread_follow');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('a thread follow lapses after 30 days without a wake or a post', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-thread-follow-lapse-test-'));
+  const day = 24 * 60 * 60 * 1000;
+  const reply = (threadTs: string, ts: string) => ({
+    channel: 'C123',
+    channel_type: 'channel',
+    text: 'a reply after a long quiet',
+    thread_ts: threadTs,
+    ts,
+    type: 'message',
+    user: 'U456',
+  });
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureThreadSubscriptionForSentMessage({ agentId: 'scout', channelId: 'C123', messageTs: '1770000010.000001', nowMs: 1_000 });
+      await ensureThreadSubscriptionForSentMessage({ agentId: 'scout', channelId: 'C123', messageTs: '1770000020.000001', nowMs: 1_000 });
+      await muteSubscriptionForAgent({ agentId: 'scout', channelId: 'C123', threadTs: '1770000020.000001', nowMs: 1_000 });
+
+      const lapsed = await slackRuntimeDecision(reply('1770000010.000001', '1770000011.000001'), {
+        agentId: 'scout',
+        nowMs: 1_000 + 30 * day + 1,
+      });
+      assert.equal(lapsed.shouldStartRuntime, false);
+      assert.equal(lapsed.reason, 'not_addressed');
+
+      // A mute is the agent's own decision and does not lapse.
+      const muted = await slackRuntimeDecision(reply('1770000020.000001', '1770000021.000001'), {
+        agentId: 'scout',
+        nowMs: 1_000 + 30 * day + 1,
+      });
+      assert.equal(muted.reason, 'muted');
+
+      // A mention follows the thread again.
+      const mention = await slackRuntimeDecision(
+        { ...reply('1770000010.000001', '1770000012.000001'), text: '<@U999> back here', type: 'app_mention' },
+        { agentId: 'scout', nowMs: 1_000 + 30 * day + 2 },
+      );
+      assert.equal(mention.reason, 'mention');
+      const followUp = await slackRuntimeDecision(reply('1770000010.000001', '1770000013.000001'), {
+        agentId: 'scout',
+        nowMs: 1_000 + 30 * day + 3,
+      });
+      assert.equal(followUp.reason, 'thread_follow');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('subscription writes drop lapsed thread follows and Slack DM thread records', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-subscription-prune-test-'));
+  const day = 24 * 60 * 60 * 1000;
+  const at = (ms: number) => new Date(ms).toISOString();
+  const nowMs = Date.parse('2026-10-20T00:00:00.000Z');
+  const thread = (channelId: string, threadTs: string, updatedAt: string, extra: Partial<SubscriptionRecord> = {}): SubscriptionRecord => ({
+    agentId: 'scout',
+    channelId,
+    kind: 'thread',
+    subscriptionId: threadSubscriptionId('scout', channelId, threadTs),
+    threadTs,
+    updatedAt,
+    ...extra,
+  } as SubscriptionRecord);
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const store = new SubscriptionStore('scout');
+      const seeded = [
+        channelSubscription({ channelId: 'C-quiet', updatedAt: at(nowMs - 300 * day) }),
+        thread('C123', '1.000001', at(nowMs - 31 * day)),
+        thread('C123', '2.000001', at(nowMs - 31 * day), { lastActivityAt: at(nowMs - 2 * day) }),
+        thread('C123', '3.000001', at(nowMs - 29 * day)),
+        thread('C123', '4.000001', at(nowMs - 90 * day), { mutedAt: at(nowMs - 90 * day) }),
+        thread('D-alice', '5.000001', at(nowMs - day)),
+        thread('oc_group', 'omt_topic', at(nowMs - day), { platform: 'feishu' }),
+      ];
+      for (const subscription of seeded) {
+        await store.replace(subscription);
+      }
+      // Each seeded write prunes by its own time; the last write sets the clock.
+      await store.replace(thread('C123', '9.000001', at(nowMs)));
+
+      assert.deepEqual((await store.list()).map((subscription) => subscription.subscriptionId).sort(), [
+        'slack-subscription:scout:C-quiet:channel',
+        threadSubscriptionId('scout', 'C123', '2.000001'),
+        threadSubscriptionId('scout', 'C123', '3.000001'),
+        threadSubscriptionId('scout', 'C123', '4.000001'),
+        threadSubscriptionId('scout', 'C123', '9.000001'),
+        threadSubscriptionId('scout', 'oc_group', 'omt_topic'),
+      ].sort());
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
@@ -1001,7 +1094,8 @@ test('attention map shows member channels, muted threads, and quiet thread tails
         agentId: 'scout',
         channelId: 'C123',
         messageTs: '1770000001.000001',
-        nowMs: Date.UTC(2025, 0, 1),
+        // Quiet, but inside the 30-day follow lapse.
+        nowMs: Date.UTC(2025, 11, 25),
       });
       await muteSubscriptionForAgent({
         agentId: 'scout',

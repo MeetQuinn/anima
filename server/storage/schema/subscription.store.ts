@@ -82,13 +82,15 @@ export class SubscriptionStore {
     return subscription ? normalizeSubscription(this.agentId, subscriptionId, subscription) : undefined;
   }
 
+  /** Writes one record and drops the thread records that can no longer wake the agent. */
   async replace(subscription: SubscriptionRecord): Promise<SubscriptionRecord> {
     if (subscription.agentId !== this.agentId) {
       throw new Error(`Cannot write subscription for ${subscription.agentId} through ${this.agentId} store`);
     }
+    const nowMs = writeTimeMs(subscription);
     await this.file.update((stored) => {
       return {
-        ...stored,
+        ...withoutDeadThreadRecords(stored, nowMs),
         [subscription.subscriptionId]: persistedSubscription(subscription),
       };
     });
@@ -106,6 +108,46 @@ export class SubscriptionStore {
     });
     return removed;
   }
+}
+
+/** An unmuted thread follow lapses after this long without a wake or a post. */
+export const THREAD_FOLLOW_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function threadFollowLapsed(subscription: Subscription, nowMs: number): boolean {
+  if (subscription.kind !== 'thread' || subscription.mutedAt) return false;
+  const touchedMs = Math.max(
+    ...[subscription.updatedAt, subscription.lastActivityAt, subscription.lastPostedAt]
+      .map((value) => (value ? Date.parse(value) : Number.NaN))
+      .filter(Number.isFinite),
+  );
+  return Number.isFinite(touchedMs) && nowMs - touchedMs > THREAD_FOLLOW_IDLE_MS;
+}
+
+/** A Slack DM always wakes the agent directly and never consults a thread follow. */
+function isSlackDmThread(subscription: Subscription): boolean {
+  if (subscription.kind !== 'thread') return false;
+  const platform = subscription.platform ?? (subscription.channelId.startsWith('oc_') ? 'feishu' : 'slack');
+  return platform === 'slack' && subscription.channelId.startsWith('D');
+}
+
+function withoutDeadThreadRecords(stored: StoredSubscriptions, nowMs: number): StoredSubscriptions {
+  let kept: StoredSubscriptions | undefined;
+  for (const [subscriptionId, subscription] of Object.entries(stored)) {
+    if (!isSlackDmThread(subscription) && !threadFollowLapsed(subscription, nowMs)) continue;
+    kept ??= { ...stored };
+    delete kept[subscriptionId];
+  }
+  return kept ?? stored;
+}
+
+/**
+ * The clock for pruning is the written record's own `updatedAt`, so callers
+ * that pass an explicit time stay consistent. It is capped at the real clock,
+ * so a future-dated record cannot make every other follow look idle.
+ */
+function writeTimeMs(subscription: Subscription): number {
+  const writtenMs = Date.parse(subscription.updatedAt);
+  return Number.isFinite(writtenMs) ? Math.min(writtenMs, Date.now()) : Date.now();
 }
 
 export function subscriptionStatus(subscription: Subscription, _nowMs?: number): SubscriptionStatus {
