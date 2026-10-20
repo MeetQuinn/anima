@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -17,6 +18,37 @@ test('anima CLI help still prints normally and exits successfully', async () => 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /^Usage: anima /);
   assert.equal(result.stderr, '');
+});
+
+test('anima CLI help does not load the Slack or Feishu SDKs', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-cli-lazy-sdk-'));
+  const hookPath = join(dir, 'record-loads.mjs');
+  const loadedPath = join(dir, 'loaded.json');
+  await writeFile(
+    hookPath,
+    [
+      "import { registerHooks } from 'node:module';",
+      "import { writeFileSync } from 'node:fs';",
+      'const loaded = [];',
+      'registerHooks({ load(url, context, nextLoad) { loaded.push(url); return nextLoad(url, context); } });',
+      `process.on('exit', () => writeFileSync(${JSON.stringify(loadedPath)}, JSON.stringify(loaded)));`,
+    ].join('\n'),
+    'utf8',
+  );
+
+  try {
+    const result = await runNode(['--import', pathToFileURL(hookPath).href, cliPath, '--help']);
+    assert.equal(result.status, 0);
+    const loaded = JSON.parse(await readFile(loadedPath, 'utf8')) as string[];
+    assert.ok(loaded.some((url) => url.includes('/dist/server/cli/')), 'the hook saw the CLI load');
+    const sdks = ['@larksuiteoapi/node-sdk', '@slack/web-api', 'slackify-markdown'];
+    assert.deepEqual(
+      sdks.filter((sdk) => loaded.some((url) => url.includes(`/node_modules/${sdk}/`))),
+      [],
+    );
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
 });
 
 test('anima CLI renders Commander failures through the structured error contract', async () => {
