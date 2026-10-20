@@ -1162,7 +1162,11 @@ async function findObservationByEventId(
   surfaceId: string,
   eventId: string,
 ): Promise<ObservedConversationEntry | undefined> {
-  // Tail window covers normal traffic; for deep history read more.
+  // The trigger is almost always among the newest rows; widen only on a miss.
+  // observe() dedupes within 2,000 rows, so a hit in either window is the same row.
+  const newest = await store.readTail(surfaceId, 32);
+  const newestHit = newest.find((row) => row.eventId === eventId);
+  if (newestHit) return newestHit;
   const recent = await store.readTail(surfaceId, 2_000);
   const hit = recent.find((row) => row.eventId === eventId);
   if (hit) return hit;
