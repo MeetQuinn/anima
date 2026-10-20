@@ -633,6 +633,9 @@ test('codex-cli exposes running thread terminals as background work until they e
           '}, 5);',
           "readline.createInterface({ input: process.stdin }).on('line', (line) => {",
           '  const msg = JSON.parse(line);',
+          // Check the release before recording the call. The test releases only
+          // after it sees enough calls, so none of those calls may see the release.
+          '  const released = existsSync(process.env.BACKGROUND_RELEASE_PATH);',
           "  appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
           "  if (msg.method === 'initialize') {",
           "    send({ id: msg.id, result: { userAgent: 'fake-codex/0.153.0' } });",
@@ -650,7 +653,6 @@ test('codex-cli exposes running thread terminals as background work until they e
           '    return;',
           '  }',
           "  if (msg.method === 'thread/backgroundTerminals/list') {",
-          '    const released = existsSync(process.env.BACKGROUND_RELEASE_PATH);',
           "    const processId = msg.params.cursor === 'page-2' ? '43' : '42';",
           '    const data = released',
           '      ? []',
