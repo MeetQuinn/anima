@@ -58,6 +58,7 @@ const groups = {
     'linear-listener-status.test.js',
     'linear-session.test.js',
     'linear-runtime.test.js',
+    'log-tail.test.js',
     'input-trace.test.js',
     'history-pagination.test.js',
     'history-tail-read.test.js',
