@@ -174,6 +174,8 @@ export class JsonlAppendLog<T> {
     const out: T[] = [];
     let checked = 0;
     for (const path of segments.reverse()) {
+      // Stop before reading a segment the budget no longer reaches.
+      if (checked >= withinNewest) return out;
       const records = await this.readAllFromPath(path);
       for (let index = records.length - 1; index >= 0; index -= 1) {
         if (checked >= withinNewest) return out;

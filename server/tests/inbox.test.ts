@@ -521,19 +521,18 @@ test('ingest dedupe reads only the ledger window that enqueue dedupes against', 
       const event = (ts: string) => makeSlackEvent({
         channelId: 'C-product', eventId: `slack:T-demo:C-product:${ts}`, teamId: 'T-demo', text: 'hello', ts, userId: 'U1',
       });
+      const ancient = event('900000000.000001');
       const old = event('1000000000.000001');
       const recent = event('1770000000.000001');
       // The newest 10,000 rows are the live segment, oldest of them the recent
-      // item's row. The old item's row is just past them, in an archive.
+      // item's row. The old and ancient items' rows are past them, in an archive.
       const root = join(agentsDir(), 'scout');
       await mkdir(join(root, 'messages.archive'), { recursive: true });
-      await writeFile(join(root, 'messages.archive', '0000000000001-messages-000.jsonl'), `${JSON.stringify({ messageId: `msg_inbox:${old.id}` })}\n`);
+      await writeFile(join(root, 'messages.archive', '0000000000001-messages-000.jsonl'), [ancient, old].map((item) => `${JSON.stringify({ messageId: `msg_inbox:${item.id}` })}\n`).join(''));
       const filler = Array.from({ length: 9_999 }, (_, index) => JSON.stringify({ messageId: `filler-${index}` }));
       await writeFile(join(root, 'messages.jsonl'), `${[JSON.stringify({ messageId: `msg_inbox:${recent.id}` }), ...filler].join('\n')}\n`);
 
       const queue = new WakeQueueService('scout');
-      assert.equal(await queue.hasSeen(old.id), true, 'the exact lookup still reads the whole ledger');
-
       const flags: boolean[] = [];
       const queued: boolean[] = [];
       // The recent item first: it records no row, so the window stays put.
@@ -554,6 +553,9 @@ test('ingest dedupe reads only the ledger window that enqueue dedupes against', 
       // The flag matches what enqueue then decides.
       assert.deepEqual(flags, [true, false]);
       assert.deepEqual(queued, [false, true]);
+      // The exact lookup still reads the whole ledger.
+      assert.equal(await queue.hasSeen(ancient.id), true);
+      assert.equal(await queue.hasSeenRecently(ancient.id), false);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

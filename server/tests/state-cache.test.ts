@@ -216,6 +216,34 @@ test('JsonlAppendLog tail read of long rows reads the file about once', async ()
   }
 });
 
+test('JsonlAppendLog readNewestMatching does not read segments past its row budget', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-newest-budget-'));
+  try {
+    const path = join(dir, 'messages.jsonl');
+    const archiveDir = join(dir, 'messages.archive');
+    const rows = (ids: number[]) => ids.map((id) => `${JSON.stringify({ id })}\n`).join('');
+    const log = new JsonlAppendLog<{ id: number }>(path, { archiveDir, maxBytes: 1024 * 1024 });
+    const none = () => false;
+    await mkdir(archiveDir, { recursive: true });
+    // An unreadable archive: reading it makes the call reject.
+    await writeFile(join(archiveDir, '0000000000001-messages-000.jsonl'), 'not json\n');
+
+    // The budget runs out exactly at the end of the live segment.
+    await writeFile(path, rows([1, 2, 3]));
+    assert.deepEqual(await log.readNewestMatching(1, none, { withinNewest: 3 }), []);
+    await assert.rejects(log.readNewestMatching(1, none, { withinNewest: 4 }), SyntaxError);
+
+    // The budget runs out at the end of a newer archive.
+    await writeFile(join(archiveDir, '0000000000002-messages-000.jsonl'), rows([1, 2]));
+    await writeFile(path, rows([3]));
+    assert.deepEqual(await log.readNewestMatching(1, none, { withinNewest: 3 }), []);
+    assert.deepEqual((await log.readNewestMatching(1, (row) => row.id === 1, { withinNewest: 3 })).map((row) => row.id), [1]);
+    await assert.rejects(log.readNewestMatching(1, none, { withinNewest: 4 }), SyntaxError);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
 test('JsonlAppendLog keeps every archive by default (no maxArchives)', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-no-prune-'));
   const realNow = Date.now;
