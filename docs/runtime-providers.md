@@ -115,6 +115,8 @@ For a claimed item:
 7. On error or abort, the worker records failure and marks the item `failed`.
 8. `onItemSettled` runs after either path; the agent service uses it to remove processing reactions from the active item and any appended follow-up items.
 
+The agent service's `onItemStarted` starts the active item's processing reaction add and returns without waiting for it, so the provider does not wait on a Slack or Feishu round trip. `onItemSettled` waits for that add before it removes the reaction.
+
 Only one normal item can be `running` for an agent at a time. Follow-up items are temporarily claimed by the same worker while the active item is still running.
 
 ## Active-Run Follow-Up Protocol

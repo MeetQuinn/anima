@@ -96,6 +96,46 @@ function isIgnoredReactionError(error: unknown, code: string): boolean {
   return errorMessage(error).includes(code);
 }
 
+/**
+ * Processing reactions for the items a runtime starts. A reaction tells people
+ * the agent is working, and the run does not need it, so `start` begins the add
+ * and returns: the provider starts while Slack or Feishu answers. `settle` waits
+ * for that add before removing, so a remove never runs ahead of its add, and a
+ * Feishu remove has the reaction id the add stored.
+ */
+export function processingReactionsForRuns(input: {
+  feishuClient?: FeishuProcessingReactionClient;
+  logger: Pick<Console, 'error'>;
+  reactionClient?: SlackProcessingReactionClient;
+}): {
+  settle(context: { item: InboxItem }): Promise<void>;
+  start(context: { item: InboxItem }): void;
+} {
+  const adds = new Map<string, Promise<void>>();
+  return {
+    async settle(context) {
+      const added = adds.get(context.item.id);
+      adds.delete(context.item.id);
+      await added;
+      await removeProcessingReactions({ context, logger: input.logger, reactionClient: input.reactionClient });
+      await removeFeishuProcessingReaction({ context, feishuClient: input.feishuClient, logger: input.logger });
+    },
+    start(context) {
+      // Both adds log their own failures; this catch only keeps an unexpected
+      // throw from becoming an unhandled rejection before settle awaits it.
+      adds.set(context.item.id, Promise.all([
+        addProcessingReaction({ context, logger: input.logger, reactionClient: input.reactionClient }),
+        addFeishuProcessingReaction({ context, feishuClient: input.feishuClient, logger: input.logger }),
+      ]).then(
+        () => undefined,
+        (error: unknown) => {
+          input.logger.error(`Processing reaction add failed for item ${context.item.id}: ${errorMessage(error)}`);
+        },
+      ));
+    },
+  };
+}
+
 export interface FeishuProcessingReactionClient {
   add(messageId: string): Promise<void>;
   remove(messageId: string): Promise<void>;

@@ -7,8 +7,7 @@ import {
   addFeishuProcessingReaction,
   addProcessingReaction,
   feishuProcessingReactionClient,
-  removeFeishuProcessingReaction,
-  removeProcessingReactions,
+  processingReactionsForRuns,
   slackReactionClient,
 } from './processing-reactions.js';
 import type { AgentRuntime } from '../providers/contract.js';
@@ -60,6 +59,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     ? feishuProcessingReactionClient(options.feishu, { client: feishuMessageClient })
     : undefined;
   const slackClient = options.botToken ? createSlackWebClient(options.botToken) : undefined;
+  const reactions = processingReactionsForRuns({ feishuClient, logger: console, reactionClient });
   const worker = new AgentRuntimeWorker(
     {
       ...options,
@@ -67,8 +67,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
       ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
       onItemStarted: async (context) => {
         await linear.markStarted(context.item, context.item.id);
-        await addProcessingReaction({ context, logger: console, reactionClient });
-        await addFeishuProcessingReaction({ context, feishuClient, logger: console });
+        reactions.start(context);
       },
       onItemAborted: async (context) => { await linear.finishRun(context.item.id, 'This run was interrupted. It may include other accepted messages; check any actions before continuing.'); },
       onItemFailed: async (context, failure) => {
@@ -93,8 +92,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
         await recordLifetimeTokenUsageForItem(context.agentId, context.item).catch((error: unknown) => {
           console.error(`Lifetime token usage update failed for item ${context.item.id}: ${errorMessage(error)}`);
         });
-        await removeProcessingReactions({ context, logger: console, reactionClient });
-        await removeFeishuProcessingReaction({ context, feishuClient, logger: console });
+        await reactions.settle(context);
       },
       onItemFollowupAppended: async (activeContext, context) => {
         await linear.markStarted(context.item, activeContext.item.id);
