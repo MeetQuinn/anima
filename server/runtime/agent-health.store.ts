@@ -150,6 +150,10 @@ export class AgentHealthStore {
     return (await this.store.read()).snapshots[agentId];
   }
 
+  async list(): Promise<Record<string, AgentRuntimeHealthSummary>> {
+    return (await this.store.read()).snapshots;
+  }
+
   // `apply` returning undefined leaves the snapshot untouched; the decision is
   // made inside the lock, so it holds against concurrent writers.
   async update(

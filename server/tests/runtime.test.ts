@@ -18,6 +18,8 @@ import { recordRuntimeEvent } from '../runtime/activity.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
+import { BackgroundInterruptedNoticeStore } from '../runtime/background-interrupted.store.js';
+import { WakeQueueStore } from '../storage/schema/wake-queue.store.js';
 import { TeamRunLimiter } from '../runtime/team-run-limiter.js';
 import {
   managedProviderEnvForAgent,
@@ -1127,6 +1129,330 @@ test('runtime host force-restarts only the requested agent', async () => {
     assert.deepEqual(host.runningAgentIds(), ['alpha', 'bravo']);
 
     await host.stop();
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime host boot queues one background-interrupted notice for work a previous server left running', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-bg-interrupted-boot-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const healthStore = new AgentHealthStore({ animaHome: stateDir });
+      const healthService = new AgentHealthService(healthStore);
+      const previousPid = process.pid + 100_000;
+      const observedAt = '2026-10-20T12:49:00.000Z';
+      await healthService.writeHealth({
+        agentId: 'wirth',
+        runtime: {
+          processId: previousPid,
+          providerChildExpected: true,
+          providerWork: {
+            backgroundEvidence: { listedTaskIds: ['task-a'], terminalNotifications: [] },
+            backgroundTaskCount: 5,
+            state: 'background',
+          },
+        },
+        state: 'healthy',
+        updatedAt: observedAt,
+      });
+      await healthService.writeHealth({
+        agentId: 'quiet',
+        runtime: { processId: previousPid, providerChildExpected: true },
+        state: 'healthy',
+        updatedAt: observedAt,
+      });
+      const bootHost = () => new RuntimeHost({}, {
+        animaHome: stateDir,
+        healthStore,
+        loadAgents: async () => [
+          runtimeHostAgent('quiet', { connected: true }),
+          runtimeHostAgent('wirth', { connected: true }),
+        ],
+        logger: silentLogger,
+        startAgent: async (agent) => stopHandle(agent.id, []),
+        validateAgent: async () => {},
+      });
+
+      const first = bootHost();
+      await first.reconcileOnce();
+      await first.stop();
+
+      const items = await new WakeQueueService('wirth').list();
+      assert.equal(items.length, 1);
+      const [item] = items;
+      assert.equal(item?.kind, 'background_interrupted');
+      assert.equal(item?.id, `background-interrupted:wirth:${previousPid}:${observedAt}`);
+      if (item?.kind === 'background_interrupted') {
+        assert.equal(item.cause, 'server_restart');
+        assert.equal(item.backgroundTaskCount, 5);
+        assert.deepEqual(item.taskIds, ['task-a']);
+        assert.equal(item.handling.status, 'queued');
+      }
+      assert.deepEqual(await new WakeQueueService('quiet').list(), []);
+      // The boot write replaced the previous process's runtime, so a second boot adds nothing.
+      assert.equal((await healthStore.get('wirth'))?.runtime?.processId, process.pid);
+
+      const second = bootHost();
+      await second.reconcileOnce();
+      await second.stop();
+      assert.equal((await new WakeQueueService('wirth').list()).length, 1);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime host operator restart queues a background-interrupted notice when it stops background work', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-bg-interrupted-restart-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+      let generation = 0;
+      const host = new RuntimeHost({}, {
+        animaHome: stateDir,
+        loadAgents: async () => [
+          runtimeHostAgent('alpha', { connected: true }),
+          runtimeHostAgent('bravo', { connected: true }),
+        ],
+        logger: silentLogger,
+        restartCommands,
+        startAgent: async (agent) => {
+          generation += 1;
+          const handle = stopHandle(agent.id, []);
+          if (agent.id !== 'alpha' || generation > 2) return handle;
+          return {
+            ...handle,
+            health: () => ({
+              processId: process.pid,
+              providerChildExpected: true,
+              providerWork: { backgroundTaskCount: 2, state: 'background' as const },
+              workerId: `alpha:${process.pid}`,
+            }),
+          };
+        },
+        validateAgent: async () => {},
+      });
+
+      await host.reconcileOnce();
+      assert.deepEqual(await new WakeQueueService('alpha').list(), []);
+
+      const command = await restartCommands.request('alpha');
+      await host.reconcileOnce();
+      const items = await new WakeQueueService('alpha').list();
+      assert.equal(items.length, 1);
+      assert.equal(items[0]?.id, `background-interrupted:alpha:${command.requestId}`);
+      if (items[0]?.kind === 'background_interrupted') {
+        assert.equal(items[0].cause, 'agent_restart');
+        assert.equal(items[0].backgroundTaskCount, 2);
+      }
+
+      await restartCommands.request('bravo');
+      await host.reconcileOnce();
+      assert.deepEqual(await new WakeQueueService('bravo').list(), []);
+      await host.stop();
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+async function withFailingBackgroundNoticeWrites<T>(
+  shouldFail: (attempt: number) => boolean,
+  run: (state: { attempts: number }) => Promise<T>,
+): Promise<T> {
+  const original = WakeQueueStore.prototype.insertIfAbsent;
+  const state = { attempts: 0 };
+  WakeQueueStore.prototype.insertIfAbsent = async function (item) {
+    if (item.kind === 'background_interrupted') {
+      state.attempts += 1;
+      if (shouldFail(state.attempts)) {
+        throw Object.assign(new Error('synthetic queue write EIO'), { code: 'EIO' });
+      }
+    }
+    return original.call(this, item);
+  };
+  try {
+    return await run(state);
+  } finally {
+    WakeQueueStore.prototype.insertIfAbsent = original;
+  }
+}
+
+async function writePreviousServerBackgroundHealth(healthService: AgentHealthService, agentId: string): Promise<void> {
+  await healthService.writeHealth({
+    agentId,
+    runtime: {
+      processId: process.pid + 100_000,
+      providerChildExpected: true,
+      providerWork: { backgroundTaskCount: 2, state: 'background' },
+    },
+    state: 'healthy',
+    updatedAt: '2026-10-20T12:49:00.000Z',
+  });
+}
+
+async function backgroundNotices(agentId: string): Promise<InboxItem[]> {
+  return (await new WakeQueueService(agentId).list()).filter((item) => item.kind === 'background_interrupted');
+}
+
+test('runtime host boot retries a background-interrupted notice after one failed queue write', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-bg-interrupted-boot-retry-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const healthStore = new AgentHealthStore({ animaHome: stateDir });
+      await writePreviousServerBackgroundHealth(new AgentHealthService(healthStore), 'wirth');
+      const host = new RuntimeHost({}, {
+        animaHome: stateDir,
+        healthStore,
+        loadAgents: async () => [runtimeHostAgent('wirth', { connected: true })],
+        logger: silentLogger,
+        startAgent: async (agent) => stopHandle(agent.id, []),
+        validateAgent: async () => {},
+      });
+      await withFailingBackgroundNoticeWrites((attempt) => attempt === 1, async (state) => {
+        await host.reconcileOnce();
+        assert.equal(state.attempts, 1);
+        assert.deepEqual(await backgroundNotices('wirth'), []);
+        // The evidence is gone: only the recorded intent can still deliver the notice.
+        assert.equal((await healthStore.get('wirth'))?.runtime?.processId, process.pid);
+
+        await host.reconcileOnce();
+        await host.reconcileOnce();
+        assert.equal(state.attempts, 2);
+      });
+      await host.stop();
+      const notices = await backgroundNotices('wirth');
+      assert.equal(notices.length, 1);
+      assert.equal(notices[0]?.kind === 'background_interrupted' && notices[0].cause, 'server_restart');
+      assert.deepEqual(await new BackgroundInterruptedNoticeStore({ animaHome: stateDir }).list(), []);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime host operator restart retries a background-interrupted notice after one failed queue write', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-bg-interrupted-restart-retry-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+      const stopped: string[] = [];
+      let generation = 0;
+      const host = new RuntimeHost({}, {
+        animaHome: stateDir,
+        loadAgents: async () => [runtimeHostAgent('alpha', { connected: true })],
+        logger: silentLogger,
+        restartCommands,
+        startAgent: async (agent) => {
+          generation += 1;
+          const handle = stopHandle(agent.id, stopped);
+          if (generation > 1) return handle;
+          return {
+            ...handle,
+            health: () => ({
+              processId: process.pid,
+              providerChildExpected: true,
+              providerWork: { backgroundTaskCount: 2, state: 'background' as const },
+              workerId: `alpha:${process.pid}`,
+            }),
+          };
+        },
+        validateAgent: async () => {},
+      });
+      await host.reconcileOnce();
+      const command = await restartCommands.request('alpha');
+      await withFailingBackgroundNoticeWrites((attempt) => attempt === 1, async (state) => {
+        await host.reconcileOnce();
+        assert.equal(state.attempts, 1);
+        assert.deepEqual(stopped, ['alpha']);
+        assert.equal(await restartCommands.get('alpha'), undefined);
+        assert.deepEqual(await backgroundNotices('alpha'), []);
+
+        await host.reconcileOnce();
+        await host.reconcileOnce();
+        assert.equal(state.attempts, 2);
+      });
+      await host.stop();
+      const notices = await backgroundNotices('alpha');
+      assert.equal(notices.length, 1);
+      assert.equal(notices[0]?.id, `background-interrupted:alpha:${command.requestId}`);
+      assert.deepEqual(await new BackgroundInterruptedNoticeStore({ animaHome: stateDir }).list(), []);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('a later runtime host delivers a background-interrupted notice the previous host could not queue', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-bg-interrupted-durable-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const healthStore = new AgentHealthStore({ animaHome: stateDir });
+      await writePreviousServerBackgroundHealth(new AgentHealthService(healthStore), 'wirth');
+      const bootHost = () => new RuntimeHost({}, {
+        animaHome: stateDir,
+        healthStore,
+        loadAgents: async () => [runtimeHostAgent('wirth', { connected: true })],
+        logger: silentLogger,
+        startAgent: async (agent) => stopHandle(agent.id, []),
+        validateAgent: async () => {},
+      });
+      const first = bootHost();
+      await withFailingBackgroundNoticeWrites(() => true, async () => {
+        await first.reconcileOnce();
+        await first.reconcileOnce();
+      });
+      await first.stop();
+      assert.deepEqual(await backgroundNotices('wirth'), []);
+      assert.equal((await new BackgroundInterruptedNoticeStore({ animaHome: stateDir }).list()).length, 1);
+
+      const second = bootHost();
+      await second.reconcileOnce();
+      await second.reconcileOnce();
+      await second.stop();
+      const notices = await backgroundNotices('wirth');
+      assert.equal(notices.length, 1);
+      assert.equal(notices[0]?.kind === 'background_interrupted' && notices[0].cause, 'server_restart');
+      assert.deepEqual(await new BackgroundInterruptedNoticeStore({ animaHome: stateDir }).list(), []);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('runtime host does not report background work interrupted when the handle stop fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-bg-interrupted-stop-failed-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
+      const host = new RuntimeHost({}, {
+        animaHome: stateDir,
+        loadAgents: async () => [runtimeHostAgent('alpha', { connected: true })],
+        logger: silentLogger,
+        restartCommands,
+        startAgent: async (agent) => ({
+          ...stopHandle(agent.id, []),
+          health: () => ({
+            processId: process.pid,
+            providerChildExpected: true,
+            providerWork: { backgroundTaskCount: 1, state: 'background' as const },
+            workerId: `alpha:${process.pid}`,
+          }),
+          stop: async () => {
+            throw new Error('synthetic stop failure');
+          },
+        }),
+        validateAgent: async () => {},
+      });
+      await host.reconcileOnce();
+      await restartCommands.request('alpha');
+      await host.reconcileOnce();
+      await host.reconcileOnce();
+      assert.deepEqual(await backgroundNotices('alpha'), []);
+      assert.deepEqual(await new BackgroundInterruptedNoticeStore({ animaHome: stateDir }).list(), []);
+      await host.stop().catch(() => {});
+    });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }

@@ -33,6 +33,7 @@ const groups = {
     'agent-skills.test.js',
     'agent-token-usage.test.js',
     'attention-suggestion-activity.test.js',
+    'background-interrupted.test.js',
     'channel-match.test.js',
     'claude-background-evidence.test.js',
     'claude-subagent-transcript.test.js',

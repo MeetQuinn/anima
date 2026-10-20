@@ -43,6 +43,17 @@ import {
 } from './agent-restart-command.store.js';
 import { AgentHealthStore } from './agent-health.store.js';
 import {
+  backgroundInterruptedInboxItem,
+  bootInterruptedBackgroundWork,
+  interruptedBackgroundWork,
+  type BackgroundInterruptedCause,
+  type InterruptedBackgroundWork,
+} from './background-interrupted.js';
+import {
+  BackgroundInterruptedNoticeStore,
+  type PendingBackgroundInterruptedNotice,
+} from './background-interrupted.store.js';
+import {
   AgentHealthService,
   isProviderFailureReason,
   isStaleRunningItem,
@@ -100,6 +111,7 @@ export interface StartAgentOptions {
 
 export interface RuntimeHostDependencies {
   animaHome?: string;
+  backgroundInterruptedNotices?: BackgroundInterruptedNoticeStore;
   forceRestartTimeoutMs?: number;
   loadAgents?: (opts: RuntimeHostOptions) => Promise<AgentConfig[]>;
   loadMaxConcurrentAgentRuns?: () => Promise<number>;
@@ -144,6 +156,10 @@ export class RuntimeHost {
   private readonly logger: Pick<Console, 'error' | 'log'>;
   private readonly memoryCoherenceScheduler: Pick<MemoryCoherenceScheduler, 'reconcile'>;
   private readonly restartCommands: AgentRestartCommandStore;
+  private readonly backgroundInterruptedNotices: BackgroundInterruptedNoticeStore;
+  /** Notices whose evidence is gone but whose wake is not yet in the queue. */
+  private readonly pendingBackgroundInterrupted = new Map<string, PendingBackgroundInterruptedNotice>();
+  private backgroundInterruptedNoticesLoaded = false;
   private readonly health: AgentHealthService;
   private readonly healthIntervalMs: number;
   private readonly forceRestartTimeoutMs: number;
@@ -184,6 +200,8 @@ export class RuntimeHost {
       readServerConfig: () => new ServerConfigStore(this.animaHome).read(),
     });
     this.restartCommands = deps.restartCommands ?? new AgentRestartCommandStore({ animaHome: this.animaHome });
+    this.backgroundInterruptedNotices = deps.backgroundInterruptedNotices
+      ?? new BackgroundInterruptedNoticeStore({ animaHome: this.animaHome });
     this.health = new AgentHealthService(deps.healthStore ?? new AgentHealthStore({ animaHome: this.animaHome }));
     this.healthIntervalMs = deps.healthIntervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
     this.forceRestartTimeoutMs = deps.forceRestartTimeoutMs ?? AGENT_RESTART_FORCE_KILL_AFTER_MS;
@@ -282,6 +300,7 @@ export class RuntimeHost {
     this.runLimiter.setLimit(maxConcurrentAgentRuns);
     await this.cleanupExpiredHandoffs(agents);
     await this.initializeBootHealth(agents);
+    await this.deliverBackgroundInterrupted(new Set(agents.map((agent) => agent.id)));
     this.syncConfigWatchers(agents.map((agent) => agent.id));
     const pendingRestartAgentIds = new Set(await this.restartCommands.pendingAgentIds());
     const seenAgentIds = new Set<string>();
@@ -402,6 +421,15 @@ export class RuntimeHost {
         .filter((agent) => agent.enabled !== false && agentHasConnectedTransport(agent) && isAgentRunnable(agent))
         .map(async (agent) => {
           const previous = await this.health.get(agent.id);
+          // Read before the starting write below replaces the previous process's runtime
+          // snapshot; the intent is recorded first so that evidence is never the only copy.
+          const interrupted = bootInterruptedBackgroundWork(previous, process.pid);
+          if (interrupted && previous) {
+            const notice = this.backgroundInterruptedNotice(agent.id, 'server_restart', interrupted,
+              `${interrupted.processId ?? 'unknown'}:${previous.updatedAt}`);
+            await this.persistBackgroundInterrupted(notice);
+            this.pendingBackgroundInterrupted.set(notice.item.id, notice);
+          }
           if (previous?.state === 'unhealthy' && isProviderFailureReason(previous.reason)) return;
           await this.health.writeHealth({
             agentId: agent.id,
@@ -429,16 +457,35 @@ export class RuntimeHost {
       return;
     }
     this.logger.log(`Agent ${agent.id}: restart requested by operator (${command.requestId}).`);
-    await this.writeRestartPending(agent.id, command, running?.handle.health?.());
+    const runtimeBeforeRestart = running?.handle.health?.();
+    await this.writeRestartPending(agent.id, command, runtimeBeforeRestart);
     try {
       await this.resolveStaleRestartItem(agent.id, running?.handle.health?.());
       if (running) {
-        await running.handle.stop(
-          command.whenIdle
-            ? { drainActive: true, forceAfterMs: this.forceRestartTimeoutMs }
-            : { abortReason: command.reason, forceAfterMs: this.forceRestartTimeoutMs },
-        );
+        // Stopping the handle kills provider background work that outlived its Anima item.
+        // Record the intent before the stop discards that evidence; queue the wake only
+        // after the stop so the old handle cannot claim it.
+        const interrupted = interruptedBackgroundWork(running.handle.health?.() ?? runtimeBeforeRestart, nowIso());
+        const notice = interrupted
+          ? this.backgroundInterruptedNotice(agent.id, 'agent_restart', interrupted, command.requestId)
+          : undefined;
+        if (notice) await this.persistBackgroundInterrupted(notice);
+        try {
+          await running.handle.stop(
+            command.whenIdle
+              ? { drainActive: true, forceAfterMs: this.forceRestartTimeoutMs }
+              : { abortReason: command.reason, forceAfterMs: this.forceRestartTimeoutMs },
+          );
+        } catch (error) {
+          // The work was not confirmed stopped; do not report it interrupted.
+          if (notice) await this.discardBackgroundInterrupted(notice);
+          throw error;
+        }
         record.running = undefined;
+        if (notice) {
+          this.pendingBackgroundInterrupted.set(notice.item.id, notice);
+          await this.deliverBackgroundInterrupted();
+        }
       }
       await this.startAndStore(
         agent,
@@ -785,6 +832,73 @@ export class RuntimeHost {
       state: 'unhealthy',
       updatedAt: nowIso(),
     });
+  }
+
+  private backgroundInterruptedNotice(
+    agentId: string,
+    cause: BackgroundInterruptedCause,
+    work: InterruptedBackgroundWork,
+    interruptionKey: string,
+  ): PendingBackgroundInterruptedNotice {
+    return {
+      agentId,
+      item: backgroundInterruptedInboxItem({ agentId, cause, interruptionKey, now: nowIso(), work }),
+    };
+  }
+
+  private async persistBackgroundInterrupted(notice: PendingBackgroundInterruptedNotice): Promise<void> {
+    try {
+      await this.backgroundInterruptedNotices.add(notice);
+    } catch (error) {
+      // Still delivered from memory by this process; only a crash before the queue
+      // write succeeds can lose it now.
+      this.logger.error(
+        `Agent ${notice.agentId}: background-interrupted notice not persisted; retrying from memory: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  private async discardBackgroundInterrupted(notice: PendingBackgroundInterruptedNotice): Promise<void> {
+    this.pendingBackgroundInterrupted.delete(notice.item.id);
+    await this.backgroundInterruptedNotices.remove(notice.item.id).catch((error: unknown) => {
+      this.logger.error(`Agent ${notice.agentId}: background-interrupted intent cleanup failed: ${errorMessage(error)}`);
+    });
+  }
+
+  /**
+   * Move recorded notices into their wake queues. A failed enqueue stays pending for
+   * the next reconcile; the item id is stable per interruption, so a retry, or a
+   * removal that failed after the queue write, cannot wake the agent twice.
+   */
+  private async deliverBackgroundInterrupted(configuredAgentIds?: ReadonlySet<string>): Promise<void> {
+    if (!this.backgroundInterruptedNoticesLoaded) {
+      try {
+        for (const notice of await this.backgroundInterruptedNotices.list()) {
+          if (!this.pendingBackgroundInterrupted.has(notice.item.id)) {
+            this.pendingBackgroundInterrupted.set(notice.item.id, notice);
+          }
+        }
+        this.backgroundInterruptedNoticesLoaded = true;
+      } catch (error) {
+        this.logger.error(`Background-interrupted notices could not be loaded; will retry: ${errorMessage(error)}`);
+      }
+    }
+    for (const notice of [...this.pendingBackgroundInterrupted.values()]) {
+      // Kept, not retried, while its agent is not configured here.
+      if (configuredAgentIds && !configuredAgentIds.has(notice.agentId)) continue;
+      try {
+        const result = await wakeQueueServiceForAgent(notice.agentId).enqueue(notice.item);
+        if (result.queued) {
+          this.logger.log(`Agent ${notice.agentId}: queued background-interrupted notice (${notice.item.cause}).`);
+        }
+      } catch (error) {
+        this.logger.error(
+          `Agent ${notice.agentId}: background-interrupted notice not queued; will retry: ${errorMessage(error)}`,
+        );
+        continue;
+      }
+      await this.discardBackgroundInterrupted(notice);
+    }
   }
 
   private async writeRestartPending(
