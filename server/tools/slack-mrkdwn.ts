@@ -1,7 +1,12 @@
-import slackifyMarkdown from 'slackify-markdown';
+import type SlackifyMarkdown from 'slackify-markdown';
+
+import { lazyRequire } from '../lazy-require.js';
+
+// Loaded only when a message is converted; it pulls in the markdown parser.
+const slackifyMarkdown = lazyRequire<typeof SlackifyMarkdown>('slackify-markdown');
 
 export function slackMrkdwnForMarkdown(markdown: string): string {
-  const mrkdwn = slackifyMarkdown(markdown);
+  const mrkdwn = slackifyMarkdown()(markdown);
   return mrkdwn.endsWith('\n') ? mrkdwn.slice(0, -1) : mrkdwn;
 }
 

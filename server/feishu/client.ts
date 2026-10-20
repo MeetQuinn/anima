@@ -1,4 +1,4 @@
-import * as lark from '@larksuiteoapi/node-sdk';
+import type * as LarkSdk from '@larksuiteoapi/node-sdk';
 import type { Readable } from 'node:stream';
 
 import {
@@ -7,8 +7,12 @@ import {
   type FeishuConfig,
 } from '../../shared/agent-config.js';
 import { asRecord, numberField, stringField } from '../json.js';
+import { lazyRequire } from '../lazy-require.js';
 import type { FeishuMessageResourceType } from './feishu-file.service.js';
 import type { FeishuPostContent } from './markdown-to-feishu-post.js';
+
+// About 5MB of JavaScript: load it only when a call reaches Feishu.
+const lark = lazyRequire<typeof LarkSdk>('@larksuiteoapi/node-sdk');
 
 export const FEISHU_OPEN_API_BASE_URL = 'https://open.feishu.cn/open-apis';
 
@@ -495,7 +499,7 @@ export async function fetchFeishuTenantAccessToken(
 }
 
 export async function registerFeishuApp(input: FeishuRegisterAppInput): Promise<FeishuRegisterAppResult> {
-  const result = await lark.registerApp({
+  const result = await lark().registerApp({
     ...(input.appPreset ? { appPreset: input.appPreset } : {}),
     onQRCodeReady: input.onQRCodeReady,
     onStatusChange: input.onStatusChange,
@@ -929,11 +933,13 @@ function feishuApiError(operation: string, code: number, payload: Record<string,
 }
 
 function feishuSdkClient(config: FeishuConfig, deps: FeishuMessageClientDeps): FeishuSdkClient {
-  return deps.createClient?.(config) ?? (new lark.Client({
+  if (deps.createClient) return deps.createClient(config);
+  const { AppType, Client, Domain } = lark();
+  return (new Client({
     appId: config.appId,
     appSecret: config.appSecret,
-    appType: lark.AppType.SelfBuild,
-    domain: lark.Domain.Feishu,
+    appType: AppType.SelfBuild,
+    domain: Domain.Feishu,
     source: 'anima',
   }) as unknown as FeishuSdkClient);
 }
@@ -989,8 +995,8 @@ export function createFeishuEventDispatcher(input: {
   config: FeishuConfig;
   onReactionCreated?(data: unknown): Promise<void>;
   onReceiveMessage(data: unknown): Promise<void>;
-}): lark.EventDispatcher {
-  const dispatcher = new lark.EventDispatcher({
+}): LarkSdk.EventDispatcher {
+  const dispatcher = new (lark().EventDispatcher)({
     encryptKey: input.config.encryptKey,
     verificationToken: input.config.verificationToken,
   }).register({
@@ -1012,12 +1018,13 @@ function feishuSendTarget(input: FeishuTextSendInput): {
   return { receiveId: input.receiveId, receiveIdType: input.receiveIdType };
 }
 
-export function createFeishuWsClient(config: FeishuConfig): lark.WSClient {
-  return new lark.WSClient({
+export function createFeishuWsClient(config: FeishuConfig): LarkSdk.WSClient {
+  const { Domain, WSClient } = lark();
+  return new WSClient({
     appId: config.appId,
     appSecret: config.appSecret,
     autoReconnect: true,
-    domain: lark.Domain.Feishu,
+    domain: Domain.Feishu,
     source: 'anima',
   });
 }
