@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
+import fsPromises, { appendFile, mkdtemp, readdir, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -19,6 +20,7 @@ import {
   surfaceIdForObservation,
 } from '../storage/schema/observed-conversation.store.js';
 import { writeAgentConfigs, defaultAgentConfig } from './helpers/harness.js';
+import { observeAcrossClockStep } from './helpers/observed-journal.js';
 
 async function withAgentStore<T>(
   body: (store: ObservedConversationStore, agentId: string) => Promise<T>,
@@ -259,6 +261,224 @@ test('stale index after journal append is repaired on replay; next ordinal advan
     const journal = await store.readJournal(surfaceId);
     assert.deepEqual(journal.map((r) => r.ordinal), [1, 2]);
     assert.deepEqual(journal.map((r) => r.text), ['alpha', 'beta']);
+  });
+});
+
+test('cursor reads and a repeat of the newest event read only the newest journal rows', async () => {
+  await withAgentStore(async (store, agentId) => {
+    const surfaceId = 'slack:T1:C1';
+    const first = await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: '1000.000001', text: 'seed', userId: 'U1' });
+    assert.equal(first.appended, true);
+    if (!first.appended) return;
+
+    // 1,500 rows of about 2KB, fewer than the 2,000-row dedupe window.
+    const rows = Array.from({ length: 1_500 }, (_, index) => {
+      const messageTs = `${1000 + index}.000001`;
+      return { ...first.entry, eventId: `slack:T1:C1:${messageTs}`, messageTs, ordinal: index + 1, text: 'x'.repeat(2_000) };
+    });
+    const journalPath = join(observedConversationsDir(agentId), `${observedConversationFileStem(surfaceId)}.jsonl`);
+    await writeFile(journalPath, rows.map((row) => `${JSON.stringify(row)}\n`).join(''), 'utf8');
+    const newest = rows.at(-1)!;
+    await store.writeIndexForTest({
+      lastEventId: newest.eventId,
+      lastMessageTs: newest.messageTs,
+      surfaceId,
+      tailOrdinal: newest.ordinal,
+      updatedAt: new Date().toISOString(),
+    });
+    const fileBytes = (await stat(journalPath)).size;
+
+    const realOpen = fsPromises.open;
+    const realReadFile = fsPromises.readFile;
+    let journalBytes = 0;
+    const isJournal = (path: unknown) => String(path).endsWith('.jsonl');
+    fsPromises.open = (async (...args: Parameters<typeof realOpen>) => {
+      const handle = await realOpen(...args);
+      if (!isJournal(args[0])) return handle;
+      const read = handle.read.bind(handle) as (...readArgs: unknown[]) => Promise<{ bytesRead: number }>;
+      (handle as unknown as { read: typeof read }).read = async (...readArgs: unknown[]) => {
+        const result = await read(...readArgs);
+        journalBytes += result.bytesRead;
+        return result;
+      };
+      return handle;
+    }) as typeof realOpen;
+    fsPromises.readFile = (async (...args: Parameters<typeof realReadFile>) => {
+      const data = await realReadFile(...args);
+      if (isJournal(args[0])) journalBytes += typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
+      return data;
+    }) as typeof realReadFile;
+    syncBuiltinESMExports();
+
+    const measure = async <T>(label: string, run: () => Promise<T>): Promise<T> => {
+      journalBytes = 0;
+      const result = await run();
+      assert.ok(journalBytes < fileBytes / 10, `${label} read ${journalBytes} bytes of a ${fileBytes}-byte journal`);
+      return result;
+    };
+    try {
+      const advanced = await measure('advanceCursor', () => store.advanceCursor({
+        expected: { status: 'absent' },
+        nextDeliveredOrdinal: 1_498,
+        surfaceId,
+      }));
+      assert.equal(advanced.advanced, true);
+      const index = await measure('getIndexReconciled', () => store.getIndexReconciled(surfaceId));
+      assert.equal(index?.tailOrdinal, 1_500);
+      const snapshot = await measure('readCursorDeliverySnapshot', () => store.readCursorDeliverySnapshot(surfaceId, {
+        afterOrdinal: 1_498,
+        limit: 5_000,
+      }));
+      assert.equal(snapshot.capturedTailOrdinal, 1_500);
+      assert.deepEqual(snapshot.candidates.map((row) => row.ordinal), [1_499, 1_500]);
+      const repeat = await measure('observe (repeat of the newest event)', () => store.observe({
+        teamId: 'T1',
+        channelId: 'C1',
+        messageTs: newest.messageTs,
+        text: 'again',
+        userId: 'U1',
+      }));
+      assert.equal(repeat.appended, false);
+    } finally {
+      fsPromises.open = realOpen;
+      fsPromises.readFile = realReadFile;
+      syncBuiltinESMExports();
+    }
+    assert.equal((await readFile(journalPath, 'utf8')).split('\n').filter(Boolean).length, 1_500);
+  });
+});
+
+test('cursor snapshot and dedupe hold when the index is ahead of the journal', async () => {
+  await withAgentStore(async (store) => {
+    const surfaceId = 'slack:T1:C1';
+    for (let i = 1; i <= 5; i += 1) {
+      await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: `300.00${i}`, text: `row-${i}`, userId: 'U1' });
+    }
+    // Rows 6–8 are missing from the journal, so ordinals will have a gap.
+    await store.writeIndexForTest({
+      lastEventId: 'slack:T1:C1:300.008',
+      lastMessageTs: '300.008',
+      surfaceId,
+      tailOrdinal: 8,
+      updatedAt: new Date().toISOString(),
+    });
+    const next = await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: '300.009', text: 'row-9', userId: 'U1' });
+    assert.equal(next.appended, true);
+    if (!next.appended) return;
+    assert.equal(next.entry.ordinal, 9);
+
+    const ordinals = async (afterOrdinal: number, limit: number) => {
+      const snapshot = await store.readCursorDeliverySnapshot(surfaceId, { afterOrdinal, limit });
+      assert.equal(snapshot.capturedTailOrdinal, 9);
+      return snapshot.candidates.map((row) => row.ordinal);
+    };
+    assert.deepEqual(await ordinals(0, 100), [1, 2, 3, 4, 5, 9]);
+    assert.deepEqual(await ordinals(3, 100), [4, 5, 9]);
+    assert.deepEqual(await ordinals(3, 2), [5, 9]);
+    assert.deepEqual(await ordinals(5, 100), [9]);
+    assert.deepEqual(await ordinals(9, 100), []);
+
+    // A row older than the newest is still found in the dedupe window.
+    const repeat = await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: '300.002', text: 'again', userId: 'U1' });
+    assert.equal(repeat.appended, false);
+    assert.equal((await store.readJournal(surfaceId)).length, 6);
+  });
+});
+
+test('bounded reads fall back to the full window after an out-of-order append', async () => {
+  await withAgentStore(async (store, agentId) => {
+    const surfaceId = 'slack:T1:D1';
+    const observe = (messageTs: string, text: string) =>
+      store.observe({ teamId: 'T1', channelId: 'D1', messageTs, text, userId: 'U1' });
+    const middle = await observe('100.002', 'middle');
+    assert.equal(middle.appended, true);
+    if (!middle.appended) return;
+    await observe('100.003', 'high');
+
+    // An observer whose index lock was taken over as stale (lock.ts) resumes:
+    // it appends the ordinal it planned before and writes its own index.
+    const journalPath = join(observedConversationsDir(agentId), `${observedConversationFileStem(surfaceId)}.jsonl`);
+    const delayed = { ...middle.entry, eventId: 'slack:T1:D1:100.001', messageTs: '100.001', ordinal: 1, text: 'delayed' };
+    await appendFile(journalPath, `${JSON.stringify(delayed)}\n`, 'utf8');
+    await store.writeIndexForTest({
+      lastEventId: delayed.eventId,
+      lastMessageTs: delayed.messageTs,
+      surfaceId,
+      tailOrdinal: 1,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const snapshotEvents = async (afterOrdinal: number) => {
+      const snapshot = await store.readCursorDeliverySnapshot(surfaceId, { afterOrdinal, limit: 100 });
+      return { tail: snapshot.capturedTailOrdinal, events: snapshot.candidates.map((row) => row.messageTs) };
+    };
+    assert.equal((await store.getIndexReconciled(surfaceId))?.tailOrdinal, 2);
+    assert.deepEqual(await snapshotEvents(1), { tail: 2, events: ['100.003'] });
+    // The newest row repeats ordinal 1, so the trigger lookup searches wider.
+    assert.equal(await store.findAmongNewest(surfaceId, delayed.eventId, 32), undefined);
+
+    const repaired = await observe('100.004', 'repaired');
+    assert.equal(repaired.appended && repaired.entry.ordinal, 3);
+    assert.deepEqual((await store.readJournal(surfaceId)).map((row) => row.ordinal), [1, 2, 1, 3]);
+    assert.deepEqual(await snapshotEvents(1), { tail: 3, events: ['100.003', '100.004'] });
+    assert.deepEqual(await snapshotEvents(2), { tail: 3, events: ['100.004'] });
+    assert.equal(
+      (await store.advanceCursor({ expected: { status: 'absent' }, nextDeliveredOrdinal: 3, surfaceId })).advanced,
+      true,
+    );
+  });
+});
+
+test('bounded reads stay in the live file when archives sort out of append order', async () => {
+  await withAgentStore(async (store, agentId) => {
+    const surfaceId = 'slack:T1:D1';
+    const rows = await observeAcrossClockStep(store, agentId, 'D1');
+    const tail = rows.at(-1)!.ordinal;
+    const snapshotOrdinals = async (afterOrdinal: number) => {
+      const snapshot = await store.readCursorDeliverySnapshot(surfaceId, { afterOrdinal, limit: 100 });
+      assert.equal(snapshot.capturedTailOrdinal, rows.at(-1)!.ordinal);
+      return snapshot.candidates.map((row) => row.ordinal);
+    };
+    // Rows tail-2 and tail-1 sit in the archive that now sorts first.
+    assert.deepEqual(await snapshotOrdinals(tail - 3), [tail - 2, tail - 1, tail]);
+    assert.equal((await store.getIndexReconciled(surfaceId))?.tailOrdinal, tail);
+    // The newest rows reach an archive, so the lookup leaves the event to the wider search.
+    assert.equal(await store.findAmongNewest(surfaceId, rows.at(-1)!.eventId, 32), undefined);
+
+    // Once the live file holds the rows a read needs, reads stay in it again.
+    for (let i = 1; i <= 40; i += 1) {
+      const result = await store.observe({
+        teamId: 'T1', channelId: 'D1', messageTs: `200.${String(i).padStart(4, '0')}`, text: `live-${i}`, userId: 'U1',
+      });
+      assert.equal(result.appended, true);
+      if (result.appended) rows.push(result.entry);
+    }
+    const newest = rows.at(-1)!.ordinal;
+    assert.deepEqual(await snapshotOrdinals(newest - 2), [newest - 1, newest]);
+    assert.equal((await store.findAmongNewest(surfaceId, rows.at(-5)!.eventId, 32))?.ordinal, newest - 4);
+  }, { maxBytes: 16_384, maxArchives: 4 });
+});
+
+test('trigger lookup among the newest rows matches the first row for an event', async () => {
+  await withAgentStore(async (store, agentId) => {
+    const surfaceId = 'slack:T1:D1';
+    for (let i = 1; i <= 60; i += 1) {
+      await store.observe({ teamId: 'T1', channelId: 'D1', messageTs: `200.${String(i).padStart(3, '0')}`, text: `m${i}`, userId: 'U1' });
+    }
+    const rows = await store.readJournal(surfaceId);
+    const ordinalOf = async (row: { eventId: string }) => (await store.findAmongNewest(surfaceId, row.eventId, 32))?.ordinal;
+    assert.equal(await ordinalOf(rows[59]!), 60);
+    assert.equal(await ordinalOf(rows[28]!), 29);
+    // Older than the newest 32 rows (one only checks order): a miss, so the caller widens.
+    assert.equal(await ordinalOf(rows[27]!), undefined);
+    assert.equal(await ordinalOf(rows[2]!), undefined);
+
+    // A resumed observer that missed row 59 appends a second row for its event.
+    const journalPath = join(observedConversationsDir(agentId), `${observedConversationFileStem(surfaceId)}.jsonl`);
+    await appendFile(journalPath, `${JSON.stringify(rows[58]!)}\n`, 'utf8');
+    assert.equal(await ordinalOf(rows[58]!), undefined);
+    // Every lookup over rows that do not rise widens.
+    assert.equal(await ordinalOf(rows[59]!), undefined);
   });
 });
 

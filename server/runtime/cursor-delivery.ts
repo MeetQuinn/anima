@@ -1162,7 +1162,9 @@ async function findObservationByEventId(
   surfaceId: string,
   eventId: string,
 ): Promise<ObservedConversationEntry | undefined> {
-  // Tail window covers normal traffic; for deep history read more.
+  // The trigger is almost always among the newest rows; widen only on a miss.
+  const newestHit = await store.findAmongNewest(surfaceId, eventId, 32);
+  if (newestHit) return newestHit;
   const recent = await store.readTail(surfaceId, 2_000);
   const hit = recent.find((row) => row.eventId === eventId);
   if (hit) return hit;

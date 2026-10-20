@@ -30,6 +30,24 @@ import { agentsDir } from './agent.store.js';
 /** Bound recent dedupe window inside one conversation journal. */
 export const OBSERVED_CONVERSATION_DEDUPE_RECENT = 2_000;
 
+/**
+ * Older rows a bounded journal read takes beyond the rows it needs, to check
+ * that ordinals still rise in file order.
+ *
+ * A bounded read takes rows from the live file only (`readLiveTail`), where
+ * file order is append order. Archives are named by the clock and can sort out
+ * of append order, so when the rows it needs reach an archive, it falls back.
+ *
+ * observe() numbers each row one past the reconciled tail, so they rise, with
+ * one exception: lock.ts takes over a lock held for five minutes even when its
+ * holder is alive. When that holder resumes, it appends the ordinal it planned
+ * before, which can be no higher than rows appended since. A row older than a
+ * bounded read can carry an ordinal the read needed only when every one of
+ * these extra rows is such a resumed append, each after its own takeover. When
+ * the rows do not rise, the read falls back to the full dedupe window.
+ */
+export const OBSERVED_CONVERSATION_ORDER_CHECK_ROWS = 8;
+
 /** Cap retained journal archives per conversation (plus the live segment). */
 export const OBSERVED_CONVERSATION_MAX_ARCHIVES = 4;
 
@@ -212,6 +230,14 @@ export function cursorViewFromRecord(
   };
 }
 
+/** True when each row's ordinal is higher than the row before it. */
+function ordinalsRise(rows: readonly ObservedConversationEntry[]): boolean {
+  for (let i = 1; i < rows.length; i += 1) {
+    if (rows[i]!.ordinal <= rows[i - 1]!.ordinal) return false;
+  }
+  return true;
+}
+
 /**
  * Rebuild journal-tail index from retained journal rows when the index lags
  * (append-then-index-write crash recovery).
@@ -276,6 +302,13 @@ export class ObservedConversationStore {
     let outcome: ObserveSlackMessageResult | undefined;
     try {
       await indexStore.update(async (current) => {
+        // The index names an event only after its row is in the journal, so a
+        // repeat of the newest event (Slack's message + app_mention pair, the
+        // pre-drain backfill) needs no journal read.
+        if (current.tailOrdinal > 0 && current.lastEventId === eventId) {
+          outcome = { appended: false, reason: 'duplicate' };
+          return current;
+        }
         const recent = await journal.readTail(OBSERVED_CONVERSATION_DEDUPE_RECENT);
         const reconciled = reconcileIndexFromJournal(current, recent, surfaceId);
 
@@ -356,8 +389,7 @@ export class ObservedConversationStore {
     const indexStore = this.indexStore(surfaceId);
     let result: ConversationIndex | undefined;
     await indexStore.update(async (current) => {
-      const recent = await this.journal(surfaceId).readTail(OBSERVED_CONVERSATION_DEDUPE_RECENT);
-      const reconciled = reconcileIndexFromJournal(current, recent, surfaceId);
+      const reconciled = await this.reconcileWithJournal(surfaceId, current);
       result = reconciled.tailOrdinal > 0 && reconciled.lastEventId ? reconciled : undefined;
       return reconciled;
     });
@@ -373,8 +405,11 @@ export class ObservedConversationStore {
    * exact candidate population is `capturedTail − afterOrdinal` when the index
    * is present.
    *
-   * Bounded read: under the lock we only `readTail(max(limit, dedupeWindow))` —
-   * never a full retained-history parse (archives can be tens of MiB per surface).
+   * Bounded read: under the lock it reads only the newest
+   * `min(limit, capturedTail − afterOrdinal)` rows plus the order-check rows,
+   * and the full dedupe window only when their ordinals do not rise (see
+   * OBSERVED_CONVERSATION_ORDER_CHECK_ROWS). Never a full retained-history
+   * parse (archives can be tens of MiB per surface).
    */
   async readCursorDeliverySnapshot(
     surfaceId: string,
@@ -387,21 +422,15 @@ export class ObservedConversationStore {
   }> {
     const afterOrdinal = options.afterOrdinal ?? 0;
     const limit = options.limit ?? 100;
-    // Newest selection window + enough for index reconcile / dedupe — not full history.
-    const tailRead = Math.max(limit, OBSERVED_CONVERSATION_DEDUPE_RECENT);
     let snapshot: {
       index: ConversationIndex | undefined;
       candidates: ObservedConversationEntry[];
       capturedTailOrdinal: number;
     } | undefined;
     await this.indexStore(surfaceId).update(async (current) => {
-      // Bounded tail under the lock. observe() also holds this lock around
+      // Bounded reads under the lock. observe() also holds this lock around
       // journal.append + index write, so concurrent appends cannot interleave.
-      const recent = await this.journal(surfaceId).readTail(tailRead);
-      const reconcileWindow = recent.length <= OBSERVED_CONVERSATION_DEDUPE_RECENT
-        ? recent
-        : recent.slice(recent.length - OBSERVED_CONVERSATION_DEDUPE_RECENT);
-      const reconciled = reconcileIndexFromJournal(current, reconcileWindow, surfaceId);
+      const { reconciled, recent } = await this.snapshotRows(surfaceId, current, afterOrdinal, limit);
       const capturedTailOrdinal = reconciled.tailOrdinal;
       const index =
         capturedTailOrdinal > 0 && reconciled.lastEventId ? reconciled : undefined;
@@ -446,6 +475,29 @@ export class ObservedConversationStore {
     return this.journal(surfaceId).readTail(limit);
   }
 
+  /**
+   * The row for `eventId` among the newest `newest` journal rows. Undefined
+   * when it is not there, when those rows and the order-check rows reach an
+   * archive, or when their ordinals do not rise; the caller then searches a
+   * wider window. A second row for an event comes from an observer that missed
+   * the first, so the rows between break the rise, and a hit is the row a
+   * wider search finds first. The exception is a resumed append that lands in
+   * an archive after newer rows: then the hit is the event's later row, whose
+   * ordinal is higher.
+   */
+  async findAmongNewest(
+    surfaceId: string,
+    eventId: string,
+    newest: number,
+  ): Promise<ObservedConversationEntry | undefined> {
+    const count = newest + OBSERVED_CONVERSATION_ORDER_CHECK_ROWS;
+    const rows = await this.journal(surfaceId).readLiveTail(count);
+    if (!rows || !ordinalsRise(rows)) return undefined;
+    // Fewer rows than asked for is the whole journal: no older row exists.
+    const searched = rows.length < count ? rows : rows.slice(OBSERVED_CONVERSATION_ORDER_CHECK_ROWS);
+    return searched.find((row) => row.eventId === eventId);
+  }
+
   // --- Delivered cursor (independent of journal tail) ---
 
   async getCursor(surfaceId: string): Promise<ConversationCursorView> {
@@ -488,8 +540,7 @@ export class ObservedConversationStore {
 
       // Cap against reconciled journal tail (index + retained journal rows).
       const index = await this.indexStore(input.surfaceId).read();
-      const recent = await this.journal(input.surfaceId).readTail(OBSERVED_CONVERSATION_DEDUPE_RECENT);
-      const reconciled = reconcileIndexFromJournal(index, recent, input.surfaceId);
+      const reconciled = await this.reconcileWithJournal(input.surfaceId, index);
       const tailOrdinal = reconciled.tailOrdinal;
       // present@0 is the only establishment with an empty journal.
       if (input.nextDeliveredOrdinal > tailOrdinal) {
@@ -583,6 +634,59 @@ export class ObservedConversationStore {
   /** Test/recovery helper: force-write delivered cursor without advanceCursor CAS. */
   async writeCursorForTest(record: ConversationCursorRecord): Promise<void> {
     await this.cursorStore(record.surfaceId).write(record);
+  }
+
+  /**
+   * The newest `needed` journal rows plus the order-check rows. Undefined when
+   * they reach an archive, their ordinals do not rise, or the newest is behind
+   * the index; the caller then reads the full dedupe window.
+   */
+  private async newestRowsInOrder(
+    surfaceId: string,
+    index: ConversationIndex,
+    needed: number,
+  ): Promise<ObservedConversationEntry[] | undefined> {
+    const rows = await this.journal(surfaceId).readLiveTail(needed + OBSERVED_CONVERSATION_ORDER_CHECK_ROWS);
+    if (!rows || !ordinalsRise(rows)) return undefined;
+    if ((rows.at(-1)?.ordinal ?? 0) < index.tailOrdinal) return undefined;
+    return rows;
+  }
+
+  /** Reconcile `index` from the newest rows, or from the full dedupe window when they do not rise. */
+  private async reconcileWithJournal(surfaceId: string, index: ConversationIndex): Promise<ConversationIndex> {
+    const rows = await this.newestRowsInOrder(surfaceId, index, 0)
+      ?? await this.journal(surfaceId).readTail(OBSERVED_CONVERSATION_DEDUPE_RECENT);
+    return reconcileIndexFromJournal(index, rows, surfaceId);
+  }
+
+  /**
+   * Rows for a cursor snapshot and the tail they reconcile to. While ordinals
+   * rise, the newest `min(limit, tail − afterOrdinal)` rows hold every
+   * candidate. Otherwise read `max(limit, dedupe window)` rows, as before.
+   */
+  private async snapshotRows(
+    surfaceId: string,
+    current: ConversationIndex,
+    afterOrdinal: number,
+    limit: number,
+  ): Promise<{ reconciled: ConversationIndex; recent: ObservedConversationEntry[] }> {
+    const needed = (tail: number) => Math.max(0, Math.min(limit, tail - afterOrdinal));
+    let want = needed(current.tailOrdinal);
+    // Reconcile can raise the tail above the index (an append whose index write
+    // did not land). Then read again for the wider window.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const recent = await this.newestRowsInOrder(surfaceId, current, want);
+      if (!recent) break;
+      const reconciled = reconcileIndexFromJournal(current, recent, surfaceId);
+      const wholeJournal = recent.length < want + OBSERVED_CONVERSATION_ORDER_CHECK_ROWS;
+      if (wholeJournal || needed(reconciled.tailOrdinal) <= want) return { reconciled, recent };
+      want = needed(reconciled.tailOrdinal);
+    }
+    const recent = await this.journal(surfaceId).readTail(Math.max(limit, OBSERVED_CONVERSATION_DEDUPE_RECENT));
+    const reconcileWindow = recent.length <= OBSERVED_CONVERSATION_DEDUPE_RECENT
+      ? recent
+      : recent.slice(recent.length - OBSERVED_CONVERSATION_DEDUPE_RECENT);
+    return { reconciled: reconcileIndexFromJournal(current, reconcileWindow, surfaceId), recent };
   }
 
   private journal(surfaceId: string): JsonlAppendLog<ObservedConversationEntry> {

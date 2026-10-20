@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -24,24 +24,28 @@ import type { RuntimeItemContext } from '../runtime/types.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import {
   ObservedConversationStore,
+  observedConversationFileStem,
+  observedConversationsDir,
   type ConversationIndex,
   type ObservedConversationEntry,
 } from '../storage/schema/observed-conversation.store.js';
 import type { SlackInboxItem } from '../../shared/inbox.js';
 import { withAnimaHome } from './anima-home.js';
 import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
+import { observeAcrossClockStep } from './helpers/observed-journal.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { makeSlackEvent } from './helpers/slack.js';
 
 async function withEnabledStore<T>(
   body: (store: ObservedConversationStore, agentId: string, queue: WakeQueueService) => Promise<T>,
+  storeOptions?: { maxArchives?: number; maxBytes?: number },
 ): Promise<T> {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cursor-del-'));
   setCursorDeliveryEnabledForTests(true);
   try {
     await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
     return await withAnimaHome(stateDir, async () => {
-      const store = new ObservedConversationStore('anima');
+      const store = new ObservedConversationStore('anima', storeOptions);
       const queue = new WakeQueueService('anima');
       return body(store, 'anima', queue);
     });
@@ -1413,6 +1417,90 @@ test('prepare never pairs a later index tail with an earlier journal window', as
       assert.match(split.error.message, /captured index tail 3 missing/);
     }
   });
+});
+
+test('a wake whose row precedes an out-of-order append is delivered, not coalesced', async () => {
+  await withEnabledStore(async (store, agentId, queue) => {
+    const surfaceId = 'slack:T1:D1';
+    const observe = (messageTs: string, text: string) =>
+      store.observe({ teamId: 'T1', channelId: 'D1', messageTs, text, userId: 'U1' });
+    const middle = await observe('100.002', 'middle');
+    assert.equal(middle.appended, true);
+    if (!middle.appended) return;
+    await observe('100.003', 'high');
+    // An observer whose index lock was taken over as stale (lock.ts) resumes:
+    // it appends the ordinal it planned before and writes its own index.
+    const delayed = { ...middle.entry, eventId: 'slack:T1:D1:100.001', messageTs: '100.001', ordinal: 1, text: 'delayed' };
+    await appendFile(
+      join(observedConversationsDir(agentId), `${observedConversationFileStem(surfaceId)}.jsonl`),
+      `${JSON.stringify(delayed)}\n`,
+      'utf8',
+    );
+    await store.writeIndexForTest({
+      lastEventId: delayed.eventId,
+      lastMessageTs: delayed.messageTs,
+      surfaceId,
+      tailOrdinal: 1,
+      updatedAt: new Date().toISOString(),
+    });
+    await observe('100.004', 'repaired');
+    assert.deepEqual((await store.readJournal(surfaceId)).map((row) => row.ordinal), [1, 2, 1, 3]);
+
+    await store.writeCursorForTest({ surfaceId, deliveredOrdinal: 1, updatedAt: new Date().toISOString() });
+    const high = slackItem({ id: 'wake-high', channelId: 'D1', messageTs: '100.003', text: 'high' });
+    const latest = slackItem({ id: 'wake-latest', channelId: 'D1', messageTs: '100.004', text: 'repaired' });
+    await queue.enqueue(high);
+    await queue.enqueue(latest);
+
+    const prepared = await prepareCursorDelivery({ agentId, item: latest, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    assert.deepEqual(
+      prepared.plan.surfaces.flatMap((surface) => surface.entries.map((row) => row.messageTs)),
+      ['100.003', '100.004'],
+    );
+    const { coalescedItemIds } = await commitCursorDelivery({
+      plan: prepared.plan,
+      queue,
+      store,
+      excludeItemIds: [latest.id],
+    });
+    assert.deepEqual(coalescedItemIds, ['wake-high']);
+    const cursor = await store.getCursor(surfaceId);
+    assert.equal(cursor.status === 'present' ? cursor.deliveredOrdinal : undefined, 3);
+  });
+});
+
+test('a wake whose row sits in an archive that sorts out of order is delivered, not coalesced', async () => {
+  await withEnabledStore(async (store, agentId, queue) => {
+    const surfaceId = 'slack:T1:D1';
+    const rows = await observeAcrossClockStep(store, agentId, 'D1');
+    const tail = rows.at(-1)!.ordinal;
+    await store.writeCursorForTest({ surfaceId, deliveredOrdinal: tail - 3, updatedAt: new Date().toISOString() });
+    const wake = (row: (typeof rows)[number], id: string) =>
+      slackItem({ id, channelId: 'D1', messageTs: row.messageTs, text: row.text });
+    const archived = wake(rows.at(-2)!, 'wake-archived');
+    const latest = wake(rows.at(-1)!, 'wake-latest');
+    await queue.enqueue(archived);
+    await queue.enqueue(latest);
+
+    const prepared = await prepareCursorDelivery({ agentId, item: latest, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    assert.deepEqual(
+      prepared.plan.surfaces.flatMap((surface) => surface.entries.map((row) => row.ordinal)),
+      [tail - 2, tail - 1, tail],
+    );
+    const { coalescedItemIds } = await commitCursorDelivery({
+      plan: prepared.plan,
+      queue,
+      store,
+      excludeItemIds: [latest.id],
+    });
+    assert.deepEqual(coalescedItemIds, ['wake-archived']);
+    const cursor = await store.getCursor(surfaceId);
+    assert.equal(cursor.status === 'present' ? cursor.deliveredOrdinal : undefined, tail);
+  }, { maxBytes: 16_384, maxArchives: 4 });
 });
 
 test('readCursorDeliverySnapshot filters journal through captured tail under lock', async () => {
