@@ -30,6 +30,10 @@ import { allActivities, loadState } from './helpers/state.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 
+// Starting the fake grok and reaching its first prompt takes about 0.25s alone,
+// but passed the 1s waitFor default with six test processes running at once.
+const GROK_STARTUP_TIMEOUT_MS = 5_000;
+
 test('grok-cli ACP starts, appends, dispatches agent requests, and reports actual model authority', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-runtime-'));
   let runtime: AgentRuntime | undefined;
@@ -122,7 +126,7 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         { args: ['--profile', 'team one'] },
       );
       const runPromise = runtime.run(await runtimeInput(runtime, first, await loadState()));
-      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
+      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')), { timeoutMs: GROK_STARTUP_TIMEOUT_MS });
       assert.deepEqual(
         await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, first, followup, await loadState())),
         { accepted: true, text: 'Grok follow-up applied (interrupts active prompt)' },
@@ -668,7 +672,7 @@ test('grok-cli sends ACP cancel before tearing down an aborted turn', async () =
         signal: abort.signal,
       };
       const run = runtime.run(input);
-      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
+      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')), { timeoutMs: GROK_STARTUP_TIMEOUT_MS });
       abort.abort('operator_abort');
       await assert.rejects(run, /Grok turn cancelled/);
       const calls = await readJsonLines(callsPath);
@@ -829,7 +833,7 @@ test('grok-cli child loss retries the same inbox item and reloads the persisted 
         updatedAt: '2026-07-13T00:00:00.000Z',
       });
       const drain = worker.drainOnce();
-      await waitFor(() => readFile(primaryReadyPath, 'utf8').then((value) => value === 'ready'));
+      await waitFor(() => readFile(primaryReadyPath, 'utf8').then((value) => value === 'ready'), { timeoutMs: GROK_STARTUP_TIMEOUT_MS });
       const followup = await enqueueInbox(
         makeSlackEvent({
           channelId: 'D-grok',
@@ -940,7 +944,7 @@ test('grok-cli mid-turn follow-up cancels active prompt then runs the follow-up 
         model: 'grok-4.5',
       });
       const runPromise = runtime.run(await runtimeInput(runtime, first, await loadState()));
-      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
+      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')), { timeoutMs: GROK_STARTUP_TIMEOUT_MS });
       // Give the fake a tick to emit stale-primary before we interrupt.
       await new Promise((resolve) => setTimeout(resolve, 20));
       assert.deepEqual(
@@ -1027,7 +1031,7 @@ test('grok-cli operator stop ends the active run (follow-up interrupt may have a
         { agentId: 'anima', homePath, stateDir },
       );
       const drain = worker.drainOnce();
-      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')));
+      await waitFor(() => readFile(callsPath, 'utf8').then((value) => value.includes('session/prompt')), { timeoutMs: GROK_STARTUP_TIMEOUT_MS });
       const followup = await enqueueInbox(
         makeSlackEvent({
           channelId: 'D-grok',
