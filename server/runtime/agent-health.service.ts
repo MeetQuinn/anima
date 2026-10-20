@@ -56,6 +56,16 @@ export class AgentHealthService {
     await this.store.update(input.agentId, (previous) => applyHealthWrite(previous, input));
   }
 
+  // One locked rewrite for many agents, with the same carry rules per agent.
+  async writeHealthMany(inputs: readonly HealthWriteInput[]): Promise<void> {
+    await this.store.updateMany(
+      inputs.map((input) => ({
+        agentId: input.agentId,
+        apply: (previous) => applyHealthWrite(previous, input),
+      })),
+    );
+  }
+
   async writeProviderFailure(input: ProviderFailureInput): Promise<void> {
     await this.store.update(input.agentId, (previous) => applyProviderFailure(previous, input));
   }

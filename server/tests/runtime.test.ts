@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import fsPromises, { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { after, before, mock } from 'node:test';
@@ -237,6 +238,46 @@ test('runtime host idles with zero agents and starts a newly runnable agent once
   assert.deepEqual(host.runningAgentIds(), ['aria']);
   await host.stop();
   assert.deepEqual(stopped, ['aria']);
+});
+
+test('runtime host publishes a health round in one snapshot-file rewrite', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'anima-runtime-health-round-'));
+  const healthStore = new AgentHealthStore({ animaHome: homeDir });
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: homeDir,
+    healthStore,
+    loadAgents: async () => ['aria', 'bard', 'cleo'].map((id) => runtimeHostAgent(id, { connected: true })),
+    logger: silentLogger,
+    startAgent: async (agent) => stopHandle(agent.id, stopped),
+    validateAgent: async () => {},
+  });
+  const realRename = fsPromises.rename;
+  let healthRewrites = 0;
+  try {
+    await healthStore.ensureDirectory();
+    await host.reconcileOnce();
+    fsPromises.rename = (async (...args: Parameters<typeof realRename>) => {
+      if (String(args[1]) === healthStore.path()) healthRewrites += 1;
+      return realRename(...args);
+    }) as typeof realRename;
+    syncBuiltinESMExports();
+
+    const before = await healthStore.list();
+    await host['publishKnownHealthSnapshots']();
+    const after = await healthStore.list();
+    assert.deepEqual(Object.keys(after).sort(), ['aria', 'bard', 'cleo']);
+    for (const id of ['aria', 'bard', 'cleo']) {
+      assert.equal(after[id]?.state, 'healthy');
+      assert.ok(after[id]!.updatedAt >= before[id]!.updatedAt);
+    }
+    assert.equal(healthRewrites, 1);
+  } finally {
+    fsPromises.rename = realRename;
+    syncBuiltinESMExports();
+    await host.stop();
+    await rm(homeDir, { force: true, recursive: true });
+  }
 });
 
 test('runtime host shares one run limiter across every agent it starts', async () => {
