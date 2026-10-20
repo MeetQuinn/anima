@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import { JsonFile } from '../storage/json-file.js';
 import { JsonlAppendLog } from '../storage/jsonl-log.js';
+import { withFileLock } from '../storage/lock.js';
 
 const JSON_FILE_CACHE_ENTRY_CAP = 256;
 
@@ -98,6 +101,48 @@ test('JsonlAppendLog cache invalidates when another writer appends to the file o
     assert.deepEqual(await log.readAll(), [{ id: 'a' }, { id: 'b' }], 'readAll should see the external append');
   } finally {
     await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('ActivityStore stamps a row only after another process releases the log lock', { timeout: 15_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-activity-lock-order-'));
+  try {
+    const storeUrl = new URL('../storage/schema/activity.store.js', import.meta.url).href;
+    // A second writer (a CLI next to the daemon) calls record() while this
+    // process holds the activity log lock.
+    const script = [
+      `const { ActivityStore } = await import(${JSON.stringify(storeUrl)});`,
+      `const writing = new ActivityStore('anima').record({ type: 'runtime.event', payload: { itemId: 'other-writer' } });`,
+      `process.stdout.write('recording\\n');`,
+      `const row = await writing;`,
+      `process.stdout.write(JSON.stringify({ createdAt: row.createdAt }) + '\\n');`,
+    ].join('\n');
+    let stdout = '';
+    let stderr = '';
+    let exited: Promise<unknown[]> | undefined;
+    const releasedAt = await withFileLock(join(home, 'agents', 'anima', 'activity.jsonl'), home, async () => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+        env: { ...process.env, ANIMA_HOME: home },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      exited = once(child, 'exit');
+      child.stderr.on('data', (chunk) => { stderr += chunk; });
+      await new Promise<void>((resolve, reject) => {
+        child.stdout.on('data', (chunk) => {
+          stdout += chunk;
+          if (stdout.includes('recording\n')) resolve();
+        });
+        child.once('exit', () => reject(new Error(`writer exited early: ${stderr}`)));
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return new Date().toISOString();
+    });
+    const [code] = await must(exited);
+    assert.equal(code, 0, stderr);
+    const row = JSON.parse(must(stdout.trim().split('\n').at(-1))) as { createdAt: string };
+    assert.ok(row.createdAt >= releasedAt, `row stamped ${row.createdAt}, before the lock was released at ${releasedAt}`);
+  } finally {
+    await rm(home, { force: true, recursive: true });
   }
 });
 

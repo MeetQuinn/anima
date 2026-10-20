@@ -449,6 +449,12 @@ test('lifetime token usage for a settled item reads only activity since the item
       const archivePath = join(archiveDir, '1000000000000-activity-000.jsonl');
       await writeFile(archivePath, `${JSON.stringify({ createdAt: '2020-01-01T00:00:00.000Z', id: 'old', payload: {}, type: 'runtime.event' })}\n`);
       await chmod(archivePath, 0o000);
+      // An hour-old row in the live segment: past the scan margin, so the read stops there.
+      await activityServiceForAgent('anima').record({
+        createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        payload: { itemId: 'hour-old-item' },
+        type: 'runtime.event',
+      });
       await recordRuntimeEvent({ agentId: 'anima', itemId: 'earlier-item' }, 'codex-cli', undefined, {
         eventType: 'codex.session.stats',
         inputTokens: 999,
@@ -479,6 +485,44 @@ test('lifetime token usage for a settled item reads only activity since the item
     });
   } finally {
     await chmod(join(archiveDir, '1000000000000-activity-000.jsonl'), 0o600).catch(() => {});
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('lifetime token usage for a settled item survives an older row appended after its rows', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-lifetime-late-row-test-'));
+  try {
+    await writeAgentConfigs(stateDir);
+    await withAnimaHome(stateDir, async () => {
+      const ctx = await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-demo',
+          teamId: 'T-demo',
+          text: 'Record usage around a late older row.',
+          ts: '1770000000.000006',
+          userId: 'U1',
+        }),
+        { agentId: 'anima', stateDir },
+      );
+      await recordRuntimeEvent({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', undefined, {
+        eventType: 'codex.session.stats',
+        inputTokens: 40,
+        outputTokens: 2,
+        runtimeKind: 'codex-cli',
+      });
+      // Stamped before the item but appended after its stats, as from a clock
+      // step or a runtime that stamps before taking the log lock.
+      await activityServiceForAgent('anima').record({
+        createdAt: new Date(Date.parse(ctx.item.handling.createdAt) - 60_000).toISOString(),
+        payload: { itemId: 'unrelated-item' },
+        type: 'runtime.event',
+      });
+      await recordRuntimeActivity({ agentId: 'anima', itemId: ctx.item.id }, 'codex-cli', 'runtime.completed');
+      await new WakeQueueService('anima').complete(ctx.item.id);
+
+      assert.equal(await recordLifetimeTokenUsageForItem('anima', ctx.item), 42);
+    });
+  } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
 });
