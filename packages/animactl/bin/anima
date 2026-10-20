@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const sourcePath = existsSync(scriptPath) ? realpathSync(scriptPath) : scriptPath;
 const packageRoot = resolve(dirname(sourcePath), '..');
 const cliPath = resolve(packageRoot, 'dist/server/cli/anima.js');
-const result = spawnSync(process.execPath, [cliPath, ...process.argv.slice(2)], { stdio: 'inherit' });
-if (result.error) throw result.error;
-if (result.signal) process.kill(process.pid, result.signal);
-process.exit(result.status ?? 1);
+// Run the CLI in this process. Agents call `anima` several times a turn, and a
+// second node process would add its startup to every call. The CLI parses
+// argv from index 2 and sets process.exitCode itself.
+await import(pathToFileURL(cliPath).href);

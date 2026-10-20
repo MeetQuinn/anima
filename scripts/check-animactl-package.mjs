@@ -124,6 +124,13 @@ async function runPackSmoke() {
       "Usage: animactl",
       installDir,
     );
+    await assertCommandFails(
+      animaBin,
+      ["history"],
+      "anima.no_agent_context",
+      installDir,
+    );
+    await assertSingleNodeProcess(animaBin, ["--help"], workDir, installDir);
 
     const envStorePath = join(
       installDir,
@@ -171,10 +178,50 @@ async function assertCommandHelp(command, args, expected, cwd) {
   }
 }
 
+// The exit status and error output must come through the `anima` bin unchanged.
+async function assertCommandFails(command, args, expected, cwd) {
+  const env = { ...process.env };
+  delete env.ANIMA_AGENT_ID;
+  const result = await run(command, args, {
+    allowFailure: true,
+    capture: true,
+    cwd,
+    env,
+  });
+  if (result.code !== 1 || !result.stderr.includes(expected)) {
+    throw new Error(
+      `${command} ${args.join(" ")} should exit 1 with "${expected}", got exit ${result.code}${result.stderr ? `\n${result.stderr}` : ""}`,
+    );
+  }
+}
+
+// Agents call `anima` several times a turn; a second node process per call
+// would add its startup to each one.
+async function assertSingleNodeProcess(command, args, workDir, cwd) {
+  const pidLog = join(workDir, "anima-pids.log");
+  const hook = join(workDir, "record-pid.mjs");
+  await writeFile(
+    hook,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(pidLog)}, \`\${process.pid}\\n\`);\n`,
+  );
+  const env = {
+    ...process.env,
+    NODE_OPTIONS: `--import=${pathToFileURL(hook).href}`,
+  };
+  await run(command, args, { capture: true, cwd, env });
+  const pids = (await readFile(pidLog, "utf8")).trim().split("\n");
+  if (pids.length !== 1) {
+    throw new Error(
+      `${command} ${args.join(" ")} ran ${pids.length} node processes, expected 1`,
+    );
+  }
+}
+
 function run(command, args, options = {}) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd ?? repoRoot,
+      env: options.env ?? process.env,
       stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
     });
     let stdout = "";
@@ -191,8 +238,8 @@ function run(command, args, options = {}) {
     }
     child.on("error", reject);
     child.on("close", (code, signal) => {
-      if (code === 0) {
-        resolveRun({ stderr, stdout });
+      if (code === 0 || (options.allowFailure && !signal)) {
+        resolveRun({ code, stderr, stdout });
         return;
       }
       const detail = signal ? `signal ${signal}` : `exit ${code}`;
