@@ -35,6 +35,11 @@ export class MessageStore {
     return this.log().readAll();
   }
 
+  /** The last appended record, read from the end of the log instead of parsing the whole segment. */
+  async readNewest(): Promise<AgentMessageRecord | undefined> {
+    return (await this.log().readTail(1))[0];
+  }
+
   async hasMessageId(messageId: string): Promise<boolean> {
     return (await this.log().readNewestMatching(1, (entry) => entry.messageId === messageId)).length > 0;
   }

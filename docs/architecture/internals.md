@@ -165,7 +165,7 @@ run/
 
 Agent config files are managed by `server/storage/schema/agent.store.ts`. The default agent home path helper is in `shared/agent-home.ts`, but the runtime state directory above is the Anima home, not the provider working directory.
 
-The storage layer starts with `server/storage/json-file.ts`, which provides atomic JSON writes, file locks, and a small process-local cache. `JsonFile.update` leaves the file untouched when the new value serializes to the bytes already on disk, so a no-op update keeps the file's mtime and every process's cached copy. Files with a mode (the 0600 Linear stores) always rewrite, to reapply it. `server/storage/json-store.ts` adds schema parsing and validation. JSONL append/read/rotation is in `server/storage/jsonl-log.ts`.
+The storage layer starts with `server/storage/json-file.ts`, which provides atomic JSON writes, file locks, and a small process-local cache. `JsonFile.update` leaves the file untouched when the new value serializes to the bytes already on disk, so a no-op update keeps the file's mtime and every process's cached copy. A new value for a missing file is always written, and files with a mode (the 0600 Linear stores) always rewrite a new value, to reapply the mode. `server/storage/json-store.ts` adds schema parsing and validation. JSONL append/read/rotation is in `server/storage/jsonl-log.ts`.
 
 Typed stores live in `server/storage/schema/`. Examples:
 

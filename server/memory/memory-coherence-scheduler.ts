@@ -29,6 +29,8 @@ export interface MemoryCoherenceSchedulerConfig {
 
 export interface MemoryCoherenceQueue {
   enqueue(item: MemoryCoherenceInboxItem): Promise<{ duplicate: boolean; queued: boolean }>;
+  /** True when the id is queued, running, or settled with a seen marker. */
+  has(itemId: string): Promise<boolean>;
   list(): Promise<InboxItem[]>;
 }
 
@@ -51,7 +53,7 @@ export class MemoryCoherenceScheduler {
     this.hasMeaningfulActivitySinceLastPass =
       deps.hasMeaningfulActivitySinceLastPass ?? hasMeaningfulActivitySinceLastMemoryPass;
     this.now = deps.now ?? (() => new Date());
-    this.queueForAgent = deps.queueForAgent ?? ((agentId) => wakeQueueServiceForAgent(agentId));
+    this.queueForAgent = deps.queueForAgent ?? reusedWakeQueues();
     this.readServerConfig = deps.readServerConfig ?? (() => serverConfigStore.read());
     this.timezoneForAgent = deps.timezoneForAgent ?? defaultTimezoneForAgent;
   }
@@ -67,8 +69,8 @@ export class MemoryCoherenceScheduler {
     // Due-slot computation is pure time math, so it runs before any file I/O.
     // Note: with the 2-day catchup window ([0, -1]) every candidate created
     // before its most recent slot has one, so `due` is mostly non-empty; it is
-    // the enqueue-side settled-id dedupe (wake-queue `seen` markers) and the
-    // activity gate that make this loop a no-op on most ticks. Slots that
+    // the wake-queue check below (active items plus `seen` markers), then the
+    // activity gate, that make this loop a no-op on most ticks. Slots that
     // predate the agent's creation are never due (see dueMemoryCoherenceSlot).
     const due = candidates
       .map((agent) => dueMemoryCoherenceSlot(agent, config, now, this.timezoneForAgent(agent, config.timezone)))
@@ -76,15 +78,25 @@ export class MemoryCoherenceScheduler {
       .sort((a, b) => a.scheduledSlotAt.localeCompare(b.scheduledSlotAt));
     if (due.length === 0) return;
 
+    // A slot whose pass is already queued, running or settled would only
+    // enqueue as a duplicate, so drop it before the activity gate reads any
+    // logs. On most ticks every due slot is already settled.
+    const pending: Array<{ item: MemoryCoherenceInboxItem; queue: MemoryCoherenceQueue; slot: MemoryCoherenceDueSlot }> = [];
+    for (const slot of due) {
+      const queue = this.queueForAgent(slot.agent.id);
+      const item = memoryCoherenceInboxItem(slot, now);
+      if (!await queue.has(item.id)) pending.push({ item, queue, slot });
+    }
+    if (pending.length === 0) return;
+
     const activeCount = await this.activeMemoryCoherenceCount(candidates);
     let available = Math.max(0, config.maxConcurrent - activeCount);
     if (available <= 0) return;
 
-    for (const slot of due) {
+    for (const { item, queue, slot } of pending) {
       if (available <= 0) break;
       if (!await this.hasMeaningfulActivitySinceLastPass(slot.agent.id)) continue;
-      const queue = this.queueForAgent(slot.agent.id);
-      const result = await queue.enqueue(memoryCoherenceInboxItem(slot, now));
+      const result = await queue.enqueue(item);
       if (result.queued) available -= 1;
     }
   }
@@ -236,6 +248,23 @@ function memoryCoherenceInboxItem(slot: MemoryCoherenceDueSlot, now: Date): Memo
     receivedAt,
     scheduledSlotAt: slot.scheduledSlotAt,
     scheduledSlotLabel: slot.scheduledSlotLabel,
+  };
+}
+
+/**
+ * One wake-queue service per agent for the scheduler's lifetime. Its store
+ * memoizes the parsed queue by the file cache's object, so a tick over an
+ * unchanged queue skips the schema parse.
+ */
+function reusedWakeQueues(): (agentId: string) => MemoryCoherenceQueue {
+  const queues = new Map<string, MemoryCoherenceQueue>();
+  return (agentId) => {
+    let queue = queues.get(agentId);
+    if (!queue) {
+      queue = wakeQueueServiceForAgent(agentId);
+      queues.set(agentId, queue);
+    }
+    return queue;
   };
 }
 

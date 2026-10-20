@@ -69,7 +69,7 @@ export class MessageService {
   }
 
   async latestMessageAt(): Promise<string | undefined> {
-    return (await this.store.readLatest({ limit: 1 }))[0]?.timestamp;
+    return (await this.store.readNewest())?.timestamp;
   }
 
   async search(input: MessageSearchInput): Promise<AgentMessageHistoryPage> {
