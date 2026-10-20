@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { rename } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { link, rename } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import Fastify from 'fastify';
@@ -220,6 +221,88 @@ test('a summary reads ledger rows again only after the ledger or the request cha
     await rename(new AgentTokenUsageStore('other').path, store.path);
     assert.equal((await usage.summary(request)).totalTokens, 3);
     assert.equal(store.reads, 8);
+
+    // Replaced again with no commit in between. Two connections can report the
+    // same data_version, so the stamp also names the connection.
+    const third = new AgentTokenUsageService('third');
+    await third.record('item-8', 'codex-cli', {
+      occurredAt: '2026-08-04T00:00:00.000Z',
+      sourceId: 'turn-8',
+      totalTokens: 4,
+    });
+    await rename(new AgentTokenUsageStore('third').path, store.path);
+    assert.equal((await usage.summary(request)).totalTokens, 4);
+    assert.equal(store.reads, 9);
+  });
+});
+
+test('a summary keeps the read locks that other connections in the process hold on the ledger', async () => {
+  await withTempAnimaHome(async (stateDir) => {
+    await writeAgentConfigs(stateDir);
+    const store = new AgentTokenUsageStore('anima');
+    const usage = new AgentTokenUsageService('anima', store);
+    const request = { agentName: 'Anima', from: '2026-08-04', through: '2026-08-05', timezone: 'UTC' };
+    await usage.record('item-1', 'codex-cli', {
+      occurredAt: '2026-08-04T00:00:00.000Z',
+      sourceId: 'turn-1',
+      totalTokens: 10,
+    });
+    // A writer in another process that does not wait for locks. POSIX locks
+    // belong to the process, so only another process can see one dropped.
+    const writer = `
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(process.argv[1], { timeout: 0 });
+      try {
+        db.exec("UPDATE provider_usage SET total_tokens = total_tokens + 1");
+        console.log('committed');
+      } catch (error) {
+        console.log(error.message);
+      } finally {
+        db.close();
+      }
+    `;
+    const writeFromAnotherProcess = (path: string) =>
+      execFileSync(process.execPath, ['-e', writer, path], { encoding: 'utf8' }).trim();
+    const readInTransaction = (path: string) => {
+      const reader = new DatabaseSync(path);
+      reader.exec('BEGIN');
+      reader.prepare('SELECT count(*) FROM provider_usage').get();
+      return reader;
+    };
+
+    // A summary that reads rows, then one that hits the cache.
+    const reader = readInTransaction(store.path);
+    try {
+      assert.equal((await usage.summary(request)).totalTokens, 10);
+      assert.equal((await usage.summary(request)).totalTokens, 10);
+      assert.match(writeFromAnotherProcess(store.path), /database is locked/);
+    } finally {
+      reader.exec('COMMIT');
+      reader.close();
+    }
+    assert.equal(writeFromAnotherProcess(store.path), 'committed');
+    assert.equal((await usage.summary(request)).totalTokens, 11);
+
+    // A replaced ledger: closing the connection kept for the old file keeps
+    // the lock a reader still holds on that file.
+    const oldFile = `${store.path}.old`;
+    await link(store.path, oldFile);
+    const oldReader = readInTransaction(oldFile);
+    try {
+      const other = new AgentTokenUsageService('other');
+      await other.record('item-9', 'codex-cli', {
+        occurredAt: '2026-08-04T00:00:00.000Z',
+        sourceId: 'turn-9',
+        totalTokens: 3,
+      });
+      await rename(new AgentTokenUsageStore('other').path, store.path);
+      assert.equal((await usage.summary(request)).totalTokens, 3);
+      assert.match(writeFromAnotherProcess(oldFile), /database is locked/);
+    } finally {
+      oldReader.exec('COMMIT');
+      oldReader.close();
+    }
+    assert.equal(writeFromAnotherProcess(oldFile), 'committed');
   });
 });
 

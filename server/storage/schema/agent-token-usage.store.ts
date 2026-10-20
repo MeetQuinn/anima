@@ -1,7 +1,7 @@
 // Exact provider usage ledger for one agent. SQLite gives us a durable UNIQUE
 // event id and range scans without loading/re-writing an ever-growing JSON file.
 
-import { open, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -66,6 +66,21 @@ type SqliteUsageCountsRow = Pick<SqliteUsageRow,
   | 'output_tokens'
   | 'reasoning_output_tokens'
   | 'total_tokens'>;
+
+/**
+ * Read-only connections that `contentStamp` keeps open, one per ledger path.
+ * `file` is the device and inode the connection was opened for; `id` is unique
+ * per connection, since data_version values from two connections can match.
+ */
+const versionConnections = new Map<string, { db: DatabaseSync; file: string; id: number }>();
+let nextVersionConnectionId = 0;
+
+function closeVersionConnection(path: string): void {
+  const connection = versionConnections.get(path);
+  if (!connection) return;
+  versionConnections.delete(path);
+  connection.db.close();
+}
 
 export class AgentTokenUsageStore {
   readonly path: string;
@@ -147,33 +162,42 @@ export class AgentTokenUsageStore {
   }
 
   /**
-   * A stamp of the ledger's current contents: a new commit or a replaced file
-   * gives a new stamp. Undefined when there is no ledger, or its header is not
-   * a rollback-journal SQLite database.
+   * A stamp of the ledger's current contents: a commit from any connection, or
+   * a replaced file, gives a new stamp. Undefined when there is no ledger or
+   * SQLite cannot read it.
    *
-   * In rollback-journal mode, which `withDatabase` sets on every open, SQLite
-   * increments the header's change counter on each commit. The stamp also holds
-   * the file's identity, size and mtime.
+   * It reads `PRAGMA data_version` on one read-only connection per ledger,
+   * kept open, because that value is only comparable within one connection.
+   * The stamp never opens the file outside SQLite: closing such a descriptor
+   * would drop the POSIX locks this process's SQLite connections hold on it.
    */
   async contentStamp(): Promise<string | undefined> {
-    let handle;
+    let stats;
     try {
-      handle = await open(this.path, 'r');
+      stats = await stat(this.path, { bigint: true });
     } catch (error) {
-      if (isNotFound(error)) return undefined;
-      throw error;
+      if (!isNotFound(error)) throw error;
+      closeVersionConnection(this.path);
+      return undefined;
     }
+    // Stat before opening. If the file is replaced in between, the connection
+    // is on the new file under the old identity, and the next stamp reopens.
+    const file = `${stats.dev}:${stats.ino}`;
+    let connection = versionConnections.get(this.path);
     try {
-      const header = Buffer.alloc(100);
-      const { bytesRead } = await handle.read(header, 0, header.length, 0);
-      const rollbackJournal = header[18] === 1 && header[19] === 1;
-      if (bytesRead < header.length || header.toString('latin1', 0, 16) !== 'SQLite format 3\0' || !rollbackJournal) {
-        return undefined;
+      if (connection?.file !== file) {
+        closeVersionConnection(this.path);
+        connection = { db: new DatabaseSync(this.path, { readOnly: true }), file, id: nextVersionConnectionId++ };
+        versionConnections.set(this.path, connection);
       }
-      const stats = await handle.stat({ bigint: true });
-      return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${header.readUInt32BE(24)}`;
-    } finally {
-      await handle.close();
+      const row = connection.db.prepare('PRAGMA data_version').get() as { data_version?: unknown } | undefined;
+      if (typeof row?.data_version !== 'number') throw new Error('PRAGMA data_version returned no number');
+      return `${connection.id}:${row.data_version}`;
+    } catch {
+      // For example a hot journal, which a read-only connection cannot roll
+      // back. The summary's own read-write open rolls it back.
+      closeVersionConnection(this.path);
+      return undefined;
     }
   }
 
