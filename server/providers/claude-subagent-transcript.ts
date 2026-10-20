@@ -62,7 +62,6 @@ export interface ClaudeJsonlMapperState {
   pendingUnlinkedTexts: PendingClaudeAgentText[];
   pendingUnlinkedToolsById: Map<string, Record<string, unknown>>;
   providerToolsById: Map<string, Record<string, unknown>>;
-  subagentTranscriptIndexesByDir: Map<string, ClaudeSubagentTranscriptIndex>;
   subagentMetadataByKey: Map<string, Record<string, unknown>>;
 }
 
@@ -247,10 +246,11 @@ async function claudeSubagentInfoForAgent(
   const sessionId = stringField(value, 'sessionId') ?? stringField(value, 'session_id') ?? state.context.sessionId;
   if (!cwd || !sessionId) return { agentId };
   const dir = claudeSubagentsDir(cwd, sessionId);
-  const index = claudeSubagentTranscriptIndex(dir, state);
   const name = `agent-${agentId}.jsonl`;
-  await refreshClaudeSubagentTranscriptFile(dir, name, agentId, index);
-  return index.files.get(name)?.info ?? { agentId };
+  return withClaudeSubagentTranscriptIndex(dir, async (index) => {
+    await refreshClaudeSubagentTranscriptFile(dir, name, agentId, index);
+    return index.files.get(name)?.info ?? { agentId };
+  });
 }
 
 async function claudeSubagentInfoFromToolIds(
@@ -263,13 +263,14 @@ async function claudeSubagentInfoFromToolIds(
   const toolIds = claudeToolIdsFromJson(value);
   if (toolIds.length === 0) return undefined;
   const dir = claudeSubagentsDir(cwd, sessionId);
-  const index = claudeSubagentTranscriptIndex(dir, state);
-  await refreshClaudeSubagentTranscriptIndex(dir, index);
-  for (const toolId of toolIds) {
-    const info = index.byToolId.get(toolId);
-    if (info) return info;
-  }
-  return undefined;
+  return withClaudeSubagentTranscriptIndex(dir, async (index) => {
+    await refreshClaudeSubagentTranscriptIndex(dir, index);
+    for (const toolId of toolIds) {
+      const info = index.byToolId.get(toolId);
+      if (info) return info;
+    }
+    return undefined;
+  });
 }
 
 function claudeToolIdsFromJson(value: Record<string, unknown>): string[] {
@@ -300,16 +301,51 @@ export async function readClaudeSubagentMetadata(
   }
 }
 
-function claudeSubagentTranscriptIndex(
+/**
+ * Subagent dirs whose transcript index stays in memory between runs. A
+ * session with 190 transcripts and 100,000 tool IDs holds about 11MB.
+ */
+const SHARED_SUBAGENT_INDEX_LIMIT = 8;
+
+interface SharedClaudeSubagentTranscriptIndex {
+  index: ClaudeSubagentTranscriptIndex;
+  /** Settles when the latest queued use of `index` finishes. */
+  idle: Promise<void>;
+}
+
+/**
+ * Transcript indexes shared by every mapper in the process, newest use last.
+ * Each run gets a new mapper, and a session's subagents dir can hold hundreds
+ * of transcripts, so an index per mapper re-read all of them on the first
+ * lookup of every run. Each use still refreshes from readdir and stat first,
+ * so sharing changes what is re-read, not what a lookup sees.
+ */
+const sharedSubagentTranscriptIndexes = new Map<string, SharedClaudeSubagentTranscriptIndex>();
+
+/** Tests: drop shared indexes, so the next lookup builds from the files alone. */
+export function resetClaudeSubagentTranscriptIndexesForTests(): void {
+  sharedSubagentTranscriptIndexes.clear();
+}
+
+/** Run `use` on the shared index for `dir`, after any earlier use of it finishes. */
+function withClaudeSubagentTranscriptIndex<T>(
   dir: string,
-  state: ClaudeJsonlMapperState,
-): ClaudeSubagentTranscriptIndex {
-  let index = state.subagentTranscriptIndexesByDir.get(dir);
-  if (!index) {
-    index = { files: new Map(), byToolId: new Map(), dirty: false };
-    state.subagentTranscriptIndexesByDir.set(dir, index);
+  use: (index: ClaudeSubagentTranscriptIndex) => Promise<T>,
+): Promise<T> {
+  const shared = sharedSubagentTranscriptIndexes.get(dir) ?? {
+    index: { files: new Map(), byToolId: new Map(), dirty: false },
+    idle: Promise.resolve(),
+  };
+  sharedSubagentTranscriptIndexes.delete(dir);
+  sharedSubagentTranscriptIndexes.set(dir, shared);
+  for (const oldest of sharedSubagentTranscriptIndexes.keys()) {
+    if (sharedSubagentTranscriptIndexes.size <= SHARED_SUBAGENT_INDEX_LIMIT) break;
+    sharedSubagentTranscriptIndexes.delete(oldest);
   }
-  return index;
+  // Refreshes update files in place, so two at once on one index would race.
+  const result = shared.idle.then(() => use(shared.index));
+  shared.idle = result.then(() => undefined, () => undefined);
+  return result;
 }
 
 async function refreshClaudeSubagentTranscriptIndex(

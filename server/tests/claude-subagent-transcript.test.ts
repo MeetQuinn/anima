@@ -7,6 +7,7 @@ import test, { type TestContext } from 'node:test';
 import { createClaudeJsonlActivityMapper } from '../providers/claude-events.js';
 import {
   claudeSubagentsDir,
+  resetClaudeSubagentTranscriptIndexesForTests,
   subagentActivityLinkageFromClaudeJson,
   type ClaudeJsonlMapperState,
 } from '../providers/claude-subagent-transcript.js';
@@ -20,19 +21,7 @@ async function fixture(t: TestContext) {
     else process.env.CLAUDE_PROJECTS_DIR = previousRoot;
     await fs.rm(root, { recursive: true, force: true });
   });
-  const state: ClaudeJsonlMapperState = {
-    context: { cwd: '/test/project', sessionId: 'session-one' },
-    emittedSubagentTextKeys: new Set(),
-    emittedSubagentToolIds: new Set(),
-    ingestedSubagentLogs: new Set(),
-    pendingAgentToolIds: new Set(),
-    pendingSubagentResultsByAgentId: new Map(),
-    pendingUnlinkedTexts: [],
-    pendingUnlinkedToolsById: new Map(),
-    providerToolsById: new Map(),
-    subagentTranscriptIndexesByDir: new Map(),
-    subagentMetadataByKey: new Map(),
-  };
+  const state = mapperState();
   const dir = claudeSubagentsDir('/test/project', 'session-one');
   await fs.mkdir(dir, { recursive: true });
   const io = { bytes: 0, opened: [] as string[], failNext: '' };
@@ -61,13 +50,39 @@ async function fixture(t: TestContext) {
       toolUseId: `parent-${agentId}`, agentType: 'Explore', description: agentId,
     }));
   };
-  const lookup = (toolId: string, extra: Record<string, unknown> = {}) =>
+  const lookup = (toolId: string, extra: Record<string, unknown> = {}, mapper = state) =>
     subagentActivityLinkageFromClaudeJson({
       type: 'assistant',
       message: { content: [{ type: 'tool_use', id: toolId, name: 'Read' }] },
       ...extra,
-    }, state);
+    }, mapper);
   return { state, dir, io, readdir, writeChild, lookup };
+}
+
+/** A new mapper's state, as each provider run creates. */
+function mapperState(): ClaudeJsonlMapperState {
+  return {
+    context: { cwd: '/test/project', sessionId: 'session-one' },
+    emittedSubagentTextKeys: new Set(),
+    emittedSubagentToolIds: new Set(),
+    ingestedSubagentLogs: new Set(),
+    pendingAgentToolIds: new Set(),
+    pendingSubagentResultsByAgentId: new Map(),
+    pendingUnlinkedTexts: [],
+    pendingUnlinkedToolsById: new Map(),
+    providerToolsById: new Map(),
+    subagentMetadataByKey: new Map(),
+  };
+}
+
+async function writeHistory(f: Awaited<ReturnType<typeof fixture>>): Promise<number> {
+  let historyBytes = 0;
+  for (let i = 0; i < 12; i += 1) {
+    const contents = Array.from({ length: 500 }, (_, j) => row(`tool-${i}-${j}`)).join('');
+    historyBytes += Buffer.byteLength(contents);
+    await f.writeChild(`child-${i}`, contents);
+  }
+  return historyBytes;
 }
 
 function row(toolId: string, model = 'child-model'): string {
@@ -107,12 +122,7 @@ test('explicit root and child ownership bypass historical directory searches', a
 
 test('unique misses and hits reuse indexed history without rereading transcript bytes', async (t) => {
   const f = await fixture(t);
-  let historyBytes = 0;
-  for (let i = 0; i < 12; i += 1) {
-    const contents = Array.from({ length: 500 }, (_, j) => row(`tool-${i}-${j}`)).join('');
-    historyBytes += Buffer.byteLength(contents);
-    await f.writeChild(`child-${i}`, contents);
-  }
+  const historyBytes = await writeHistory(f);
   assert.deepEqual(await f.lookup('missing-0'), {});
   assert.equal(f.io.bytes, historyBytes);
   const opens = f.io.opened.length;
@@ -121,6 +131,52 @@ test('unique misses and hits reuse indexed history without rereading transcript 
   assert.equal((await f.lookup('tool-0-0'))['model'], 'child-model');
   assert.equal(f.io.bytes, historyBytes);
   assert.equal(f.io.opened.length, opens);
+});
+
+test('a later run reuses the index an earlier run built', async (t) => {
+  const f = await fixture(t);
+  const historyBytes = await writeHistory(f);
+  assert.deepEqual(await f.lookup('missing-0'), {});
+  assert.equal(f.io.bytes, historyBytes);
+
+  const nextRun = mapperState();
+  assert.deepEqual(await f.lookup('missing-1', {}, nextRun), {});
+  assert.equal((await f.lookup('tool-7-250', {}, nextRun))['subRunId'], 'child-7');
+  assert.equal(f.io.bytes, historyBytes);
+
+  // The next run still sees an append made after the earlier run.
+  await fs.appendFile(join(f.dir, 'agent-child-3.jsonl'), row('late-tool', 'late-model'));
+  assert.equal((await f.lookup('late-tool', {}, nextRun))['subRunId'], 'child-3');
+});
+
+test('concurrent runs on one session read its history once', async (t) => {
+  const f = await fixture(t);
+  const historyBytes = await writeHistory(f);
+  const [first, second] = await Promise.all([
+    f.lookup('tool-2-10'),
+    f.lookup('tool-9-499', {}, mapperState()),
+  ]);
+  assert.equal(first['subRunId'], 'child-2');
+  assert.equal(second['subRunId'], 'child-9');
+  assert.equal(f.io.bytes, historyBytes);
+});
+
+test('runs keep the indexes of the 8 most recently used sessions', async (t) => {
+  const f = await fixture(t);
+  const session = (i: number) => ({ cwd: '/test/project', session_id: `session-lru-${i}` });
+  for (let i = 0; i <= 8; i += 1) {
+    await f.writeChild(`child-${i}`, row(`tool-${i}`), claudeSubagentsDir('/test/project', `session-lru-${i}`));
+    assert.equal((await f.lookup(`tool-${i}`, session(i)))['subRunId'], `child-${i}`);
+  }
+  const reread = async (i: number) => {
+    const before = f.io.bytes;
+    assert.equal((await f.lookup(`tool-${i}`, session(i)))['subRunId'], `child-${i}`);
+    return f.io.bytes - before;
+  };
+  assert.equal(await reread(8), 0);
+  assert.equal(await reread(1), 0);
+  // Session 0 was used least recently when session 8 was added, so it was dropped.
+  assert.equal(await reread(0), Buffer.byteLength(row('tool-0')));
 });
 
 test('appends and new files invalidate misses and update the child model', async (t) => {
@@ -286,6 +342,8 @@ for (const transition of ['append', 'visible truncation', 'rewrite larger', 'rew
       model: transition === 'append' ? 'old-child-model' : 'new-child-model',
     };
     assert.deepEqual(await warm.lookup('new-tool'), expected);
+    // Runs share indexes, so drop them for a cold build to compare against.
+    resetClaudeSubagentTranscriptIndexesForTests();
     assert.deepEqual(await (await activityConsumer()).lookup('new-tool'), expected);
   });
 }
