@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { FastifyInstance } from 'fastify';
 
+import { defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { defaultSystemService } from '../services/system.service.js';
 import { defaultProviderUsageService } from '../provider-usage/provider-usage.service.js';
@@ -110,7 +111,15 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
   });
   fastify.get('/api/system-update', async () => defaultRuntimeUpgradeService.status());
   fastify.post('/api/system-update/check', async () => defaultRuntimeUpgradeService.checkNow());
-  fastify.get('/api/server-info', async () => defaultSystemService.serverInfo());
+  // Public so the upgrade check can confirm which instance answered. The last restart
+  // result names the work that blocked it, including message previews, so only a
+  // signed-in dashboard sees it.
+  fastify.get('/api/server-info', async (request) => {
+    const info = await defaultSystemService.serverInfo();
+    if (await defaultDashboardAuthService.isRequestAuthenticated(request.headers)) return info;
+    const { lastRestart: _lastRestart, ...publicInfo } = info;
+    return publicInfo;
+  });
   fastify.post('/api/system-update/apply', async (_request, reply) => {
     const config = await defaultServerSettingsService.readConfig();
     const prepared = await defaultRuntimeUpgradeService.prepareApply({
