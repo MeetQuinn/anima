@@ -133,6 +133,9 @@ export interface RuntimeHostDependencies {
 const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 const DEFAULT_HEALTH_INTERVAL_MS = 5_000;
 const DEFAULT_AGENT_START_TIMEOUT_MS = 30_000;
+// Agents that start in one reconcile pass run this many at a time, so one slow
+// start (network, Slack) does not hold up the others.
+const AGENT_START_CONCURRENCY = 6;
 const CONFIG_WATCH_DEBOUNCE_MS = 150;
 const AGENT_RESTART_FORCE_KILL_AFTER_MS = 5_000;
 const HANDOFF_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
@@ -305,6 +308,7 @@ export class RuntimeHost {
     this.syncConfigWatchers(agents.map((agent) => agent.id));
     const pendingRestartAgentIds = new Set(await this.restartCommands.pendingAgentIds());
     const seenAgentIds = new Set<string>();
+    const starts: Array<() => Promise<void>> = [];
     for (const agent of agents) {
       seenAgentIds.add(agent.id);
       // Agent-level overrides replace the machine-wide value wholesale; unset
@@ -346,16 +350,18 @@ export class RuntimeHost {
           });
           continue;
         }
-        await this.startAndStore(agent, providerCommand, args);
-      } catch (error) {
-        const action = running ? 'failed to reconcile' : 'failed to start';
-        const message = `Agent ${agent.id} ${action}: ${errorMessage(error)}`;
-        this.logAgentStatus(record, `error:${message}`, () => {
-          this.logger.error(message);
+        starts.push(async () => {
+          try {
+            await this.startAndStore(agent, providerCommand, args);
+          } catch (error) {
+            await this.recordReconcileFailure(record, false, error);
+          }
         });
-        await this.writeFailedHealth(agent.id, running ? 'stale_running_item' : 'start_failed');
+      } catch (error) {
+        await this.recordReconcileFailure(record, Boolean(running), error);
       }
     }
+    await runConcurrently(starts, AGENT_START_CONCURRENCY);
     await this.clearMissingRestartCommands(seenAgentIds, pendingRestartAgentIds);
     if (!this.opts.agent) await this.stopMissingAgents(seenAgentIds);
     await this.reconcileMemoryCoherence(agents);
@@ -610,6 +616,15 @@ export class RuntimeHost {
     if (!wait) return;
     wait.abort.abort();
     record.configReloadWait = undefined;
+  }
+
+  private async recordReconcileFailure(record: ManagedAgent, wasRunning: boolean, error: unknown): Promise<void> {
+    const agentId = record.config.id;
+    const message = `Agent ${agentId} ${wasRunning ? 'failed to reconcile' : 'failed to start'}: ${errorMessage(error)}`;
+    this.logAgentStatus(record, `error:${message}`, () => {
+      this.logger.error(message);
+    });
+    await this.writeFailedHealth(agentId, wasRunning ? 'stale_running_item' : 'start_failed');
   }
 
   private async startAndStore(
@@ -1362,4 +1377,16 @@ async function awaitShutdown(stop: () => Promise<void>): Promise<void> {
     process.once('SIGINT', handle);
     process.once('SIGTERM', handle);
   });
+}
+
+async function runConcurrently(tasks: ReadonlyArray<() => Promise<void>>, limit: number): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < tasks.length) {
+      const task = tasks[next];
+      next += 1;
+      await task?.();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
 }
