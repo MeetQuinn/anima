@@ -765,6 +765,8 @@ test('kb raw route serves tracked bytes with hardened headers', async () => {
       assert.match(csp, /script-src/, 'CSP present');
       assert.doesNotMatch(csp, /script-src 'none'/, 'report scripts must run (sandboxed)');
       assert.match(csp, /object-src 'none'/);
+      assert.match(csp, /; sandbox allow-scripts /, 'opened in its own tab, the report gets an opaque origin');
+      assert.doesNotMatch(csp, /allow-same-origin/);
       const html = await res.text();
       assert.match(html, /<script>console\.log/);
 
@@ -774,6 +776,7 @@ test('kb raw route serves tracked bytes with hardened headers', async () => {
       assert.equal(pdf.status, 200);
       assert.equal(pdf.headers.get('content-type'), 'application/pdf');
       assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff');
+      assert.doesNotMatch(pdf.headers.get('content-security-policy') ?? '', /sandbox/, 'a sandbox breaks the built-in PDF viewer');
       assert.deepEqual(Buffer.from(await pdf.arrayBuffer()), pdfBytes);
     });
   } finally {

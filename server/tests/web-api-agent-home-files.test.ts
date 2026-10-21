@@ -14,6 +14,8 @@ import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 
 import { INLINE_TEXT_CAP } from '../kb/kb.helper.js';
+import { cachedSlackFilePath } from '../slack/slack-file.service.js';
+import { getSlackFileCacheMetaStore, slackFileCacheDir } from '../storage/schema/cache.js';
 import { AGENT_HOME_MANIFEST_ENTRY_CAP } from '../web/agent-home-file-routes.js';
 import { createWebServer } from '../web/app.js';
 import { withAnimaHome } from './anima-home.js';
@@ -38,10 +40,16 @@ type ManifestBody = {
 async function withHomeServer<T>(
   homeDir: string,
   body: (base: string, stateDir: string) => Promise<T>,
+  options: { slackTeamId?: string } = {},
 ): Promise<T> {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-home-files-state-'));
+  const agent = defaultAgentConfig('anima');
   await writeAgentConfigs(stateDir, [
-    { ...defaultAgentConfig('anima'), homePath: homeDir },
+    {
+      ...agent,
+      homePath: homeDir,
+      ...(options.slackTeamId ? { slack: { ...agent.slack, teamId: options.slackTeamId } } : {}),
+    },
   ]);
   try {
     return await withAnimaHome(stateDir, async () => {
@@ -293,6 +301,51 @@ test('agent home pdf is metadata-only and raw route serves application/pdf', asy
       assert.equal(raw.headers.get('content-type'), 'application/pdf');
       assert.deepEqual(Buffer.from(await raw.arrayBuffer()), bytes);
     });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+  }
+});
+
+test('served files open in a sandbox with an opaque origin, except PDFs', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'anima-home-files-sandbox-'));
+  try {
+    await writeHomeFile(homeDir, 'notes/report.html', '<script>fetch("/api/agents")</script>');
+    await writeHomeFile(homeDir, 'notes/chart.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>');
+    await writeHomeFile(homeDir, 'notes/guide.pdf', '%PDF-1.4 minimal');
+    await withHomeServer(
+      homeDir,
+      async (base) => {
+        const html = '<script>fetch("/api/agents")</script>';
+        await mkdir(slackFileCacheDir('T-demo', 'F-upload'), { recursive: true });
+        await writeFile(cachedSlackFilePath({ teamId: 'T-demo', fileId: 'F-upload', name: 'page.html' }), html);
+        await getSlackFileCacheMetaStore('T-demo', 'F-upload').write({
+          id: 'F-upload',
+          mimetype: 'text/html',
+          name: 'page.html',
+          sizeBytes: Buffer.byteLength(html),
+          teamId: 'T-demo',
+        });
+
+        for (const path of [
+          '/api/agents/anima/home/raw/notes/report.html',
+          '/api/agents/anima/home/raw/notes/chart.svg',
+          '/api/agents/anima/files/F-upload',
+        ]) {
+          const res = await fetch(`${base}${path}`);
+          assert.equal(res.status, 200, path);
+          assert.equal(res.headers.get('x-content-type-options'), 'nosniff', path);
+          const csp = res.headers.get('content-security-policy') ?? '';
+          assert.match(csp, /(^|; )sandbox allow-scripts /, path);
+          assert.doesNotMatch(csp, /allow-same-origin/, path);
+        }
+
+        const pdf = await fetch(`${base}/api/agents/anima/home/raw/notes/guide.pdf`);
+        assert.equal(pdf.status, 200);
+        assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff');
+        assert.equal(pdf.headers.get('content-security-policy'), null, 'a sandbox breaks the built-in PDF viewer');
+      },
+      { slackTeamId: 'T-demo' },
+    );
   } finally {
     await rm(homeDir, { force: true, recursive: true });
   }
