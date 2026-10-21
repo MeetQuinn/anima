@@ -504,7 +504,7 @@ export class AgentRuntimeWorker {
         agentRuntime: this.options.agentRuntime.kind,
         event: 'runtime.completed',
         itemId: context.item.id,
-        text: result.text,
+        textLength: result.text?.length ?? 0,
         workerId: this.workerId,
       }, null, 2));
       await defaultAgentHealthService.writeHealth({
