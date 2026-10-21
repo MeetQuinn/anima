@@ -163,17 +163,18 @@ export class ReminderService {
   async cancelReminder(input: { id: string; now?: Date }): Promise<Reminder> {
     const now = input.now ?? new Date();
     return this.activity.cancel({ agentId: this.agentId, id: input.id }, async () => {
-      const reminder = await this.store.find(input.id);
+      const { applied, reminder } = await this.store.updateMatching(input.id, (current) => {
+        if (current.status === 'cancelled') return null;
+        const cancelledAt = now.toISOString();
+        current.status = 'cancelled';
+        current.cancelledAt = cancelledAt;
+        current.updatedAt = cancelledAt;
+        delete current.nextDueAt;
+        return current;
+      });
       if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
-      if (reminder.status === 'cancelled') return reminder;
-      const cancelledAt = now.toISOString();
-      reminder.status = 'cancelled';
-      reminder.cancelledAt = cancelledAt;
-      reminder.updatedAt = cancelledAt;
-      delete reminder.nextDueAt;
-      const updated = await this.store.update(reminder);
-      await this.pruneOldSettled(now);
-      return updated;
+      if (applied) await this.pruneOldSettled(now);
+      return reminder;
     });
   }
 
@@ -181,17 +182,18 @@ export class ReminderService {
     const durationMs = parseDurationMs(input.by);
     const now = input.now ?? new Date();
     return this.activity.snooze({ agentId: this.agentId, id: input.id }, async () => {
-      const reminder = await this.store.find(input.id);
+      const { reminder } = await this.store.updateMatching(input.id, (current) => {
+        if (current.status === 'cancelled') {
+          throw new Error(`Cannot snooze cancelled reminder: ${current.reminderId}`);
+        }
+        current.status = 'scheduled';
+        current.nextDueAt = new Date(now.getTime() + durationMs).toISOString();
+        current.updatedAt = now.toISOString();
+        return current;
+      });
       if (!reminder) throw new Error(`Reminder not found: ${input.id}`);
-      if (reminder.status === 'cancelled') {
-        throw new Error(`Cannot snooze cancelled reminder: ${reminder.reminderId}`);
-      }
-      reminder.status = 'scheduled';
-      reminder.nextDueAt = new Date(now.getTime() + durationMs).toISOString();
-      reminder.updatedAt = now.toISOString();
-      const updated = await this.store.update(reminder);
       await this.pruneOldSettled(now);
-      return updated;
+      return reminder;
     });
   }
 
