@@ -10,8 +10,6 @@ export interface ProviderUsageAdapter {
   provider: ProviderUsageKind;
   source: ProviderUsageRow['source'];
   fetch: () => Promise<Array<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>>>;
-  /** Optional single-row path for GET /provider-usage/:provider. */
-  fetchActive?: () => Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>>;
 }
 
 export interface ProviderUsageReadOptions {
@@ -72,46 +70,16 @@ export class ProviderUsageService {
     return { providers };
   }
 
-  async get(provider: ProviderUsageKind, options: ProviderUsageReadOptions = {}): Promise<ProviderUsageRow> {
-    const adapter = this.adapters.find((candidate) => candidate.provider === provider);
-    if (!adapter) {
-      return {
-        checkedAt: new Date().toISOString(),
-        error: usageError('unknown', `Provider usage adapter not found for ${provider}`),
-        extras: [],
-        label: provider,
-        provider,
-        source: 'native',
-        status: 'unavailable',
-        windows: [],
-      };
-    }
-    const rows = await this.fetchProvider(adapter, { activeOnly: true, force: options.force });
-    const row = rows[0];
-    if (row) return row;
-    return {
-      checkedAt: new Date().toISOString(),
-      error: usageError('unknown', `Provider usage adapter returned no rows for ${provider}`),
-      extras: [],
-      label: adapter.label,
-      provider,
-      source: adapter.source,
-      status: 'unavailable',
-      windows: [],
-    };
-  }
-
   private async fetchProvider(
     adapter: ProviderUsageAdapter,
-    options: { activeOnly?: boolean; force?: boolean } = {},
+    options: { force?: boolean } = {},
   ): Promise<ProviderUsageRow[]> {
-    const mode = options.activeOnly && adapter.fetchActive ? 'active' : 'all';
-    const key = `${adapter.provider}:${mode}`;
+    const key = adapter.provider;
     const nowMs = this.now();
     const cached = this.cache.get(key);
     if (!options.force && cached && cached.expiresAtMs > nowMs) {
       this.log(
-        `[provider-usage] provider=${adapter.provider} mode=${mode} cache=hit ageMs=${Math.max(0, nowMs - cached.refreshedAtMs)} staleRows=${cached.valueRows.filter((row) => row.stale).length}`,
+        `[provider-usage] provider=${adapter.provider} cache=hit ageMs=${Math.max(0, nowMs - cached.refreshedAtMs)} staleRows=${cached.valueRows.filter((row) => row.stale).length}`,
       );
       return cached.valueRows;
     }
@@ -120,7 +88,7 @@ export class ProviderUsageService {
     if (existing) return existing;
 
     const startedAtMs = nowMs;
-    const pending = this.fetchProviderFresh(adapter, options)
+    const pending = this.fetchProviderFresh(adapter)
       .then((freshRows) => {
         const completedAtMs = this.now();
         const merged = mergeWithLastGood(
@@ -141,7 +109,6 @@ export class ProviderUsageService {
           adapter,
           durationMs: Math.max(0, completedAtMs - startedAtMs),
           freshRows,
-          mode,
           staleRows: merged.rows.filter((row) => row.stale).length,
         }));
         return entry.valueRows;
@@ -153,15 +120,10 @@ export class ProviderUsageService {
     return pending;
   }
 
-  private async fetchProviderFresh(
-    adapter: ProviderUsageAdapter,
-    options: { activeOnly?: boolean } = {},
-  ): Promise<ProviderUsageRow[]> {
+  private async fetchProviderFresh(adapter: ProviderUsageAdapter): Promise<ProviderUsageRow[]> {
     const checkedAt = new Date(this.now()).toISOString();
     try {
-      const rows = options.activeOnly && adapter.fetchActive
-        ? [await adapter.fetchActive()]
-        : await adapter.fetch();
+      const rows = await adapter.fetch();
       return rows.map((row) => ({
         checkedAt,
         label: adapter.label,
@@ -232,7 +194,6 @@ function providerUsageOutcomeLog(input: {
   adapter: ProviderUsageAdapter;
   durationMs: number;
   freshRows: ProviderUsageRow[];
-  mode: string;
   staleRows: number;
 }): string {
   const unavailable = input.freshRows.filter((row) => row.status === 'unavailable');
@@ -249,7 +210,6 @@ function providerUsageOutcomeLog(input: {
   const parts = [
     '[provider-usage]',
     `provider=${input.adapter.provider}`,
-    `mode=${input.mode}`,
     'cache=miss',
     `outcome=${outcome}`,
     `durationMs=${input.durationMs}`,

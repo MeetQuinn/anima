@@ -203,8 +203,9 @@ async function fetchGrokBilling(
       BILLING_TIMEOUT_MS,
     );
 
-    // Carry the HTTP status, as the shared fetch helper does: a 429 or 5xx lets the
-    // usage service keep showing the last good reading, marked stale.
+    // Carry the HTTP status, as the shared fetch helper does. On a status the usage
+    // service treats as transient (408, 429, 500, 502-504), it keeps showing the last
+    // good reading, marked stale.
     if (response.status === 401 || response.status === 403) {
       return {
         error: {

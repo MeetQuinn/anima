@@ -797,7 +797,7 @@ test('provider usage service force refresh bypasses TTL cache', async () => {
   assert.equal(calls, 2);
 });
 
-test('Grok usage keeps the last good reading on a 5xx, but not on a 401', async (t) => {
+test('Grok usage keeps the last good reading on a 503, but not on a 401', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-grok-usage-status-'));
   t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.grok'), { recursive: true });
@@ -956,38 +956,6 @@ test('provider usage service stops serving last-good data after the stale budget
   const expired = await service.list({ force: true });
   assert.equal(expired.providers[0]?.status, 'unavailable');
   assert.equal(expired.providers[0]?.stale, undefined);
-});
-
-test('provider usage service can refresh a single provider without calling the others', async () => {
-  let codexCalls = 0;
-  let claudeCalls = 0;
-  const service = new ProviderUsageService([
-    {
-      fetch: async () => {
-        codexCalls += 1;
-        return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 92 }] }];
-      },
-      label: 'Codex',
-      provider: 'codex-cli',
-      source: 'private-api',
-    },
-    {
-      fetch: async () => {
-        claudeCalls += 1;
-        return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 88 }] }];
-      },
-      label: 'Claude',
-      provider: 'claude-code',
-      source: 'private-api',
-    },
-  ]);
-
-  const row = await service.get('codex-cli');
-
-  assert.equal(row.provider, 'codex-cli');
-  assert.equal(row.status, 'available');
-  assert.equal(codexCalls, 1);
-  assert.equal(claudeCalls, 0);
 });
 
 // Captured live response from GetGrokCreditsConfig (usedPercent=9), matching Raycast Agent Usage.
