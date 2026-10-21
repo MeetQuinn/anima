@@ -1,6 +1,6 @@
 # Provider Layer
 
-This document explains the layer where Anima talks to an underlying provider such as Codex, Claude Code, Kimi Code, Grok Build, or OpenCode.
+This document explains the layer where Anima talks to an underlying provider such as Codex, Claude Code, Kimi Code, Grok Build, OpenCode, or pi.
 
 It intentionally does not re-explain chat routing, reminder scheduling, inbox ingestion, or the web app. For the system map, start with [Architecture overview](architecture/overview.md).
 
@@ -54,7 +54,7 @@ point; live background work is exposed through health and keeps the controller n
 
 `close` is optional. It is for provider adapters that keep resources alive across items, such as a persistent child process. `AgentRuntimeCloseOptions` lets the caller choose the kill signal and a force-kill deadline.
 
-Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, and OpenCode ACP) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude and Codex become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks or terminals.
+Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, OpenCode ACP, and pi RPC) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude and Codex become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks or terminals.
 
 `health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, how the live one looks, and any provider-native background work) for the runtime health service. `providerWork` distinguishes a main turn that also has background work (`working` plus a count) from a completed main turn whose background work remains (`background` plus a count).
 
@@ -161,7 +161,7 @@ The important pieces are:
 - configured provider env from the agent config;
 - a `PATH` that includes Anima's agent-facing CLI.
 
-`ANIMA_INBOX_ITEM_ID` is deliberately stripped from the long-lived provider environment. Chat-visible tools resolve the audited item at call time from `runtime/active-item.json`.
+`runtimeEnv` also sets `ANIMA_INBOX_ITEM_ID` to the item that started the provider child. The child outlives that item, so the value can be stale, and Codex tool shells don't receive it at all. Chat-visible tools therefore resolve the audited item at call time: `--item` first, then the agent's running primary item in the wake queue, then the env value.
 
 Provider code should not read chat credentials directly. It should call `anima message`, `anima reminder`, or `anima subscription` so the side effect is audited against the current item.
 
@@ -190,8 +190,9 @@ They are used to resume the underlying tool's native context:
 - Codex: the stored id is the Codex thread id;
 - Claude: the stored id is the Claude Code session id;
 - Kimi: the stored id is the Kimi ACP session id;
-- Grok: the stored id is the Grok ACP session id.
-- OpenCode: the stored id is the OpenCode ACP session id.
+- Grok: the stored id is the Grok ACP session id;
+- OpenCode: the stored id is the OpenCode ACP session id;
+- pi: the stored id is the uuid Anima passes as `--session-id`, which resumes that session or creates it.
 
 When a provider emits a new session id, the adapter calls `effects.persistProviderSession`. The sink updates Anima's primary session record.
 
@@ -368,6 +369,7 @@ Anima uses provider tools for observability only; chat side effects, reminders, 
 | Grok Build tools                                           | Grok ACP                  | Launched with `--always-approve`; ACP permission requests are approved for the session and unsupported client methods are rejected.     | Tool activity is mapped by Anima.                                                               | Allow/observe |
 | Kimi Code tools                                            | Kimi ACP                  | Anima initializes with empty client capabilities; interactive prompts are not exposed through the adapter.                              | Tool activity is mapped by Anima.                                                               | Allow/observe |
 | OpenCode tools                                             | OpenCode ACP              | Launched with `--pure`; ACP permission requests prefer the provider's allow-always option, and unsupported client methods are rejected. | Tool activity is mapped by Anima.                                                               | Allow/observe |
+| pi tools                                                   | pi RPC                    | Launched with `--no-extensions`, so extension UI requests can't block a headless run; Anima aborts a hung shell tool.                   | Tool activity is mapped by Anima.                                                               | Allow/observe |
 
 The denylist is global for now. Per-agent tool policy should be added only when there is a concrete operator need; the default policy should keep provider-native scheduling and notifications out of the runtime.
 
@@ -637,7 +639,7 @@ Common runtime activities:
 - `runtime.started`: provider process/transport began work;
 - `runtime.completed`: provider work finished normally;
 - `runtime.failed`: provider work threw or exited unsuccessfully;
-- `runtime.aborted`: worker aborted the item because of `idle_timeout`, `shutdown`, or `user_stop`;
+- `runtime.aborted`: worker aborted the item because of `idle_timeout`, `operator_restart`, `restart_drain`, `shutdown`, or `user_stop`;
 - `runtime.output`: raw stdout/stderr chunks when they are not parsed into richer records;
 - `runtime.event`: provider lifecycle events such as compact and session stats.
 

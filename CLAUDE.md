@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Anima is a local runtime that turns a code-agent runtime (Codex, Claude Code, Kimi Code, Grok Build, or OpenCode) into a durable teammate in Slack or Feishu, with optional Linear app sessions. One agent identity maps to one **primary provider session** that spans every DM, channel, chat, and thread - not one session per thread. See `docs/architecture/overview.md` for the architecture and `README.md` for the user-facing pitch.
+Anima is a local runtime that turns a code-agent runtime (Codex, Claude Code, Kimi Code, Grok Build, OpenCode, or pi) into a durable teammate in Slack or Feishu, with optional Linear app sessions. One agent identity maps to one **primary provider session** that spans every DM, channel, chat, and thread - not one session per thread. See `docs/architecture/overview.md` for the architecture and `README.md` for the user-facing pitch.
 
 ## Commands
 
 ```bash
-pnpm build           # rm -rf dist, tsc, build UI; produces dist/server and dist/web
+pnpm build           # clear dist/server + dist/shared, tsc, build UI and the animactl package
 pnpm build:server    # rebuild dist/server (including tests) and dist/shared; skips Vite
 pnpm typecheck       # tsc --noEmit, no UI
 pnpm test            # default fast gate: server/web build + unit/api tests
@@ -39,7 +39,7 @@ CLIs (`dist/server/cli/animactl.js` for environment control, `dist/server/cli/an
 ```bash
 node dist/server/cli/animactl.js server                 # chat transports + reminder scheduler + worker loop (foreground)
 node dist/server/cli/animactl.js web                    # local Anima web app (foreground)
-node dist/server/cli/animactl.js services <op>          # supervisor: daemon server + web for one env (start|stop|restart|status)
+node dist/server/cli/animactl.js services <op>          # supervisor: daemon server + web for one env (install|uninstall|start|stop|restart|status|dashboard)
 ```
 
 Global flag on `animactl`: `--agent <id>` goes **before** the subcommand. The Anima home is resolved via `ANIMA_HOME` env var, then `./.anima` if present, then `~/.anima`. The Anima home holds config and state together (`config.json`, `agents/<id>/config.json`, `agents/<id>/inbox.json`, sessions, activities, reminders, subscriptions).
@@ -52,7 +52,7 @@ The repo is one TypeScript Node ESM project (`"type": "module"`, NodeNext, stric
 
 ```
 Slack Socket Mode ──┐
-Feishu events/WS ───┼──► transports/inbox ──► Runtime worker ──► Codex / Claude / Kimi / Grok / OpenCode CLI
+Feishu events/WS ───┼──► transports/inbox ──► Runtime worker ──► Codex / Claude / Kimi / Grok / OpenCode / pi CLI
 Linear webhooks ────┤
 Reminder scheduler ─┘                                                    │
                                                                          ▼
@@ -69,9 +69,9 @@ The chat transports, reminder scheduler, and agent worker all run in one `agent`
 - **`server/agents/`** — Agent config and lifecycle service. `agent.service.ts` owns create/patch/delete/list/status-facing config behavior; `agent-slack.service.ts` and `agent-feishu.service.ts` own platform connection/display info and owner onboarding.
 - **`server/transports/`** — Inbound platform transport lifecycle. `MessageTransportRunner` starts/stops Slack and Feishu transports; `RuntimeHost` separately owns the optional `LinearMessageTransport`. Keep this about connection/event ingestion; do not grow it into an outbound message API.
 - **`server/inbox/`** — Inbox business layer and wake routing. Slack and Feishu event normalization, subscription eligibility, reminder wake ingestion, and wake queue lifecycle orchestration live here.
-- **`server/storage/schema/wake-queue.store.ts`** — Wake queue persistence store. It owns queued/running/settled inbox item state plus direct single-store operations (`find`, `list`, `insertIfAbsent`, `replaceItem`, `claimQueued`, `complete`, `fail`, `requeue`, `requestStop`). It does not own cross-store business flow.
+- **`server/storage/schema/wake-queue.store.ts`** — Wake queue persistence store. It owns queued/running/settled inbox item state plus direct single-store operations (`find`, `list`, `insertIfAbsent`, `replaceItem`, `takeNextRunnable`, `complete`, `fail`, `requeue`, `requestStop`). It does not own cross-store business flow.
 - **`server/storage/schema/activity.store.ts`** — Per-agent append-only activity store. Runtime events, provider tool rows, platform tool rows, reminders, and subscription ops write through this path.
-- **`server/messages/`** — Per-agent message ledger and projections. It projects inbox items and activity rows into `messages.jsonl`, backs `anima inbox/outbox/search`, and is agent-visible history, not workspace-wide platform search.
+- **`server/messages/`** — Per-agent message ledger and projections. It projects inbox items and activity rows into `messages.jsonl`, backs `anima history`, `anima inbox`, `anima outbox` and `anima message search`, and is agent-visible history, not workspace-wide platform search.
 - **`server/slack/`** — Slack API/data helpers only. SDK client creation, pure Slack formatting helpers, and workspace directory/cache logic live here. Agent attention and inbox semantics belong in `inbox/`.
 - **`server/feishu/`** — Feishu API/data helpers: SDK client creation, event normalization, directory lookup, message content conversion, file/resource handling, and scope/auth helpers. Keep Feishu protocol mechanics here; agent attention and wake decisions still belong in `inbox/`.
 - **`server/linear/`** — Optional Linear app identity and session services: OAuth installation, signed-webhook validation, durable receipts, and outbound session activities. The listener lifecycle stays in `transports/`; accepted work joins the existing wake queue and primary provider context.
@@ -82,7 +82,7 @@ The chat transports, reminder scheduler, and agent worker all run in one `agent`
 - **`server/env/`** — Per-agent provider environment storage, encryption/decryption, key validation, and masking.
 - **`server/provider-usage/`** — Provider usage/account probing. It should stay decoupled from provider runtime adapters.
 - **`server/runtime/`** — Runtime item execution. `runtime-worker.ts` drains the wake queue, handles active-run follow-ups, stop/idle/crash behavior, prompt construction, provider effects, session stats, and activity emission.
-- **`server/providers/`** — Provider adapter layer. Claude Code, Claude Code Channels, Codex, Kimi Code, Grok Build, and OpenCode adapters own only their provider protocols; `child-process.ts` is the shared spawn layer.
+- **`server/providers/`** — Provider adapter layer. Claude Code, Codex, Kimi Code, Grok Build, OpenCode, and pi adapters own only their provider protocols; `child-process.ts` is the shared spawn layer.
 - **`server/reminders/`** — Reminder records, repeat-rule parsing (`every:15m`, `daily@09:00`, `weekly:mon,fri@09:00`), reminder lifecycle/activity, and the `anima reminder` CLI. Due reminders become inbox items through `inbox/`.
 - **`server/storage/`** — Persistence primitives and typed stores: JSON files, JSONL logs, file locks, safe filenames, and `storage/schema/*` store modules. Folder layout is under `$ANIMA_HOME/agents/<agentId>/`.
 - **`server/settings/`** — Runtime-wide settings, including dashboard password-auth state.
@@ -92,8 +92,8 @@ The chat transports, reminder scheduler, and agent worker all run in one `agent`
 - **`server/activities/`** — Activity service and formatting helpers shared by runtime, tools, diagnostics, and UI feed projection.
 - **`server/web/`** — Web API backend and static app host. Route modules parse HTTP input, call services, redact secrets, and return view data. UI package under `web/` builds to `dist/web/`.
 - **`server/runtime/host.ts`** — The agent service host. It wires runnable agents, chat transports, reminder subscribers, wake queues, runtime workers, and provider adapters into one foreground `agent` process.
-- **`server/cli/anima.ts`** — Agent-facing CLI entry. Registers `anima message`, `anima ask`, `anima reminder`, `anima subscription`, `anima file`, `anima reaction`, and `anima linear`.
-- **`server/cli/animactl.ts`** — Operator CLI entry (`server`, `web`, `services`).
+- **`server/cli/anima.ts`** — Agent-facing CLI entry. Registers `anima message`, `anima history`, `anima inbox`, `anima outbox`, `anima whois`, `anima places`, `anima env`, `anima ask`, `anima reminder`, `anima subscription`, `anima file`, `anima reaction`, and `anima linear`.
+- **`server/cli/animactl.ts`** — Operator CLI entry (`server`, `web`, `services`, `runtime`, `dashboard-auth`).
 
 ### Vocabulary
 
@@ -124,8 +124,8 @@ storage primitives                                ← JSON/JSONL/files/locks
 
 - **API/web/CLI layers** parse input, call a service, redact/shape output, and stop there. They should not read or write storage directly.
 - **Service layers** own business semantics and multi-store operations. If a workflow touches config + inbox + activity, it belongs in a service, not a store or route.
-- **Store layers** own one persisted table/file family. Methods should be direct persistence operations such as `find`, `list`, `insertIfAbsent`, `replaceItem`, `claimQueued`, `complete`, `delete`. Stores should not know HTTP, Slack routing, provider execution, or cross-store orchestration.
-- **Storage primitives** (`JsonStore`, `JsonFile`, `JsonlLog`, locks) are generic mechanics. Domain code should use typed stores instead of ad hoc filesystem reads/writes.
+- **Store layers** own one persisted table/file family. Methods should be direct persistence operations such as `find`, `list`, `insertIfAbsent`, `replaceItem`, `takeNextRunnable`, `complete`, `delete`. Stores should not know HTTP, Slack routing, provider execution, or cross-store orchestration.
+- **Storage primitives** (`JsonStore`, `JsonFile`, `JsonlAppendLog`, locks) are generic mechanics. Domain code should use typed stores instead of ad hoc filesystem reads/writes.
 - **`slack/`** owns speaking Slack — Web API calls, files, reactions, profiles, formatting. Nothing about agent attention or business logic.
 - **`feishu/`** owns speaking Feishu - SDK calls, files, reactions, directory lookup, message parsing, formatting, and scope/auth helpers. Nothing about agent attention or business logic.
 - **`transports/`** owns platform listener lifecycle. It should start/stop inbound transports and pass normalized work toward `inbox/`.
@@ -135,7 +135,7 @@ storage primitives                                ← JSON/JSONL/files/locks
 
 Cross-cutting notes:
 
-- **`defaultActivityStore`** (in `storage/schema/activity.store.ts`) is called by every write-side concern that produces audit entries — agent tools, runtime events, reminder ops. This is intentional; the audit log is a single channel.
+- **`ActivityService.record`** (in `activities/activity.service.ts`, reached through `activityServiceForAgent` or `defaultActivityRecorder`) is called by every write-side concern that produces audit entries — agent tools, runtime events, reminder ops. This is intentional; the audit log is a single channel.
 - **Inbox item types** live in `shared/inbox.ts`; wake queue persistence lives in `storage/schema/wake-queue.store.ts`; inbox business behavior lives in `inbox/` services.
 - **Agent-facing platform docs** live in `docs/agent/guide.md` and `docs/agent/reference.md`. They are shared, code-versioned docs the standing prompt points at; do not materialize per-agent copies in agent homes.
 - Keep the store/service naming boundary explicit. `*.store.ts` is persistence; `*.service.ts` is business orchestration.
@@ -180,5 +180,5 @@ Before non-trivial changes, propose the plan in chat (what you'll touch, why, th
 
 ## Operating constraints (from project memory)
 
-- Service control: never `kill` / `pkill` the agent or web app directly. Always go through `animactl services <op>`. The supervisor detects `ANIMA_INBOX_ITEM_ID` + `ANIMA_RUNTIME_HOME` and **refuses to stop or restart the agent's own environment** — that would kill the item making the request. Restarting a **different** environment from inside a runtime is allowed when `ANIMA_HOME` points at that other environment while `ANIMA_RUNTIME_HOME` still points at the caller's own environment. The web app also exposes `POST /api/services/restart` (button in sidebar) for browser-driven restarts, which a human can use to restart the agent's own environment after the item ends.
+- Service control: never `kill` / `pkill` the agent or web app directly. Always go through `animactl services <op>`. `cli/services-cli.ts` treats a caller with `ANIMA_INBOX_ITEM_ID` or `ANIMA_AGENT_ID` set as a runtime item and **refuses to install, uninstall, stop or restart the agent service of its own environment** — that would kill the item making the request. `--only web` is allowed. Controlling a **different** environment from inside a runtime is allowed when `ANIMA_HOME` points at that other environment while `ANIMA_RUNTIME_HOME` still points at the caller's own environment. The web app also exposes `POST /api/services/restart` (**Restart** on **Settings > Server**) for browser-driven restarts, which a human can use to restart the agent's own environment after the item ends.
 - Runtime config and state live under the selected `ANIMA_HOME` directory. Logs go to `$ANIMA_HOME/logs/{agent,web}.log`. Pid files go to `$ANIMA_HOME/run/{agent,web}.pid`.
