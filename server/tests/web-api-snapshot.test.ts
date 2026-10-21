@@ -1103,6 +1103,20 @@ test('agent diagnostics endpoint returns allowlisted support state without secre
           '[2026-06-04T08:01:01.000Z] Agent anima: provider error xoxb-log-secret',
           '[2026-06-04T08:01:02.000Z] Agent anima: failed payload {"text":"Do not leak log message body.","token":"xoxb-log-payload"}',
           '[2026-06-04T08:01:03.000Z] Agent anima: SLACK_BOT_TOKEN=xoxb-env-secret',
+          '[2026-06-04T08:01:05.000Z] Agent anima: provider error invalid x-api-key sk-ant-fake-log-key',
+          '[2026-06-04T08:01:06.000Z] Agent anima: linear failed lin_api_fakeLogKey and ghp_fakeLogKey',
+          '[2026-06-04T08:01:07.000Z] Agent anima: git push failed https://deploy:url-log-secret@example.com/r.git',
+          '[2026-06-04T08:01:08.000Z] Agent anima: provider error api_key: "named-log-secret" Authorization: Basic bm90LWEtc2VjcmV0',
+          '[2026-06-04T08:01:08.100Z] Agent anima: provider error Authorization: Bearer A7b2C9 password=58392017',
+          '[2026-06-04T08:01:08.200Z] Agent anima: provider error {"password":"wordOne wordTwo","max_tokens":4096}',
+          '[2026-06-04T08:01:08.300Z] Agent anima: provider error retrying with Bearer Qx7s9',
+          `[2026-06-04T08:01:08.400Z] Agent anima: provider error ${JSON.stringify({ password: 'left"TAIL_JSON_Q7' })}`,
+          '[2026-06-04T08:01:08.500Z] Agent anima: provider error password="left\\"TAIL_EQ_Q7" secret=\'it\\\'s TAIL_SQ_Q7\'',
+          '[2026-06-04T08:01:08.600Z] Agent anima: provider error token="a\\\\" kept-after-escaped-backslash token="b\\\\\\"TAIL_BS_Q7"',
+          '[2026-06-04T08:01:08.700Z] Agent anima: provider error api_key="TAIL_UNTERM_Q7',
+          '[2026-06-04T08:01:09.000Z] Agent anima: provider error shapeless Zq81mXr0pLk2Vb7Nc4Hd9Ws3Te6Yu5Ia0',
+          '[2026-06-04T08:01:10.000Z] Agent anima: provider error session=0f8fdc5c-1b2a-4e3d-9c8b-7a6f5e4d3c2b input_tokens=300',
+          'Agent anima: provider error at 2026-06-04T08:01:11.000Z Do not leak a mid-line timestamp',
         ].join('\n'),
         'utf8',
       );
@@ -1149,6 +1163,18 @@ test('agent diagnostics endpoint returns allowlisted support state without secre
         assert.ok(body.recentActivity?.some((activity) => activity.providerReason === 'quota_exhausted'));
         assert.ok(body.logs?.lines?.some((line) => /restart requested/.test(line.message ?? '')));
         assert.ok((body.logs?.lines?.length ?? 0) <= 80);
+        // Secrets with no Slack shape are masked in place; ids and counts stay readable.
+        const messages = (body.logs?.lines ?? []).map((line) => line.message ?? '').join('\n');
+        assert.match(messages, /x-api-key <redacted-token>/);
+        assert.match(messages, /linear failed <redacted-token> and <redacted-token>/);
+        assert.match(messages, /https:\/\/<redacted>@example\.com/);
+        assert.match(messages, /api_key: "<redacted>" Authorization: <redacted>/);
+        assert.match(messages, /Authorization: <redacted> password=<redacted>/);
+        assert.match(messages, /\{"password":"<redacted>","max_tokens":4096\}/);
+        assert.match(messages, /retrying with Bearer <redacted-token>/);
+        assert.match(messages, /token="<redacted>" kept-after-escaped-backslash token="<redacted>"/);
+        assert.match(messages, /shapeless <redacted>/);
+        assert.match(messages, /session=0f8fdc5c-1b2a-4e3d-9c8b-7a6f5e4d3c2b input_tokens=300/);
 
         const serialized = JSON.stringify(body);
         assert.doesNotMatch(serialized, /CODEX_SECRET/);
@@ -1169,6 +1195,18 @@ test('agent diagnostics endpoint returns allowlisted support state without secre
         assert.doesNotMatch(serialized, /cat \/tmp\/secret-file/);
         assert.doesNotMatch(serialized, /raw-command-secret/);
         assert.doesNotMatch(serialized, /claude --resume/);
+        assert.doesNotMatch(serialized, /fake-log-key/);
+        assert.doesNotMatch(serialized, /fakeLogKey/);
+        assert.doesNotMatch(serialized, /url-log-secret/);
+        assert.doesNotMatch(serialized, /named-log-secret/);
+        assert.doesNotMatch(serialized, /bm90LWEtc2VjcmV0/);
+        assert.doesNotMatch(serialized, /A7b2C9/);
+        assert.doesNotMatch(serialized, /58392017/);
+        assert.doesNotMatch(serialized, /wordOne|wordTwo/);
+        assert.doesNotMatch(serialized, /Qx7s9/);
+        assert.doesNotMatch(serialized, /TAIL_(?:JSON|EQ|SQ|BS|UNTERM)_Q7/);
+        assert.doesNotMatch(serialized, /Zq81mXr0pLk2Vb7Nc4Hd9Ws3Te6Yu5Ia0/);
+        assert.doesNotMatch(serialized, /mid-line timestamp/);
       } finally {
         server.close();
       }
