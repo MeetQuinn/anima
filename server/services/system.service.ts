@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { resolveAnimaHome } from '../anima-home.js';
+import { ignoreChildStdinErrors } from '../providers/child-process.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from './env.js';
 import { readLastServicesRestart, servicesRestartLogPath, servicesRestartResultPath } from './restart-result.js';
@@ -293,6 +294,7 @@ function piRpcProbe(command: string, commands: string[]): Promise<Record<string,
       env: { ...process.env, PI_SKIP_VERSION_CHECK: '1', PI_TELEMETRY: '0' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    ignoreChildStdinErrors(child);
     const results: Record<string, unknown> = {};
     const pending = new Set(commands);
     let buffer = '';
@@ -373,6 +375,7 @@ async function grokAcpModelCatalog(command: string): Promise<ProviderModelCatalo
       ['--no-auto-update', 'agent', '--no-leader', '--always-approve', 'stdio'],
       { stdio: ['pipe', 'pipe', 'pipe'] },
     );
+    ignoreChildStdinErrors(child);
     let buffer = '';
     let settled = false;
     const finish = (error?: Error, value?: ProviderModelCatalog) => {
@@ -718,6 +721,7 @@ function commandPresent(command: string, args: string[]): Promise<boolean> {
     const child = execFile(command, args, { encoding: 'utf8', timeout: 2_000 }, (error) => {
       resolvePresent(!error);
     });
+    ignoreChildStdinErrors(child);
     child.stdin?.end();
   });
 }
