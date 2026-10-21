@@ -16,7 +16,7 @@ import {
   kbFileKind,
 } from '../../shared/kb-file-types.js';
 import type { KbFile } from '../../shared/kb.js';
-import { routePath } from './http.js';
+import { routePath, untrustedFileHeaders } from './http.js';
 
 type HomeEntry = {
   path: string;
@@ -99,7 +99,9 @@ export function registerAgentHomeFileRoutes(fastify: FastifyInstance): void {
         `inline; filename="${encodeURIComponent(posix.basename(resolved.relPath))}"`,
       );
       reply.header('content-length', String(body.length));
-      reply.header('content-type', contentTypeFor(resolved.relPath));
+      const contentType = contentTypeFor(resolved.relPath);
+      reply.header('content-type', contentType);
+      reply.headers(untrustedFileHeaders(contentType));
       return reply.send(body);
     },
   );

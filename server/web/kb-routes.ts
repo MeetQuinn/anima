@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { errorMessage } from '../ids.js';
 import { KbError } from '../kb/kb.helper.js';
 import { defaultKbRegistryService, type KbRegistryService, type KbService } from '../kb/kb.service.js';
-import { HttpError, queryParam, routePath, sendJsonRaw } from './http.js';
+import { HttpError, queryParam, routePath, sendJsonRaw, untrustedFileHeaders } from './http.js';
 import { KbCreateRequest, KbMkdirRequest, KbRenameRequest } from '../../shared/kb.js';
 
 const KB_RAW_PREFIX = '/kb/raw/';
@@ -113,10 +113,9 @@ async function serveKbRaw(
   response.writeHead(200, {
     'cache-control': 'no-store',
     'content-length': String(body.length),
-    'content-security-policy': KB_CSP,
     'content-type': contentType,
     ...(options.attachment ? { 'content-disposition': contentDisposition(filePath) } : {}),
-    'x-content-type-options': 'nosniff',
+    ...untrustedFileHeaders(contentType, KB_CSP),
   });
   response.end(body);
 }

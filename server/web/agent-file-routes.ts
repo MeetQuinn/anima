@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { defaultSlackFileService } from '../slack/slack-file.service.js';
-import { queryParam } from './http.js';
+import { queryParam, untrustedFileHeaders } from './http.js';
 
 export function registerAgentFileRoutes(fastify: FastifyInstance): void {
   fastify.get<{ Params: { agentId: string; fileId: string } }>(
@@ -20,6 +20,7 @@ export function registerAgentFileRoutes(fastify: FastifyInstance): void {
       reply.header('content-length', String(file.sizeBytes));
       reply.header('content-type', file.contentType);
       reply.header('content-disposition', `inline; filename="${encodeURIComponent(file.filename)}"`);
+      reply.headers(untrustedFileHeaders(file.contentType));
       return reply.send(file.bytes);
     },
   );
@@ -59,7 +60,9 @@ export function registerAgentFileRoutes(fastify: FastifyInstance): void {
       const buffer = Buffer.from(await upstream.arrayBuffer());
       reply.header('cache-control', 'private, max-age=300');
       reply.header('content-length', String(buffer.length));
-      reply.header('content-type', upstream.headers.get('content-type') ?? info?.mimetype ?? 'image/jpeg');
+      const contentType = upstream.headers.get('content-type') ?? info?.mimetype ?? 'image/jpeg';
+      reply.header('content-type', contentType);
+      reply.headers(untrustedFileHeaders(contentType));
       return reply.send(buffer);
     },
   );

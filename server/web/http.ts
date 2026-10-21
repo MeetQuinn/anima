@@ -40,6 +40,26 @@ export function queryParam(rawUrl: string | undefined, key: string): string | un
   }
 }
 
+// Agent homes, knowledge bases, and chat uploads hold files the operator did
+// not write. Served inline from the dashboard origin, an HTML or SVG file
+// opened in its own tab would run with the dashboard's own access. A CSP
+// sandbox without allow-same-origin gives the document an opaque origin: it
+// still renders, runs its scripts, and follows links, but it cannot read the
+// dashboard API, and the cross-site write guard refuses its writes. A sandbox
+// often breaks the browser's built-in PDF viewer (the dashboard's PDF preview
+// skips its iframe sandbox for the same reason), so PDFs keep only nosniff.
+const UNTRUSTED_FILE_SANDBOX =
+  'sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads';
+
+export function untrustedFileHeaders(contentType: string, policy?: string): Record<string, string> {
+  const isPdf = contentType.split(';', 1)[0]?.trim().toLowerCase() === 'application/pdf';
+  const csp = [policy, isPdf ? undefined : UNTRUSTED_FILE_SANDBOX].filter(Boolean).join('; ');
+  return {
+    ...(csp ? { 'content-security-policy': csp } : {}),
+    'x-content-type-options': 'nosniff',
+  };
+}
+
 export function sendJsonRaw(response: ServerResponse, statusCode: number, body: object): void {
   response.writeHead(statusCode, {
     'cache-control': 'no-store',
