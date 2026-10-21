@@ -182,8 +182,12 @@ const timeoutProfiles = {
 // files drive real child processes on tight timings and stay one at a time.
 const fileConcurrency = { unit: 4, api: 4, fast: 4, runtime: 1, all: 1 };
 
-export function testConcurrencyFor(group) {
+function testConcurrencyFor(group) {
   return fileConcurrency[group] ?? 1;
+}
+
+export function nodeTestArgs({ group, perTestMs, testPaths }) {
+  return ['--test', `--test-timeout=${perTestMs}`, `--test-concurrency=${testConcurrencyFor(group)}`, ...testPaths];
 }
 
 const fallbackTimeoutProfile = {
@@ -219,7 +223,7 @@ export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
   }
 
   const concurrency = testConcurrencyFor(group);
-  const args = ['--test', `--test-timeout=${perTestMs}`, `--test-concurrency=${concurrency}`, ...testPaths];
+  const args = nodeTestArgs({ group, perTestMs, testPaths });
 
   console.log(
     `Running ${group} tests (${testPaths.length} files, ${concurrency} at a time, ` +
