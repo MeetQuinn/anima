@@ -234,6 +234,8 @@ class ClaudeProviderError extends Error {
   }
 }
 
+const CLAUDE_STDERR_TAIL_CHARS = 8_192;
+
 function claudeSessionNotFound(stderr: string): boolean {
   return /No conversation found with session ID:/.test(stderr);
 }
@@ -258,7 +260,8 @@ class ClaudeStreamJsonController {
   private nativeResultCount = 0;
   private providerTurnOwner?: 'background' | 'current';
   private providerTurnActive = false;
-  private stderrText = '';
+  /** Recent stderr, for the session-not-found check when the child exits. */
+  private stderrTail = '';
   private currentTurn?: {
     commands: Map<string, {
       startedAfterResult?: number;
@@ -295,7 +298,7 @@ class ClaudeStreamJsonController {
         this.rejectQuiescentWaiters(new Error('Claude Code runtime exited before drain reached a quiescent point'));
         this.rejectQueuedMessages(exitError);
         await this.clearBackgroundObserver();
-        const stderrOutput = stderr || this.stderrText;
+        const stderrOutput = stderr || this.stderrTail;
         if (claudeSessionNotFound(stderrOutput)) {
           this.rejectCurrentTurn(new ClaudeSessionNotFoundError(stderrOutput));
           return;
@@ -454,7 +457,8 @@ class ClaudeStreamJsonController {
   async acceptStderrChunk(chunk: string): Promise<void> {
     const turn = this.currentTurn;
     if (!turn) return;
-    this.stderrText += chunk;
+    // The controller outlives many turns, so keep only the end, like Codex's stderrTail.
+    this.stderrTail = `${this.stderrTail}${chunk}`.slice(-CLAUDE_STDERR_TAIL_CHARS);
     turn.input.onActivity?.();
     await turn.input.effects.recordOutput('stderr', chunk);
   }
