@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { buildServiceEnvironment } from './env.js';
+import { rotateServiceLogIfNeeded, serviceLogDir, serviceLogPath } from './service-log.js';
 import type { ServiceSpec, SupervisorOptions } from './supervisor.js';
 
 export interface LaunchdStatus {
@@ -77,6 +78,9 @@ export async function startLaunchdService(spec: ServiceSpec): Promise<LaunchdSta
     console.log(`${spec.id}: already running launchd ${launchdLabel(spec)}${pidPart}`);
     return status;
   }
+  // launchd opens StandardOutPath when it spawns the process, so a rotation
+  // here hands the new process a fresh log, as detached starts do.
+  await rotateServiceLogIfNeeded(serviceLogPath(spec));
   for (const action of actions) {
     const invocation = launchdActionInvocation(action, spec, plistPath);
     await launchctl(invocation.args, invocation.options);
@@ -292,14 +296,6 @@ function run(command: string, args: string[]): Promise<{ status: number | null; 
 
 function assertLaunchdSupported(): void {
   if (!launchdSupported()) throw new Error('launchd service management is only supported on macOS.');
-}
-
-function serviceLogDir(spec: ServiceSpec): string {
-  return join(spec.animaHome, 'logs');
-}
-
-function serviceLogPath(spec: ServiceSpec): string {
-  return join(serviceLogDir(spec), spec.logName);
 }
 
 function keyArray(key: string, values: string[]): string {

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -30,6 +30,7 @@ import {
   servicesRestartDetachedFallbackPlan,
   servicesRestartDetachedSpawnPlan,
 } from '../services/system.service.js';
+import { rotateServiceLogIfNeeded } from '../services/service-log.js';
 import { stopPidFallbackService } from '../services/supervisor.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
@@ -972,6 +973,145 @@ test('services start rotates oversized logs and keeps five generations', async (
   }
 });
 
+test('service log rotation moves each generation up and drops the oldest', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'anima-service-log-rotate-'));
+  try {
+    const path = join(tempDir, 'agent.log');
+    await writeFile(path, 'current');
+    for (let index = 1; index <= 5; index += 1) await writeFile(`${path}.${index}`, `gen${index}`);
+
+    await rotateServiceLogIfNeeded(path, { maxBytes: 'current'.length });
+
+    await assert.rejects(stat(path), /ENOENT/);
+    assert.equal(await readFile(`${path}.1`, 'utf8'), 'current');
+    for (let index = 2; index <= 5; index += 1) {
+      assert.equal(await readFile(`${path}.${index}`, 'utf8'), `gen${index - 1}`);
+    }
+    await assert.rejects(stat(`${path}.6`), /ENOENT/);
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
+test('service log rotation skips a small or missing log and tolerates gaps', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'anima-service-log-rotate-gaps-'));
+  try {
+    const path = join(tempDir, 'agent.log');
+    await rotateServiceLogIfNeeded(path, { maxBytes: 1 });
+    await assert.rejects(stat(path), /ENOENT/);
+
+    await writeFile(path, 'small');
+    await rotateServiceLogIfNeeded(path, { maxBytes: 'small'.length + 1 });
+    assert.equal(await readFile(path, 'utf8'), 'small');
+    await assert.rejects(stat(`${path}.1`), /ENOENT/);
+
+    await writeFile(`${path}.1`, 'gen1');
+    await writeFile(`${path}.3`, 'gen3');
+    await rotateServiceLogIfNeeded(path, { maxBytes: 'small'.length });
+    assert.equal(await readFile(`${path}.1`, 'utf8'), 'small');
+    assert.equal(await readFile(`${path}.2`, 'utf8'), 'gen1');
+    await assert.rejects(stat(`${path}.3`), /ENOENT/);
+    assert.equal(await readFile(`${path}.4`, 'utf8'), 'gen3');
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
+test(
+  'service log rotation failure warns and keeps the log where it was',
+  { skip: process.getuid?.() === 0 ? 'root ignores directory permissions' : false },
+  async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'anima-service-log-rotate-fail-'));
+    const logDir = join(tempDir, 'logs');
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    try {
+      await mkdir(logDir);
+      const path = join(logDir, 'agent.log');
+      await writeFile(path, 'current');
+      await chmod(logDir, 0o555);
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      };
+
+      await rotateServiceLogIfNeeded(path, { maxBytes: 1 });
+
+      console.warn = originalWarn;
+      assert.equal(await readFile(path, 'utf8'), 'current');
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0] ?? '', /log rotation skipped for .*agent\.log/);
+    } finally {
+      console.warn = originalWarn;
+      await chmod(logDir, 0o755).catch(() => {});
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  },
+);
+
+test(
+  'launchd start rotates a full service log before launchd opens it',
+  { skip: process.platform !== 'darwin' ? 'launchd is macOS only' : false },
+  async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'anima-launchd-log-rotate-'));
+    try {
+      const fake = await writeFakeServiceManager(tempDir, 'launchctl');
+      await mkdir(join(fake.home, 'Library', 'LaunchAgents'), { recursive: true });
+      // Never a loadable plist: the fake launchctl must be the only one that sees it.
+      await writeFile(join(fake.home, 'Library', 'LaunchAgents', 'ai.meetquinn.anima.agent.plist'), '<plist/>\n');
+
+      const started = await runAnimactl(['services', 'start', '--only', 'agent'], { env: fake.env });
+      assert.equal(started.status, 0, started.stderr || started.stdout);
+      assert.deepEqual(await fake.actions(), ['bootstrap rotated=yes', 'kickstart rotated=yes']);
+      assert.equal((await stat(`${fake.logPath}.1`)).size, FULL_SERVICE_LOG_BYTES);
+      await assert.rejects(stat(fake.logPath), /ENOENT/);
+
+      // A running service keeps its open log: no rotation, no launchctl action.
+      await writeFile(fake.logPath, 'live\n');
+      await truncate(fake.logPath, FULL_SERVICE_LOG_BYTES);
+      await rm(fake.callsPath, { force: true });
+      const again = await runAnimactl(['services', 'start', '--only', 'agent'], { env: fake.env });
+      assert.equal(again.status, 0, again.stderr || again.stdout);
+      assert.deepEqual(await fake.actions(), []);
+      assert.equal((await stat(fake.logPath)).size, FULL_SERVICE_LOG_BYTES);
+      await assert.rejects(stat(`${fake.logPath}.2`), /ENOENT/);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  },
+);
+
+test(
+  'systemd start rotates a full service log before systemd opens it',
+  { skip: process.platform !== 'linux' ? 'systemd is Linux only' : false },
+  async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'anima-systemd-log-rotate-'));
+    try {
+      const fake = await writeFakeServiceManager(tempDir, 'systemctl');
+      const unitDir = join(fake.home, '.config', 'systemd', 'user');
+      await mkdir(unitDir, { recursive: true });
+      await writeFile(join(unitDir, 'ai.meetquinn.anima.agent.service'), '[Unit]\n');
+
+      const started = await runAnimactl(['services', 'start', '--only', 'agent'], { env: fake.env });
+      assert.equal(started.status, 0, started.stderr || started.stdout);
+      assert.deepEqual(await fake.actions(), ['start rotated=yes']);
+      assert.equal((await stat(`${fake.logPath}.1`)).size, FULL_SERVICE_LOG_BYTES);
+      await assert.rejects(stat(fake.logPath), /ENOENT/);
+
+      // A running service keeps its open log: no rotation, no systemctl action.
+      await writeFile(fake.logPath, 'live\n');
+      await truncate(fake.logPath, FULL_SERVICE_LOG_BYTES);
+      await rm(fake.callsPath, { force: true });
+      const again = await runAnimactl(['services', 'start', '--only', 'agent'], { env: fake.env });
+      assert.equal(again.status, 0, again.stderr || again.stdout);
+      assert.deepEqual(await fake.actions(), []);
+      assert.equal((await stat(fake.logPath)).size, FULL_SERVICE_LOG_BYTES);
+      await assert.rejects(stat(`${fake.logPath}.2`), /ENOENT/);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  },
+);
+
 async function writeMinimalConfig(configDir: string, extras: { dashboardPort?: number }): Promise<void> {
   const body: Record<string, unknown> = {
     agents: [
@@ -1058,6 +1198,82 @@ function slackInboxItem(id: string, status: 'queued' | 'running', text: string):
     receivedAt: createdAt,
     teamId: 'T1',
     text,
+  };
+}
+
+const FULL_SERVICE_LOG_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Put a fake launchctl or systemctl first on PATH for one isolated Anima home.
+ * It reports the agent service stopped until a start action runs, then running.
+ * Each start action records whether `agent.log.1` existed at that moment, which
+ * shows the rotation ran before the manager would open the log.
+ */
+async function writeFakeServiceManager(
+  tempDir: string,
+  command: 'launchctl' | 'systemctl',
+): Promise<{
+  actions: () => Promise<string[]>;
+  callsPath: string;
+  env: NodeJS.ProcessEnv;
+  home: string;
+  logPath: string;
+}> {
+  const home = join(tempDir, 'home');
+  const configDir = join(home, '.anima');
+  await writeMinimalConfig(configDir, {});
+  const logPath = join(configDir, 'logs', 'agent.log');
+  await mkdir(join(configDir, 'logs'), { recursive: true });
+  await writeFile(logPath, 'old log\n');
+  await truncate(logPath, FULL_SERVICE_LOG_BYTES);
+
+  const binDir = join(tempDir, 'bin');
+  await mkdir(binDir, { recursive: true });
+  const callsPath = join(tempDir, `${command}-calls`);
+  const runningPath = join(tempDir, `${command}-running`);
+  const status = command === 'launchctl'
+    ? [
+        'if [ "$1" = print ]; then',
+        `  if [ -e '${runningPath}' ]; then printf 'state = running\\n\\tpid = 4242\\n'; exit 0; fi`,
+        '  exit 113',
+        'fi',
+        'action="$1"',
+      ]
+    : [
+        'if [ "$2" = show ]; then',
+        `  if [ -e '${runningPath}' ]; then printf 'LoadState=loaded\\nActiveState=active\\nMainPID=4242\\nUnitFileState=enabled\\n'; exit 0; fi`,
+        "  printf 'LoadState=loaded\\nActiveState=inactive\\nMainPID=0\\nUnitFileState=enabled\\n'",
+        '  exit 0',
+        'fi',
+        'action="$2"',
+      ];
+  await writeFile(join(binDir, command), [
+    '#!/bin/sh',
+    ...status,
+    `if [ -e '${logPath}.1' ]; then rotated=yes; else rotated=no; fi`,
+    `echo "$action rotated=$rotated" >> '${callsPath}'`,
+    `case "$action" in kickstart|start) : > '${runningPath}' ;; esac`,
+    'exit 0',
+    '',
+  ].join('\n'), { mode: 0o755 });
+
+  return {
+    actions: async () => {
+      try {
+        return (await readFile(callsPath, 'utf8')).trim().split('\n').filter(Boolean);
+      } catch {
+        return [];
+      }
+    },
+    callsPath,
+    env: {
+      ANIMA_HOME: configDir,
+      HOME: home,
+      PATH: `${binDir}:/usr/bin:/bin`,
+      XDG_CONFIG_HOME: join(home, '.config'),
+    },
+    home,
+    logPath,
   };
 }
 

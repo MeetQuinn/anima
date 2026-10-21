@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { buildServiceEnvironment } from './env.js';
+import { rotateServiceLogIfNeeded, serviceLogDir, serviceLogPath } from './service-log.js';
 import type { ServiceSpec, SupervisorOptions } from './supervisor.js';
 
 export interface SystemdStatus {
@@ -88,6 +89,9 @@ export async function startSystemdService(spec: ServiceSpec): Promise<SystemdSta
     console.log(`${spec.id}: already running systemd ${systemdServiceName(spec)}${pidPart}`);
     return status;
   }
+  // systemd opens the append: output file when it starts the unit, so a
+  // rotation here hands the new process a fresh log, as detached starts do.
+  await rotateServiceLogIfNeeded(serviceLogPath(spec));
   for (const action of actions) {
     const invocation = systemdActionInvocation(action, spec);
     await systemctl(invocation.args, invocation.options);
@@ -333,14 +337,6 @@ function assertSystemdSupported(): void {
 function systemdConfigHome(): string {
   const value = process.env.XDG_CONFIG_HOME;
   return value ? resolve(value) : join(homedir(), '.config');
-}
-
-function serviceLogDir(spec: ServiceSpec): string {
-  return join(spec.animaHome, 'logs');
-}
-
-function serviceLogPath(spec: ServiceSpec): string {
-  return join(serviceLogDir(spec), spec.logName);
 }
 
 function systemdText(value: string): string {
