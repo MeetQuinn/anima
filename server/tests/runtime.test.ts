@@ -350,6 +350,52 @@ test('runtime host starts up to six agents at once and a slow start does not hol
   await host.stop();
 });
 
+test('runtime host stop waits for in-flight starts even when recording a start failure fails', async () => {
+  class FailingHealthStore extends AgentHealthStore {
+    override async update(
+      agentId: string,
+      apply: Parameters<AgentHealthStore['update']>[1],
+    ): Promise<void> {
+      if (agentId === 'bad' && apply(undefined)?.state === 'unhealthy') throw new Error('health write failed');
+      await super.update(agentId, apply);
+    }
+  }
+  const homeDir = await mkdtemp(join(tmpdir(), 'anima-runtime-start-pool-failure-'));
+  try {
+    let releaseSlow!: () => void;
+    let slowEntered = false;
+    const stopped: string[] = [];
+    const host = new RuntimeHost({}, {
+      animaHome: homeDir,
+      healthStore: new FailingHealthStore({ animaHome: homeDir }),
+      loadAgents: async () => ['bad', 'slow'].map((id) => runtimeHostAgent(id, { connected: true })),
+      logger: silentLogger,
+      startAgent: async (agent) => {
+        if (agent.id === 'bad') throw new Error('bad start');
+        slowEntered = true;
+        await new Promise<void>((resolve) => { releaseSlow = resolve; });
+        return stopHandle(agent.id, stopped);
+      },
+      validateAgent: async () => {},
+    });
+
+    const reconcile = host.reconcileOnce().then(() => undefined, (error: unknown) => error);
+    await waitFor(() => slowEntered, { description: 'slow start in flight' });
+    let stopReturned = false;
+    const stopping = host.stop().then(() => { stopReturned = true; });
+    await sleep(50);
+    assert.equal(stopReturned, false, 'stop waits for the in-flight start');
+
+    releaseSlow();
+    await stopping;
+    assert.match(String(await reconcile), /health write failed/);
+    assert.deepEqual(stopped, ['slow']);
+    assert.deepEqual(host.runningAgentIds(), []);
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime host publishes a health round in one snapshot-file rewrite', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'anima-runtime-health-round-'));
   const healthStore = new AgentHealthStore({ animaHome: homeDir });

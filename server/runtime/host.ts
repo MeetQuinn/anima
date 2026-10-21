@@ -1379,14 +1379,22 @@ async function awaitShutdown(stop: () => Promise<void>): Promise<void> {
   });
 }
 
+// Runs at most `limit` tasks at once and rethrows the first failure only after
+// every task settles, so no start outlives the reconcile pass that stop() awaits.
 async function runConcurrently(tasks: ReadonlyArray<() => Promise<void>>, limit: number): Promise<void> {
   let next = 0;
+  let failure: { error: unknown } | undefined;
   const worker = async (): Promise<void> => {
     while (next < tasks.length) {
       const task = tasks[next];
       next += 1;
-      await task?.();
+      try {
+        await task?.();
+      } catch (error) {
+        failure ??= { error };
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  if (failure) throw failure.error;
 }
