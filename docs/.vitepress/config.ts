@@ -84,6 +84,7 @@ export default defineConfig({
           },
           { text: "Update Anima", link: "/guide/updating-anima" },
           { text: "Runtime and services", link: "/deployment" },
+          { text: "Configuration reference", link: "/configuration" },
           { text: "Recover local services", link: "/service-runbook" },
           { text: "Back up and restore", link: "/guide/backup-and-restore" },
         ],
