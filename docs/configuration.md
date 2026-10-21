@@ -211,11 +211,11 @@ npx -y @meetquinn/animactl@latest dashboard-auth disable
 These come from the service's process environment, not from `config.json`. Restart the service
 after changing one.
 
-| Variable                     | Default    | What it does                                                                                                                                                                                                                                                  |
-| ---------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANIMA_HOME`                 | `~/.anima` | Selects the Anima home. Managed `animactl` commands use it or `~/.anima`. When it is unset, the runtime also uses a `.anima` directory in the current directory if one exists. Installed service definitions set it explicitly.                               |
-| `ANIMA_READ_ONLY`            | off        | The web service answers `403` to routes that change state outside the Anima home: provider runtime commands, context limits and sign-in, provider CLI installs, provider usage reads, runtime updates, service restarts, folder creation, and agent creation. |
-| `ANIMA_ALLOW_MACHINE_WRITES` | off        | Explicitly allows those routes. `ANIMA_READ_ONLY` wins when both are set. With neither set, the routes are allowed, and the web service logs a warning once per route that this default is planned to become a refusal.                                       |
+| Variable                     | Default    | What it does                                                                                                                                                                                                                            |
+| ---------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANIMA_HOME`                 | `~/.anima` | Selects the Anima home. Managed `animactl` commands use it or `~/.anima`. When it is unset, the runtime also uses a `.anima` directory in the current directory if one exists. Installed service definitions set it explicitly.         |
+| `ANIMA_READ_ONLY`            | off        | The web service answers `403` to routes that change state outside the Anima home: provider runtime commands, context limits and sign-in, provider CLI installs, runtime updates, service restarts, folder creation, and agent creation. |
+| `ANIMA_ALLOW_MACHINE_WRITES` | off        | Explicitly allows those routes. `ANIMA_READ_ONLY` wins when both are set. With neither set, the routes are allowed, and the web service logs a warning once per route that this default is planned to become a refusal.                 |
 
 - `ANIMA_READ_ONLY` and `ANIMA_ALLOW_MACHINE_WRITES` accept `1`, `true`, `yes`, or `on` (any case).
   Any other value is off.
