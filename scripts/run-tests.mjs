@@ -109,6 +109,7 @@ const groups = {
     'reminders.test.js',
     'runtime-cli.test.js',
     'runtime-host-config-watch.test.js',
+    'race-timeout.test.js',
     'runtime.test.js',
     'runtime-upgrade.test.js',
     'secret-handoff.test.js',

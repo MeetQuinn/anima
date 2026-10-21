@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { errorMessage, nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { truncateForActivity } from '../activities/format.js';
+import { raceWithTimeout } from '../race-timeout.js';
 import { writeSystemPromptFile } from './claude-launch.js';
 import { type RunningChildProcess } from './child-process.js';
 import { LineBuffer } from './line-buffer.js';
@@ -339,10 +340,7 @@ class PiRpcController {
   async steer(prompt: string): Promise<boolean> {
     const turn = this.currentTurn;
     if (!turn) return false;
-    const accepted = await Promise.race([
-      turn.promptAccepted,
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), PI_STEER_TIMEOUT_MS)),
-    ]);
+    const accepted = await raceWithTimeout(turn.promptAccepted, PI_STEER_TIMEOUT_MS, false);
     if (!accepted || this.currentTurn !== turn) return false;
     try {
       await this.request({ message: prompt, type: 'steer' });
@@ -370,10 +368,7 @@ class PiRpcController {
     void this.request({ type: 'abort' }).catch(() => undefined);
     const completion = this.turnCompletion;
     if (!completion) return;
-    await Promise.race([
-      completion.catch(() => undefined),
-      new Promise((resolve) => setTimeout(resolve, 2_000)),
-    ]);
+    await raceWithTimeout(completion.catch(() => undefined), 2_000, undefined);
   }
 
   async acceptStdoutChunk(chunk: string): Promise<void> {

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { truncateForActivity } from '../activities/format.js';
+import { raceWithTimeout } from '../race-timeout.js';
 import { type RunningChildProcess } from './child-process.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
 import { LineBuffer } from './line-buffer.js';
@@ -279,7 +280,7 @@ class GrokAcpController {
     this.notify('session/cancel', { sessionId: this.sessionId });
     const completion = this.turnCompletion;
     if (!completion) return;
-    await Promise.race([completion.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    await raceWithTimeout(completion.catch(() => undefined), 2_000, undefined);
   }
 
   appendPrompt(prompt: string): boolean {

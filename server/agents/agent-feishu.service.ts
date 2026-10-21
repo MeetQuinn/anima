@@ -22,6 +22,7 @@ import {
 import { nowIso } from '../ids.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { singleLine } from '../json.js';
+import { raceWithTimeout } from '../race-timeout.js';
 import { defaultAgentRegistryService } from './agent.service.js';
 import { randomUUID } from 'crypto';
 
@@ -224,7 +225,7 @@ export class AgentFeishuService {
         markReady();
       });
 
-    await Promise.race([ready, delay(10_000)]);
+    await raceWithTimeout(ready, 10_000, undefined);
     return registrationStatus(session);
   }
 
@@ -462,10 +463,6 @@ function recommendedScopeStatusItems(
       scope: recommended.scope,
     };
   });
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // True when `iso` is a valid timestamp within `ttlMs` of now. Unset/unparseable
