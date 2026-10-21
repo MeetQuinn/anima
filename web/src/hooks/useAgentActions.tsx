@@ -28,7 +28,7 @@ import {
   agentHealthBlocksRestart,
   agentHealthProviderAction,
   agentHealthSummaryText,
-} from '@/components/AgentHealthIndicator';
+} from '@/lib/agent-health';
 import { useConfirm } from '@/hooks/useConfirm';
 import { formatAgentDiagnostics } from '@/lib/diagnostics';
 import { copyTextToClipboard } from '@/lib/clipboard';

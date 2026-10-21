@@ -202,7 +202,7 @@ export async function fetchAgentDiagnostics(agentId: string): Promise<AgentDiagn
   return apiRequest(`/api/agents/${encodeURIComponent(agentId)}/diagnostics`);
 }
 
-// Invalidates all active queries so the UI re-fetches without a full page reload.
+// Re-fetches the agent list and statuses, so the UI updates without a full page reload.
 export function refreshDashboardData(): void {
   queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
   queryClient.invalidateQueries({ queryKey: queryKeys.agentStatuses() });

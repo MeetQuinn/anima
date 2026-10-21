@@ -113,7 +113,7 @@ function homeStatusText(status: AgentStatusSummary, now: Date): string {
   return [headline.join('  ·  '), ...details].join('\n');
 }
 
-/** Mirrors the dashboard's health precedence (AgentHealthIndicator), worded for teammates. */
+/** Health precedence: starting, then needs attention, then unknown, then retrying. Worded for teammates. */
 function healthIssue(health: AgentRuntimeHealthSummary | undefined): HealthIssue | undefined {
   if (!health) return undefined;
   if (health.state === 'starting') {
