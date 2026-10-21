@@ -5,23 +5,18 @@ import { providerUsageNetworkErrorMessage } from '../http.js';
 import { available, unavailable, usageError } from '../result.js';
 import {
   clampPercent,
-  expiresSoon,
   homePath,
   providerHome,
   readJsonFile,
   record,
   stringValue,
-  writeJsonFile,
 } from './common.js';
 
 /** Same endpoint Raycast Agent Usage uses for SuperGrok / Grok Build credits. */
 const GROK_BILLING_API = 'https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig';
-const GROK_OIDC_ISSUER_DEFAULT = 'https://auth.x.ai';
-const GROK_AUTH_SCOPE_PREFIX = 'https://auth.x.ai::';
 /** Empty gRPC-Web request frame (flags=0, length=0). */
 const EMPTY_GRPC_WEB_BODY = new Uint8Array([0, 0, 0, 0, 0]);
 const BILLING_TIMEOUT_MS = 15_000;
-const REFRESH_TIMEOUT_MS = 15_000;
 
 /**
  * Known used-percent paths on GetGrokCreditsConfig (live fixture + Raycast).
@@ -65,12 +60,6 @@ const VARINT_READ_PATHS: readonly number[][] = [
 interface GrokCredentials {
   accessToken: string;
   account?: string;
-  expiresAt?: string;
-  oidcClientId?: string;
-  oidcIssuer: string;
-  refreshToken?: string;
-  scope: string;
-  sourcePath: string;
 }
 
 export async function fetchGrokUsage(): Promise<
@@ -82,18 +71,16 @@ export async function fetchGrokUsage(): Promise<
   }
 
   let active = credentials;
-  if (grokExpiresSoon(active.expiresAt) && active.refreshToken && active.oidcClientId) {
-    const refreshed = await refreshGrokCredentials(active);
-    if (refreshed.error) return unavailable(refreshed.error, active.account);
-    active = refreshed.credentials;
-  }
-
   let result = await fetchGrokBilling(active.accessToken);
-  if (result.error?.type === 'unauthorized' && active.refreshToken && active.oidcClientId) {
-    const refreshed = await refreshGrokCredentials(active);
-    if (refreshed.error) return unavailable(refreshed.error, active.account);
-    active = refreshed.credentials;
-    result = await fetchGrokBilling(active.accessToken);
+  if (result.error?.type === 'unauthorized') {
+    // Grok is the only owner of its OAuth refresh and auth.json. Usage only
+    // reads: it adopts a token Grok rotated meanwhile, and never refreshes or
+    // writes, which could race Grok's own rotation and sign it out.
+    const latest = await readGrokCredentials();
+    if (latest && latest.accessToken !== active.accessToken) {
+      active = latest;
+      result = await fetchGrokBilling(active.accessToken);
+    }
   }
 
   if (result.error) return unavailable(result.error, active.account);
@@ -169,11 +156,10 @@ interface GrokBillingSnapshot {
 }
 
 async function readGrokCredentials(): Promise<GrokCredentials | undefined> {
-  const sourcePath = grokAuthPath();
-  const root = record(await readJsonFile(sourcePath));
+  const root = record(await readJsonFile(grokAuthPath()));
   if (!root) return undefined;
 
-  for (const [scope, value] of Object.entries(root)) {
+  for (const value of Object.values(root)) {
     const entry = record(value);
     // CLI stores the access token as `key` (Raycast Agent Usage reads the same field).
     const accessToken = stringValue(entry?.key) ?? stringValue(entry?.accessToken) ?? stringValue(entry?.access_token);
@@ -189,117 +175,9 @@ async function readGrokCredentials(): Promise<GrokCredentials | undefined> {
         : displayName
           ? displayName
           : undefined;
-    return {
-      accessToken,
-      ...(account ? { account } : {}),
-      expiresAt: stringValue(entry?.expires_at) ?? stringValue(entry?.expiresAt),
-      oidcClientId: stringValue(entry?.oidc_client_id)
-        ?? stringValue(entry?.oidcClientId)
-        ?? clientIdFromScope(scope),
-      oidcIssuer: stringValue(entry?.oidc_issuer) ?? stringValue(entry?.oidcIssuer) ?? GROK_OIDC_ISSUER_DEFAULT,
-      refreshToken: stringValue(entry?.refresh_token) ?? stringValue(entry?.refreshToken),
-      scope,
-      sourcePath,
-    };
+    return { accessToken, ...(account ? { account } : {}) };
   }
   return undefined;
-}
-
-async function refreshGrokCredentials(
-  credentials: GrokCredentials,
-): Promise<
-  | { credentials: GrokCredentials; error?: never }
-  | { credentials?: never; error: NonNullable<ReturnType<typeof usageError>> }
-> {
-  if (!credentials.refreshToken || !credentials.oidcClientId) {
-    return {
-      error: usageError('unauthorized', 'Grok refresh token not found. Run `grok login` to authenticate again.'),
-    };
-  }
-
-  try {
-    const tokenUrl = await discoverTokenEndpoint(credentials.oidcIssuer);
-    const body = new URLSearchParams({
-      client_id: credentials.oidcClientId,
-      grant_type: 'refresh_token',
-      refresh_token: credentials.refreshToken,
-    });
-    const response = await fetchUntilBody(
-      tokenUrl,
-      {
-        body: body.toString(),
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        method: 'POST',
-      },
-      REFRESH_TIMEOUT_MS,
-    );
-
-    if (response.status === 401 || response.status === 403) {
-      return {
-        error: usageError('unauthorized', 'Grok session expired or invalid. Run `grok login` to refresh credentials.'),
-      };
-    }
-    if (!response.ok) {
-      return {
-        error: usageError('unknown', `Grok token refresh failed with HTTP ${response.status}`),
-      };
-    }
-
-    const data = record(JSON.parse(response.bodyText));
-    const accessToken = stringValue(data?.access_token);
-    if (!accessToken) {
-      return { error: usageError('parse_error', 'Grok refresh response did not include an access token.') };
-    }
-    const refreshToken = stringValue(data?.refresh_token) ?? credentials.refreshToken;
-    const expiresIn = typeof data?.expires_in === 'number' && Number.isFinite(data.expires_in)
-      ? data.expires_in
-      : numberFromUnknown(data?.expires_in);
-    const expiresAt = expiresIn !== undefined && expiresIn > 0
-      ? new Date(Date.now() + expiresIn * 1000).toISOString()
-      : credentials.expiresAt;
-
-    await writeGrokAccessToken(credentials, {
-      accessToken,
-      ...(expiresAt ? { expiresAt } : {}),
-      refreshToken,
-    });
-
-    return {
-      credentials: {
-        ...credentials,
-        accessToken,
-        ...(expiresAt ? { expiresAt } : {}),
-        refreshToken,
-      },
-    };
-  } catch (error) {
-    return {
-      error: usageError(
-        'network_error',
-        error instanceof Error && error.name === 'AbortError'
-          ? 'Provider usage request timed out.'
-          : providerUsageNetworkErrorMessage(error),
-      ),
-    };
-  }
-}
-
-async function writeGrokAccessToken(
-  credentials: GrokCredentials,
-  next: { accessToken: string; expiresAt?: string; refreshToken: string },
-): Promise<void> {
-  const root = record(await readJsonFile(credentials.sourcePath)) ?? {};
-  const entry = record(root[credentials.scope]) ?? {};
-  root[credentials.scope] = {
-    ...entry,
-    key: next.accessToken,
-    refresh_token: next.refreshToken,
-    ...(next.expiresAt ? { expires_at: next.expiresAt } : {}),
-  };
-  await writeJsonFile(credentials.sourcePath, root);
 }
 
 async function fetchGrokBilling(
@@ -458,48 +336,6 @@ function grokAuthPath(): string {
     return join(grokHome, 'auth.json');
   }
   return homePath('.grok', 'auth.json');
-}
-
-function clientIdFromScope(scope: string): string | undefined {
-  if (!scope.startsWith(GROK_AUTH_SCOPE_PREFIX)) return undefined;
-  const id = scope.slice(GROK_AUTH_SCOPE_PREFIX.length).trim();
-  return id || undefined;
-}
-
-/** Grok stores `expires_at` as ISO-8601; shared expiresSoon only handles numeric epochs. */
-function grokExpiresSoon(expiresAt: string | undefined, skewMs = 60_000, nowMs: number = Date.now()): boolean {
-  if (!expiresAt) return false;
-  const parsed = Date.parse(expiresAt);
-  if (Number.isFinite(parsed)) return parsed <= nowMs + skewMs;
-  return expiresSoon(expiresAt, skewMs / 1000, nowMs);
-}
-
-async function discoverTokenEndpoint(issuer: string): Promise<string> {
-  const base = issuer.replace(/\/$/, '');
-  try {
-    const response = await fetchUntilBody(
-      `${base}/.well-known/openid-configuration`,
-      { headers: { Accept: 'application/json' }, method: 'GET' },
-      REFRESH_TIMEOUT_MS,
-    );
-    if (!response.ok) {
-      // Fallback used by the CLI / Raycast when discovery is unavailable.
-      return `${base}/oauth/token`;
-    }
-    const data = record(JSON.parse(response.bodyText));
-    return stringValue(data?.token_endpoint) ?? `${base}/oauth/token`;
-  } catch {
-    return `${base}/oauth/token`;
-  }
-}
-
-function numberFromUnknown(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
 }
 
 // --- gRPC-Web + protobuf (minimal scan; mirrors Raycast Agent Usage) ---

@@ -1,8 +1,8 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { ProviderUsageService } from '../provider-usage/provider-usage.service.js';
 import { fetchJson, providerUsageNetworkErrorMessage } from '../provider-usage/http.js';
@@ -309,120 +309,153 @@ test('Codex account prefers profile/email over opaque org account ids', () => {
   assert.equal(codexAccount({ account_id: orgId }), undefined);
 });
 
-test('Codex usage refreshes an expired access token before fetching usage', async (t) => {
-  const home = await mkdtemp(join(tmpdir(), 'anima-codex-usage-home-'));
-  t.after(() => rm(home, { force: true, recursive: true }));
-  await mkdir(join(home, '.codex'), { recursive: true });
-  const authPath = join(home, '.codex', 'auth.json');
-  await writeFile(
-    authPath,
-    JSON.stringify({
+// Each provider CLI owns its OAuth refresh and its credential file. Usage reads
+// the file, and after a 401 rereads it once to adopt a token the CLI rotated in
+// the meantime. It never calls a token endpoint and never writes the file.
+interface ReadOnlyUsageCase {
+  available: () => Response;
+  credentialPath: (home: string) => string;
+  credentials: (accessToken: string) => unknown;
+  expiredToken: () => string;
+  fetchUsage: () => Promise<{ error?: { type: string }; status: string }>;
+  name: string;
+  unauthorized: () => Response;
+  usage: { method: string; url: string };
+}
+
+const grokResponse = (body: Buffer) =>
+  new Response(new Uint8Array(body), { headers: { 'content-type': 'application/grpc-web+proto' }, status: 200 });
+
+const readOnlyUsageCases: ReadOnlyUsageCase[] = [
+  {
+    available: () => jsonResponse(codexUsagePayload()),
+    credentialPath: (home) => join(home, '.codex', 'auth.json'),
+    credentials: (accessToken) => ({
       auth_mode: 'chatgpt',
-      tokens: {
-        access_token: jwtWithExp(Math.floor(Date.now() / 1000) - 60),
-        id_token: jwtWithClaims({ email: 'old@example.com' }),
-        refresh_token: 'old-codex-refresh',
+      tokens: { access_token: accessToken, refresh_token: 'codex-owned-refresh' },
+    }),
+    expiredToken: () => jwtWithExp(Math.floor(Date.now() / 1000) - 60),
+    fetchUsage: () => fetchCodexUsage(),
+    name: 'Codex',
+    unauthorized: () => jsonResponse({ error: 'expired' }, 401),
+    usage: { method: 'GET', url: 'https://chatgpt.com/backend-api/wham/usage' },
+  },
+  {
+    available: () => jsonResponse({ usage: { limit: 100, remaining: 75 }, limits: [] }),
+    credentialPath: (home) => join(home, '.kimi-code', 'credentials', 'kimi-code.json'),
+    credentials: (accessToken) => ({
+      access_token: accessToken,
+      expires_at: Math.floor(Date.now() / 1000) - 60,
+      refresh_token: 'kimi-owned-refresh',
+    }),
+    expiredToken: () => 'expired-kimi-access',
+    fetchUsage: () => fetchKimiUsage(),
+    name: 'Kimi',
+    unauthorized: () => jsonResponse({ error: 'expired' }, 401),
+    usage: { method: 'GET', url: 'https://api.kimi.com/coding/v1/usages' },
+  },
+  {
+    available: () => grokResponse(GROK_BILLING_FIXTURE),
+    credentialPath: (home) => join(home, '.grok', 'auth.json'),
+    credentials: (accessToken) => ({
+      'https://auth.x.ai::test-client': {
+        auth_mode: 'oidc',
+        email: 'operator@example.com',
+        expires_at: new Date(Date.now() - 60_000).toISOString(),
+        key: accessToken,
+        oidc_client_id: 'test-client',
+        oidc_issuer: 'https://auth.x.ai',
+        refresh_token: 'grok-owned-refresh',
       },
     }),
-    'utf8',
-  );
+    expiredToken: () => 'expired-grok-access',
+    fetchUsage: () => fetchGrokUsage(),
+    name: 'Grok',
+    // Grok reports an expired session as grpc-status 16 in the body trailer.
+    unauthorized: () => grokResponse(withGrpcTrailerStatus(GROK_BILLING_FIXTURE, '16', 'unauthenticated')),
+    usage: { method: 'POST', url: 'https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig' },
+  },
+];
 
-  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
-  const originalFetch = globalThis.fetch;
-  const authorizations: string[] = [];
-  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
-  globalThis.fetch = (async (url, init) => {
-    if (String(url) === 'https://auth.openai.com/oauth/token') {
-      assert.deepEqual(JSON.parse(String(init?.body)), {
-        client_id: 'app_EMoamEEZ73f0CkXaXp7hrann',
-        grant_type: 'refresh_token',
-        refresh_token: 'old-codex-refresh',
-      });
-      return jsonResponse({
-        access_token: 'fresh-codex-access',
-        id_token: jwtWithClaims({ email: 'fresh@example.com' }),
-        refresh_token: 'fresh-codex-refresh',
-      });
-    }
-    authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
-    return jsonResponse(codexUsagePayload());
-  }) as typeof fetch;
+interface RecordedRequest {
+  authorization: string;
+  method: string;
+  url: string;
+}
 
-  try {
-    const result = await fetchCodexUsage();
-    assert.equal(result.status, 'available');
-    assert.equal(result.account, 'fresh@example.com');
-    assert.deepEqual(authorizations, ['Bearer fresh-codex-access']);
-    const stored = JSON.parse(await readFile(authPath, 'utf8')) as { last_refresh?: string; tokens: Record<string, string> };
-    assert.equal(stored.tokens.access_token, 'fresh-codex-access');
-    assert.equal(stored.tokens.refresh_token, 'fresh-codex-refresh');
-    assert.equal(stored.tokens.id_token, jwtWithClaims({ email: 'fresh@example.com' }));
-    assert.ok(stored.last_refresh);
-  } finally {
-    globalThis.fetch = originalFetch;
-    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
-  }
-});
-
-test('Kimi usage refreshes and retries once after a usage 401', async (t) => {
-  const home = await mkdtemp(join(tmpdir(), 'anima-kimi-refresh-home-'));
+// A provider home holding one credential file, with fetch stubbed. Every request
+// is recorded, so a refresh call to any token endpoint shows up in the list.
+async function readOnlyUsageFixture(
+  t: TestContext,
+  usageCase: ReadOnlyUsageCase,
+  accessToken: string,
+  respond: (request: RecordedRequest, path: string) => Promise<Response>,
+): Promise<{ path: string; requests: RecordedRequest[] }> {
+  const home = await mkdtemp(join(tmpdir(), `anima-${usageCase.name.toLowerCase()}-read-only-home-`));
   t.after(() => rm(home, { force: true, recursive: true }));
-  await mkdir(join(home, '.kimi-code', 'credentials'), { recursive: true });
-  await writeFile(join(home, '.kimi-code', 'device_id'), 'test-device-id', 'utf8');
-  const credentialPath = join(home, '.kimi-code', 'credentials', 'kimi-code.json');
-  await writeFile(
-    credentialPath,
-    JSON.stringify({
-      access_token: 'stale-kimi-access',
-      expires_at: Math.floor(Date.now() / 1000) + 600,
-      refresh_token: 'old-kimi-refresh',
-      scope: 'kimi-code',
-      token_type: 'Bearer',
-    }),
-    'utf8',
-  );
+  const path = usageCase.credentialPath(home);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(usageCase.credentials(accessToken)), 'utf8');
 
   const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
-  const originalShareDir = process.env.KIMI_SHARE_DIR;
+  const originalGrokHome = process.env.GROK_HOME;
+  const originalKimiShareDir = process.env.KIMI_SHARE_DIR;
   const originalFetch = globalThis.fetch;
-  const authorizations: string[] = [];
   process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  delete process.env.GROK_HOME;
   delete process.env.KIMI_SHARE_DIR;
-  globalThis.fetch = (async (url, init) => {
-    if (String(url) === 'https://auth.kimi.com/api/oauth/token') {
-      const body = new URLSearchParams(String(init?.body));
-      assert.equal(body.get('client_id'), '17e5f671-d194-4dfb-9706-5516cb48c098');
-      assert.equal(body.get('grant_type'), 'refresh_token');
-      assert.equal(body.get('refresh_token'), 'old-kimi-refresh');
-      assert.equal((init?.headers as Record<string, string>)['X-Msh-Device-Id'], 'test-device-id');
-      return jsonResponse({
-        access_token: 'fresh-kimi-access',
-        expires_in: 900,
-        refresh_token: 'fresh-kimi-refresh',
-        scope: 'kimi-code',
-        token_type: 'Bearer',
-      });
-    }
-    authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
-    if (authorizations.length === 1) return jsonResponse({ error: 'expired' }, 401);
-    return jsonResponse({ usage: { limit: 100, remaining: 75 }, limits: [] });
-  }) as typeof fetch;
-
-  try {
-    const result = await fetchKimiUsage();
-    assert.equal(result.status, 'available');
-    assert.deepEqual(authorizations, ['Bearer stale-kimi-access', 'Bearer fresh-kimi-access']);
-    const stored = JSON.parse(await readFile(credentialPath, 'utf8')) as Record<string, unknown>;
-    assert.equal(stored.access_token, 'fresh-kimi-access');
-    assert.equal(stored.refresh_token, 'fresh-kimi-refresh');
-    assert.equal(stored.expires_in, 900);
-    assert.equal(typeof stored.expires_at, 'number');
-  } finally {
+  t.after(() => {
     globalThis.fetch = originalFetch;
     restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
-    restoreEnv('KIMI_SHARE_DIR', originalShareDir);
-  }
-});
+    restoreEnv('GROK_HOME', originalGrokHome);
+    restoreEnv('KIMI_SHARE_DIR', originalKimiShareDir);
+  });
+  const requests: RecordedRequest[] = [];
+  globalThis.fetch = (async (url, init) => {
+    const request = {
+      authorization: String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''),
+      method: init?.method ?? 'GET',
+      url: String(url),
+    };
+    requests.push(request);
+    return respond(request, path);
+  }) as typeof fetch;
+  return { path, requests };
+}
+
+for (const usageCase of readOnlyUsageCases) {
+  test(`${usageCase.name} usage never refreshes or rewrites expired credentials`, async (t) => {
+    const expired = usageCase.expiredToken();
+    const { path, requests } = await readOnlyUsageFixture(t, usageCase, expired, async () => usageCase.unauthorized());
+    const original = await readFile(path, 'utf8');
+
+    const result = await usageCase.fetchUsage();
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.error?.type, 'unauthorized');
+    assert.deepEqual(requests, [{ ...usageCase.usage, authorization: `Bearer ${expired}` }]);
+    assert.equal(await readFile(path, 'utf8'), original);
+  });
+
+  test(`${usageCase.name} usage adopts a token its CLI rotated during a 401`, async (t) => {
+    const rotated = `${usageCase.name.toLowerCase()}-cli-rotated-access`;
+    let rotatedFile = '';
+    const { path, requests } = await readOnlyUsageFixture(t, usageCase, 'stale-access', async (request, path) => {
+      if (request.authorization !== 'Bearer stale-access') return usageCase.available();
+      // The CLI refreshes and saves its new token while the first request is out.
+      rotatedFile = JSON.stringify(usageCase.credentials(rotated));
+      await writeFile(path, rotatedFile, 'utf8');
+      return usageCase.unauthorized();
+    });
+
+    const result = await usageCase.fetchUsage();
+    assert.equal(result.status, 'available');
+    assert.deepEqual(requests, [
+      { ...usageCase.usage, authorization: 'Bearer stale-access' },
+      { ...usageCase.usage, authorization: `Bearer ${rotated}` },
+    ]);
+    assert.equal(await readFile(path, 'utf8'), rotatedFile);
+  });
+}
 
 test('Claude usage never refreshes or rewrites expired credentials', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-claude-refresh-home-'));
@@ -1028,71 +1061,6 @@ test('Grok usage prefers first_name when email is absent and skips opaque ids', 
   }
 });
 
-test('Grok usage refreshes an expired access token before billing', async (t) => {
-  const home = await mkdtemp(join(tmpdir(), 'anima-grok-refresh-home-'));
-  t.after(() => rm(home, { force: true, recursive: true }));
-  await mkdir(join(home, '.grok'), { recursive: true });
-  const authPath = join(home, '.grok', 'auth.json');
-  const scope = 'https://auth.x.ai::test-client';
-  await writeFile(
-    authPath,
-    JSON.stringify({
-      [scope]: {
-        auth_mode: 'oidc',
-        email: 'operator@example.com',
-        expires_at: new Date(Date.now() - 60_000).toISOString(),
-        key: 'stale-grok-access',
-        oidc_client_id: 'test-client',
-        oidc_issuer: 'https://auth.x.ai',
-        refresh_token: 'old-grok-refresh',
-      },
-    }),
-    'utf8',
-  );
-
-  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
-  const originalFetch = globalThis.fetch;
-  const authorizations: string[] = [];
-  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
-  globalThis.fetch = (async (url, init) => {
-    const href = String(url);
-    if (href.includes('openid-configuration')) {
-      return jsonResponse({ token_endpoint: 'https://auth.x.ai/oauth/token' });
-    }
-    if (href === 'https://auth.x.ai/oauth/token') {
-      const body = String(init?.body);
-      assert.match(body, /grant_type=refresh_token/);
-      assert.match(body, /refresh_token=old-grok-refresh/);
-      assert.match(body, /client_id=test-client/);
-      return jsonResponse({
-        access_token: 'fresh-grok-access',
-        expires_in: 3600,
-        refresh_token: 'fresh-grok-refresh',
-      });
-    }
-    if (href.includes('GetGrokCreditsConfig')) {
-      authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
-      return new Response(GROK_BILLING_FIXTURE, {
-        headers: { 'content-type': 'application/grpc-web+proto' },
-        status: 200,
-      });
-    }
-    return new Response('unexpected', { status: 500 });
-  }) as typeof fetch;
-
-  try {
-    const result = await fetchGrokUsage();
-    assert.equal(result.status, 'available');
-    assert.deepEqual(authorizations, ['Bearer fresh-grok-access']);
-    const stored = JSON.parse(await readFile(authPath, 'utf8')) as Record<string, { key: string; refresh_token: string }>;
-    assert.equal(stored[scope]?.key, 'fresh-grok-access');
-    assert.equal(stored[scope]?.refresh_token, 'fresh-grok-refresh');
-  } finally {
-    globalThis.fetch = originalFetch;
-    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
-  }
-});
-
 test('Grok usage reports not_configured without auth.json', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-grok-empty-home-'));
   t.after(() => rm(home, { force: true, recursive: true }));
@@ -1116,77 +1084,6 @@ test('Grok billing parser rejects body trailer grpc-status 16 before accepting d
   const parsed = parseGrokBillingBytes(new Uint8Array(unauth));
   assert.equal(parsed.snapshot, undefined);
   assert.equal(parsed.error?.type, 'unauthorized');
-});
-
-test('Grok usage refreshes and retries after body trailer grpc-status 16', async (t) => {
-  const home = await mkdtemp(join(tmpdir(), 'anima-grok-trailer-auth-'));
-  t.after(() => rm(home, { force: true, recursive: true }));
-  await mkdir(join(home, '.grok'), { recursive: true });
-  const authPath = join(home, '.grok', 'auth.json');
-  const scope = 'https://auth.x.ai::test-client';
-  await writeFile(
-    authPath,
-    JSON.stringify({
-      [scope]: {
-        auth_mode: 'oidc',
-        email: 'operator@example.com',
-        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-        key: 'stale-access',
-        oidc_client_id: 'test-client',
-        oidc_issuer: 'https://auth.x.ai',
-        refresh_token: 'trailer-refresh',
-      },
-    }),
-    'utf8',
-  );
-
-  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
-  const originalFetch = globalThis.fetch;
-  const authorizations: string[] = [];
-  let billingCalls = 0;
-  let refreshCalls = 0;
-  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
-  globalThis.fetch = (async (url, init) => {
-    const href = String(url);
-    if (href.includes('openid-configuration')) {
-      return jsonResponse({ token_endpoint: 'https://auth.x.ai/oauth/token' });
-    }
-    if (href === 'https://auth.x.ai/oauth/token') {
-      refreshCalls += 1;
-      return jsonResponse({
-        access_token: 'refreshed-after-trailer',
-        expires_in: 3600,
-        refresh_token: 'trailer-refresh-2',
-      });
-    }
-    if (href.includes('GetGrokCreditsConfig')) {
-      billingCalls += 1;
-      authorizations.push(String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''));
-      if (billingCalls === 1) {
-        return new Response(new Uint8Array(withGrpcTrailerStatus(GROK_BILLING_FIXTURE, '16', 'unauthenticated')), {
-          headers: { 'content-type': 'application/grpc-web+proto' },
-          status: 200,
-        });
-      }
-      return new Response(new Uint8Array(GROK_BILLING_FIXTURE), {
-        headers: { 'content-type': 'application/grpc-web+proto' },
-        status: 200,
-      });
-    }
-    return new Response('unexpected', { status: 500 });
-  }) as typeof fetch;
-
-  try {
-    const result = await fetchGrokUsage();
-    assert.equal(result.status, 'available');
-    assert.equal(result.windows[0]?.usedPercent, 9);
-    assert.equal(billingCalls, 2);
-    assert.equal(refreshCalls, 1);
-    assert.deepEqual(authorizations, ['Bearer stale-access', 'Bearer refreshed-after-trailer']);
-  } finally {
-    globalThis.fetch = originalFetch;
-    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
-  }
 });
 
 test('Grok billing parser is fail-closed on unrelated fixed32 and accepts omitted 0%', () => {
