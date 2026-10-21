@@ -11,7 +11,8 @@ import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { ReminderInboxSubscriber } from '../inbox/reminder-subscriber.js';
 import { allActivities, loadAgentState, loadState } from './helpers/state.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
-import { reminderServiceForAgent } from '../reminders/reminder.service.js';
+import { ReminderService, reminderServiceForAgent } from '../reminders/reminder.service.js';
+import { ReminderStore } from '../storage/schema/reminder.store.js';
 import {
   REMINDER_SCHEDULE_EXAMPLES,
   reminderScheduleExampleCommand,
@@ -796,6 +797,73 @@ test('cancelReminder throws on missing id and snoozeReminder throws on cancelled
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+// Lets a fire land just before this store's first read or locked update, the
+// way the scheduler can complete a fire while a CLI cancel or snooze is in flight.
+class FireLandsFirstStore extends ReminderStore {
+  private landed = false;
+
+  constructor(private readonly fire: () => Promise<unknown>) {
+    super('scout');
+  }
+
+  override async find(reminderId: string) {
+    const found = await super.find(reminderId);
+    await this.fireOnce();
+    return found;
+  }
+
+  override async updateMatching(...args: Parameters<ReminderStore['updateMatching']>) {
+    await this.fireOnce();
+    return super.updateMatching(...args);
+  }
+
+  private async fireOnce(): Promise<void> {
+    if (this.landed) return;
+    this.landed = true;
+    await this.fire();
+  }
+}
+
+for (const action of ['cancel', 'snooze'] as const) {
+  test(`reminder ${action} keeps a fire that lands while it is in flight`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), `anima-reminder-${action}-race-`));
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const reminder = await reminderService.scheduleReminder({
+          instructions: 'Review course comments.',
+          now: new Date('2026-05-14T08:00:00.000Z'),
+          repeat: 'daily@09:00',
+          timezone: 'UTC',
+          title: 'Daily course review',
+        });
+        const racing = new ReminderService('scout', new FireLandsFirstStore(() => reminderService.completeReminderFire({
+          id: reminder.reminderId,
+          now: new Date('2026-05-14T09:00:05.000Z'),
+        })));
+        const now = new Date('2026-05-14T09:00:10.000Z');
+        const result = action === 'cancel'
+          ? await racing.cancelReminder({ id: reminder.reminderId, now })
+          : await racing.snoozeReminder({ by: '2h', id: reminder.reminderId, now });
+
+        const stored = await new ReminderStore('scout').find(reminder.reminderId);
+        for (const view of [result, stored]) {
+          assert.equal(view?.firedCount, 1, 'the fire that landed first was overwritten');
+          assert.equal(view?.lastFiredAt, '2026-05-14T09:00:05.000Z');
+        }
+        if (action === 'cancel') {
+          assert.equal(stored?.status, 'cancelled');
+          assert.equal(stored?.nextDueAt, undefined);
+        } else {
+          assert.equal(stored?.status, 'scheduled');
+          assert.equal(stored?.nextDueAt, '2026-05-14T11:00:10.000Z');
+        }
+      });
+    } finally {
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
 
 test('reminder scheduling rejects both initial-time options and accepts either with repeat', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-contract-'));

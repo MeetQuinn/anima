@@ -51,17 +51,6 @@ export class ReminderStore {
     return reminder;
   }
 
-  async update(reminder: Reminder): Promise<Reminder> {
-    await this.file.update((stored) => {
-      if (!stored[reminder.reminderId]) throw new Error(`Reminder not found: ${reminder.reminderId}`);
-      return {
-        ...stored,
-        [reminder.reminderId]: reminder,
-      };
-    });
-    return reminder;
-  }
-
   /**
    * Atomically read-modify-write one reminder under the JsonStore lock.
    * Return `null` from `mutate` to no-op (stale/CAS miss). Mutate must not
