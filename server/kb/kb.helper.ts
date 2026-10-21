@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join, posix } from 'node:path';
 
 import { kbFileExtension } from '../../shared/kb-file-types.js';
+import { PATH_SAFE_ID } from '../../shared/path-ids.js';
 import type { KbTreeNode, KbView } from '../../shared/kb.js';
 
 // Error carrying an HTTP status; the API layer translates `statusCode` to the
@@ -87,7 +88,7 @@ export async function sniffUnknownText(
 // KB per asset. Visibility rarely changes within a page load; staleness
 // self-heals on the next tick.
 export const CACHE_TTL_MS = 5_000;
-export const KB_ID = /^[A-Za-z0-9._-]+$/;
+export const KB_ID = PATH_SAFE_ID;
 
 export function normalizeRelPath(raw: string): string {
   if (!raw || raw.includes('\0') || raw.includes('\\') || raw.startsWith('/')) {

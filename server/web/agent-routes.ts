@@ -12,6 +12,7 @@ import { messageServiceForAgent } from '../messages/message.service.js';
 import { buildAgentChannelList } from './agent-channels.js';
 import { enrichInboundAvatars } from './message-profiles.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
+import { AGENT_ID } from '../storage/schema/agent.store.js';
 import {
   AgentAssignTeamRequest,
   AgentCreateRequest,
@@ -30,6 +31,19 @@ import { HttpError, queryParam } from './http.js';
 // ---------------------------------------------------------------------------
 
 const RotateSessionBody = z.object({ note: z.string().optional() });
+
+// Handlers turn :agentId into a directory under the Anima home, and the router
+// has already percent-decoded it (`..%2F..` arrives as `../..`). Refuse an id
+// that is not a valid agent id before any handler builds a path from it.
+// Register after the auth guard: preHandler hooks run in registration order,
+// and an unauthenticated caller should get 401, not a hint about the id.
+export function registerAgentIdGuard(fastify: FastifyInstance): void {
+  fastify.addHook('preHandler', async (request, reply) => {
+    const agentId = (request.params as { agentId?: unknown } | undefined)?.agentId;
+    if (agentId === undefined || (typeof agentId === 'string' && AGENT_ID.test(agentId))) return;
+    return reply.code(400).send({ error: 'invalid_agent_id' });
+  });
+}
 
 export function registerAgentRoutes(fastify: FastifyInstance): void {
   // -------------------------------------------------------------------------

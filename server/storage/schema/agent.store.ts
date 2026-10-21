@@ -9,8 +9,9 @@ import { join } from 'node:path';
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
 import { agentConfigSchema, type AgentConfig } from '../../../shared/agent-config.js';
+import { PATH_SAFE_ID } from '../../../shared/path-ids.js';
 
-export const AGENT_ID = /^[A-Za-z0-9._-]+$/;
+export const AGENT_ID = PATH_SAFE_ID;
 
 function getAgentConfigFileStore(agentId: string): JsonStore<AgentConfig> {
   return new JsonStore<AgentConfig>({

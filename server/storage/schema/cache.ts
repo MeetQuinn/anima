@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
+import { PATH_SAFE_ID } from '../../../shared/path-ids.js';
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
 
@@ -211,11 +212,11 @@ export const getFeishuFileCacheMetaStore = (fileId: string): JsonStore<Partial<F
   });
 
 export function feishuFileCacheDir(fileId: string): string {
-  return join(resolveAnimaHome(), 'cache', 'feishu', 'files', safeFeishuCacheSegment(fileId));
+  return join(resolveAnimaHome(), 'cache', 'feishu', 'files', safeCacheSegment(fileId));
 }
 
 export function slackFileCacheDir(teamId: string, fileId: string): string {
-  return join(resolveAnimaHome(), 'cache', 'slack', 'files', teamId, fileId);
+  return join(resolveAnimaHome(), 'cache', 'slack', 'files', safeCacheSegment(teamId), safeCacheSegment(fileId));
 }
 
 export const getSlackWorkspaceDirectoryStore = (teamId: string): JsonStore<SlackWorkspaceDirectoryFile> =>
@@ -229,9 +230,11 @@ export const getFeishuDirectoryStore = (directoryId: string): JsonStore<FeishuDi
   new JsonStore<FeishuDirectoryFile>({
     empty: () => ({ chats: [], directoryId, users: [] }),
     parse: (value) => FeishuDirectoryFileSchema.parse(value) as FeishuDirectoryFile,
-    path: () => join(resolveAnimaHome(), 'cache', 'feishu', 'tenants', safeFeishuCacheSegment(directoryId), 'directory.json'),
+    path: () => join(resolveAnimaHome(), 'cache', 'feishu', 'tenants', safeCacheSegment(directoryId), 'directory.json'),
   });
 
-function safeFeishuCacheSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'resource';
+// Ids from chat platforms and request URLs become one directory name each.
+function safeCacheSegment(value: string): string {
+  const segment = value.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '');
+  return PATH_SAFE_ID.test(segment) ? segment : 'resource';
 }

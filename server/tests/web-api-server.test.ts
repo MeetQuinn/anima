@@ -1,5 +1,6 @@
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { writeAgentConfigs } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -79,6 +80,63 @@ test('web API serves the web app and agents API', async () => {
     }
   });
   await rm(stateDir, { force: true, recursive: true });
+});
+
+test('agent and KB routes refuse ids that would leave their directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-web-path-ids-'));
+  const stateDir = join(root, 'home');
+  const outside = join(root, 'outside');
+  await mkdir(stateDir);
+  await mkdir(outside);
+  await writeAgentConfigs(stateDir);
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+        const base = `http://127.0.0.1:${address.port}`;
+        // fetch() would collapse a bare `%2e%2e` segment client-side, so the
+        // dot-segment forms go out as raw request lines.
+        const send = (method: string, path: string) =>
+          new Promise<{ status: number; body: string }>((resolve, reject) => {
+            const req = httpRequest({ host: '127.0.0.1', method, path, port: address.port }, (res) => {
+              let body = '';
+              res.on('data', (chunk) => (body += chunk));
+              res.on('end', () => resolve({ body, status: res.statusCode ?? 0 }));
+            });
+            req.on('error', reject);
+            if (method === 'POST') req.setHeader('content-type', 'application/json');
+            req.end(method === 'POST' ? '{}' : undefined);
+          });
+
+        for (const [method, path] of [
+          ['POST', '/api/agents/..%2F..%2Foutside/session/rotate'],
+          ['GET', '/api/agents/..%2F..%2Foutside/reminders'],
+          ['GET', '/api/agents/..%2F..%2Foutside/activities'],
+          ['GET', '/api/agents/%2e%2e/reminders'],
+          ['GET', '/api/agents/./reminders'],
+        ] as const) {
+          const res = await send(method, path);
+          assert.equal(res.status, 400, `${method} ${path}`);
+          assert.match(res.body, /invalid_agent_id/, `${method} ${path}`);
+        }
+        assert.deepEqual(await readdir(outside), [], 'nothing may be written outside the Anima home');
+
+        const valid = await fetch(`${base}/api/agents/anima/reminders`);
+        assert.equal(valid.status, 200, 'a real agent id still passes');
+
+        const kb = await send('GET', '/api/kbs/%2e%2e');
+        assert.equal(kb.status, 400, 'a KB id of `..` is refused');
+      } finally {
+        server.close();
+      }
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
 
 test('web API reports provider availability', async () => {
@@ -483,6 +541,7 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
           ['POST', '/%61pi/agents/anima/disable'],
           ['GET', '/%6bb/raw/test/docs/report.html'],
           ['GET', '/api/no-such-route'],
+          ['GET', '/api/agents/..%2F..%2Foutside/reminders'],
         ] as const) {
           const encoded = await fetch(`${base}${path}`, { method });
           await assertStatus(encoded, 401, `unauthenticated ${method} ${path}`);

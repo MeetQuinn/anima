@@ -26,9 +26,38 @@ import {
   providerCatalogEntry,
   reasoningEffortsForModel,
 } from '../../shared/provider-catalog.js';
+import { AGENT_ID } from '../storage/schema/agent.store.js';
+import { feishuFileCacheDir, slackFileCacheDir } from '../storage/schema/cache.js';
+import { KB_ID } from '../storage/schema/kb.store.js';
 import { withAnimaHome } from './anima-home.js';
 
 const agentService = (agentId: string) => defaultAgentRegistryService.serviceFor(agentId);
+
+test('agent and KB ids are one path segment, never `.` or `..`', async () => {
+  for (const id of ['milo', 'u-5c0f-7f8a', 'a.b', '...', 'A_1']) {
+    assert.ok(AGENT_ID.test(id), id);
+    assert.ok(KB_ID.test(id), id);
+  }
+  for (const id of ['.', '..', '', '../x', 'a/b', 'a\\b']) {
+    assert.ok(!AGENT_ID.test(id), id);
+    assert.ok(!KB_ID.test(id), id);
+  }
+
+  const home = await mkdtemp(join(tmpdir(), 'anima-path-ids-'));
+  try {
+    await withAnimaHome(home, async () => {
+      const slackRoot = join(home, 'cache', 'slack', 'files');
+      assert.equal(slackFileCacheDir('T0123', 'F0456'), join(slackRoot, 'T0123', 'F0456'), 'real ids are unchanged');
+      for (const [teamId, fileId] of [['T0123', '..'], ['T0123', '../../x'], ['..', '.'], ['T0123', '..%2F..']]) {
+        const dir = slackFileCacheDir(teamId!, fileId!);
+        assert.ok(dir.startsWith(`${slackRoot}/`) && !dir.slice(slackRoot.length).split('/').includes('..'), `${teamId}/${fileId} -> ${dir}`);
+      }
+      assert.equal(feishuFileCacheDir('..'), join(home, 'cache', 'feishu', 'files', 'resource'));
+    });
+  } finally {
+    await rm(home, { force: true, recursive: true });
+  }
+});
 
 test('agent creation accepts unicode-only display names with URL-safe generated ids', () => {
   assert.equal(agentIdFromName('小羊'), 'u-5c0f-7f8a');

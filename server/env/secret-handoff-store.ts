@@ -18,13 +18,13 @@ import {
   type HandoffSecretPayload,
 } from '../../shared/secret-handoff.js';
 import { withFileLock } from '../storage/lock.js';
+import { AGENT_ID } from '../storage/schema/agent.store.js';
 import {
   currentWriteRoot,
   ensureDirectoryUnderRoot,
 } from '../storage/write-root.js';
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{22}$/;
-const AGENT_ID = /^[A-Za-z0-9._-]+$/;
 const PRIVATE_KEY = /^[0-9a-f]{64}$/;
 const PERMISSION_PRIVATE = 0o600;
 const PERMISSION_DIR = 0o700;
