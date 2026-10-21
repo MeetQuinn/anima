@@ -105,6 +105,48 @@ test('child process termination escalates from SIGTERM to SIGKILL', async () => 
   assert.ok(Date.now() - startedAt < 1_000, 'termination should not wait for the ignored SIGTERM forever');
 });
 
+test('child process output keeps a character split across chunks whole', async () => {
+  // Each stream writes "a" or "b" and the first two bytes of a three-byte
+  // character, waits until the parent has read both, then writes the last byte.
+  const script = [
+    'process.stdout.write(Buffer.from([0x61, 0xe4, 0xbd]));',
+    'process.stderr.write(Buffer.from([0x62, 0xe5, 0xa5]));',
+    'process.stdin.once("data", () => {',
+    '  process.stdout.write(Buffer.from([0xa0, 0x0a]));',
+    '  process.stderr.write(Buffer.from([0xbd, 0x0a]));',
+    '  process.stdin.destroy();',
+    '});',
+  ].join('\n');
+  let streamedStdout = '';
+  let streamedStderr = '';
+  let resumed = false;
+  const resumeOnceBothRead = () => {
+    if (resumed || !streamedStdout.includes('a') || !streamedStderr.includes('b')) return;
+    resumed = true;
+    child.writeStdin('go\n');
+  };
+  const child = startChildProcess({
+    args: ['-e', script],
+    command: process.execPath,
+    env: process.env,
+    label: 'split character child',
+    onStderrChunk: async (chunk) => {
+      streamedStderr += chunk;
+      resumeOnceBothRead();
+    },
+    onStdoutChunk: async (chunk) => {
+      streamedStdout += chunk;
+      resumeOnceBothRead();
+    },
+  });
+
+  const { stderr, stdout } = await child.completion;
+  assert.equal(streamedStdout, 'a\u4f60\n');
+  assert.equal(streamedStderr, 'b\u597d\n');
+  assert.equal(stdout, 'a\u4f60\n');
+  assert.equal(stderr, 'b\u597d\n');
+});
+
 test('first-class anima CLI command detection covers plain agent-facing tools', () => {
   assert.equal(isFirstClassAnimaCliCommand('anima ask --question "Pick" --option A --option B'), true);
   assert.equal(isFirstClassAnimaCliCommand('ANIMA_AGENT_ID=scout anima reminder list'), true);

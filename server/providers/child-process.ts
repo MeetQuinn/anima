@@ -46,8 +46,12 @@ export function startChildProcess(input: {
     }
   }
 
-  const stdoutChunks: Buffer[] = [];
-  const stderrChunks: Buffer[] = [];
+  // Decode each stream as a whole, so a character split across two chunks
+  // reaches the chunk callbacks intact.
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
   let exitedAt: string | undefined;
   let exitCode: number | null | undefined;
   let exitSignal: NodeJS.Signals | null | undefined;
@@ -65,17 +69,15 @@ export function startChildProcess(input: {
         streamEffectError = error;
       });
   }
-  child.stdout?.on('data', (chunk: Buffer | string) => {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  child.stdout?.on('data', (chunk: string) => {
     lastStdoutAt = new Date().toISOString();
-    if (bufferOutput) stdoutChunks.push(buffer);
-    enqueueStreamEffect(input.onStdoutChunk ? () => input.onStdoutChunk?.(buffer.toString('utf8')) ?? Promise.resolve() : undefined);
+    if (bufferOutput) stdoutChunks.push(chunk);
+    enqueueStreamEffect(input.onStdoutChunk ? () => input.onStdoutChunk?.(chunk) ?? Promise.resolve() : undefined);
   });
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  child.stderr?.on('data', (chunk: string) => {
     lastStderrAt = new Date().toISOString();
-    if (bufferOutput) stderrChunks.push(buffer);
-    enqueueStreamEffect(input.onStderrChunk ? () => input.onStderrChunk?.(buffer.toString('utf8')) ?? Promise.resolve() : undefined);
+    if (bufferOutput) stderrChunks.push(chunk);
+    enqueueStreamEffect(input.onStderrChunk ? () => input.onStderrChunk?.(chunk) ?? Promise.resolve() : undefined);
   });
 
   const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
@@ -89,8 +91,8 @@ export function startChildProcess(input: {
   }).then(async (exit) => {
     await streamEffects;
 
-    const stdout = Buffer.concat(stdoutChunks).toString('utf8');
-    const stderr = Buffer.concat(stderrChunks).toString('utf8');
+    const stdout = stdoutChunks.join('');
+    const stderr = stderrChunks.join('');
     const exitError = childProcessExitError(input.label, exit, stdout, stderr);
     if (exitError) {
       if (streamEffectError) {

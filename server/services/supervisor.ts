@@ -256,6 +256,8 @@ async function psOutput(): Promise<string> {
     const child = spawn('ps', ['-axo', 'pid=,command='], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
       stdout += chunk;
     });
