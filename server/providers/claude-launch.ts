@@ -5,9 +5,14 @@ import type { AgentRuntimeInput, ClaudeCodeAgentProviderConfig } from './contrac
 
 export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 272000;
 export const CLAUDE_DISABLE_AUTO_MEMORY = '1';
+// Claude Code moves a subagent or MCP call that runs past about two minutes to
+// the background only in interactive sessions unless this is set. Anima keeps
+// the Claude process alive between items, so the result still arrives as a task
+// notification and Claude starts a turn for it; the agent isn't blocked meanwhile.
+export const CLAUDE_DEFAULT_AUTO_BACKGROUND_TASKS = '1';
 // Claude Code's own MCP tool timeout is about 28 hours. A stdio server that
-// stops answering is aborted only by its 30-minute idle check, which matches
-// Anima's idle timeout, and non-interactive runs don't background the call.
+// stops answering is aborted only by its 30-minute idle check, and a call in the
+// background keeps the agent's Claude process from going idle until it ends.
 // Ten minutes leaves room for slow tools; a server's own `timeout` still wins.
 export const CLAUDE_DEFAULT_MCP_TOOL_TIMEOUT_MS = 10 * 60 * 1000;
 export const CLAUDE_FAST_MODE_SETTINGS = JSON.stringify({ fastMode: true });
@@ -23,6 +28,7 @@ export const CLAUDE_DISALLOWED_TOOLS = [
 
 export function claudeProviderEnv(config: ClaudeCodeAgentProviderConfig): Record<string, string> {
   return {
+    CLAUDE_AUTO_BACKGROUND_TASKS: CLAUDE_DEFAULT_AUTO_BACKGROUND_TASKS,
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
     MCP_TOOL_TIMEOUT: String(CLAUDE_DEFAULT_MCP_TOOL_TIMEOUT_MS),
     ...(config.env ?? {}),
