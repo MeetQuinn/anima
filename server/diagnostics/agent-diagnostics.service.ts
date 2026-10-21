@@ -52,7 +52,10 @@ export async function buildAgentDiagnostics(agentId: string): Promise<AgentDiagn
         'raw queue text',
         'raw tool payloads',
       ],
-      logPolicy: 'Timestamps plus subsystem/error lines only; payload and message lines are omitted.',
+      logPolicy:
+        'Only lines that start with a timestamp and concern this agent or an error, restart, provider or health event. ' +
+        'Payload and message lines are omitted. Secrets are masked by shape (known token prefixes, URL credentials, ' +
+        'secret-named values, long token-like strings); other text is kept as logged.',
       mode: 'allowlist',
     },
     server: {
@@ -354,17 +357,35 @@ function logLineLooksUnsafe(line: string): boolean {
     || /\b(SLACK|FEISHU|ANTHROPIC|OPENAI|CODEX|KIMI)_[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)\b/i.test(line);
 }
 
+// Only records Anima itself wrote with a leading timestamp. A timestamp further
+// into a line marks a fragment of something else (a JSON dump, a field inside
+// free text), not a log record.
 function logTimestamp(line: string): string | undefined {
-  const match = line.match(/\[?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)\]?/);
+  const match = line.match(/^\[?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)\]?/);
   return match?.[1];
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Log text is free-form, so secrets are masked by shape. The last rule catches
+// tokens with no known prefix: any run of 32+ token characters that mixes
+// letters and digits, except a UUID (session and request ids).
 function scrubLogLine(line: string): string {
   return line
-    .replace(/xox[a-z]?-[A-Za-z0-9-]+/g, '<redacted-token>')
-    .replace(/xapp-[A-Za-z0-9-]+/g, '<redacted-token>')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer <redacted-token>')
-    .replace(/([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY)[A-Za-z0-9_]*)=\S+/gi, '$1=<redacted>');
+    .replace(/\b(?:xox[a-z]?|xapp)-[A-Za-z0-9-]+/g, '<redacted-token>')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '<redacted-token>')
+    .replace(/\blin_(?:api|oauth)_[A-Za-z0-9]+/g, '<redacted-token>')
+    .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g, '<redacted-token>')
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 <redacted-token>')
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1<redacted>@')
+    // A secret-named value, unless it is a plain count such as `input_tokens=300`.
+    .replace(
+      /([A-Za-z0-9_-]*(?:token|secret|password|passwd|key|authorization|cookie|credential)[A-Za-z0-9_-]*)(["']?\s*[:=]\s*["']?)([^\s"',;}]+)/gi,
+      (match, name: string, separator: string, value: string) =>
+        /^\d+$/.test(value) ? match : `${name}${separator}<redacted>`,
+    )
+    .replace(/[A-Za-z0-9_-]{32,}/g, (run) =>
+      /\d/.test(run) && /[A-Za-z]/.test(run) && !UUID.test(run) ? '<redacted>' : run);
 }
 
 function truncate(value: string, maxLength: number): string {
