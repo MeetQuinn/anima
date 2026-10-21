@@ -15,6 +15,7 @@ import {
   toolCallId,
   toolInput,
 } from './acp-updates.js';
+import { acpPermissionApprovalOptionId } from './acp-permissions.js';
 import { type RunningChildProcess } from './child-process.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
@@ -464,7 +465,7 @@ class GrokAcpController {
     if (method === 'session/request_permission') {
       this.rpc.respond(id, {
         outcome: {
-          optionId: grokPermissionApprovalOptionId(message) ?? 'approve_for_session',
+          optionId: acpPermissionApprovalOptionId(message) ?? 'approve_for_session',
           outcome: 'selected',
         },
       });
@@ -750,57 +751,6 @@ function isGrokSessionNotFoundError(error: unknown): boolean {
   return /(?:unknown|missing|not\s+found|no\s+such).{0,40}session|session.{0,40}(?:unknown|missing|not\s+found|no\s+such)|fs_not_found/i.test(
     error.message,
   );
-}
-
-function grokPermissionApprovalOptionId(message: Record<string, unknown>): string | undefined {
-  const params = isRecord(message['params']) ? message['params'] : undefined;
-  const options = Array.isArray(params?.['options']) ? params['options'].filter(isRecord) : [];
-  return (
-    findGrokPermissionOptionId(options, isAlwaysAllowGrokPermissionOption) ??
-    findGrokPermissionOptionId(options, isAllowGrokPermissionOption)
-  );
-}
-
-function findGrokPermissionOptionId(
-  options: Record<string, unknown>[],
-  predicate: (option: Record<string, unknown>) => boolean,
-): string | undefined {
-  for (const option of options) {
-    const optionId = grokPermissionOptionId(option);
-    if (!optionId) continue;
-    if (predicate(option)) return optionId;
-  }
-  return undefined;
-}
-
-function grokPermissionOptionId(option: Record<string, unknown>): string | undefined {
-  return stringField(option, 'optionId') ?? stringField(option, 'option_id') ?? stringField(option, 'id');
-}
-
-function isAlwaysAllowGrokPermissionOption(option: Record<string, unknown>): boolean {
-  const key = grokPermissionOptionKey(option);
-  return /\b(allow|approve)[_-]?(always|session)\b/.test(key) || /\b(always|session)[_-]?(allow|approve)\b/.test(key);
-}
-
-function isAllowGrokPermissionOption(option: Record<string, unknown>): boolean {
-  const key = grokPermissionOptionKey(option);
-  if (/\b(reject|deny|decline|cancel|disallow)\b/.test(key)) return false;
-  return /\b(allow|approve|accept|permit)\b/.test(key);
-}
-
-function grokPermissionOptionKey(option: Record<string, unknown>): string {
-  return [
-    grokPermissionOptionId(option),
-    stringField(option, 'kind'),
-    stringField(option, 'type'),
-    stringField(option, 'name'),
-    stringField(option, 'label'),
-    stringField(option, 'title'),
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, ' ');
 }
 
 function grokAcpInitializeEvent(result: Record<string, unknown> | undefined): Record<string, unknown> | undefined {

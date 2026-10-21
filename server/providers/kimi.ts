@@ -15,6 +15,7 @@ import {
   toolCallId,
   toolInput,
 } from './acp-updates.js';
+import { acpPermissionApprovalOptionId } from './acp-permissions.js';
 import {
   acpFollowupAppliedText,
   appendAcpFollowupPrompt,
@@ -397,7 +398,7 @@ class KimiAcpController {
     if (method === 'session/request_permission') {
       this.rpc.respond(id, {
         outcome: {
-          optionId: kimiPermissionApprovalOptionId(message) ?? 'approve_for_session',
+          optionId: acpPermissionApprovalOptionId(message) ?? 'approve_for_session',
           outcome: 'selected',
         },
       });
@@ -610,53 +611,6 @@ function isKimiSessionNotFoundError(error: unknown): boolean {
   if (!(error instanceof AcpJsonRpcError)) return false;
   if (error.method !== 'session/resume') return false;
   return /unknown\s+sessionid/i.test(error.message);
-}
-
-function kimiPermissionApprovalOptionId(message: Record<string, unknown>): string | undefined {
-  const params = isRecord(message['params']) ? message['params'] : undefined;
-  const options = Array.isArray(params?.['options']) ? params['options'].filter(isRecord) : [];
-  return (
-    findKimiPermissionOptionId(options, isAlwaysAllowKimiPermissionOption) ??
-    findKimiPermissionOptionId(options, isAllowKimiPermissionOption)
-  );
-}
-
-function findKimiPermissionOptionId(
-  options: Record<string, unknown>[],
-  predicate: (option: Record<string, unknown>) => boolean,
-): string | undefined {
-  for (const option of options) {
-    const optionId = kimiPermissionOptionId(option);
-    if (!optionId) continue;
-    if (predicate(option)) return optionId;
-  }
-  return undefined;
-}
-
-function kimiPermissionOptionId(option: Record<string, unknown>): string | undefined {
-  return stringField(option, 'optionId') ?? stringField(option, 'option_id') ?? stringField(option, 'id');
-}
-
-function isAlwaysAllowKimiPermissionOption(option: Record<string, unknown>): boolean {
-  const key = kimiPermissionOptionKey(option);
-  return /\b(allow|approve)[_-]?(always|session)\b/.test(key) || /\b(always|session)[_-]?(allow|approve)\b/.test(key);
-}
-
-function isAllowKimiPermissionOption(option: Record<string, unknown>): boolean {
-  const key = kimiPermissionOptionKey(option);
-  if (/\b(reject|deny|decline|cancel|disallow)\b/.test(key)) return false;
-  return /\b(allow|approve|accept|permit)\b/.test(key);
-}
-
-function kimiPermissionOptionKey(option: Record<string, unknown>): string {
-  return [
-    kimiPermissionOptionId(option),
-    stringField(option, 'kind'),
-    stringField(option, 'type'),
-    stringField(option, 'name'),
-    stringField(option, 'label'),
-    stringField(option, 'title'),
-  ].filter(Boolean).join(' ').toLowerCase().replace(/[^a-z0-9_-]+/g, ' ');
 }
 
 function kimiAcpInitializeEvent(result: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
