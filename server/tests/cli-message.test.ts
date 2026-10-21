@@ -1523,15 +1523,19 @@ test('reaction commands require --channel, --message-ts, and --name', async () =
   }
 });
 
-test('server preflights Socket Mode token before constructing the Slack app', async () => {
+test('server fails an agent start fast when Slack rejects the app token', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-server-slack-preflight-test-'));
+  let connectionOpens = 0;
   const slackApi = await startSlackApiMock((method) => {
     if (method === 'auth.test') return { ok: true, team: 'Demo', team_id: 'T-demo', user: 'scout', user_id: 'U-scout' };
     if (method === 'users.info') {
       return { ok: true, user: { id: 'U-scout', name: 'scout', profile: { display_name: 'Scout' } } };
     }
     if (method === 'team.info') return { ok: true, team: { id: 'T-demo', name: 'Demo' } };
-    if (method === 'apps.connections.open') return { error: 'invalid_auth', ok: false };
+    if (method === 'apps.connections.open') {
+      connectionOpens += 1;
+      return { error: 'invalid_auth', ok: false };
+    }
     throw new Error(`unexpected method ${method}`);
   });
   try {
@@ -1553,14 +1557,14 @@ test('server preflights Socket Mode token before constructing the Slack app', as
 
     const server = await runNodeUntilOutput([adminCliPath, '--agent', 'scout', 'server'], {
       env: { ...process.env, ANIMA_HOME: stateDir, ANIMA_SLACK_API_URL: slackApi.url },
-      match: /apps\.connections\.open failed/,
+      match: /Agent scout failed to start/,
       // Server cold-boot takes ~0.4s idle but has blown the default 5s deadline on a
       // heavily loaded machine (flakes only under parallel load, never isolated or in CI).
       // This is an until-match wait, so a generous ceiling adds no latency when fast.
       timeoutMs: 30_000,
     });
-    assert.match(server.stderr || server.stdout, /apps\.connections\.open failed/);
-    assert.doesNotMatch(server.stderr + server.stdout, /SocketModeClient/);
+    assert.match(server.stderr, /Agent scout failed to start: app token apps\.connections\.open failed: .*invalid_auth/);
+    assert.equal(connectionOpens, 1, 'a rejected app token is not retried');
   } finally {
     await slackApi.close();
     await rm(stateDir, { force: true, recursive: true });

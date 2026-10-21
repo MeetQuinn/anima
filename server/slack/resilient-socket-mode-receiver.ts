@@ -48,7 +48,14 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
 
   override async start(): Promise<AppsConnectionsOpenResponse> {
     this.stopping = false;
-    const outcome = await this.connectUntilStopped();
+    let outcome: SocketConnectOutcome;
+    try {
+      outcome = await this.connectUntilStopped();
+    } catch (error) {
+      // Only an unrecoverable apps.connections.open error gets here, and that
+      // call is the one that checks the app token.
+      throw new Error(`app token apps.connections.open failed: ${errorMessage(error)}`, { cause: error });
+    }
     if (outcome.kind === 'stopped') throw new Error('Slack Socket Mode startup stopped before connecting');
     this.started = true;
     return outcome.response;

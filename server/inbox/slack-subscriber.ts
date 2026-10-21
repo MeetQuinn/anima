@@ -3,10 +3,10 @@ import type { WebClient } from '@slack/web-api';
 
 import type { SlackInboxItem } from '../../shared/inbox.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
-import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
+import { agentSlackServiceForAgent, SLACK_DISPLAY_INFO_SYNC_TTL_MS } from '../agents/agent-slack.service.js';
 import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
 import { errorMessage, slackMessageEventId } from '../ids.js';
-import { createSlackWebClient, createSlackPreviewWebClient } from '../slack/client.js';
+import { createSlackWebClient, createSlackPreviewWebClient, slackWebClientOptions } from '../slack/client.js';
 import { ResilientSocketModeReceiver } from '../slack/resilient-socket-mode-receiver.js';
 import {
   SlackShortcutService,
@@ -36,6 +36,8 @@ import { WakeQueueService, type WakeQueueEnqueueResult } from './wake-queue.serv
 export interface SlackInboxSubscriberOptions {
   agentRuntimeKind: string;
   appToken: string;
+  /** Slack bot id from the start-time auth.test. */
+  botId?: string;
   /** Synced agent Slack bot user id — threaded from runtime start; never re-read from disk per event. */
   botUserId?: string;
   botToken: string;
@@ -70,9 +72,16 @@ export class SlackInboxSubscriber {
   private createApp(): App {
     const receiver = new ResilientSocketModeReceiver({
       appToken: this.options.appToken,
+      // Bolt hands these to the Socket Mode client's own Web API client, which
+      // makes the apps.connections.open call.
+      installerOptions: { clientOptions: slackWebClientOptions() },
       logLevel: LogLevel.INFO,
     });
+    const { botId, botUserId } = this.options;
     const app = new App({
+      // With both ids, Bolt skips its own auth.test; runtime start already ran one.
+      ...(botId && botUserId ? { botId, botUserId } : {}),
+      clientOptions: slackWebClientOptions(),
       ignoreSelf: true,
       logLevel: LogLevel.INFO,
       receiver,
@@ -250,7 +259,7 @@ export class SlackInboxSubscriber {
     if (this.botDisplayInfoSyncInFlight) return;
     this.botDisplayInfoSyncInFlight = true;
     agentSlackServiceForAgent(this.options.queue.agentId)
-      .syncDisplayInfoIfStale({ client, ttlMs: BOT_DISPLAY_INFO_SYNC_TTL_MS })
+      .syncDisplayInfoIfStale({ client, ttlMs: SLACK_DISPLAY_INFO_SYNC_TTL_MS })
       .catch((error: unknown) => {
         console.warn(`bot display-info sync failed: ${errorMessage(error)}`);
       })
@@ -259,11 +268,6 @@ export class SlackInboxSubscriber {
       });
   }
 }
-
-// Refresh the bot's own Slack display info at most once every 6h while handling
-// messages — frequent enough to pick up an avatar/name change soon after it
-// happens, rare enough to add no meaningful Slack API load.
-const BOT_DISPLAY_INFO_SYNC_TTL_MS = 6 * 60 * 60 * 1000;
 
 const SLACK_DIRECTORY_EVENTS = [
   'channel_archive',

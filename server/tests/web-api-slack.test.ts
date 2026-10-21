@@ -628,6 +628,69 @@ test('syncDisplayInfoIfStale refreshes once then throttles within the TTL', asyn
   }
 });
 
+test('runtime start syncs Slack display info only when it is stale or lacks the bot user id', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-start-sync-test-'));
+  const slackCalls: string[] = [];
+  const slackApi = await startSlackApiMock((method) => {
+    slackCalls.push(method);
+    if (method === 'auth.test') {
+      return { ok: true, team: 'Anima', team_id: 'T-demo', user_id: 'U-bot' };
+    }
+    if (method === 'users.info') {
+      return { ok: true, user: { id: 'U-bot', profile: { image_72: 'https://example.test/bot.png' } } };
+    }
+    if (method === 'team.info') {
+      return { ok: true, team: { id: 'T-demo', icon: { image_132: 'https://example.test/workspace.png' }, name: 'Anima' } };
+    }
+    throw new Error(`unexpected Slack API method ${method}`);
+  });
+  const previousSlackApiUrl = process.env.ANIMA_SLACK_API_URL;
+  process.env.ANIMA_SLACK_API_URL = slackApi.url;
+  try {
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    const old = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString();
+    const slack = { appToken: 'xapp-1-ADEMO123-secret', botToken: 'xoxb-secret-value' };
+    await writeAgentConfigs(stateDir, ['fresh', 'stale', 'no-user-id'].map((id) => ({ ...defaultAgentConfig(id), slack })));
+    await withAnimaHome(stateDir, async () => {
+      for (const [agentId, botProfileSyncedAt, botUserId] of [
+        ['fresh', recent, 'U-bot'],
+        ['stale', old, 'U-bot'],
+        ['no-user-id', recent, undefined],
+      ] as const) {
+        const config = await agentService(agentId).getConfig();
+        await agentService(agentId).saveConfig({
+          ...config,
+          slack: { ...config.slack, botProfileSyncedAt, ...(botUserId ? { botUserId } : {}) },
+        });
+      }
+      const fresh = await agentService('fresh').getConfig();
+      assert.equal(await agentSlackServiceForAgent('fresh').syncDisplayInfoForStart(fresh), fresh);
+      assert.deepEqual(slackCalls, []);
+
+      for (const agentId of ['stale', 'no-user-id']) {
+        slackCalls.length = 0;
+        const before = Date.now();
+        const synced = await agentSlackServiceForAgent(agentId)
+          .syncDisplayInfoForStart(await agentService(agentId).getConfig());
+        // team.info is cached per workspace, so only the first sync sends it.
+        assert.deepEqual(slackCalls.filter((method) => method !== 'team.info'), ['auth.test', 'users.info'], agentId);
+        assert.equal(synced.slack.botUserId, 'U-bot', agentId);
+        assert.equal(synced.slack.avatarUrl, 'https://example.test/bot.png', agentId);
+        assert.ok(Date.parse(synced.slack.botProfileSyncedAt ?? '') >= before, `${agentId} sync is stamped`);
+        assert.deepEqual((await agentService(agentId).getConfig()).slack, synced.slack, agentId);
+      }
+    });
+  } finally {
+    if (previousSlackApiUrl === undefined) {
+      delete process.env.ANIMA_SLACK_API_URL;
+    } else {
+      process.env.ANIMA_SLACK_API_URL = previousSlackApiUrl;
+    }
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('syncDisplayInfoIfStale does not clobber a concurrent config edit made mid-sync', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-sync-race-test-'));
   // Simulate an operator editing config (here: display name) WHILE the

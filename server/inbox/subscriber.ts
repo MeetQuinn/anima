@@ -9,6 +9,8 @@ export interface InboxSubscriberOptions {
   agentRuntimeKind: string;
   animaHome: string;
   appToken?: string;
+  /** Slack bot id from the start-time auth.test. */
+  botId?: string;
   /** Agent Slack bot user id from the synced start-time config (not re-read per event). */
   botUserId?: string;
   botToken?: string;
@@ -32,6 +34,7 @@ export class InboxSubscriber {
       ...(options.appToken && options.botToken ? [new SlackMessageTransport({
         agentRuntimeKind: options.agentRuntimeKind,
         appToken: options.appToken,
+        ...(options.botId ? { botId: options.botId } : {}),
         ...(options.botUserId ? { botUserId: options.botUserId } : {}),
         botToken: options.botToken,
         queue: options.queue,

@@ -17,6 +17,7 @@ import { withAnimaHome } from './anima-home.js';
 import { withTempAnimaHome, writeAgentConfigs, withTimeout } from './helpers/harness.js';
 import { SlackInboxSubscriber } from '../inbox/slack-subscriber.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
+import { bearerToken, startSlackApiMock } from './helpers/slack-api.js';
 
 interface FakeSlackCalls {
   api: string[];
@@ -605,4 +606,33 @@ test('ordinary messages and already attached previews do not create a preview cl
       assert.equal(item.previewStatus, undefined);
     }
   });
+});
+
+test('the Slack app skips its own auth.test only when start passes both bot ids', async () => {
+  const authTestTokens: string[] = [];
+  const slackApi = await startSlackApiMock((method, _body, request) => {
+    if (method !== 'auth.test') throw new Error(`unexpected Slack API method ${method}`);
+    authTestTokens.push(bearerToken(request));
+    return { ok: true, bot_id: 'B-bot', user_id: 'U-bot' };
+  });
+  const previousUrl = process.env.ANIMA_SLACK_API_URL;
+  process.env.ANIMA_SLACK_API_URL = slackApi.url;
+  try {
+    const options = { agentRuntimeKind: 'codex-cli', appToken: 'xapp-test-only', queue: new WakeQueueService('anima') };
+    // Bolt sends its auth.test from the constructor; none of these is started.
+    new SlackInboxSubscriber({ ...options, botId: 'B-bot', botToken: 'xoxb-both-ids', botUserId: 'U-bot' });
+    new SlackInboxSubscriber({ ...options, botToken: 'xoxb-user-id-only', botUserId: 'U-bot' });
+    new SlackInboxSubscriber({ ...options, botId: 'B-bot', botToken: 'xoxb-bot-id-only' });
+    for (let waited = 0; waited < 2_000 && authTestTokens.length < 2; waited += 10) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // All three constructors ran in the same tick, so a call from the first
+    // would have arrived with the other two.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(authTestTokens.sort(), ['xoxb-bot-id-only', 'xoxb-user-id-only']);
+  } finally {
+    if (previousUrl === undefined) delete process.env.ANIMA_SLACK_API_URL;
+    else process.env.ANIMA_SLACK_API_URL = previousUrl;
+    await slackApi.close();
+  }
 });
