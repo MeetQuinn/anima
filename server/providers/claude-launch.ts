@@ -5,9 +5,10 @@ import type { AgentRuntimeInput, ClaudeCodeAgentProviderConfig } from './contrac
 
 export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 272000;
 export const CLAUDE_DISABLE_AUTO_MEMORY = '1';
-// Claude Code waits on an MCP tool call until the server answers, so a hung
-// server stalls the whole turn until Anima's idle timeout. Ten minutes leaves
-// room for slow tools; a server's own `timeout` setting still wins.
+// Claude Code's own MCP tool timeout is about 28 hours. A stdio server that
+// stops answering is aborted only by its 30-minute idle check, which matches
+// Anima's idle timeout, and non-interactive runs don't background the call.
+// Ten minutes leaves room for slow tools; a server's own `timeout` still wins.
 export const CLAUDE_DEFAULT_MCP_TOOL_TIMEOUT_MS = 10 * 60 * 1000;
 export const CLAUDE_FAST_MODE_SETTINGS = JSON.stringify({ fastMode: true });
 export const CLAUDE_DISALLOWED_TOOLS = [

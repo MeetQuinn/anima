@@ -271,7 +271,7 @@ Current process model:
   speed. Provider result events remain the authority for the observed
   `fast_mode_state`.
 - The adapter sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000` by default to match Codex's current `gpt-5.5` context-window budget; agent config `provider.env` can override it.
-- The adapter sets `MCP_TOOL_TIMEOUT=600000` (10 minutes) by default. Claude Code otherwise waits on a hung MCP server until Anima's idle timeout ends the turn; with the limit, the call fails and the turn continues. Agent config `provider.env` can override it, and an MCP server's own `timeout` setting takes precedence for that server.
+- The adapter sets `MCP_TOOL_TIMEOUT=600000` (10 minutes) by default. Claude Code's own default is about 28 hours. A stdio server that stops answering is aborted only by Claude Code's 30-minute idle check, which matches Anima's idle timeout, and non-interactive runs don't move the call to the background. With the limit, the call fails after 10 minutes and the turn continues. For HTTP and SSE servers the value also raises Claude Code's per-request limit from 60 seconds to 10 minutes; their 5-minute idle check still applies. Agent config `provider.env` can override it, and an MCP server's own `timeout` setting takes precedence for that server.
 - The process stays alive across Anima items until abort or worker shutdown.
 
 Claude Code remains responsible for its native background tasks and async-hook auto-rewake. Anima
