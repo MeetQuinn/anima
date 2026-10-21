@@ -39,7 +39,7 @@ import {
   agentHealthDegradedText,
   agentHealthReasonText,
   agentHealthRecoveredFresh,
-} from '@/components/AgentHealthIndicator';
+} from '@/lib/agent-health';
 import { groupByAuthor } from '@/lib/message-model';
 import { EmptyMessage } from '@/components/EmptyMessage';
 import { DayLabelPill, SystemEventRow } from '@/components/TimelineRows';

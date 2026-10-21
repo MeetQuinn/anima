@@ -1,4 +1,10 @@
 {
+  // The shadcn CLI resolves components.json's `@/` aliases through this file.
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },

@@ -15,9 +15,9 @@ import type { AgentConfig } from '@shared/agent-config';
 // header doesn't carry - so it reads as the page's subject, not a repeat.
 // Health lives on the sidebar dot and the owner sits in the Setup ledger.
 //
-// Name and role stay inline-editable with the same begin/commit mechanics as
-// InlineTextRow, restyled to hero scale. Only the actively-editing field holds
-// a local draft, so a snapshot tick mid-edit cannot clobber it.
+// Name and role stay inline-editable at hero scale: begin copies the value into
+// a draft, commit saves it. Only the actively-editing field holds a local
+// draft, so a snapshot tick mid-edit cannot clobber it.
 
 function HeroEditable({
   value,

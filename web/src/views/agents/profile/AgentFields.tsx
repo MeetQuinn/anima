@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, X } from 'lucide-react';
 import {
   DEFAULT_REASONING_EFFORT,
   type ProviderAvailability,
   type ProviderCatalogEntry,
 } from '@shared/provider-catalog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import ConfirmModal from '@/components/ConfirmModal';
 import DirectoryPicker from '@/components/DirectoryPicker';
@@ -16,107 +14,6 @@ import { ANIMA_MANAGED_PROVIDER_ENV_KEYS } from '@shared/agent-config';
 import type { TeamConfig } from '@shared/server-settings';
 import { effortOptionsForSelectedModel } from '@/lib/provider-availability';
 export const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
-
-// ── InlineTextRow ─────────────────────────────────────────────────────────────
-
-// Inline-editable text row (Name / Description). View binds to snapshot; only the
-// actively-editing row holds a local draft, so a tick mid-edit cannot clobber.
-export function InlineTextRow({
-  label,
-  value,
-  placeholder,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  onCommit: (next: string) => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  const [saved, setSaved] = useState(false);
-
-  function begin() {
-    setDraft(value);
-    setError(undefined);
-    setSaved(false);
-    setEditing(true);
-  }
-
-  async function commit() {
-    if (busy) return;
-    if (draft === value) {
-      setEditing(false);
-      return;
-    }
-    setBusy(true);
-    setError(undefined);
-    try {
-      await onCommit(draft);
-      setEditing(false);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Field label={label}>
-      {editing ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            autoFocus
-            value={draft}
-            placeholder={placeholder}
-            disabled={busy}
-            onChange={(e) => setDraft(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void commit();
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                setEditing(false);
-              }
-            }}
-            className="h-8 w-64 max-w-full font-serif text-[15px]"
-          />
-          <Button size="sm" className="min-h-[44px] md:min-h-0" disabled={busy} onClick={() => void commit()}>
-            <Check />
-            {busy ? 'Saving…' : 'Save'}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="min-h-[44px] md:min-h-0"
-            disabled={busy}
-            onClick={() => setEditing(false)}
-          >
-            <X />
-            Cancel
-          </Button>
-          {error && <ErrorHint message={error} />}
-        </div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <EditAffordance onEdit={begin}>
-            {value ? (
-              <span className="block break-words font-serif text-[13px] md:text-[15px] text-text">{value}</span>
-            ) : (
-              <span className="font-serif italic text-[14px] text-text-subtle">{placeholder ?? '—'}</span>
-            )}
-          </EditAffordance>
-          {saved && <SavedHint />}
-        </div>
-      )}
-    </Field>
-  );
-}
 
 // ── WorkspacePickerModal ──────────────────────────────────────────────────────
 
