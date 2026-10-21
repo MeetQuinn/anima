@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { withFileLock } from './lock.js';
@@ -86,7 +86,8 @@ export class JsonFile<T> {
    * passes, since it re-parses each result) is written unless it serializes
    * to the bytes already on disk; then the mtime stays and every process's
    * cached copy stays valid. For a new object, a missing file is always
-   * written, and a store with a file mode always rewrites to reapply it.
+   * written. When the bytes match, a store with a file mode corrects the
+   * file's permissions in place rather than rewriting it.
    */
   async update(op: (current: T) => T | Promise<T>): Promise<T> {
     return withFileLock(this.path, this.writeRoot, async () => {
@@ -94,7 +95,10 @@ export class JsonFile<T> {
       const next = await op(current);
       if (next === current) return next;
       const serialized = serializeJson(next);
-      if (serialized === text && this.mode === undefined) return next;
+      if (serialized === text) {
+        if (this.mode !== undefined) await applyMode(this.path, this.mode);
+        return next;
+      }
       await writeAtomic(this.path, serialized, this.writeRoot, this.mode);
       await this.refreshCache(next);
       return next;
@@ -124,6 +128,14 @@ export class JsonFile<T> {
       throw error;
     }
     return { text, value: JSON.parse(text) as T };
+  }
+}
+
+async function applyMode(path: string, mode: number): Promise<void> {
+  try {
+    if (((await stat(path)).mode & 0o777) !== mode) await chmod(path, mode);
+  } catch (error) {
+    if (!isMissingFile(error)) throw error;
   }
 }
 
