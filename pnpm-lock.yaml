@@ -14,9 +14,6 @@ importers:
       '@larksuiteoapi/node-sdk':
         specifier: ^1.66.1
         version: 1.66.1
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@slack/bolt':
         specifier: ^4.7.2
         version: 4.7.2(@types/express@5.0.6)
@@ -93,9 +90,6 @@ importers:
       '@larksuiteoapi/node-sdk':
         specifier: ^1.66.1
         version: 1.66.1
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@slack/bolt':
         specifier: ^4.7.2
         version: 4.7.2(@types/express@5.0.6)
@@ -114,9 +108,6 @@ importers:
       fastify:
         specifier: ^5.8.5
         version: 5.8.5
-      ignore:
-        specifier: ^7.0.5
-        version: 7.0.5
       luxon:
         specifier: ^3.7.2
         version: 3.7.2
@@ -141,9 +132,6 @@ importers:
       '@larksuiteoapi/node-sdk':
         specifier: ^1.66.1
         version: 1.66.1
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@slack/bolt':
         specifier: ^4.7.2
         version: 4.7.2(@types/express@5.0.6)
@@ -287,9 +275,6 @@ importers:
       remark-math:
         specifier: ^6.0.0
         version: 6.0.0
-      shadcn:
-        specifier: ^4.7.0
-        version: 4.8.0(@types/node@24.12.3)(typescript@6.0.3)
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
@@ -339,6 +324,9 @@ importers:
       prettier:
         specifier: ^3.8.3
         version: 3.8.3
+      shadcn:
+        specifier: ^4.7.0
+        version: 4.8.0(@types/node@24.12.3)(typescript@6.0.3)
       tailwindcss:
         specifier: ^4.3.0
         version: 4.3.0
@@ -5700,28 +5688,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
-    dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.23)
-      ajv: 8.20.0
-      ajv-formats: 3.0.1(ajv@8.20.0)
-      content-type: 1.0.5
-      cors: 2.8.6
-      cross-spawn: 7.0.6
-      eventsource: 3.0.7
-      eventsource-parser: 3.0.8
-      express: 5.2.1
-      express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.23
-      jose: 6.2.3
-      json-schema-typed: 8.0.2
-      pkce-challenge: 5.0.1
-      raw-body: 3.0.2
-      zod: 4.4.3
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
-    transitivePeerDependencies:
-      - supports-color
-
   '@mswjs/interceptors@0.41.9':
     dependencies:
       '@open-draft/deferred-promise': 2.2.0
@@ -10161,10 +10127,6 @@ snapshots:
   zod-to-json-schema@3.25.2(zod@3.25.76):
     dependencies:
       zod: 3.25.76
-
-  zod-to-json-schema@3.25.2(zod@4.4.3):
-    dependencies:
-      zod: 4.4.3
 
   zod-validation-error@4.0.2(zod@4.4.3):
     dependencies:

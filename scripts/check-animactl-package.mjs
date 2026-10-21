@@ -39,9 +39,13 @@ async function checkRuntimeDependencies() {
     }
   }
 
-  if (missing.length > 0 || mismatched.length > 0) {
+  const extra = Object.keys(animactlDependencies)
+    .filter((name) => serverDependencies[name] === undefined)
+    .sort((a, b) => a.localeCompare(b));
+
+  if (missing.length > 0 || mismatched.length > 0 || extra.length > 0) {
     const lines = [
-      "packages/animactl publishes dist/server, so it must declare every server runtime dependency.",
+      "packages/animactl publishes dist/server, so it must declare exactly the server runtime dependencies.",
     ];
     if (missing.length > 0) {
       lines.push(
@@ -55,6 +59,13 @@ async function checkRuntimeDependencies() {
         "",
         "Version specifier mismatch:",
         ...mismatched.map((entry) => `  - ${entry}`),
+      );
+    }
+    if (extra.length > 0) {
+      lines.push(
+        "",
+        "Not a server dependency (remove from packages/animactl/package.json):",
+        ...extra.map((name) => `  - ${name}`),
       );
     }
     throw new Error(lines.join("\n"));
