@@ -14,9 +14,13 @@ import { buildCodeAgentDeliveryPrompt, renderSlackCursorExtras } from '../runtim
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { slackMessageContentForText } from '../tools/slack-message-format.js';
 import { withAnimaHome } from './anima-home.js';
-import { withTempAnimaHome, writeAgentConfigs, withTimeout } from './helpers/harness.js';
+import { defaultAgentConfig, withTempAnimaHome, writeAgentConfigs, withTimeout } from './helpers/harness.js';
+import { makeSlackEvent } from './helpers/slack.js';
+import { startRunningAgent } from '../runtime/agent-runner.js';
+import { TeamRunLimiter } from '../runtime/team-run-limiter.js';
 import { SlackInboxSubscriber } from '../inbox/slack-subscriber.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
+import { bearerToken, startSlackApiMock } from './helpers/slack-api.js';
 
 interface FakeSlackCalls {
   api: string[];
@@ -606,3 +610,96 @@ test('ordinary messages and already attached previews do not create a preview cl
     }
   });
 });
+
+test('the Slack app skips its own auth.test only when start passes both bot ids', async () => {
+  const authTestTokens: string[] = [];
+  const slackApi = await startSlackApiMock((method, _body, request) => {
+    if (method !== 'auth.test') throw new Error(`unexpected Slack API method ${method}`);
+    authTestTokens.push(bearerToken(request));
+    return { ok: true, bot_id: 'B-bot', user_id: 'U-bot' };
+  });
+  const previousUrl = process.env.ANIMA_SLACK_API_URL;
+  process.env.ANIMA_SLACK_API_URL = slackApi.url;
+  try {
+    const options = { agentRuntimeKind: 'codex-cli', appToken: 'xapp-test-only', queue: new WakeQueueService('anima') };
+    // Bolt sends its auth.test from the constructor; none of these is started.
+    new SlackInboxSubscriber({ ...options, botId: 'B-bot', botToken: 'xoxb-both-ids', botUserId: 'U-bot' });
+    new SlackInboxSubscriber({ ...options, botToken: 'xoxb-user-id-only', botUserId: 'U-bot' });
+    new SlackInboxSubscriber({ ...options, botId: 'B-bot', botToken: 'xoxb-bot-id-only' });
+    for (let waited = 0; waited < 2_000 && authTestTokens.length < 2; waited += 10) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // All three constructors ran in the same tick, so a call from the first
+    // would have arrived with the other two.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(authTestTokens.sort(), ['xoxb-bot-id-only', 'xoxb-user-id-only']);
+  } finally {
+    if (previousUrl === undefined) delete process.env.ANIMA_SLACK_API_URL;
+    else process.env.ANIMA_SLACK_API_URL = previousUrl;
+    await slackApi.close();
+  }
+});
+
+test('an agent start that Slack rejects leaves queued work unclaimed', async (t) => withTempAnimaHome(async (home) => {
+  t.mock.method(console, 'error', () => {});
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  const queue = new WakeQueueService('scout');
+  const queued = makeSlackEvent({ channelId: 'D-scout', teamId: 'T-demo', text: 'queued before restart', userId: 'U-human' });
+  await queue.enqueue(queued);
+  let runs = 0;
+  let connectionOpens = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', () => {
+      const method = new URL(request.url ?? '/', 'http://127.0.0.1').pathname.replace(/^\/api\//, '');
+      const reply = (body: object) => {
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+      };
+      if (method !== 'apps.connections.open') {
+        reply({ ok: true });
+        return;
+      }
+      connectionOpens += 1;
+      // Hold the rejection long enough for a worker started first to claim the item.
+      const heldAt = Date.now();
+      const hold = setInterval(() => {
+        if (runs === 0 && Date.now() - heldAt < 500) return;
+        clearInterval(hold);
+        reply({ error: 'invalid_auth', ok: false });
+      }, 10);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const previousUrl = process.env.ANIMA_SLACK_API_URL;
+  process.env.ANIMA_SLACK_API_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  try {
+    await assert.rejects(startRunningAgent({
+      agentId: 'scout',
+      agentRuntime: {
+        async appendToActiveRun() { return { accepted: false }; },
+        kind: 'counting',
+        async run() {
+          runs += 1;
+          return { text: 'done' };
+        },
+      },
+      animaHome: home,
+      appToken: 'xapp-rejected',
+      botId: 'B-scout',
+      botToken: 'xoxb-scout',
+      botUserId: 'U-scout',
+      homePath: join(home, 'agent-homes', 'scout'),
+      runLimiter: new TeamRunLimiter(),
+      runtimeEnv: {},
+      stateDir: home,
+    }), /apps\.connections\.open failed: .*invalid_auth/);
+    assert.equal(connectionOpens, 1);
+    assert.equal(runs, 0, 'the provider never ran');
+    assert.deepEqual((await queue.list()).map((item) => [item.id, item.handling.status]), [[queued.id, 'queued']]);
+  } finally {
+    if (previousUrl === undefined) delete process.env.ANIMA_SLACK_API_URL;
+    else process.env.ANIMA_SLACK_API_URL = previousUrl;
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}));

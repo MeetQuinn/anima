@@ -24,6 +24,6 @@ export function createSlackPreviewWebClient(token: string, signal: AbortSignal):
   });
 }
 
-function slackWebClientOptions(): WebClientOptions {
+export function slackWebClientOptions(): WebClientOptions {
   return process.env.ANIMA_SLACK_API_URL ? { slackApiUrl: process.env.ANIMA_SLACK_API_URL } : {};
 }

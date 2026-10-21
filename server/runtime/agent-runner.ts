@@ -26,6 +26,8 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
   animaHome: string;
   appToken?: string;
+  /** Slack bot id from the start-time auth.test. */
+  botId?: string;
   /** Synced Slack bot user id for mention routing (start-time authority). */
   botUserId?: string;
   botToken?: string;
@@ -108,6 +110,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     agentRuntimeKind: options.agentRuntime.kind,
     animaHome: options.animaHome,
     ...(options.appToken ? { appToken: options.appToken } : {}),
+    ...(options.botId ? { botId: options.botId } : {}),
     ...(options.botUserId ? { botUserId: options.botUserId } : {}),
     ...(options.botToken ? { botToken: options.botToken } : {}),
     ...(options.feishu ? { feishu: options.feishu } : {}),
@@ -115,8 +118,10 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     runtimeEnv: options.runtimeEnv,
   });
   try {
-    worker.start();
+    // Connect before claiming: a start that fails would otherwise abort the
+    // item it just claimed, and an aborted item is failed, not requeued.
     await startSubscriberWithTimeout(subscriber, options.startTimeoutMs);
+    worker.start();
   } catch (error) {
     await Promise.allSettled([
       subscriber.stop(),

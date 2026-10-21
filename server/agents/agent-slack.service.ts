@@ -131,7 +131,19 @@ export class AgentSlackService {
   }
 
   async syncDisplayInfo(): Promise<AgentConfig> {
-    return this.persistDisplayInfo(await getSlackDisplayInfo(await this.getWebClient()));
+    return this.persistDisplayInfo(await getSlackDisplayInfo(await this.getWebClient()), nowIso());
+  }
+
+  /**
+   * Runtime start: returns `agent` as is when its display info was synced
+   * within the TTL and has the bot user id, and syncs otherwise. The running
+   * subscriber keeps the info fresh, so most restarts make no Slack calls here.
+   */
+  async syncDisplayInfoForStart(agent: AgentConfig): Promise<AgentConfig> {
+    if (agent.slack.botUserId && isWithinTtl(agent.slack.botProfileSyncedAt, SLACK_DISPLAY_INFO_SYNC_TTL_MS)) {
+      return agent;
+    }
+    return this.syncDisplayInfo();
   }
 
   /**
@@ -276,6 +288,11 @@ export class AgentSlackService {
   }
 
 }
+
+// Refresh the bot's own Slack display info at most once every 6h: frequent
+// enough to pick up an avatar or name change soon after it happens, rare enough
+// to add no meaningful Slack API load.
+export const SLACK_DISPLAY_INFO_SYNC_TTL_MS = 6 * 60 * 60 * 1000;
 
 export function agentSlackServiceForAgent(agentId: string): AgentSlackService {
   return new AgentSlackService(new AgentService(agentId));

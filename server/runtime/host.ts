@@ -1056,7 +1056,7 @@ async function syncSlackDisplayInfoForRuntimeStart(
   agent: AgentConfig,
 ): Promise<AgentConfig> {
   if (!agent.slack.connected || !agent.slack.botToken) return agent;
-  return agentSlackServiceForAgent(agent.id).syncDisplayInfo();
+  return agentSlackServiceForAgent(agent.id).syncDisplayInfoForStart(agent);
 }
 
 async function startAgentFromConfig(
@@ -1066,7 +1066,8 @@ async function startAgentFromConfig(
 ): Promise<RunningAgentHandle> {
   await validateRunnableAgentConfig(agent);
   const server = runtimeServerConfigForAgent(agent);
-  if (server.slack) await validateSlackConnectionForStart(agent.id, server.slack);
+  const slackBot = server.slack ? await slackBotIdentityForStart(agent.id, server.slack.botToken) : undefined;
+  const slackBotUserId = slackBot?.botUserId ?? server.slack?.botUserId;
   const managedEnv = await managedProviderEnvForAgent(agent, animaHome, server.slack?.botToken);
   const runtimeEnv = {
     ...(server.runtime.env ?? {}),
@@ -1095,7 +1096,8 @@ async function startAgentFromConfig(
       ? {
           appToken: server.slack.appToken,
           botToken: server.slack.botToken,
-          ...(server.slack.botUserId ? { botUserId: server.slack.botUserId } : {}),
+          ...(slackBot?.botId ? { botId: slackBot.botId } : {}),
+          ...(slackBotUserId ? { botUserId: slackBotUserId } : {}),
         }
       : {}),
     feishu: server.feishu,
@@ -1224,19 +1226,22 @@ function stableValue(value: unknown): unknown {
   );
 }
 
-async function validateSlackConnectionForStart(
+// Checks the bot token and returns the bot's ids. They are current even when
+// the start skipped the display-info sync, and with both Bolt skips its own
+// auth.test. The app token is checked when the socket connects: Slack's
+// rejection of it fails the start without retrying.
+async function slackBotIdentityForStart(
   agentId: string,
-  server: { appToken: string; botToken: string },
-): Promise<void> {
+  botToken: string,
+): Promise<{ botId?: string; botUserId?: string }> {
   try {
-    await createSlackWebClient(server.botToken).auth.test();
+    const result = await createSlackWebClient(botToken).auth.test();
+    return {
+      ...(result.bot_id ? { botId: result.bot_id } : {}),
+      ...(result.user_id ? { botUserId: result.user_id } : {}),
+    };
   } catch (error) {
     throw new Error(`Agent ${agentId}: bot token auth.test failed: ${errorMessage(error)}`);
-  }
-  try {
-    await createSlackWebClient(server.appToken).apps.connections.open({});
-  } catch (error) {
-    throw new Error(`Agent ${agentId}: app token apps.connections.open failed: ${errorMessage(error)}`);
   }
 }
 
