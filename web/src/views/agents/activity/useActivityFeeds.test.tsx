@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -63,6 +63,7 @@ describe('useActivityFeeds live tail', () => {
   });
   afterEach(() => {
     client.clear();
+    focusManager.setFocused(undefined);
     vi.useRealTimers();
   });
 
@@ -131,6 +132,37 @@ describe('useActivityFeeds live tail', () => {
     expect(limits.filter(([, kind]) => kind === 'older').every(([limit]) => limit === 500)).toBe(true);
     expect(limits.filter(([, kind]) => kind === 'first').every(([limit]) => limit === 100)).toBe(true);
     expect(result.current.activityQuery.hasNextPage).toBe(true);
+  });
+
+  it('does not re-fetch loaded pages on window focus or remount', async () => {
+    const log: Activity[] = [];
+    for (let m = 0; m < 700; m += 1) log.push(activity(`a${m}`, iso(m)));
+    activitiesMock.mockImplementation(activityServer(() => log));
+    const first = renderHook(() => useActivityFeeds('nora'), { wrapper });
+    await waitFor(() => expect(first.result.current.activitiesData?.events.length).toBe(100));
+    await act(async () => {
+      await first.result.current.activityQuery.fetchNextPage();
+    });
+    await waitFor(() => expect(first.result.current.activitiesData?.events.length).toBe(600));
+    const loaded = activitiesMock.mock.calls.length;
+    const olderPageCalls = () => activitiesMock.mock.calls.slice(loaded).filter(([, , before]) => before !== undefined);
+
+    await act(async () => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    // Old behaviour (red control): focus re-fetched both loaded pages, the
+    // older one with its `before` cursor.
+    expect(olderPageCalls()).toEqual([]);
+
+    first.unmount();
+    const second = renderHook(() => useActivityFeeds('nora'), { wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(second.result.current.activitiesData?.events.length).toBe(600);
+    expect(olderPageCalls()).toEqual([]);
   });
 
   it('keeps the merged events reference-stable across an unchanged poll', async () => {

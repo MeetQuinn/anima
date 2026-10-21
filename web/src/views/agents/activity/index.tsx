@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -95,16 +95,19 @@ function StepsDisclosure({
   count,
   expanded,
   onToggle,
+  ref,
 }: {
   count: number;
   expanded: boolean;
   onToggle: () => void;
+  ref?: Ref<HTMLButtonElement>;
 }) {
   // Tap target grew from ~20px to ~32px: the padding is the hit area and the
   // negative margins cancel it out of the layout, so the label sits exactly
   // where the old px-1 py-0.5 version did in the dense timeline.
   return (
     <button
+      ref={ref}
       type="button"
       onClick={onToggle}
       aria-expanded={expanded}
@@ -132,6 +135,8 @@ function StepList({ steps }: { steps: Extract<ActivityFeedItem, { kind: 'step' }
 // A folded run of non-special steps in its chronological slot. The disclosure
 // sits at the message gutter; the body animates open/closed via the grid
 // 0fr/1fr height trick (overflow-hidden child). `motion-reduce` opts out.
+// A collapsed body stays mounted at zero height, so `inert` takes its rows out
+// of the tab order and the accessibility tree until the fold is opened.
 function StepFold({
   steps,
   expanded,
@@ -141,12 +146,24 @@ function StepFold({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const disclosureRef = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // The live fold also shuts on its own when its run completes. If keyboard
+  // focus is on one of its rows then, `inert` would drop it to <body> and the
+  // next Tab would restart from the top of the page, so hand it to the toggle.
+  useLayoutEffect(() => {
+    if (!expanded && bodyRef.current?.contains(document.activeElement)) {
+      disclosureRef.current?.focus();
+    }
+  }, [expanded]);
   return (
     <StepGutter>
-      <StepsDisclosure count={steps.length} expanded={expanded} onToggle={onToggle} />
+      <StepsDisclosure ref={disclosureRef} count={steps.length} expanded={expanded} onToggle={onToggle} />
       <div
+        ref={bodyRef}
         className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
         style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
+        inert={!expanded}
       >
         <div className="overflow-hidden">
           <StepList steps={steps} />
