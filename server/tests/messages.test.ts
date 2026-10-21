@@ -1,5 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { WebClient } from "@slack/web-api";
+
+import { withAnimaHome } from "../anima-home.js";
 
 import { slackMessagePreviewsFromAttachments } from "../slack/message-previews.js";
 import {
@@ -7,7 +13,7 @@ import {
   slackVisibleMessageText,
   withCanonicalSlackVisibleText,
 } from "../slack/message-text.js";
-import { slackTranscriptOutput } from "../tools/slack-transcript.js";
+import { slackTranscriptOutput, slackTranscriptUserLabels } from "../tools/slack-transcript.js";
 import {
   slackBareUrlAutolink,
   slackEmphasisFlanking,
@@ -501,6 +507,49 @@ test("Slack transcript lines decode Slack HTML escapes", () => {
     { hasMore: false, nextCursor: "" },
   );
   assert.match(output, /A & B, x < y, literal &gt; stays/);
+});
+
+test("Slack transcript lines read a long post from its block, not the cut fallback text", () => {
+  const body = `${"a long agent update line. ".repeat(200)}then <@U0NORA> and the end`;
+  const content = slackMessageContentForText(body);
+  assert.ok(!content.text.includes("the end"), "fallback text is cut");
+  const output = slackTranscriptOutput(
+    [{ blocks: content.blocks, bot_id: "B-milo", text: content.text, ts: "1770000200.000003", user: "U-milo" }],
+    { channel: "D-milo", limit: 1 },
+    {
+      actors: new Map([["U-milo", "@milo"]]),
+      channelMentions: new Map(),
+      timezones: new Map(),
+      userMentions: new Map([["U0NORA", "nora"]]),
+    },
+    { hasMore: false, nextCursor: "" },
+  );
+  assert.ok(output.includes(`@milo: ${"a long agent update line. ".repeat(200)}then @nora and the end`));
+});
+
+test("Slack transcript labels cover mentions that only a block carries", async () => {
+  const content = slackMessageContentForText(`${"x".repeat(4000)} <@U0NORA>`);
+  assert.ok(!content.text.includes("U0NORA"), "fallback text is cut");
+  const stateDir = await mkdtemp(join(tmpdir(), "anima-transcript-labels-"));
+  try {
+    const looked: string[] = [];
+    const client = {
+      users: {
+        info: async ({ user }: { user: string }) => {
+          looked.push(user);
+          return { ok: true, user: { id: user, name: "nora", profile: { display_name: "Nora" } } };
+        },
+      },
+    } as unknown as WebClient;
+    const labels = await withAnimaHome(stateDir, () => slackTranscriptUserLabels(
+      [{ blocks: content.blocks, text: content.text, ts: "1770000200.000004" }],
+      client,
+    ));
+    assert.deepEqual(looked, ["U0NORA"]);
+    assert.ok(labels.userMentions.has("U0NORA"));
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test("Slack markdown block ends lists and quotes before a plain line", () => {
