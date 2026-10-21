@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -142,6 +142,29 @@ test('concurrent server settings edits all survive', async () => {
       assert.equal(config.dashboardAuth?.sessionTtlHours, 72);
       assert.deepEqual(config.teams?.map((team) => team.id).sort(), ['alpha', 'beta', 'default']);
     });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+test('server and agent config files are saved owner-only', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-config-mode-test-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [{ id: 'milo', homePath: 'agents/milo', provider: { kind: 'codex-cli' } }],
+    });
+    const serverPath = join(configDir, 'config.json');
+    const agentPath = join(configDir, 'agents', 'milo', 'config.json');
+    await chmod(serverPath, 0o644);
+    await chmod(agentPath, 0o644);
+
+    await withAnimaHome(configDir, async () => {
+      await defaultServerSettingsService.setReleaseTrack('canary');
+      await agentService('milo').setEnabled(false);
+    });
+
+    assert.equal((await stat(serverPath)).mode & 0o777, 0o600);
+    assert.equal((await stat(agentPath)).mode & 0o777, 0o600);
   } finally {
     await rm(configDir, { force: true, recursive: true });
   }

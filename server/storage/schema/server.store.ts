@@ -64,6 +64,8 @@ export class ServerConfigStore {
 
   private readonly file = new JsonStore<ServerConfig>({
     empty: () => ({}),
+    // Owner-only, like the agent configs: it holds the dashboard auth settings.
+    mode: 0o600,
     parse: ServerConfig.parse,
     path: () => join(this.animaHome ?? resolveAnimaHome(), 'config.json'),
     // Same authority as path(). Deriving the root separately would let a store

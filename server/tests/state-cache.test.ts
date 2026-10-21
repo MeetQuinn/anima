@@ -528,6 +528,36 @@ test('JsonFile update leaves the file untouched when a new object has the same b
   }
 });
 
+test('JsonFile update with a file mode corrects permissions without rewriting same bytes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-update-mode-'));
+  try {
+    const path = join(dir, 'value.json');
+    const file = new JsonFile<{ count: number }>(path, () => ({ count: 0 }), dir, 0o600);
+    await file.write({ count: 1 });
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+
+    // A file left with looser permissions, by an older version or by hand.
+    await chmod(path, 0o644);
+    const warmMtime = new Date(1_700_000_000_000);
+    await utimes(path, warmMtime, warmMtime);
+    const before = await stat(path);
+
+    await file.update((current) => ({ ...current }));
+    const after = await stat(path);
+    assert.equal(after.mode & 0o777, 0o600);
+    assert.equal(after.mtimeMs, before.mtimeMs, 'an equal value must not rewrite the file');
+    assert.equal(after.ino, before.ino, 'an equal value must not replace the file');
+
+    // A changed value is written with the mode.
+    await chmod(path, 0o644);
+    await file.update(() => ({ count: 2 }));
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.deepEqual(await file.read(), { count: 2 });
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
 test('JsonFile update with a file mode still rewrites an equal value to reapply the mode', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-jsonfile-update-mode-'));
   try {

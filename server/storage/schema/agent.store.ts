@@ -16,6 +16,8 @@ export const AGENT_ID = PATH_SAFE_ID;
 function getAgentConfigFileStore(agentId: string): JsonStore<AgentConfig> {
   return new JsonStore<AgentConfig>({
     empty: () => agentConfigSchema(agentId).parse({}),
+    // Owner-only, since it can hold Slack tokens.
+    mode: 0o600,
     parse: (value) => agentConfigSchema(agentId).parse(value),
     path: () => agentConfigPath(agentId),
   });
