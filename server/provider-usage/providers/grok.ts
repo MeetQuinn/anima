@@ -203,14 +203,22 @@ async function fetchGrokBilling(
       BILLING_TIMEOUT_MS,
     );
 
+    // Carry the HTTP status, as the shared fetch helper does: a 429 or 5xx lets the
+    // usage service keep showing the last good reading, marked stale.
     if (response.status === 401 || response.status === 403) {
       return {
-        error: usageError('unauthorized', 'Grok session expired or invalid. Run `grok login` to refresh credentials.'),
+        error: {
+          ...usageError('unauthorized', 'Grok session expired or invalid. Run `grok login` to refresh credentials.'),
+          status: response.status,
+        },
       };
     }
     if (!response.ok) {
       return {
-        error: usageError('unknown', `Grok billing request failed with HTTP ${response.status}`),
+        error: {
+          ...usageError('unknown', `Grok billing request failed with HTTP ${response.status}`),
+          status: response.status,
+        },
       };
     }
 

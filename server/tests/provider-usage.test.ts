@@ -797,6 +797,65 @@ test('provider usage service force refresh bypasses TTL cache', async () => {
   assert.equal(calls, 2);
 });
 
+test('Grok usage keeps the last good reading on a 5xx, but not on a 401', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-grok-usage-status-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
+  await mkdir(join(home, '.grok'), { recursive: true });
+  await writeFile(
+    join(home, '.grok', 'auth.json'),
+    JSON.stringify({
+      'https://auth.x.ai::test-client': {
+        auth_mode: 'oidc',
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        key: 'grok-access-token',
+        oidc_client_id: 'test-client',
+        oidc_issuer: 'https://auth.x.ai',
+      },
+    }),
+    'utf8',
+  );
+  const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
+  const originalGrokHome = process.env.GROK_HOME;
+  const originalFetch = globalThis.fetch;
+  process.env.ANIMA_PROVIDER_USAGE_HOME = home;
+  delete process.env.GROK_HOME;
+  const statuses = [200, 503, 401];
+  globalThis.fetch = (async () => {
+    const status = statuses.shift() ?? 500;
+    return status === 200
+      ? new Response(GROK_BILLING_FIXTURE, { headers: { 'content-type': 'application/grpc-web+proto' }, status })
+      : new Response('', { status });
+  }) as typeof fetch;
+  let nowMs = Date.parse('2026-08-01T04:00:00.000Z');
+  const service = new ProviderUsageService([{
+    fetch: async () => [await fetchGrokUsage()],
+    label: 'Grok',
+    provider: 'grok-cli',
+    source: 'private-api',
+  }], { cacheTtlMs: 30_000, failureTtlMs: 5_000, log: () => undefined, now: () => nowMs, staleMaxAgeMs: 60_000 });
+
+  try {
+    assert.equal((await service.list()).providers[0]?.status, 'available');
+
+    nowMs += 31_000;
+    const unavailable = (await service.list()).providers[0];
+    assert.equal(unavailable?.status, 'available');
+    assert.equal(unavailable?.stale, true);
+    assert.equal(unavailable?.windows[0]?.usedPercent, 9);
+
+    const rejected = (await service.list({ force: true })).providers[0];
+    assert.equal(rejected?.status, 'unavailable');
+    assert.equal(rejected?.error?.type, 'unauthorized');
+    assert.equal(rejected?.error?.status, 401);
+    assert.equal(rejected?.stale, undefined);
+    assert.equal(statuses.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv('ANIMA_PROVIDER_USAGE_HOME', originalHome);
+    restoreEnv('GROK_HOME', originalGrokHome);
+  }
+});
+
 test('provider usage service serves recent last-good data for a transient failure', async () => {
   let calls = 0;
   let nowMs = Date.parse('2026-08-01T04:00:00.000Z');
