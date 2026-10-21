@@ -103,27 +103,27 @@ export class ServerSettingsService {
     return config.workspacePlatform ?? 'slack';
   }
 
+  // Every setter changes its own key inside store.update, under the file lock,
+  // so it never writes back a copy that predates another key's edit.
   async setReleaseTrack(releaseTrack: ReleaseTrack): Promise<ReleaseTrack> {
-    const config = await this.store.read();
-    await this.store.write({ ...config, releaseTrack, track: releaseTrack });
+    await this.store.update((current) => ({ ...current, releaseTrack, track: releaseTrack }));
     return releaseTrack;
   }
 
   async setSidebarOrder(sidebarOrder: SidebarOrder): Promise<SidebarOrder> {
-    const config = await this.store.read();
-    await this.store.write({ ...config, sidebarOrder });
+    await this.store.update((current) => ({ ...current, sidebarOrder }));
     return sidebarOrder;
   }
 
-  async setTeams(teams: TeamConfig[]): Promise<TeamConfig[]> {
-    const config = await this.store.read();
-    await this.store.write({ ...config, teams });
-    return teams;
+  // `change` gets the persisted team list and runs inside the lock, so checks
+  // against the list (an id or name already taken) see the latest teams.
+  async updateTeams(change: (persisted: TeamConfig[]) => TeamConfig[]): Promise<TeamConfig[]> {
+    const config = await this.store.update((current) => ({ ...current, teams: change(current.teams ?? []) }));
+    return config.teams ?? [];
   }
 
   async setDashboardAuth(dashboardAuth: DashboardAuth): Promise<DashboardAuth> {
-    const config = await this.store.read();
-    await this.store.write({ ...config, dashboardAuth });
+    await this.store.update((current) => ({ ...current, dashboardAuth }));
     return dashboardAuth;
   }
 
@@ -173,8 +173,7 @@ export class ServerSettingsService {
   }
 
   async setWorkspacePlatform(workspacePlatform: WorkspacePlatform): Promise<WorkspacePlatform> {
-    const config = await this.store.read();
-    await this.store.write({ ...config, workspacePlatform });
+    await this.store.update((current) => ({ ...current, workspacePlatform }));
     return workspacePlatform;
   }
 }

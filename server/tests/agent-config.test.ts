@@ -118,6 +118,35 @@ test('concurrent partial edits to one agent config all survive', async () => {
   }
 });
 
+test('concurrent server settings edits all survive', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-settings-race-test-'));
+  try {
+    await writeConfig(configDir, { agents: [] });
+
+    await withAnimaHome(configDir, async () => {
+      // Each setter rewrites the whole config.json. A setter that saved a copy
+      // read before another edit landed would put the old values back.
+      await Promise.all([
+        defaultServerSettingsService.setReleaseTrack('canary'),
+        defaultServerSettingsService.setSidebarOrder({ agents: ['milo'] }),
+        defaultServerSettingsService.setWorkspacePlatform('feishu'),
+        defaultServerSettingsService.setDashboardAuth({ enabled: false, sessionTtlHours: 72 }),
+        defaultTeamService.createTeam({ name: 'Alpha' }),
+        defaultTeamService.createTeam({ name: 'Beta' }),
+      ]);
+
+      const config = await defaultServerSettingsService.readConfig();
+      assert.equal(config.releaseTrack, 'canary');
+      assert.deepEqual(config.sidebarOrder, { agents: ['milo'] });
+      assert.equal(config.workspacePlatform, 'feishu');
+      assert.equal(config.dashboardAuth?.sessionTtlHours, 72);
+      assert.deepEqual(config.teams?.map((team) => team.id).sort(), ['alpha', 'beta', 'default']);
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
 test('agent store lists and gets agent configs', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-profile-test-'));
   try {

@@ -56,16 +56,19 @@ function normalizeHome(rawHome: string): string {
   return trimmed.replace(/\/+$/, '') || trimmed;
 }
 
+// Effective team list: the persisted registry with the default team guaranteed present and
+// pinned first. Absent/empty config yields exactly `[default]`, so N=1 is the norm.
+function effectiveTeams(persisted: TeamConfig[]): TeamConfig[] {
+  const withoutDefault = persisted.filter((team) => team.id !== DEFAULT_TEAM_ID);
+  const persistedDefault = persisted.find((team) => team.id === DEFAULT_TEAM_ID);
+  return [persistedDefault ?? defaultTeam(), ...withoutDefault];
+}
+
 export class TeamService {
   constructor(private readonly settings: ServerSettingsService = defaultServerSettingsService) {}
 
-  // Effective team list: the persisted registry with the default team guaranteed present and
-  // pinned first. Absent/empty config yields exactly `[default]`, so N=1 is the norm.
   async listTeams(): Promise<TeamConfig[]> {
-    const persisted = await this.settings.getTeams();
-    const withoutDefault = persisted.filter((team) => team.id !== DEFAULT_TEAM_ID);
-    const persistedDefault = persisted.find((team) => team.id === DEFAULT_TEAM_ID);
-    return [persistedDefault ?? defaultTeam(), ...withoutDefault];
+    return effectiveTeams(await this.settings.getTeams());
   }
 
   async getTeam(teamId: string): Promise<TeamConfig | undefined> {
@@ -129,18 +132,19 @@ export class TeamService {
       throw new TeamServiceError(409, `"${DEFAULT_TEAM_ID}" is reserved for the default team`);
     }
 
-    const teams = await this.listTeams();
-    if (teams.some((team) => team.id === id)) {
-      throw new TeamServiceError(409, `team already exists: ${id}`);
-    }
-
     // Default a new team's KB root to a sibling `~/<id>` tree; operators can override.
     const home = normalizeHome(input.home ?? `~/${id}`);
     const created: TeamConfig = { id, name, home };
 
     // Persist the FULL effective list (including the now-materialized default team) so the
     // registry becomes explicit the moment a second team exists.
-    await this.settings.setTeams([...teams, created]);
+    await this.settings.updateTeams((persisted) => {
+      const teams = effectiveTeams(persisted);
+      if (teams.some((team) => team.id === id)) {
+        throw new TeamServiceError(409, `team already exists: ${id}`);
+      }
+      return [...teams, created];
+    });
     return created;
   }
 
@@ -153,27 +157,30 @@ export class TeamService {
     teamId: string,
     patch: { name?: string; home?: string },
   ): Promise<TeamConfig> {
-    const teams = await this.listTeams();
-    const existing = teams.find((team) => team.id === teamId);
-    if (!existing) throw new TeamServiceError(404, `unknown team: ${teamId}`);
+    const saved = await this.settings.updateTeams((persisted) => {
+      const teams = effectiveTeams(persisted);
+      const existing = teams.find((team) => team.id === teamId);
+      if (!existing) throw new TeamServiceError(404, `unknown team: ${teamId}`);
 
-    const nextName = patch.name !== undefined ? patch.name.trim() : existing.name;
-    if (!nextName) throw new TeamServiceError(400, 'team name must not be empty');
+      const nextName = patch.name !== undefined ? patch.name.trim() : existing.name;
+      if (!nextName) throw new TeamServiceError(400, 'team name must not be empty');
 
-    // Guard against two teams sharing a display name (confusing in the switcher). The id is not
-    // affected by a rename, so this is a UX guard, not a correctness one.
-    const nameClash = teams.some(
-      (team) => team.id !== teamId && team.name.trim().toLowerCase() === nextName.toLowerCase(),
-    );
-    if (nameClash) throw new TeamServiceError(409, `a team named "${nextName}" already exists`);
+      // Guard against two teams sharing a display name (confusing in the switcher). The id is not
+      // affected by a rename, so this is a UX guard, not a correctness one.
+      const nameClash = teams.some(
+        (team) => team.id !== teamId && team.name.trim().toLowerCase() === nextName.toLowerCase(),
+      );
+      if (nameClash) throw new TeamServiceError(409, `a team named "${nextName}" already exists`);
 
-    const nextHome = patch.home !== undefined ? normalizeHome(patch.home) : existing.home;
+      const nextHome = patch.home !== undefined ? normalizeHome(patch.home) : existing.home;
+      const next: TeamConfig = { id: existing.id, name: nextName, home: nextHome };
 
-    const updated: TeamConfig = { id: existing.id, name: nextName, home: nextHome };
-
-    // Persist the FULL effective list with this team replaced. If the default team was still
-    // synthesized, mapping over the effective list materializes it (same as createTeam).
-    await this.settings.setTeams(teams.map((team) => (team.id === teamId ? updated : team)));
+      // Persist the FULL effective list with this team replaced. If the default team was still
+      // synthesized, mapping over the effective list materializes it (same as createTeam).
+      return teams.map((team) => (team.id === teamId ? next : team));
+    });
+    const updated = saved.find((team) => team.id === teamId);
+    if (!updated) throw new TeamServiceError(404, `unknown team: ${teamId}`);
     return updated;
   }
 }
