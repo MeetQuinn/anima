@@ -304,20 +304,24 @@ test('#524 buildWebApp registers the guards in the order the contract requires',
   assert.doesNotThrow(() => buildWebApp().close());
 });
 
-test('#524 the governed table matches on method and path, and ignores the query string', () => {
+test('#524 the governed table matches on method and the matched route pattern', () => {
   assert.ok(governedRouteFor('POST', '/api/services/restart'));
   assert.ok(governedRouteFor('GET', '/api/provider-usage'));
-  assert.ok(governedRouteFor('GET', '/api/provider-usage?refresh=1'));
-  assert.ok(governedRouteFor('GET', '/api/provider-usage/claude-code'));
+  assert.ok(governedRouteFor('GET', '/api/provider-usage/:provider'));
   assert.ok(governedRouteFor('HEAD', '/api/provider-usage'), 'HEAD must normalize to GET');
-  assert.ok(governedRouteFor('POST', '/api/provider-cli-status/claude-code/apply'));
+  assert.ok(governedRouteFor('POST', '/api/provider-cli-status/:provider/apply'));
   assert.ok(governedRouteFor('PUT', '/api/provider-runtime-commands'));
   assert.ok(governedRouteFor('PUT', '/api/provider-context-limits'));
-  assert.ok(governedRouteFor('POST', '/api/provider-login/codex-cli'));
-  assert.ok(governedRouteFor('DELETE', '/api/provider-login/codex-cli'));
+  assert.ok(governedRouteFor('POST', '/api/provider-login/:provider'));
+  assert.ok(governedRouteFor('DELETE', '/api/provider-login/:provider'));
   // Host-path writers, proven in Milo's inventory and re-derived from the property.
   assert.ok(governedRouteFor('POST', '/api/filesystem/mkdir'));
   assert.ok(governedRouteFor('POST', '/api/agents'));
+
+  // The input is the route pattern, never a request path: no route matched, or a
+  // concrete path, governs nothing here. Request-level tests cover concrete paths.
+  assert.equal(governedRouteFor('POST', undefined), undefined);
+  assert.equal(governedRouteFor('GET', '/api/provider-usage/claude-code'), undefined);
 
   // Ungoverned: reads that do not cross the ANIMA_HOME boundary.
   assert.equal(governedRouteFor('GET', '/api/health'), undefined);
@@ -335,15 +339,35 @@ test('#524 the governed table matches on method and path, and ignores the query 
   // Reads the provider's own `login status`; the CLI reports, it does not sign in.
   assert.equal(governedRouteFor('GET', '/api/provider-login'), undefined);
   // The `check` routes take no machine-wide lease and write nothing.
-  assert.equal(governedRouteFor('POST', '/api/provider-cli-status/claude-code/check'), undefined);
+  assert.equal(governedRouteFor('POST', '/api/provider-cli-status/:provider/check'), undefined);
   // Method matters: the governed set is not "every POST".
   assert.equal(governedRouteFor('POST', '/api/provider-usage'), undefined);
 
   // CONSIDERED AND EXCLUDED: ensureExistingAgentHome() stats the path and throws
   // unless it is already a directory. It validates; it does not create. Over-blocking
   // is a failure too — a guard that refuses more than it can justify gets routed around.
-  assert.equal(governedRouteFor('POST', '/api/agents/nora/home'), undefined);
+  assert.equal(governedRouteFor('POST', '/api/agents/:agentId/home'), undefined);
   assert.equal(governedRouteFor('GET', '/api/agents'), undefined);
+});
+
+test('#524 read-only ON: encoded and query-string forms of a governed path are refused too', async () => {
+  const fastify = inertApp(true);
+  await fastify.ready();
+  // The router percent-decodes before matching, so each of these reaches a governed
+  // handler. The guard must decide on the matched route, not on the raw path.
+  const variants: Array<[string, string]> = [
+    ['PUT', '/%61pi/provider-runtime-commands'],
+    ['PUT', '/api/provider-runtime-%63ommands'],
+    ['POST', '/api/provider-login/%63odex-cli'],
+    ['GET', '/api/provider-usage?refresh=1'],
+    ['GET', '/%61pi/provider-usage/claude-code'],
+  ];
+  for (const [method, url] of variants) {
+    const response = await fastify.inject({ method: method as 'GET', url });
+    assert.equal(response.statusCode, 403, `${method} ${url} must be refused in a read-only runtime`);
+    assert.equal((response.json() as { error?: string }).error, READ_ONLY_REFUSAL);
+  }
+  await fastify.close();
 });
 
 test('#524 ANIMA_READ_ONLY parsing: default off, explicit on', () => {
@@ -691,6 +715,6 @@ test('#524 the credential-writing GETs are governed (machine scope is not "is a 
   assert.ok(usage, 'GET /api/provider-usage rewrites machine-user OAuth credentials and must be governed');
   assert.match(usage.evidence, /credential/i);
 
-  const perProvider = governedRouteFor('GET', '/api/provider-usage/claude-code');
+  const perProvider = governedRouteFor('GET', '/api/provider-usage/:provider');
   assert.ok(perProvider, 'the per-provider usage GET has the same refresh-and-write path');
 });

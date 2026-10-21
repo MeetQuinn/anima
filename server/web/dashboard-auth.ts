@@ -85,7 +85,11 @@ export function registerDashboardAuthGuard(
   fastify.decorate(DASHBOARD_AUTH_GUARD_MARKER, true);
 
   fastify.addHook('preHandler', async (request, reply) => {
-    const path = routePath(request.url);
+    // Decide on the route the router matched, not on the raw request path. The router
+    // percent-decodes the path, so `/%61pi/agents` reaches the `/api/agents` handler
+    // while its raw path does not start with `/api/`. Unmatched requests fall back to
+    // the raw path, so an unknown `/api/...` path still answers 401 before 404.
+    const path = request.routeOptions.url ?? routePath(request.url);
     if (!path.startsWith('/api/') && !path.startsWith('/kb/raw/')) return;
     if (isPublicApiPath(path)) return;
     if (await authService.isRequestAuthenticated(request.headers)) return;
