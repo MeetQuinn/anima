@@ -4,13 +4,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  createHandoffKeyPair,
-  createHandoffRequest,
-  encodeHandoffRequest,
-  encryptSealedHandoffSecret,
-} from '../../shared/secret-handoff.js';
-import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
+import { encryptSealedHandoffSecret } from '../../shared/secret-handoff.js';
 import { runNode } from './helpers/run-node.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
@@ -241,48 +235,29 @@ test('env handoff CLI transfers one sealed secret between agents and chooses the
     ], { env: envFor('milo') });
     assert.equal(replace.status, 0, replace.stderr || replace.stdout);
 
-    const legacyKeys = createHandoffKeyPair();
-    const legacyRequest = createHandoffRequest({
-      recipientAgentId: 'milo',
-      targetKey: 'LEGACY_TOKEN',
-      purpose: 'Complete an in-flight request after upgrade',
-      sender: { kind: 'agent', agentId: 'nora' },
-      expiresAt: new Date(Date.now() + 10 * 60_000),
-      publicKey: legacyKeys.publicKey,
-    });
-    await new SecretHandoffPendingStore('milo', stateDir).create(
-      legacyRequest,
-      legacyKeys.privateKey,
-    );
-    const wrongLegacySender = await runNode([
+    const oldRequest = await runNode([
       cliPath,
       'env',
       'handoff',
       'send',
-      encodeHandoffRequest(legacyRequest),
-      '--from-key',
-      'MISSING_TOKEN',
-    ], { env: envFor('aria') });
-    assert.equal(wrongLegacySender.status, 1);
-    assert.match(wrongLegacySender.stderr, /expects sender nora/);
-    assert.doesNotMatch(wrongLegacySender.stderr, /MISSING_TOKEN/);
-    const legacySend = await runNode([
-      cliPath,
-      'env',
-      'handoff',
-      'send',
-      encodeHandoffRequest(legacyRequest),
+      'asec_req_v1_e30',
       '--from-key',
       'SOURCE_TOKEN',
     ], { env: envFor('nora') });
-    assert.equal(legacySend.status, 0, legacySend.stderr || legacySend.stdout);
-    const legacyBox = extractHandoffCode(legacySend.stdout, 'asec_box_v1_');
-    const legacyAccept = await runNode(
-      [cliPath, 'env', 'handoff', 'accept', legacyBox],
-      { env: envFor('milo') },
-    );
-    assert.equal(legacyAccept.status, 0, legacyAccept.stderr || legacyAccept.stdout);
-    assert.match(legacyAccept.stdout, /key=LEGACY_TOKEN/);
+    assert.equal(oldRequest.status, 1);
+    assert.match(oldRequest.stderr, /Expected asec_key_v1_ handoff code/);
+    assert.doesNotMatch(oldRequest.stdout, new RegExp(specimen));
+    const oldBox = await runNode([
+      cliPath,
+      'env',
+      'handoff',
+      'accept',
+      'asec_box_v1_e30',
+      '--key',
+      'OLD_TOKEN',
+    ], { env: envFor('milo') });
+    assert.equal(oldBox.status, 1);
+    assert.match(oldBox.stderr, /Expected asec_sealed_v1_ handoff code/);
 
     const retiredRequest = await runNode([
       cliPath,
@@ -298,7 +273,7 @@ test('env handoff CLI transfers one sealed secret between agents and chooses the
   }
 });
 
-test('env handoff CLI bounds expiry, cancels sealed keys, and routes legacy ids by full shape', async () => {
+test('env handoff CLI bounds expiry and cancels sealed keys', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-env-cancel-handoff-test-'));
   const env = { ...process.env, ANIMA_AGENT_ID: 'milo', ANIMA_HOME: stateDir };
   try {
@@ -346,27 +321,6 @@ test('env handoff CLI bounds expiry, cancels sealed keys, and routes legacy ids 
       assert.equal(invalid.status, 1, `${expiry}: ${invalid.stderr || invalid.stdout}`);
       assert.match(invalid.stderr, /Expiry must/);
     }
-
-    const legacyId = `s_${'a'.repeat(20)}`;
-    const legacyKeys = createHandoffKeyPair();
-    const legacyRequest = createHandoffRequest({
-      requestId: legacyId,
-      recipientAgentId: 'milo',
-      targetKey: 'LEGACY_TOKEN',
-      purpose: 'Verify full-shape cancel routing',
-      sender: { kind: 'agent', agentId: 'nora' },
-      expiresAt: new Date(Date.now() + 10 * 60_000),
-      publicKey: legacyKeys.publicKey,
-    });
-    await new SecretHandoffPendingStore('milo', stateDir).create(
-      legacyRequest,
-      legacyKeys.privateKey,
-    );
-    const legacyCancel = await runNode(
-      [cliPath, 'env', 'handoff', 'cancel', legacyId],
-      { env },
-    );
-    assert.equal(legacyCancel.status, 0, legacyCancel.stderr || legacyCancel.stdout);
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
