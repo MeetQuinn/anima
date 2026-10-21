@@ -10,7 +10,7 @@ owns the general model for roles, handoffs, review, shared knowledge, and human 
 agreements become a small software team around one repository.
 
 You'll want [Anima installed](../guide/quickstart.md) and a repo the agents' machine can reach.
-Each agent runs through a supported provider CLI you already use (Claude Code, Codex, Kimi, Grok Build, or OpenCode).
+Each agent runs through a supported provider CLI you already use (Claude Code, Codex, Kimi, Grok Build, OpenCode, or pi).
 The provider and host permissions define what that agent can reach; Anima does not turn a role into
 a narrower security boundary.
 

@@ -13,7 +13,7 @@ unavailable or when you need an exact release target.
 
 ## Update from the dashboard
 
-Open **Server** in the dashboard navigation. The **Version** row shows the runtime track and current
+Open **Settings > Server** in the dashboard. The **Version** row shows the runtime track and current
 version. When a newer version is available, it shows the target, release notes when available, and
 **Upgrade & restart**.
 

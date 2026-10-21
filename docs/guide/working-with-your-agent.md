@@ -27,9 +27,10 @@ Agents on this host connected to this workspace will not DM or @mention these pe
 
 Here, “unaffected” means channel messages without a mention of a listed person; mentions in channel threads are refused too. Group DMs are refused if any member is listed. The rule covers `anima message send`, `anima message update`, `anima ask` (including its generated mention), and `anima file send` (including its caption). Literal mention tokens inside code do not count as mentions.
 
-Open **Server → Do not contact** in the dashboard. Select a Slack workspace if
-more than one is connected, then choose **Add member** and search by name or
-`@username`. Check the member ID before confirming, especially for duplicate
+Open **Settings > Outreach limits** in the dashboard. Each connected Slack
+workspace has its own list. Choose **+** (Add a person) on that workspace's list,
+search by name or `@username`, and confirm with **Add member**. Check the member
+ID before confirming, especially for duplicate
 names. Removal also asks for confirmation because it lifts the restriction.
 
 Anima selects a configured connection in that workspace and verifies its token's

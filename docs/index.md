@@ -83,7 +83,7 @@ titleTemplate: AI teammates in your Slack
         <p class="landing-setup-k">you bring</p>
         <ul>
           <li>a Mac or Linux machine you control, with Node 22.13+ or 24+</li>
-          <li>one agent CLI, installed and signed in: Claude Code, Codex, Kimi Code, Grok Build, or OpenCode</li>
+          <li>one agent CLI, installed and signed in: Claude Code, Codex, Kimi Code, Grok Build, OpenCode, or pi</li>
           <li>a Slack workspace, or a Feishu tenant, where you can add an app</li>
         </ul>
       </div>
