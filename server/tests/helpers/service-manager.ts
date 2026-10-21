@@ -87,8 +87,10 @@ export async function writeFakeServiceManager(
 export async function runAnimactlWith(
   args: string[],
   env: NodeJS.ProcessEnv,
+  options: { cwd?: string } = {},
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
   const child = spawn(process.execPath, [resolve('dist/server/cli/animactl.js'), ...args], {
+    ...(options.cwd ? { cwd: options.cwd } : {}),
     env: {
       ...process.env,
       ANIMA_AGENT_ID: '',
