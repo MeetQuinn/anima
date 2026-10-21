@@ -1,4 +1,4 @@
-import fsPromises, { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import fsPromises, { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1962,7 +1962,11 @@ test('Slack DM and channel events share one primary session', async () => {
   }
 });
 
-test('activitiesForInboxItemWindow uses a bounded rotated activity scan for recent items', async () => {
+test('activitiesForInboxItemWindow uses a bounded rotated activity scan for recent items', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('root ignores file modes');
+    return;
+  }
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-item-activity-window-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -2007,8 +2011,10 @@ test('activitiesForInboxItemWindow uses a bounded rotated activity scan for rece
       const oldestArchive = (await readdir(archiveDir))
         .sort((a, b) => a.localeCompare(b))[0];
       assert.ok(oldestArchive);
-      await writeFile(join(archiveDir, oldestArchive), '{not-json}\n', 'utf8');
-      await assert.rejects(activityServiceForAgent('anima').readAll(), SyntaxError);
+      // An archive the window scan must not open: reading it fails.
+      await writeFile(join(archiveDir, oldestArchive), '\n', 'utf8');
+      await chmod(join(archiveDir, oldestArchive), 0o000);
+      await assert.rejects(activityServiceForAgent('anima').readAll(), { code: 'EACCES' });
 
       assert.deepEqual(await activitiesForInboxItemWindow('anima', recentItem.id), reference);
     });

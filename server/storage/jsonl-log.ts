@@ -1,4 +1,4 @@
-import { appendFile, open, readFile, readdir, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
+import { open, readFile, readdir, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import { cacheDelete, cacheHit, cachePeek, cacheSet, isMissingFile, statOrNull } from './json-file.js';
@@ -32,9 +32,29 @@ const TAIL_PROBE_BYTES = 64 * 1024;
 /** The next window covers the missing rows at the measured length, times this. */
 const TAIL_WINDOW_MARGIN = 1.25;
 
+function nonBlankLines(text: string): string[] {
+  return text.split(/\r?\n/).filter((line) => line.trim() !== '');
+}
+
+/**
+ * One record per line. A line that is not valid JSON is skipped: a writer
+ * died partway through an append (later appends start on a new line, so the
+ * damage stays on that line), or a reader caught an append in progress.
+ */
+function parseRecords<T>(lines: string[]): T[] {
+  const records: T[] = [];
+  for (const line of lines) {
+    try {
+      records.push(JSON.parse(line) as T);
+    } catch {
+      // Skipped; see above.
+    }
+  }
+  return records;
+}
+
 function parseLines<T>(bytes: Buffer): T[] {
-  return bytes.toString('utf8').split(/\r?\n/)
-    .filter((s) => s.trim() !== '').map((s) => JSON.parse(s) as T);
+  return parseRecords<T>(nonBlankLines(bytes.toString('utf8')));
 }
 
 /**
@@ -86,8 +106,7 @@ export class JsonlAppendLog<T> {
     return withFileLock(this.path, this.writeRoot, async () => {
       const record = build();
       await this.rotateIfNeeded();
-      await ensureParentDirectory(this.path, this.writeRoot);
-      await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
+      await this.appendLines(`${JSON.stringify(record)}\n`);
       cacheDelete(this.path);
       return record;
     });
@@ -101,8 +120,7 @@ export class JsonlAppendLog<T> {
         return { appended: false };
       }
       await this.rotateIfNeeded();
-      await ensureParentDirectory(this.path, this.writeRoot);
-      await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
+      await this.appendLines(`${JSON.stringify(record)}\n`);
       await this.refreshCache([...records, record]);
       return { appended: true };
     });
@@ -117,8 +135,7 @@ export class JsonlAppendLog<T> {
       const recentRecords = await this.readTailFromDisk(recentLimit);
       if (!shouldAppend(recentRecords)) return { appended: false };
       await this.rotateIfNeeded();
-      await ensureParentDirectory(this.path, this.writeRoot);
-      await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
+      await this.appendLines(`${JSON.stringify(record)}\n`);
       cacheDelete(this.path);
       return { appended: true };
     });
@@ -141,8 +158,7 @@ export class JsonlAppendLog<T> {
         return { appended: 0 };
       }
       await this.rotateIfNeeded();
-      await ensureParentDirectory(this.path, this.writeRoot);
-      await appendFile(this.path, `${missing.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf8');
+      await this.appendLines(`${missing.map((record) => JSON.stringify(record)).join('\n')}\n`);
       await this.refreshCache([...current, ...missing]);
       return { appended: missing.length };
     });
@@ -459,10 +475,11 @@ export class JsonlAppendLog<T> {
         const { bytesRead } = await fd.read(buf, 0, buf.length, start);
         const text = buf.subarray(0, bytesRead).toString('utf8');
         // First line may be a partial record if we started mid-file — drop it.
-        const rawLines = text.split(/\r?\n/).filter((l) => l.trim() !== '');
+        const rawLines = nonBlankLines(text);
         const lines = start > 0 ? rawLines.slice(1) : rawLines;
-        if (lines.length >= n || start === 0) {
-          return lines.slice(-n).map((l) => JSON.parse(l) as T);
+        const records = parseRecords<T>(lines);
+        if (records.length >= n || start === 0) {
+          return records.slice(-n);
         }
         // Not enough lines. Grow by the missing rows at the length measured so
         // far, plus a margin, and at least double.
@@ -494,15 +511,34 @@ export class JsonlAppendLog<T> {
     const hit = cacheHit<T[]>(path, fileStat);
     if (hit !== undefined) return hit.slice();
     try {
-      const records = (await readFile(path, 'utf8'))
-        .split(/\r?\n/)
-        .filter((line) => line.trim() !== '')
-        .map((line) => JSON.parse(line) as T);
+      const records = parseRecords<T>(nonBlankLines(await readFile(path, 'utf8')));
       cacheSet(path, records, fileStat);
       return records.slice();
     } catch (error) {
       if (isMissingFile(error)) return [];
       throw error;
+    }
+  }
+
+  /**
+   * Appends whole lines. If the file ends partway through a line, a writer
+   * died mid-append. The new lines then start on a line of their own, so
+   * that fragment stays a single unreadable line that reads skip.
+   */
+  private async appendLines(text: string): Promise<void> {
+    await ensureParentDirectory(this.path, this.writeRoot);
+    const file = await open(this.path, 'a+');
+    try {
+      const { size } = await file.stat();
+      let separator = '';
+      if (size > 0) {
+        const last = Buffer.alloc(1);
+        await file.read(last, 0, 1, size - 1);
+        if (last[0] !== 0x0a) separator = '\n';
+      }
+      await file.appendFile(`${separator}${text}`, 'utf8');
+    } finally {
+      await file.close();
     }
   }
 

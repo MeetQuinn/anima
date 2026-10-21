@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -227,8 +227,8 @@ test('tool activity does not fail successful effects when message ledger write f
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-message-outbox-failure-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
-      await mkdir(join(stateDir, 'agents/scout'), { recursive: true });
-      await writeFile(join(stateDir, 'agents/scout/messages.jsonl'), '{not-json}\n', 'utf8');
+      // A directory where the message ledger should be: every ledger write fails.
+      await mkdir(join(stateDir, 'agents/scout/messages.jsonl'), { recursive: true });
 
       const result = await withMutedWarnings(() =>
         withToolActivity({
