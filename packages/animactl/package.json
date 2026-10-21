@@ -17,6 +17,9 @@
     "access": "public"
   },
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "bin": {
     "anima": "bin/anima",
     "animactl": "bin/animactl"

@@ -41,7 +41,7 @@ Your technical champion runs Anima once. Everyone else works with the agents whe
 
 Run Anima on a Mac or Linux machine you control. Before you start, you need:
 
-- Node.js 20 or newer;
+- Node.js 22.13 or newer;
 - a Slack workspace where you can add an app; and
 - Claude Code, Codex, Kimi Code, Grok Build, or OpenCode installed and signed in.
 

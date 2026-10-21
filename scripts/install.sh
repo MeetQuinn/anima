@@ -4,7 +4,7 @@ set -eu
 ANIMA_PACKAGE_NAME="${ANIMA_PACKAGE_NAME:-@meetquinn/animactl}"
 ANIMA_VERSION_DEFAULT="latest"
 ANIMA_VERSION="${ANIMA_VERSION:-$ANIMA_VERSION_DEFAULT}"
-ANIMA_MIN_NODE_MAJOR="${ANIMA_MIN_NODE_MAJOR:-20}"
+ANIMA_MIN_NODE_VERSION="${ANIMA_MIN_NODE_VERSION:-22.13}"
 
 say() {
   printf '%s\n' "$*"
@@ -19,15 +19,16 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
-node_major() {
-  node -e "const major = Number(process.versions.node.split('.')[0]); if (!Number.isInteger(major)) process.exit(1); console.log(major);"
+# Exits 0 when the installed Node is at least ANIMA_MIN_NODE_VERSION (major.minor).
+node_meets_minimum() {
+  node -e "const [wantMajor, wantMinor] = process.argv[1].split('.').map(Number); const [major, minor] = process.versions.node.split('.').map(Number); process.exit(major > wantMajor || (major === wantMajor && minor >= wantMinor) ? 0 : 1);" "$ANIMA_MIN_NODE_VERSION"
 }
 
 print_node_help() {
   cat >&2 <<'EOF'
 
-Anima needs Node.js 20 or newer. Node includes npm, which Anima uses to download
-and run the managed runtime package.
+Anima needs Node.js 22.13 or newer. Node includes npm, which Anima uses to
+download and run the managed runtime package.
 
 Install Node.js, then run this command again:
 
@@ -43,13 +44,9 @@ if ! have node; then
   fail "node was not found."
 fi
 
-MAJOR="$(node_major 2>/dev/null || true)"
-if [ -z "$MAJOR" ]; then
-  fail "could not read the installed Node.js version."
-fi
-if [ "$MAJOR" -lt "$ANIMA_MIN_NODE_MAJOR" ]; then
+if ! node_meets_minimum 2>/dev/null; then
   print_node_help
-  fail "Node.js $ANIMA_MIN_NODE_MAJOR or newer is required; found $(node --version)."
+  fail "Node.js $ANIMA_MIN_NODE_VERSION or newer is required; found $(node --version 2>/dev/null || echo unknown)."
 fi
 
 if ! have npm; then

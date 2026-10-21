@@ -72,8 +72,9 @@ For the code-level map, see `docs/architecture/internals.md`.
 Branch from `main`.
 
 Repository development and tests require Node.js 24 or newer; `.nvmrc` pins the
-CI major. The published installer/runtime remains compatible with Node.js 20+ as
-documented in the README.
+CI major. The published installer and runtime need Node.js 22.13 or newer, the
+first release line where `node:sqlite` loads without a flag, as documented in the
+README.
 
 Keep PRs to one concern. If a change crosses layers, state why in the PR.
 
