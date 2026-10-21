@@ -209,8 +209,9 @@ export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
       `per-test ${formatSeconds(perTestMs)}, suite ${formatSeconds(suiteMs)})`,
   );
   // Provider CLI locks are machine-wide by default and shared with any live
-  // Anima service on this machine; give each run its own.
-  const lockDir = process.env.ANIMA_PROVIDER_CLI_LOCK_DIR
+  // Anima service on this machine; give each run its own. Keep a value only
+  // when launch-gate would use it (it ignores a blank one).
+  const lockDir = process.env.ANIMA_PROVIDER_CLI_LOCK_DIR?.trim()
     ? undefined
     : mkdtempSync(join(tmpdir(), 'anima-test-provider-cli-locks-'));
   const child = spawn(process.execPath, args, {

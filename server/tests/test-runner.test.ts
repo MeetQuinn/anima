@@ -131,9 +131,38 @@ test('slow serial files may exceed one test allowance without hitting the suite 
 });
 
 test('each run gets its own provider CLI lock directory and removes it afterwards', async () => {
+  // A blank value would send launch-gate back to the machine-wide default, so
+  // the runner must replace it just as it fills in a missing one.
+  for (const inherited of [undefined, '', '   ']) {
+    const dir = await fixtureDir();
+    const fixture = join(dir, 'lock-dir.test.mjs');
+    const seen = join(dir, 'seen.txt');
+    await writeFile(fixture, `
+      import { writeFileSync } from 'node:fs';
+      import test from 'node:test';
+      test('records the lock directory', () => {
+        writeFileSync(${JSON.stringify(seen)}, process.env.ANIMA_PROVIDER_CLI_LOCK_DIR ?? '');
+      });
+    `, 'utf8');
+
+    const result = await runWrapper(
+      runFilesSource([fixture], 1_000, 5_000),
+      inherited === undefined ? {} : { ANIMA_PROVIDER_CLI_LOCK_DIR: inherited },
+    );
+
+    const label = JSON.stringify(inherited);
+    assert.equal(result.code, 0, `${label}: ${result.output}`);
+    const lockDir = await readFile(seen, 'utf8');
+    assert.ok(lockDir.startsWith(join(tmpdir(), 'anima-test-provider-cli-locks-')), `${label}: ${lockDir}`);
+    assert.equal(existsSync(lockDir), false, `${label}: the lock directory is removed when the run ends`);
+  }
+});
+
+test('the runner keeps a lock directory that is already set', async () => {
   const dir = await fixtureDir();
   const fixture = join(dir, 'lock-dir.test.mjs');
   const seen = join(dir, 'seen.txt');
+  const lockDir = join(dir, 'locks');
   await writeFile(fixture, `
     import { writeFileSync } from 'node:fs';
     import test from 'node:test';
@@ -142,12 +171,10 @@ test('each run gets its own provider CLI lock directory and removes it afterward
     });
   `, 'utf8');
 
-  const result = await runWrapper(runFilesSource([fixture], 1_000, 5_000));
+  const result = await runWrapper(runFilesSource([fixture], 1_000, 5_000), { ANIMA_PROVIDER_CLI_LOCK_DIR: lockDir });
 
   assert.equal(result.code, 0, result.output);
-  const lockDir = await readFile(seen, 'utf8');
-  assert.ok(lockDir.startsWith(join(tmpdir(), 'anima-test-provider-cli-locks-')), lockDir);
-  assert.equal(existsSync(lockDir), false, 'the lock directory is removed when the run ends');
+  assert.equal(await readFile(seen, 'utf8'), lockDir);
 });
 
 function runFilesSource(testPaths: string[], perTestMs: number, suiteMs: number): string {
@@ -162,7 +189,7 @@ function runFilesSource(testPaths: string[], perTestMs: number, suiteMs: number)
   `;
 }
 
-async function runWrapper(source: string): Promise<{
+async function runWrapper(source: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<{
   code: number | null;
   output: string;
   stderr: string;
@@ -181,7 +208,7 @@ async function runWrapper(source: string): Promise<{
     ...env
   } = process.env;
   const child = spawn(process.execPath, [wrapper], {
-    env,
+    env: { ...env, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
