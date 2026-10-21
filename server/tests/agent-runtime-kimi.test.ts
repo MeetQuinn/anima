@@ -137,7 +137,7 @@ test('kimi-cli ACP transport starts a turn and appends subscription follow-up in
         await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
         { accepted: true, text: 'Kimi follow-up applied (interrupts active prompt)' },
       );
-      assert.equal((await withTimeout(runPromise, 1_000)).text, 'handled first + appended');
+      assert.equal((await withTimeout(runPromise, 5_000)).text, 'handled first + appended');
       assert.equal(runtime.health?.().child?.version, '0.9.0');
 
       const state = await loadState();

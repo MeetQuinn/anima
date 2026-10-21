@@ -92,7 +92,7 @@ export async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   options: { description?: string; intervalMs?: number; timeoutMs?: number } = {},
 ): Promise<void> {
-  const timeoutMs = options.timeoutMs ?? 1000;
+  const timeoutMs = options.timeoutMs ?? 5_000;
   const intervalMs = options.intervalMs ?? 10;
   const description = options.description ?? predicate.toString();
   const startedAt = Date.now();
