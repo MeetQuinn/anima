@@ -12,7 +12,7 @@ import {
   formatObservedLine,
   mergeCursorDeliveryPlans,
   prepareCursorDelivery,
-  selectNewestFitting,
+  selectNewestFittingForEnvelope,
   setCursorDeliveryEnabledForTests,
   surfacesForSlackWake,
   truncateUtf8,
@@ -448,7 +448,7 @@ test('degraded continuity and missing trigger are fail-closed (not absent)', asy
   });
 });
 
-test('selectNewestFitting: newest-fitting chronological with exact omitted count', () => {
+test('selectNewestFittingForEnvelope: newest-fitting chronological with exact omitted count', () => {
   const rows = Array.from({ length: 10 }, (_, i) => ({
     channelId: 'C1',
     eventId: `slack:T1:C1:${i + 1}.0`,
@@ -461,19 +461,21 @@ test('selectNewestFitting: newest-fitting chronological with exact omitted count
     text: `line-${i + 1}`,
     userId: 'U1',
   }));
-  const { entries, omittedCount } = selectNewestFitting(rows, {
+  const { entries, omittedCount } = selectNewestFittingForEnvelope(rows, {
     maxMessages: 3,
     maxBytes: CURSOR_DELIVERY_MAX_BYTES,
+    totalCandidates: rows.length,
   });
   assert.equal(entries.length, 3);
   assert.deepEqual(entries.map((e) => e.ordinal), [8, 9, 10]);
   assert.equal(omittedCount, 7);
 
   // Must include older trigger when it would fall outside the newest window.
-  const withTrigger = selectNewestFitting(rows, {
+  const withTrigger = selectNewestFittingForEnvelope(rows, {
     maxMessages: 3,
     maxBytes: CURSOR_DELIVERY_MAX_BYTES,
     mustIncludeEventId: 'slack:T1:C1:2.0',
+    totalCandidates: rows.length,
   });
   assert.ok(withTrigger.entries.some((e) => e.eventId === 'slack:T1:C1:2.0'));
 });

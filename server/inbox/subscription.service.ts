@@ -13,8 +13,6 @@ import {
 export { subscriptionStatus };
 export type { SubscriptionRecord };
 
-export const THREAD_ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-
 const ATTENTION_NUDGE_WINDOW_MS = 60 * 60 * 1000;
 const ATTENTION_NUDGE_WAKE_THRESHOLD = 6;
 const ATTENTION_NUDGE_BACKOFF_MS = 24 * 60 * 60 * 1000;
@@ -22,19 +20,6 @@ const CHRONIC_NUDGE_WAKE_THRESHOLD = 12;
 const CHRONIC_NUDGE_WINDOW_MS = 72 * 60 * 60 * 1000;
 
 export type SubscriptionPlatform = 'slack' | 'feishu';
-
-export interface AttentionMap {
-  activeThreads: SubscriptionRecord[];
-  channels: Array<{
-    channelId: string;
-    channelName?: string;
-    status: 'following' | 'muted';
-    subscription?: SubscriptionRecord;
-  }>;
-  mutedThreads: SubscriptionRecord[];
-  quietThreadCount: number;
-  quietThreads: SubscriptionRecord[];
-}
 
 export interface SubscriptionDecisionSummary {
   status: 'following' | 'muted';
@@ -45,65 +30,6 @@ export interface SubscriptionDecisionSummary {
 
 export async function listSubscriptionsForAgent(agentId: string): Promise<SubscriptionRecord[]> {
   return new SubscriptionStore(agentId).list();
-}
-
-export function attentionMapForSubscriptions(input: {
-  includeAll?: boolean;
-  memberChannels?: Array<{ id: string; name?: string }>;
-  nowMs?: number;
-  subscriptions: SubscriptionRecord[];
-}): AttentionMap {
-  const nowMs = input.nowMs ?? Date.now();
-  const channelById = new Map<string, AttentionMap['channels'][number]>();
-  for (const channel of input.memberChannels ?? []) {
-    channelById.set(channel.id, {
-      channelId: channel.id,
-      ...(channel.name ? { channelName: channel.name } : {}),
-      status: 'following',
-    });
-  }
-  for (const subscription of input.subscriptions) {
-    if (subscription.kind !== 'channel') continue;
-    const existing = channelById.get(subscription.channelId);
-    channelById.set(subscription.channelId, {
-      channelId: subscription.channelId,
-      ...(existing?.channelName ? { channelName: existing.channelName } : {}),
-      status: subscriptionStatus(subscription),
-      subscription,
-    });
-  }
-
-  const activeThreads: SubscriptionRecord[] = [];
-  const mutedThreads: SubscriptionRecord[] = [];
-  const quietThreads: SubscriptionRecord[] = [];
-  for (const subscription of input.subscriptions) {
-    if (subscription.kind !== 'thread') continue;
-    if (subscription.mutedAt) {
-      mutedThreads.push(subscription);
-      continue;
-    }
-    if (threadRecentlyActive(subscription, nowMs)) {
-      activeThreads.push(subscription);
-    } else {
-      quietThreads.push(subscription);
-    }
-  }
-
-  const byUpdatedDesc = (a: SubscriptionRecord, b: SubscriptionRecord) =>
-    subscriptionActivityAt(b).localeCompare(subscriptionActivityAt(a));
-  activeThreads.sort(byUpdatedDesc);
-  mutedThreads.sort(byUpdatedDesc);
-  quietThreads.sort(byUpdatedDesc);
-
-  return {
-    channels: [...channelById.values()].sort((a, b) =>
-      (a.channelName ?? a.channelId).localeCompare(b.channelName ?? b.channelId),
-    ),
-    activeThreads,
-    mutedThreads,
-    quietThreadCount: quietThreads.length,
-    quietThreads: input.includeAll ? quietThreads : [],
-  };
 }
 
 export async function muteSubscriptionForAgent(input: {
@@ -449,15 +375,6 @@ function attentionSuggestionFor(subscription: SubscriptionRecord): string {
     return feishuChatAttentionNote(subscription.channelId);
   }
   return slackChannelAttentionNote(subscription.channelId);
-}
-
-function threadRecentlyActive(subscription: SubscriptionRecord, nowMs: number): boolean {
-  const timestamp = parseTime(subscriptionActivityAt(subscription));
-  return timestamp !== undefined && nowMs - timestamp <= THREAD_ACTIVE_WINDOW_MS;
-}
-
-function subscriptionActivityAt(subscription: SubscriptionRecord): string {
-  return subscription.lastActivityAt ?? subscription.updatedAt;
 }
 
 function parseTime(iso: string | undefined): number | undefined {

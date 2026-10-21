@@ -108,13 +108,6 @@ export function kbView(kb: ResolvedKbRoot): KbView {
   return { id: kb.id, label: kb.label, teamId: kb.teamId };
 }
 
-export function requiredString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new KbError(400, `${field} is required`);
-  }
-  return value.trim();
-}
-
 export function expandHome(path: string): string {
   if (path === '~') return homedir();
   return path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;

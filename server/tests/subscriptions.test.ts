@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  attentionMapForSubscriptions,
   channelSubscriptionId,
   channelSubscriptionRecord,
   ensureThreadSubscriptionForSentMessage,
@@ -1112,56 +1111,6 @@ test('outbound engagement resets chronic and burst attention windows', async () 
         { agentId: 'scout', nowMs: 12 * eightHours + 1 },
       );
       assert.equal(afterEngagement.attentionSuggestion, undefined);
-    });
-  } finally {
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
-
-test('attention map shows member channels, muted threads, and quiet thread tails', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-attention-map-test-'));
-  try {
-    await withAnimaHome(stateDir, async () => {
-      await slackRuntimeDecision(
-        {
-          channel: 'C123',
-          channel_type: 'channel',
-          text: '<@U999> recent',
-          thread_ts: '1770000010.000001',
-          ts: '1770000011.000001',
-          type: 'app_mention',
-          user: 'U123',
-        },
-        { agentId: 'scout', nowMs: Date.UTC(2026, 0, 10) },
-      );
-      await ensureThreadSubscriptionForSentMessage({
-        agentId: 'scout',
-        channelId: 'C123',
-        messageTs: '1770000001.000001',
-        // Quiet, but inside the 30-day follow lapse.
-        nowMs: Date.UTC(2025, 11, 25),
-      });
-      await muteSubscriptionForAgent({
-        agentId: 'scout',
-        channelId: 'C456',
-        threadTs: '1770000030.000001',
-        nowMs: Date.UTC(2026, 0, 11),
-      });
-
-      const subscriptions = Object.values((await loadState()).subscriptions);
-      const map = attentionMapForSubscriptions({
-        memberChannels: [{ id: 'C123', name: 'team' }, { id: 'C999', name: 'support' }],
-        nowMs: Date.UTC(2026, 0, 12),
-        subscriptions,
-      });
-      assert.deepEqual(
-        map.channels.map((channel) => `${channel.channelId}:${channel.status}`).sort(),
-        ['C999:following', 'C123:following'].sort(),
-      );
-      assert.equal(map.activeThreads.length, 1);
-      assert.equal(map.mutedThreads.length, 1);
-      assert.equal(map.quietThreadCount, 1);
-      assert.equal(map.quietThreads.length, 0);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
