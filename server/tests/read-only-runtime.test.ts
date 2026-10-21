@@ -28,7 +28,7 @@ import { KbError } from '../kb/kb.helper.js';
  * ── THE RULE THIS FILE OBEYS ──────────────────────────────────────────────────
  * NO test in this file may execute a real governed handler.
  *
- * The governed handlers refresh OAuth credentials, install provider binaries,
+ * The governed handlers write OAuth credentials, install provider binaries,
  * replace the runtime, restart OS services, and create host directories. If a test
  * mounts them and the guard regresses, then THE TEST'S RED PATH PERFORMS THE EXACT
  * ACTION THE GUARD EXISTS TO PREVENT. A safety test must be able to fail without
@@ -700,21 +700,22 @@ test('#524 the default is STILL permit — the flip waits on live carrying the f
   assert.equal(
     resolveMachineWriteMode({}),
     'implicit-default',
-    'if this went red, someone flipped the default: confirm LIVE sets ANIMA_ALLOW_MACHINE_WRITES first, or live 403s on its own credential refresh',
+    'if this went red, someone flipped the default: confirm LIVE sets ANIMA_ALLOW_MACHINE_WRITES first, or live 403s on its own machine writes',
   );
 });
 
 /**
- * The GET that started this. Kept as a test so it cannot quietly drop out of the
- * governed set: GET /api/provider-usage performs an OAuth refresh and writes the
- * credential back to ~/.claude/.credentials.json or the machine user's Keychain.
- * It is a GET, it takes no machine-wide lease, and it mutates machine-scoped state.
+ * The GETs that started this. They took no machine-wide lease and were not POSTs,
+ * yet they refreshed OAuth credentials and wrote the rotated token back to the
+ * machine user's provider credential files. The usage adapters are read-only now;
+ * this keeps the GETs from quietly dropping out of the governed set before the
+ * set is re-audited.
  */
-test('#524 the credential-writing GETs are governed (machine scope is not "is a POST", and not "takes the lease")', () => {
+test('#524 the provider-usage GETs stay governed (machine scope is not "is a POST", and not "takes the lease")', () => {
   const usage = governedRouteFor('GET', '/api/provider-usage');
-  assert.ok(usage, 'GET /api/provider-usage rewrites machine-user OAuth credentials and must be governed');
+  assert.ok(usage, 'GET /api/provider-usage stays governed until the read-only set is re-audited');
   assert.match(usage.evidence, /credential/i);
 
   const perProvider = governedRouteFor('GET', '/api/provider-usage/:provider');
-  assert.ok(perProvider, 'the per-provider usage GET has the same refresh-and-write path');
+  assert.ok(perProvider, 'the per-provider usage GET is governed with it');
 });

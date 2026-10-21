@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { arch, hostname, release, type, version } from 'node:os';
 import { join } from 'node:path';
 
 import type { ProviderUsageExtra, ProviderUsageRow, ProviderUsageWindow } from '../../../shared/provider-usage.js';
@@ -8,7 +6,6 @@ import { available, unavailable, usageError } from '../result.js';
 import {
   clampPercent,
   decodeJwtPayload,
-  expiresSoon,
   homePath,
   numberValue,
   readJsonFile,
@@ -16,13 +13,9 @@ import {
   resetAtFromSeconds,
   resetAtFromValue,
   stringValue,
-  writeJsonFile,
 } from './common.js';
 
 const KIMI_USAGE_API = 'https://api.kimi.com/coding/v1/usages';
-const KIMI_OAUTH_HOST = 'https://auth.kimi.com';
-const KIMI_CLIENT_ID = '17e5f671-d194-4dfb-9706-5516cb48c098';
-const KIMI_HEADER_VERSION = '0.23.1';
 const KIMI_CODE_CREDENTIALS_PATH = ['.kimi-code', 'credentials', 'kimi-code.json'];
 const KIMI_LEGACY_CREDENTIALS_PATH = ['.kimi', 'credentials', 'kimi-code.json'];
 const KIMI_OPENCODE_AUTH_PATH = ['.local', 'share', 'opencode', 'auth.json'];
@@ -30,9 +23,6 @@ const KIMI_OPENCODE_AUTH_PATH = ['.local', 'share', 'opencode', 'auth.json'];
 interface KimiCredentials {
   account?: string;
   accessToken: string;
-  path?: string;
-  raw?: Record<string, unknown>;
-  refreshToken?: string;
 }
 
 export async function fetchKimiUsage(): Promise<Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider' | 'source'>> {
@@ -42,23 +32,16 @@ export async function fetchKimiUsage(): Promise<Omit<ProviderUsageRow, 'checkedA
   }
 
   let activeCredentials = credentials;
-  if (activeCredentials.path && expiresSoon(activeCredentials.raw?.expires_at) && activeCredentials.refreshToken) {
-    const refreshed = await refreshKimiCredentials(activeCredentials);
-    if (refreshed.error) return unavailable(refreshed.error, activeCredentials.account);
-    activeCredentials = refreshed.credentials;
-  }
-
   let result = await fetchKimiUsageWithToken(activeCredentials.accessToken);
-  if (result.error?.type === 'unauthorized' && activeCredentials.refreshToken) {
+  if (result.error?.type === 'unauthorized') {
+    // Kimi is the only owner of its OAuth refresh and credential file. Usage only
+    // reads: it adopts a token Kimi rotated meanwhile, and never refreshes or
+    // writes, which could race Kimi's own rotation and sign it out.
     const latestCredentials = await readKimiCredentials();
     if (latestCredentials && latestCredentials.accessToken !== activeCredentials.accessToken) {
       activeCredentials = latestCredentials;
-    } else if (activeCredentials.path) {
-      const refreshed = await refreshKimiCredentials(activeCredentials);
-      if (refreshed.error) return unavailable(refreshed.error, activeCredentials.account);
-      activeCredentials = refreshed.credentials;
+      result = await fetchKimiUsageWithToken(activeCredentials.accessToken);
     }
-    result = await fetchKimiUsageWithToken(activeCredentials.accessToken);
   }
 
   if (result.error) return unavailable(result.error, activeCredentials.account);
@@ -112,13 +95,7 @@ async function readKimiCredentials(): Promise<KimiCredentials | undefined> {
     const nativeToken = stringValue(native?.access_token);
     if (nativeToken) {
       const account = kimiAccount(nativeToken);
-      return {
-        ...(account ? { account } : {}),
-        accessToken: nativeToken,
-        path,
-        raw: native,
-        refreshToken: stringValue(native?.refresh_token),
-      };
+      return { ...(account ? { account } : {}), accessToken: nativeToken };
     }
   }
   const opencode = record(await readJsonFile(homePath(...KIMI_OPENCODE_AUTH_PATH)));
@@ -191,100 +168,6 @@ async function fetchKimiUsageWithToken(token: string): ReturnType<typeof fetchJs
     telemetryLabel: 'kimi-cli',
     url: KIMI_USAGE_API,
   });
-}
-
-async function refreshKimiCredentials(
-  credentials: KimiCredentials,
-): Promise<{ credentials: KimiCredentials; error?: never } | { credentials?: never; error: NonNullable<Awaited<ReturnType<typeof fetchJson>>['error']> }> {
-  if (!credentials.path || !credentials.raw || !credentials.refreshToken) {
-    return { error: usageError('unauthorized', 'Kimi refresh token not found. Run `kimi login` to authenticate again.') };
-  }
-
-  const body = new URLSearchParams({
-    client_id: KIMI_CLIENT_ID,
-    grant_type: 'refresh_token',
-    refresh_token: credentials.refreshToken,
-  });
-  const result = await fetchJson({
-    body: body.toString(),
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      ...(await kimiOauthHeaders()),
-    },
-    method: 'POST',
-    telemetryLabel: 'kimi-cli',
-    url: `${kimiOauthHost()}/api/oauth/token`,
-  });
-  if (result.error) return { error: result.error };
-
-  const response = record(result.data);
-  const accessToken = stringValue(response?.access_token);
-  const refreshToken = stringValue(response?.refresh_token);
-  if (!accessToken || !refreshToken) {
-    return { error: usageError('parse_error', 'Kimi refresh response did not include a complete token pair.') };
-  }
-
-  const expiresIn = numberValue(response?.expires_in);
-  const raw = {
-    ...credentials.raw,
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    ...(expiresIn !== undefined ? { expires_at: Math.floor(Date.now() / 1000) + expiresIn, expires_in: expiresIn } : {}),
-    ...(stringValue(response?.scope) ? { scope: stringValue(response?.scope) } : {}),
-    ...(stringValue(response?.token_type) ? { token_type: stringValue(response?.token_type) } : {}),
-  };
-  try {
-    await writeJsonFile(credentials.path, raw);
-  } catch {
-    return { error: usageError('unknown', 'Kimi token refreshed but could not be saved. Check Kimi credential file permissions.') };
-  }
-  const account = kimiAccount(accessToken) ?? credentials.account;
-  return {
-    credentials: {
-      ...(account ? { account } : {}),
-      accessToken,
-      path: credentials.path,
-      raw,
-      refreshToken,
-    },
-  };
-}
-
-function kimiOauthHost(): string {
-  return (process.env.KIMI_CODE_OAUTH_HOST?.trim() || process.env.KIMI_OAUTH_HOST?.trim() || KIMI_OAUTH_HOST).replace(/\/+$/, '');
-}
-
-async function kimiOauthHeaders(): Promise<Record<string, string>> {
-  return {
-    'X-Msh-Device-Id': await readKimiDeviceId(),
-    'X-Msh-Device-Model': `${type()} ${release()} ${arch()}`,
-    'X-Msh-Device-Name': hostname() || 'localhost',
-    'X-Msh-Os-Version': version(),
-    'X-Msh-Platform': 'kimi_cli',
-    'X-Msh-Version': process.env.KIMI_CODE_VERSION?.trim() || KIMI_HEADER_VERSION,
-  };
-}
-
-async function readKimiDeviceId(): Promise<string> {
-  for (const path of kimiDeviceIdPaths()) {
-    try {
-      const deviceId = stringValue(await readFile(path, 'utf8'));
-      if (deviceId) return deviceId;
-    } catch {
-      // Try the next known Kimi share path.
-    }
-  }
-  return 'anima-provider-usage';
-}
-
-function kimiDeviceIdPaths(): string[] {
-  const shareDir = process.env.KIMI_SHARE_DIR?.trim();
-  return [
-    ...(shareDir ? [join(shareDir, 'device_id')] : []),
-    homePath('.kimi-code', 'device_id'),
-    homePath('.kimi', 'device_id'),
-  ];
 }
 
 function kimiUsageWindow(label: string, data: Record<string, unknown> | undefined): ProviderUsageWindow | undefined {

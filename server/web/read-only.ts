@@ -63,8 +63,9 @@ export interface GovernedRoute {
  * Note carefully what the criterion is NOT. It is not "the route takes the
  * machine-wide advisory lease", and it is not "the route is a POST". The lease
  * proves machine scope where it is taken; its *absence* proves nothing. The two
- * provider-usage GETs below take no lease and are not POSTs, and they rewrite the
- * machine user's OAuth credentials.
+ * provider-usage GETs below took no lease and were not POSTs, yet they rewrote the
+ * machine user's OAuth credentials. The usage adapters are read-only now; the GETs
+ * stay governed until this set is re-audited.
  *
  * Cross-checked against Milo's source-first capability inventory
  * (anima-team @ bb0e7ad). Applying the property above independently reproduced his
@@ -123,13 +124,13 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
     id: 'GET /api/provider-usage',
     method: 'GET',
     evidence:
-      'Reads every provider usage adapter. Claude usage is credential-read-only, but Codex, Kimi, and Grok adapters can still refresh expiring OAuth credentials and write the rotated token outside ANIMA_HOME. Those machine-user credentials are shared by live provider processes, so the all-provider GET remains machine-write governed.',
+      'Reads every provider usage adapter. Governed because the adapters used to refresh OAuth credentials and write the rotated token outside ANIMA_HOME, where live provider processes share it. Every adapter is now credential-read-only; the GET stays governed until the read-only set is re-audited.',
   },
   {
     id: 'GET /api/provider-usage/:provider',
     method: 'GET',
     evidence:
-      'Runs one provider usage adapter. The Claude adapter is credential-read-only, while other supported adapters can still refresh and persist machine-user OAuth credentials; the parameterized route remains conservatively machine-write governed.',
+      'Runs one provider usage adapter. Governed with the all-provider GET: adapters used to refresh and persist machine-user OAuth credentials. Every adapter is now credential-read-only; the route stays governed until the read-only set is re-audited.',
   },
   {
     id: 'POST /api/filesystem/mkdir',
@@ -151,7 +152,7 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
  * Today a runtime that forgets `ANIMA_READ_ONLY` gets full machine permissions. That
  * is a rule enforced by remembering, which is the same object as a rule enforced by
  * prose. The end state inverts it: refuse by default, and let a runtime that genuinely
- * must write the machine (live, which really does have to refresh credentials) say so.
+ * must write the machine (live, which really does have to run provider logins) say so.
  *
  * THE ORDER IS LOAD-BEARING AND CANNOT BE COMPRESSED:
  *   1. ship this flag, MEANINGFUL from day one            <- this cut
@@ -240,7 +241,7 @@ export function resolveMachineWriteMode(env: NodeJS.ProcessEnv = process.env): M
 
 /**
  * Fastify serves HEAD for every GET route, and a HEAD still runs the handler — so
- * a HEAD on a governed GET would still refresh and rewrite the credential.
+ * a HEAD on a governed GET would still do whatever the GET does.
  */
 function normalizeMethod(method: string): string {
   return method === 'HEAD' ? 'GET' : method;

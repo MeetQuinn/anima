@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import type { ProviderUsageWindow } from '../../../shared/provider-usage.js';
 
@@ -14,11 +14,6 @@ export async function readJsonFile(path: string): Promise<unknown | undefined> {
   } catch {
     return undefined;
   }
-}
-
-export async function writeJsonFile(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
 export function homePath(...parts: string[]): string {
@@ -40,23 +35,6 @@ export function numberValue(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
-}
-
-export function epochSecondsFromValue(value: unknown): number | undefined {
-  const numeric = numberValue(value);
-  if (numeric === undefined || numeric <= 0) return undefined;
-  return numeric > 1_000_000_000_000 ? numeric / 1000 : numeric;
-}
-
-export function expiresSoon(value: unknown, skewSeconds = 60, nowMs: number = Date.now()): boolean {
-  const expiresAt = epochSecondsFromValue(value);
-  if (expiresAt === undefined) return false;
-  return expiresAt <= (nowMs / 1000) + skewSeconds;
-}
-
-export function jwtExpiresSoon(token: string, skewSeconds = 60, nowMs: number = Date.now()): boolean {
-  const claims = decodeJwtPayload(token);
-  return expiresSoon(record(claims)?.exp, skewSeconds, nowMs);
 }
 
 export function decodeJwtPayload(token: string): unknown | undefined {
