@@ -38,9 +38,6 @@ function renderChannels(response: AgentChannelListResponse) {
 }
 
 beforeEach(() => {
-  // jsdom has no layout, so it ships no scrollIntoView; the conversation pane
-  // calls it on mount. Supplying the missing DOM API, not a product state.
-  Element.prototype.scrollIntoView = vi.fn();
   window.matchMedia = vi.fn().mockReturnValue({
     matches: false,
     addEventListener: vi.fn(),

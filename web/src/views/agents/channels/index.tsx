@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { BellOff, ChevronLeft, Loader2 } from 'lucide-react';
 import { fetchAgentChannels, fetchAgentMessages } from '@/api/agents';
 import { buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
+import { mergeLatestMessagePage } from '@/lib/activity-live-merge';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { initialOf } from '@/lib/avatars';
 import { buildChannelThreadContext } from '@/lib/channel-threads';
@@ -21,7 +22,8 @@ import {
 import { EmptyMessage } from '@/components/EmptyMessage';
 import { DayDivider } from '@/components/TimelineRows';
 import { MessageGroupRow } from '../conversation/SlackTimeline';
-import type { AgentChannelSummary, AgentMessageRecord } from '@shared/messages';
+import { useStickToBottom } from '../activity/useStickToBottom';
+import type { AgentChannelSummary, AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
 
 // Channel/DM title: a channel shows its `#` flush against the name (one token);
 // a DM shows the bare handle (its avatar carries the "person" signal).
@@ -148,6 +150,14 @@ function authorFor(item: ActivityFeedItem, channel: AgentChannelSummary, agent: 
 // (no inbox/outbox split — the direction split isn't meaningful per channel).
 // ---------------------------------------------------------------------------
 
+type ChannelMessageData = InfiniteData<AgentMessageHistoryPage, string | undefined>;
+
+// Rows per live-probe read. New rows beyond this between two polls show up as a
+// gap, and a gap re-fetches the history.
+const LIVE_PAGE_LIMIT = 50;
+
+function noop() {}
+
 function ConversationPane({
   agentId,
   channel,
@@ -157,7 +167,9 @@ function ConversationPane({
   channel: AgentChannelSummary;
   onBack: () => void;
 }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // The agent's own avatar/name byline its outbound messages, Slack-style.
   const agentsQuery = useAgents();
@@ -170,13 +182,46 @@ function ConversationPane({
     isAgent: true,
   };
 
+  // The history carries no refetchInterval and never goes stale on its own: an
+  // infinite refetch re-fetches every loaded page, so a poll (or a focus, or a
+  // remount) after a few Load older clicks cost one 200-row request per page.
+  // The live probe below reads only the newest rows instead.
+  const messagesKey = queryKeys.agentChannelMessages(agentId, channel.id);
   const messageQuery = useInfiniteQuery({
-    queryKey: queryKeys.agentChannelMessages(agentId, channel.id),
+    queryKey: messagesKey,
+    staleTime: Infinity,
     queryFn: ({ pageParam }) =>
       fetchAgentMessages(agentId, { before: pageParam, channel: channel.id, limit: 200 }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  });
+
+  // Live tail, the same merge as the Activity tab's message probe: fetch this
+  // channel's newest rows and fold them into the cached pages (an unchanged
+  // poll keeps the same cache reference, so nothing re-renders). More new rows
+  // than one probe page, or a first load that failed, re-fetches the history.
+  // The server's forward (`after`) read is agent-wide, so this always reads the
+  // newest page. Nothing reads the probe's result, so its polls never re-render.
+  useQuery({
+    queryKey: queryKeys.agentChannelLive(agentId, channel.id),
+    enabled: !messageQuery.isPending,
     refetchInterval: refetchIntervals.agentActivities,
+    queryFn: async () => {
+      const latest = await fetchAgentMessages(agentId, { channel: channel.id, limit: LIVE_PAGE_LIMIT });
+      const state = queryClient.getQueryState(messagesKey);
+      // A history fetch in flight builds its result from the pages it started
+      // with, so a merge now would vanish when it lands; the next poll merges.
+      if (state?.fetchStatus === 'fetching') return 0;
+      const prev = queryClient.getQueryData<ChannelMessageData>(messagesKey);
+      if (!prev) {
+        if (state?.status === 'error') void queryClient.invalidateQueries({ queryKey: messagesKey, exact: true });
+        return 0;
+      }
+      const merged = mergeLatestMessagePage(prev, latest);
+      if (merged.changed) queryClient.setQueryData<ChannelMessageData>(messagesKey, merged.data);
+      if (merged.gap) void queryClient.invalidateQueries({ queryKey: messagesKey, exact: true });
+      return merged.added + merged.replaced;
+    },
   });
 
   // Merge loaded pages and dedupe. The server already scopes to this channel, so
@@ -212,12 +257,21 @@ function ConversationPane({
   }
   const byDay = Array.from(byDayMap.entries()).sort(([a], [b]) => a.localeCompare(b));
 
-  // Settle to the newest message on first load / channel switch.
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView();
-  }, [channel.id, items.length]);
-
   const loading = messageQuery.isLoading;
+
+  // Scroll position has one owner, the Activity timeline's controller: it
+  // settles to the newest message on open, follows new messages only while the
+  // reader is at the bottom, and keeps the viewport still when Load older
+  // prepends a page. Older history loads from the button, not on reaching the top.
+  const { revealed } = useStickToBottom({
+    containerRef: scrollContainerRef,
+    contentRef,
+    feedKey: `${agentId}:${channel.id}`,
+    settling: loading,
+    isFetchingOlder: messageQuery.isFetchingNextPage,
+    contentKey: `${messageQuery.data?.pages.length ?? 0}|${entries[0]?.messageId ?? ''}|${entries.length}`,
+    onReachTop: noop,
+  });
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-surface">
@@ -245,42 +299,50 @@ function ConversationPane({
         )}
       </div>
 
-      {/* Conversation */}
-      <div className="flex-1 overflow-x-hidden overflow-y-auto px-4 pt-3 pb-8 md:px-6 md:pt-4">
-        {messageQuery.hasNextPage && (
-          <div className="flex justify-center pb-2">
-            <button
-              type="button"
-              onClick={() => void messageQuery.fetchNextPage()}
-              disabled={messageQuery.isFetchingNextPage}
-              className="chrome min-h-[44px] rounded-sm border border-border-soft px-4 py-1 text-[11px] text-text-muted transition-colors hover:text-text disabled:opacity-60 md:min-h-0 md:px-3"
-            >
-              {messageQuery.isFetchingNextPage ? 'Loading…' : 'Load older messages'}
-            </button>
-          </div>
-        )}
-        {items.length === 0 ? (
-          <EmptyMessage>
-            {loading ? 'Loading conversation…' : 'No messages in this channel yet.'}
-          </EmptyMessage>
-        ) : (
-          byDay.map(([day, dayItems]) => (
-            <div key={day}>
-              <DayDivider iso={dayItems[0]!.timestamp} />
-              {groupByAuthor(dayItems, (item) => authorFor(item, channel, agentAuthor)).map(
-                (group, gi) => (
-                  <MessageGroupRow
-                    key={`${day}::${gi}`}
-                    group={group}
-                    agentId={agentId}
-                    threadContext={threadContext}
-                  />
-                ),
-              )}
+      {/* Conversation. `overflow-anchor: none`: every scroll write is the
+          controller's, and it stays hidden until the first settle. */}
+      <div
+        ref={scrollContainerRef}
+        className={`flex-1 overflow-x-hidden overflow-y-auto [overflow-anchor:none] px-4 pt-3 pb-8 transition-opacity duration-200 ease-out motion-reduce:transition-none md:px-6 md:pt-4 ${
+          revealed ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        <div ref={contentRef}>
+          {messageQuery.hasNextPage && (
+            <div className="flex justify-center pb-2">
+              <button
+                type="button"
+                onClick={() => void messageQuery.fetchNextPage()}
+                disabled={messageQuery.isFetchingNextPage}
+                className="chrome min-h-[44px] rounded-sm border border-border-soft px-4 py-1 text-[11px] text-text-muted transition-colors hover:text-text disabled:opacity-60 md:min-h-0 md:px-3"
+              >
+                {messageQuery.isFetchingNextPage ? 'Loading…' : 'Load older messages'}
+              </button>
             </div>
-          ))
-        )}
-        <div ref={bottomRef} className="h-2" />
+          )}
+          {items.length === 0 ? (
+            <EmptyMessage>
+              {loading ? 'Loading conversation…' : 'No messages in this channel yet.'}
+            </EmptyMessage>
+          ) : (
+            byDay.map(([day, dayItems]) => (
+              <div key={day}>
+                <DayDivider iso={dayItems[0]!.timestamp} />
+                {groupByAuthor(dayItems, (item) => authorFor(item, channel, agentAuthor)).map(
+                  (group, gi) => (
+                    <MessageGroupRow
+                      key={`${day}::${gi}`}
+                      group={group}
+                      agentId={agentId}
+                      threadContext={threadContext}
+                    />
+                  ),
+                )}
+              </div>
+            ))
+          )}
+          <div className="h-2" />
+        </div>
       </div>
     </div>
   );
