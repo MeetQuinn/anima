@@ -561,9 +561,14 @@ test('codex-cli app-server transport starts a turn and appends subscription foll
     const finalCalls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string });
     assert.equal(finalCalls.filter((call) => call.method === 'initialize').length, 2);
     assert.equal(finalCalls.filter((call) => call.method === 'thread/start').length, 1);
+    // Both the session resume and the subagent metadata lookup leave out the
+    // turn history, which Anima never reads.
     assert.deepEqual(
-      finalCalls.filter((call) => call.method === 'thread/resume').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
-      ['codex-child-raw', 'codex-thread-1'],
+      finalCalls.filter((call) => call.method === 'thread/resume').map((call) => {
+        const params = (call as { params?: Record<string, unknown> }).params;
+        return [params?.['threadId'], params?.['excludeTurns']];
+      }),
+      [['codex-child-raw', true], ['codex-thread-1', true]],
     );
     assert.deepEqual(
       finalCalls.filter((call) => call.method === 'thread/unsubscribe').map((call) => (call as { params?: Record<string, unknown> }).params?.['threadId']),
