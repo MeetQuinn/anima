@@ -118,6 +118,7 @@ const groups = {
     'slack.test.js',
     'socket-mode-predicate.test.js',
     'state-cache.test.js',
+    'storage-lock.test.js',
     'subscriptions.test.js',
     'system-service.test.js',
     'test-runner.test.js',

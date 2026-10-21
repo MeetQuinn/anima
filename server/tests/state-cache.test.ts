@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import fsPromises, { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
@@ -85,107 +85,6 @@ test('JsonFile preserves a fresh ownerless lock until the stale grace expires', 
     await utimes(lockDir, staleAt, staleAt);
     assert.deepEqual(await update, { count: 2 });
     assert.deepEqual(await file.read(), { count: 2 });
-  } finally {
-    await rm(dir, { force: true, recursive: true });
-  }
-});
-
-// The pid of a process that has already exited, for a lock whose owner died.
-function deadPid(): number {
-  const child = spawnSync(process.execPath, ['-e', '']);
-  if (!child.pid) throw new Error('failed to spawn probe child');
-  return child.pid;
-}
-
-async function writeLockOwner(lockDir: string, pid: number): Promise<void> {
-  await writeFile(join(lockDir, 'owner.json'), `${JSON.stringify({ createdAt: Date.now(), pid })}\n`, 'utf8');
-}
-
-test('a waiter that judged a lock stale does not remove the live lock that replaced it', { timeout: 5_000 }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'anima-lock-replaced-'));
-  const realReadFile = fsPromises.readFile;
-  try {
-    const path = join(dir, 'value.json');
-    const lockDir = `${path}.lock`;
-    await mkdir(lockDir);
-    await writeLockOwner(lockDir, deadPid());
-
-    // Just after this waiter reads the dead owner, another waiter removes the
-    // stale lock and takes a fresh one. This process's pid stands in for that
-    // live owner.
-    let replaced = false;
-    fsPromises.readFile = (async (...args: Parameters<typeof realReadFile>) => {
-      const data = await realReadFile(...args);
-      if (!replaced && String(args[0]) === join(lockDir, 'owner.json')) {
-        replaced = true;
-        await rm(lockDir, { force: true, recursive: true });
-        await mkdir(lockDir);
-        await writeLockOwner(lockDir, process.pid);
-      }
-      return data;
-    }) as typeof realReadFile;
-    syncBuiltinESMExports();
-
-    let entered = false;
-    const locked = withFileLock(path, dir, async () => {
-      entered = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    assert.equal(replaced, true);
-    assert.equal(entered, false, 'the waiter entered while the replacing lock was held');
-    const owner = JSON.parse(await realReadFile(join(lockDir, 'owner.json'), 'utf8')) as { pid: number };
-    assert.equal(owner.pid, process.pid, 'the replacing lock was removed');
-
-    await rm(lockDir, { force: true, recursive: true });
-    await locked;
-    assert.equal(entered, true);
-  } finally {
-    fsPromises.readFile = realReadFile;
-    syncBuiltinESMExports();
-    await rm(dir, { force: true, recursive: true });
-  }
-});
-
-test('a waiter leaves a stale lock alone while another waiter is removing it', { timeout: 5_000 }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'anima-lock-steal-marker-'));
-  try {
-    const path = join(dir, 'value.json');
-    const lockDir = `${path}.lock`;
-    await mkdir(lockDir);
-    await writeLockOwner(lockDir, deadPid());
-    await mkdir(`${lockDir}.steal`);
-
-    let entered = false;
-    const locked = withFileLock(path, dir, async () => {
-      entered = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    assert.equal(entered, false, 'the waiter entered during another waiter\'s removal');
-    assert.equal((await stat(lockDir)).isDirectory(), true);
-
-    await rm(`${lockDir}.steal`, { force: true, recursive: true });
-    await locked;
-    assert.equal(entered, true);
-    await assert.rejects(stat(`${lockDir}.steal`), /ENOENT/, 'the waiter left its own steal marker behind');
-  } finally {
-    await rm(dir, { force: true, recursive: true });
-  }
-});
-
-test('a steal marker left by a waiter that died mid-removal expires', { timeout: 5_000 }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'anima-lock-abandoned-marker-'));
-  try {
-    const path = join(dir, 'value.json');
-    const lockDir = `${path}.lock`;
-    await mkdir(lockDir);
-    await writeLockOwner(lockDir, deadPid());
-    await mkdir(`${lockDir}.steal`);
-    const abandonedAt = new Date(Date.now() - 60 * 1000);
-    await utimes(`${lockDir}.steal`, abandonedAt, abandonedAt);
-
-    assert.equal(await withFileLock(path, dir, async () => 'entered'), 'entered');
-    await assert.rejects(stat(lockDir), /ENOENT/);
-    await assert.rejects(stat(`${lockDir}.steal`), /ENOENT/);
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
