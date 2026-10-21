@@ -177,24 +177,26 @@ test('the runner keeps a lock directory that is already set', async () => {
   assert.equal(await readFile(seen, 'utf8'), lockDir);
 });
 
-test('the runner runs when started through a symlinked path', async () => {
-  const link = join(await fixtureDir(), 'repo');
-  await symlink(process.cwd(), link);
-  const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
-  const child = spawn(process.execPath, [join(link, 'scripts', 'run-tests.mjs'), 'no-such-group'], {
-    env,
-    stdio: ['ignore', 'ignore', 'pipe'],
-  });
-  let stderr = '';
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-  const code = await new Promise<number | null>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', resolve);
-  });
+for (const nodeOptions of [[], ['--preserve-symlinks-main']]) {
+  test(`the runner runs when started through a symlinked path ${nodeOptions.join(' ')}`.trim(), async () => {
+    const link = join(await fixtureDir(), 'repo');
+    await symlink(process.cwd(), link);
+    const result = await runNode([...nodeOptions, join(link, 'scripts', 'run-tests.mjs'), 'no-such-group']);
 
-  assert.equal(code, 2, stderr);
-  assert.match(stderr, /Unknown test group "no-such-group"/);
+    assert.equal(result.code, 2, result.output);
+    assert.match(result.stderr, /Unknown test group "no-such-group"/);
+  });
+}
+
+test('code read from stdin can import the runner without running it', async () => {
+  const result = await runNode(
+    ['--input-type=module', '-'],
+    `import { testTimeoutsFor } from ${JSON.stringify(runnerUrl())};\nconsole.log(typeof testTimeoutsFor);\n`,
+  );
+
+  assert.equal(result.code, 0, result.output);
+  assert.equal(result.stdout.trim(), 'function');
+  assert.doesNotMatch(result.output, /Running .* tests|Unknown test group/);
 });
 
 function runFilesSource(testPaths: string[], perTestMs: number, suiteMs: number): string {
@@ -248,6 +250,29 @@ async function fixtureDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'anima-test-runner-'));
   scratch.push(dir);
   return dir;
+}
+
+async function runNode(args: string[], input?: string): Promise<{
+  code: number | null;
+  output: string;
+  stderr: string;
+  stdout: string;
+}> {
+  // Same isolation as runWrapper: drop the parent harness marker.
+  const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
+  const child = spawn(process.execPath, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+  child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+  child.stdin.end(input ?? '');
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', resolve);
+  });
+  return { code, output: `${stdout}\n${stderr}`, stderr, stdout };
 }
 
 function runnerUrl(): string {

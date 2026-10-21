@@ -296,10 +296,22 @@ function compositeTierFileBudgetMs(group, file) {
   throw new Error(`Cannot derive ${group}-tier timeout budget for unknown test file: ${file}`);
 }
 
-// Node resolves symlinks in the main module's URL but not in argv[1]. Compare
-// real paths, or a symlinked path such as macOS /tmp exits 0 without running.
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule()) {
   process.exitCode = await main();
+}
+
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    // Compare real paths on both sides. By default Node resolves symlinks in
+    // the main module's URL but not in argv[1]; --preserve-symlinks-main keeps
+    // the link in the URL. A plain comparison makes a symlinked path, such as
+    // macOS /tmp, exit 0 without running any tests.
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // argv[1] is not a file, e.g. `-` when the importing code comes from stdin.
+    return false;
+  }
 }
 
 function auditTierMembership() {
