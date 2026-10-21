@@ -4,7 +4,7 @@ import { join, posix } from 'node:path';
 
 import { kbFileExtension } from '../../shared/kb-file-types.js';
 import { PATH_SAFE_ID } from '../../shared/path-ids.js';
-import type { KbTreeNode, KbView } from '../../shared/kb.js';
+import type { KbView } from '../../shared/kb.js';
 
 // Error carrying an HTTP status; the API layer translates `statusCode` to the
 // response code.
@@ -113,72 +113,8 @@ export function expandHome(path: string): string {
   return path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
 }
 
-// Build a nested dir/file tree from a flat list of repo-relative POSIX paths.
-// `mtimes` (path → epoch ms) stamps file nodes; dirs then carry the max of
-// their descendants (GitHub-style "latest change inside").
-export function buildTree(paths: string[], mtimes?: ReadonlyMap<string, number>): KbTreeNode[] {
-  const rootNodes: KbTreeNode[] = [];
-  const dirIndex = new Map<string, KbTreeNode[]>();
-  dirIndex.set('', rootNodes);
-
-  for (const filePath of paths.sort()) {
-    const segments = filePath.split('/');
-    let prefix = '';
-    for (let i = 0; i < segments.length; i += 1) {
-      const segment = segments[i] as string;
-      const isLeaf = i === segments.length - 1;
-      const currentPath = prefix ? `${prefix}/${segment}` : segment;
-      const siblings = dirIndex.get(prefix) ?? rootNodes;
-      let node = siblings.find((n) => n.name === segment && n.type === (isLeaf ? 'file' : 'dir'));
-      if (!node) {
-        node = { name: segment, path: currentPath, type: isLeaf ? 'file' : 'dir' };
-        if (!isLeaf) node.children = [];
-        siblings.push(node);
-        if (!isLeaf) dirIndex.set(currentPath, node.children as KbTreeNode[]);
-      }
-      if (isLeaf) {
-        // Falsy (absent or the walk's unknown-mtime 0) leaves the node undated.
-        const mtime = mtimes?.get(filePath);
-        if (mtime) node.mtime = new Date(mtime).toISOString();
-      }
-      prefix = currentPath;
-    }
-  }
-
-  sortTree(rootNodes);
-  bubbleMtimes(rootNodes);
-  return rootNodes;
-}
-
-// Dir mtime = latest mtime among descendants, bubbled bottom-up. ISO 8601 UTC
-// strings share a fixed format, so lexicographic max is chronological max.
-function bubbleMtimes(nodes: KbTreeNode[]): string | undefined {
-  let latest: string | undefined;
-  for (const node of nodes) {
-    if (node.children) {
-      const childLatest = bubbleMtimes(node.children);
-      if (childLatest !== undefined) node.mtime = childLatest;
-    }
-    if (node.mtime !== undefined && (latest === undefined || node.mtime > latest)) {
-      latest = node.mtime;
-    }
-  }
-  return latest;
-}
-
 export function contentTypeFor(relPath: string): string {
   return RAW_CONTENT_TYPES[kbFileExtension(relPath)] ?? 'application/octet-stream';
-}
-
-// Dirs before files, each group alphabetical (case-insensitive).
-function sortTree(nodes: KbTreeNode[]): void {
-  nodes.sort((a, b) => {
-    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-    return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-  });
-  for (const node of nodes) {
-    if (node.children) sortTree(node.children);
-  }
 }
 
 const RAW_CONTENT_TYPES: Record<string, string> = {

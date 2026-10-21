@@ -12,13 +12,11 @@ import type {
   KbFile,
   KbRenameRequest,
   KbSearchResult,
-  KbTree,
   KbTreeNode,
   KbView,
 } from '../../shared/kb.js';
 import { KbRegistryStore, KbStore } from '../storage/schema/kb.store.js';
 import {
-  buildTree,
   CACHE_TTL_MS,
   contentTypeFor,
   expandHome,
@@ -78,8 +76,6 @@ const DIRECTORY_PAGE_SIZE = 250;
 const SEARCH_MATCH_LIMIT = 200;
 const SEARCH_SCAN_LIMIT = 50_000;
 const SEARCH_TIME_LIMIT_MS = 1_500;
-const LEGACY_TREE_ENTRY_LIMIT = 5_000;
-const LEGACY_TREE_TIME_LIMIT_MS = 2_000;
 
 export class KbRegistryService {
   private kbsCache: { kbs: ResolvedKbRoot[]; loadedAt: number } | undefined;
@@ -87,11 +83,10 @@ export class KbRegistryService {
 
   constructor(private readonly registry: KbRegistryStore = new KbRegistryStore()) {}
 
-  // Test hook: the root/visibility caches have a TTL, so a test switching
+  // Test hook: the root cache has a TTL, so a test switching
   // ANIMA_HOME within the TTL window would otherwise see stale roots.
   clearCaches(): void {
     this.kbsCache = undefined;
-    this.services.forEach((service) => service.clearCaches());
   }
 
   async listKbs(): Promise<KbView[]> {
@@ -248,23 +243,11 @@ export class KbRegistryService {
 // skipped. Directory browsing is paged and file reads validate only the
 // requested path, so a large unrelated subtree cannot block an ordinary read.
 export class KbService {
-  // Visible file paths → lstat mtime (epoch ms). Keys are the visibility set;
-  // mtimes ride along for the tree payload.
-  private visibleFilesCache: { files: Map<string, number>; loadedAt: number } | undefined;
-  private visibleFilesLoad: Promise<Map<string, number>> | undefined;
-  private cacheEpoch = 0;
-
   constructor(
     private readonly id: string,
     private readonly store: KbStore = new KbStore(id),
     private readonly onMutation: () => void = () => {},
   ) {}
-
-  clearCaches(): void {
-    this.visibleFilesCache = undefined;
-    this.visibleFilesLoad = undefined;
-    this.cacheEpoch += 1;
-  }
 
   async getKb(): Promise<KbView> {
     const kb = await this.resolvedKb();
@@ -282,12 +265,6 @@ export class KbService {
     if (!this.store.exists()) throw new KbError(404, `kb not found: ${this.id}`);
     await this.store.remove();
     this.onMutation();
-  }
-
-  async buildTree(): Promise<KbTree> {
-    const kb = await this.resolvedKb();
-    const files = await this.visibleKbFiles(kb);
-    return { kb: kbView(kb), nodes: buildTree([...files.keys()], files) };
   }
 
   async listDirectory(rawPath: string, rawCursor: string | undefined): Promise<KbDirectoryPage> {
@@ -468,56 +445,6 @@ export class KbService {
   private isVisiblePath(relPath: string, isDirectory: boolean): boolean {
     if (!relPath) return isDirectory;
     return !relPath.split(posix.sep).includes('.git');
-  }
-
-  private async visibleKbFiles(kb: ResolvedKbRoot): Promise<Map<string, number>> {
-    const now = Date.now();
-    if (this.visibleFilesCache && now - this.visibleFilesCache.loadedAt < CACHE_TTL_MS) {
-      return this.visibleFilesCache.files;
-    }
-    if (this.visibleFilesLoad) return this.visibleFilesLoad;
-    const epoch = this.cacheEpoch;
-    const load = (async () => {
-      const files = new Map<string, number>();
-      const budget = { entries: 0, deadline: Date.now() + LEGACY_TREE_TIME_LIMIT_MS };
-      await this.collectVisibleFiles(kb.path, '', files, budget);
-      if (epoch === this.cacheEpoch) this.visibleFilesCache = { files, loadedAt: Date.now() };
-      return files;
-    })();
-    this.visibleFilesLoad = load;
-    try {
-      return await load;
-    } finally {
-      if (this.visibleFilesLoad === load) this.visibleFilesLoad = undefined;
-    }
-  }
-
-  private async collectVisibleFiles(
-    rootPath: string,
-    dirRelPath: string,
-    files: Map<string, number>,
-    budget: { entries: number; deadline: number },
-  ): Promise<void> {
-    const dirPath = dirRelPath ? join(rootPath, dirRelPath) : rootPath;
-    const dir = await opendir(dirPath);
-    for await (const entry of dir) {
-      budget.entries += 1;
-      if (budget.entries > LEGACY_TREE_ENTRY_LIMIT || Date.now() > budget.deadline) {
-        throw new KbError(413, 'kb_tree_too_large: use the paged entries API');
-      }
-      const relPath = dirRelPath ? `${dirRelPath}/${entry.name}` : entry.name;
-      if (!this.isVisiblePath(relPath, entry.isDirectory())) continue;
-      if (entry.isDirectory()) {
-        await this.collectVisibleFiles(rootPath, relPath, files, budget);
-        continue;
-      }
-      if (entry.isFile() || entry.isSymbolicLink()) {
-        // A vanished-mid-walk entry stays visible with an unknown mtime (0)
-        // rather than dropping from the set on a transient race.
-        const entryStat = await lstat(join(dirPath, entry.name)).catch(() => undefined);
-        files.set(relPath, entryStat?.mtimeMs ?? 0);
-      }
-    }
   }
 }
 

@@ -38,15 +38,9 @@ export interface KbTreeNode {
   name: string;
   path: string; // repo-relative POSIX
   type: 'dir' | 'file';
-  // Last modification, ISO 8601 UTC. Legacy full trees may bubble a directory's
-  // latest descendant mtime; paged directory entries omit directory mtimes.
+  // Last modification, ISO 8601 UTC. Paged directory entries omit directory mtimes.
   mtime?: string;
   children?: KbTreeNode[];
-}
-
-export interface KbTree {
-  kb: KbView;
-  nodes: KbTreeNode[];
 }
 
 export interface KbDirectoryPage {

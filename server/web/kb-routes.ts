@@ -30,9 +30,6 @@ export function registerKbRoutes(
     const { parent, name } = KbMkdirRequest.parse(request.body);
     return kbRegistryService.createKbDirectory(parent, name);
   });
-  fastify.get<{ Params: { id: string } }>('/api/kbs/:id/tree', async (request) =>
-    kbRegistryService.serviceFor(request.params.id).buildTree(),
-  );
   fastify.get<{ Params: { id: string } }>('/api/kbs/:id/entries', async (request) =>
     kbRegistryService.serviceFor(request.params.id).listDirectory(
       queryParam(request.url, 'path') ?? '',
