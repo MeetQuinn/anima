@@ -1,3 +1,5 @@
+import type { IncomingHttpHeaders } from 'node:http';
+
 import type { FastifyInstance } from 'fastify';
 
 export interface WebListenerAccess {
@@ -24,4 +26,35 @@ export function registerWebListenerAccess(fastify: FastifyInstance, access: WebL
       return reply.code(403).header('cache-control', 'no-store').send({ error: 'network_access_denied' });
     }
   });
+}
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Refuses state-changing requests that a browser marks as sent from another site.
+ * Without dashboard auth, any page open in the operator's browser could otherwise
+ * send body-less POSTs (restart services, disable an agent) to the dashboard.
+ * Clients that are not browsers send neither header and are unaffected.
+ */
+export function registerCrossSiteWriteGuard(fastify: FastifyInstance): void {
+  fastify.addHook('onRequest', async (request, reply) => {
+    if (SAFE_METHODS.has(request.method)) return;
+    if (isSameOriginRequest(request.headers)) return;
+    return reply.code(403).header('cache-control', 'no-store').send({ error: 'cross_site_request_denied' });
+  });
+}
+
+function isSameOriginRequest(headers: IncomingHttpHeaders): boolean {
+  // Browsers send Sec-Fetch-Site whatever Host a reverse proxy forwards, so it is
+  // the primary signal. Origin is the fallback for browsers that do not send it;
+  // only its host is compared, because a TLS-terminating proxy forwards plain HTTP.
+  const site = headers['sec-fetch-site'];
+  if (site !== undefined) return site === 'same-origin' || site === 'none';
+  const origin = headers.origin;
+  if (origin === undefined) return true;
+  try {
+    return new URL(origin).host === headers.host;
+  } catch {
+    return false;
+  }
 }
