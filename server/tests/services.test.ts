@@ -34,15 +34,18 @@ import { stopPidFallbackService } from '../services/supervisor.js';
 import { FULL_SERVICE_LOG_BYTES, runAnimactlWith, writeFakeServiceManager } from './helpers/service-manager.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
+const npmAnimactl = resolve('dist/server/cli/animactl-npm.js');
 
-test('animactl --version prints the package version', async () => {
+test('both animactl entry points print the package version with --version', async () => {
   const pkg = JSON.parse(await readFile('package.json', 'utf8')) as { version?: unknown };
   const expectedVersion = typeof pkg.version === 'string' ? pkg.version : 'unknown';
 
-  const version = await runAnimactl(['--version']);
+  for (const entry of [animactl, npmAnimactl]) {
+    const version = await runAnimactl(['--version'], { entry });
 
-  assert.equal(version.status, 0, version.stderr || version.stdout);
-  assert.equal(version.stdout.trim(), expectedVersion);
+    assert.equal(version.status, 0, version.stderr || version.stdout);
+    assert.equal(version.stdout.trim(), expectedVersion);
+  }
 });
 
 test('cleanServiceEnv strips runtime item context before spawning services', () => {
@@ -1112,7 +1115,7 @@ function pidIsRunning(pid: number): boolean {
 
 async function runAnimactl(
   args: string[],
-  options: { env?: NodeJS.ProcessEnv } = {},
+  options: { entry?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -1124,7 +1127,7 @@ async function runAnimactl(
     ANIMA_RUNTIME_HOME: '',
     ...(options.env ?? {}),
   };
-  const child = spawn(process.execPath, [animactl, ...args], {
+  const child = spawn(process.execPath, [options.entry ?? animactl, ...args], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

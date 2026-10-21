@@ -124,6 +124,12 @@ async function runPackSmoke() {
       "Usage: animactl",
       installDir,
     );
+    await assertCommandHelp(
+      animactlBin,
+      ["--version"],
+      packInfo.version,
+      installDir,
+    );
     await assertCommandFails(
       animaBin,
       ["history"],
