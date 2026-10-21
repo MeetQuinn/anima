@@ -242,7 +242,10 @@ async function resolveServices(opts: ServicesCliOptions): Promise<{ specs: Servi
   const specs = opts.only ? allSpecs.filter((spec) => spec.id === opts.only) : allSpecs;
 
   const animactl = fileURLToPath(new URL('./animactl.js', import.meta.url));
-  const cwd = process.cwd();
+  // Services run from the package root (three levels above dist/server/cli),
+  // not from wherever the operator typed the command: a unit pinned to a
+  // since-deleted directory fails to start.
+  const cwd = resolvePath(fileURLToPath(new URL('../../..', import.meta.url)));
   return { specs, supervisor: { animactl, cwd } };
 }
 

@@ -58,7 +58,7 @@ export async function writeFakeServiceManager(
     ...status,
     `if [ -e '${logPath}.1' ]; then rotated=yes; else rotated=no; fi`,
     `echo "$action rotated=$rotated" >> '${callsPath}'`,
-    `case "$action" in kickstart|start) : > '${runningPath}' ;; esac`,
+    `case "$action" in kickstart|start|restart) : > '${runningPath}' ;; esac`,
     'exit 0',
     '',
   ].join('\n'), { mode: 0o755 });
@@ -87,8 +87,10 @@ export async function writeFakeServiceManager(
 export async function runAnimactlWith(
   args: string[],
   env: NodeJS.ProcessEnv,
+  options: { cwd?: string } = {},
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
   const child = spawn(process.execPath, [resolve('dist/server/cli/animactl.js'), ...args], {
+    ...(options.cwd ? { cwd: options.cwd } : {}),
     env: {
       ...process.env,
       ANIMA_AGENT_ID: '',
