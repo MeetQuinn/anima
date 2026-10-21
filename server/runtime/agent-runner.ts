@@ -118,8 +118,10 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     runtimeEnv: options.runtimeEnv,
   });
   try {
-    worker.start();
+    // Connect before claiming: a start that fails would otherwise abort the
+    // item it just claimed, and an aborted item is failed, not requeued.
     await startSubscriberWithTimeout(subscriber, options.startTimeoutMs);
+    worker.start();
   } catch (error) {
     await Promise.allSettled([
       subscriber.stop(),
