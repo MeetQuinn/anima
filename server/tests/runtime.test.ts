@@ -183,6 +183,7 @@ test('first-class anima CLI command detection covers plain agent-facing tools', 
 
 test('runtime host startup reconciliation deletes expired handoff private keys', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-handoff-cleanup-'));
+  let host: RuntimeHost | undefined;
   try {
     const keys = createHandoffKeyPair();
     const pending = new SecretHandoffPendingStore('alpha', stateDir);
@@ -208,7 +209,7 @@ test('runtime host startup reconciliation deletes expired handoff private keys',
     assert.equal((await stat(path)).isFile(), true);
     assert.equal((await stat(sealedPath)).isFile(), true);
 
-    const host = new RuntimeHost({}, {
+    host = new RuntimeHost({}, {
       animaHome: stateDir,
       ensureDefaultSkills: async () => {},
       loadAgents: async () => [runtimeHostAgent('alpha', { connected: false, enabled: false })],
@@ -220,6 +221,7 @@ test('runtime host startup reconciliation deletes expired handoff private keys',
     await assert.rejects(() => stat(path), /ENOENT/);
     await assert.rejects(() => stat(sealedPath), /ENOENT/);
   } finally {
+    await host?.stop();
     await rm(stateDir, { force: true, recursive: true });
   }
 });
@@ -1699,12 +1701,13 @@ test('runtime host keeps a when-idle reload pending until active work finishes',
 
 test('runtime host writes recovered restart health snapshots', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-health-restart-test-'));
+  let host: RuntimeHost | undefined;
   try {
     const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
     const healthStore = new AgentHealthStore({ animaHome: stateDir });
     const agents = [runtimeHostAgent('alpha', { connected: true })];
     let generation = 0;
-    const host = new RuntimeHost({}, {
+    host = new RuntimeHost({}, {
       animaHome: stateDir,
       healthStore,
       loadAgents: async () => agents,
@@ -1733,6 +1736,7 @@ test('runtime host writes recovered restart health snapshots', async () => {
     assert.equal(restarted?.restart?.outcome, 'recovered');
     assert.equal(restarted?.restart?.workerPid, process.pid);
   } finally {
+    await host?.stop();
     await rm(stateDir, { force: true, recursive: true });
   }
 });
@@ -1919,6 +1923,7 @@ test('runtime host debounces missing provider children before marking unhealthy'
 
 test('runtime host restart clears only the requested stale running item', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-stale-restart-test-'));
+  let host: RuntimeHost | undefined;
   try {
     await withAnimaHome(stateDir, async () => {
       const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
@@ -1930,7 +1935,7 @@ test('runtime host restart clears only the requested stale running item', async 
       const started: string[] = [];
       const stopped: string[] = [];
       let alphaGeneration = 0;
-      const host = new RuntimeHost({}, {
+      host = new RuntimeHost({}, {
         animaHome: stateDir,
         healthStore,
         loadAgents: async () => agents,
@@ -2031,17 +2036,19 @@ test('runtime host restart clears only the requested stale running item', async 
       assert.equal(alphaHealth?.runtime?.workerId, `alpha:${process.pid}:2`);
     });
   } finally {
+    await host?.stop();
     await rm(stateDir, { force: true, recursive: true });
   }
 });
 
 test('runtime host does not restart disabled agents from stale commands', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-restart-disabled-test-'));
+  let host: RuntimeHost | undefined;
   try {
     const restartCommands = new AgentRestartCommandStore({ animaHome: stateDir });
     const agents = [runtimeHostAgent('alpha', { connected: true, enabled: false })];
     const started: string[] = [];
-    const host = new RuntimeHost({}, {
+    host = new RuntimeHost({}, {
       animaHome: stateDir,
       loadAgents: async () => agents,
       logger: silentLogger,
@@ -2060,6 +2067,7 @@ test('runtime host does not restart disabled agents from stale commands', async 
     assert.deepEqual(await restartCommands.pendingAgentIds(), []);
     assert.deepEqual(host.runningAgentIds(), []);
   } finally {
+    await host?.stop();
     await rm(stateDir, { force: true, recursive: true });
   }
 });
