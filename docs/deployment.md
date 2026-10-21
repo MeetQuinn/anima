@@ -132,15 +132,8 @@ restart, Anima wakes each affected agent with a background-interrupted notice so
 Use `--force` only for an explicit incident decision. It bypasses the normal gate and can abort the
 active provider turn.
 
-The lower-level `services restart` command exists for supervisor work. Its drain mode requires both
-flags together:
-
-```bash
-npx -y @meetquinn/animactl@latest services restart \
-  --drain-active --resume-running
-```
-
-Prefer the top-level `restart` command unless you are following the service runbook.
+Without `--force`, `restart` runs the runtime's `services restart --drain-active --resume-running`.
+`--drain-timeout-ms <ms>` sets how long it waits for running agents to reach that boundary.
 
 ## Select a release target
 

@@ -38,7 +38,7 @@ Tailscale IPv4 addresses:
 This list replaces the web command's `--host` binding. All listeners use the
 same `--port` or configured `dashboardPort`. Keep `dashboardHost` in `config.json`
 set to `127.0.0.1` as well. For an already installed OS-managed service, regenerate
-its command with `animactl services install --only web`: its old command may still
+its command with `npx -y @meetquinn/animactl@latest install-services --only web`: its old command may still
 contain `--host 0.0.0.0`. Installation also reloads that web service. This keeps the fallback loopback-only if
 the optional network file is later removed. Without a listener list, existing
 single-host behavior is unchanged.
@@ -56,7 +56,7 @@ wildcard binds, duplicate listeners, empty lists and unknown fields are errors.
 An invalid file or failed bind stops startup and closes any listeners already
 opened; it never falls back to a wider bind. This configuration is read at web
 startup, not hot-reloaded. Replace it atomically, then restart only the web service
-with `animactl services restart --only web`. The agent service need not restart.
+with `npx -y @meetquinn/animactl@latest restart --only web`. The agent service need not restart.
 
 This is device-level filtering for each restricted listener, not a replacement
 for dashboard authentication. Localhost and a retained reverse proxy remain
