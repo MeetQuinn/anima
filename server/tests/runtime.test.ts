@@ -147,6 +147,29 @@ test('child process output keeps a character split across chunks whole', async (
   assert.equal(stderr, 'b\u597d\n');
 });
 
+test('a write to a child that closed its input does not crash the server', async () => {
+  // The child closes its end of the stdin pipe but stays alive, so the next
+  // write fails with EPIPE. With no listener, that error is uncaught.
+  let markReady!: () => void;
+  const ready = new Promise<void>((resolve) => { markReady = resolve; });
+  const child = startChildProcess({
+    args: ['-e', "require('fs').closeSync(0); process.stdout.write('ready\\n'); setTimeout(() => {}, 10_000);"],
+    command: process.execPath,
+    env: process.env,
+    label: 'closed stdin child',
+    onStdoutChunk: async () => markReady(),
+  });
+  try {
+    await ready;
+    child.writeStdin('ping\n');
+    await waitFor(() => !child.snapshot().stdinWritable, { description: 'stdin closed after EPIPE', timeoutMs: 5_000 });
+    assert.throws(() => child.writeStdin('again\n'), /closed stdin child stdin is closed/);
+  } finally {
+    child.kill('SIGKILL');
+    await child.completion.catch(() => undefined);
+  }
+});
+
 test('first-class anima CLI command detection covers plain agent-facing tools', () => {
   assert.equal(isFirstClassAnimaCliCommand('anima ask --question "Pick" --option A --option B'), true);
   assert.equal(isFirstClassAnimaCliCommand('ANIMA_AGENT_ID=scout anima reminder list'), true);

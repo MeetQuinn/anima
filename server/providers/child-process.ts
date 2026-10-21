@@ -1,7 +1,17 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 
 import { errorMessage } from '../ids.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
+
+/**
+ * A child that exits, or closes its input, while a write is in flight fails
+ * that write with EPIPE as a stream 'error' event. Unhandled, that event
+ * crashes the whole server. The child's exit already reports the failure, so
+ * the stream error is dropped.
+ */
+export function ignoreChildStdinErrors(child: ChildProcess): void {
+  child.stdin?.on('error', () => undefined);
+}
 
 export interface RunningChildProcess {
   completion: Promise<{ stdout: string; stderr: string }>;
@@ -35,6 +45,7 @@ export function startChildProcess(input: {
     env: input.env,
     stdio: [input.stdin ?? 'pipe', 'pipe', 'pipe'],
   });
+  ignoreChildStdinErrors(child);
 
   if (input.signal) {
     if (input.signal.aborted) {
