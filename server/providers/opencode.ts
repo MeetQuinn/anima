@@ -8,6 +8,13 @@ import { type RunningChildProcess } from './child-process.js';
 import { providerUsageFromStats } from './provider-usage.js';
 import { AcpJsonRpcError, AcpJsonRpcPeer } from './acp-json-rpc.js';
 import {
+  copyNumberLike,
+  extractAcpText,
+  normalizeAcpUpdate,
+  toolCallId,
+  toolInput,
+} from './acp-updates.js';
+import {
   acpFollowupAppliedText,
   appendAcpFollowupPrompt,
   discardAcpPromptPartialText,
@@ -720,44 +727,6 @@ function permissionApprovalOptionId(message: Record<string, unknown>): string | 
     )?.id;
 }
 
-function normalizeAcpUpdate(value: unknown): { data: Record<string, unknown>; type: string } {
-  if (!isRecord(value)) return { data: {}, type: '' };
-  const direct = stringField(value, 'sessionUpdate') ?? stringField(value, 'type');
-  if (direct) return { data: value, type: normalizeAcpUpdateType(direct) };
-  const entries = Object.entries(value);
-  if (entries.length !== 1) return { data: value, type: '' };
-  const [key, data] = entries[0] ?? [];
-  return { data: isRecord(data) ? data : {}, type: normalizeAcpUpdateType(key ?? '') };
-}
-
-function normalizeAcpUpdateType(type: string): string {
-  const key = type.trim().toLowerCase().replace(/[_-]/g, '');
-  if (key === 'agentmessagechunk') return 'agent_message_chunk';
-  if (key === 'agentthoughtchunk') return 'agent_thought_chunk';
-  if (key === 'toolcall') return 'tool_call';
-  if (key === 'toolcallupdate') return 'tool_call_update';
-  if (key === 'usageupdate') return 'usage_update';
-  return '';
-}
-
-function extractAcpText(data: Record<string, unknown>): string | undefined {
-  if (typeof data.text === 'string') return data.text;
-  if (typeof data.delta === 'string') return data.delta;
-  if (typeof data.content === 'string') return data.content;
-  return isRecord(data.content)
-    ? stringField(data.content, 'text') ?? stringField(data.content, 'delta')
-    : undefined;
-}
-
-function toolCallId(data: Record<string, unknown>): string | undefined {
-  return stringField(data, 'toolCallId') ?? stringField(data, 'tool_call_id') ?? stringField(data, 'id');
-}
-
-function toolInput(data: Record<string, unknown>): Record<string, unknown> | undefined {
-  const raw = data.rawInput ?? data.input ?? data.parameters;
-  return isRecord(raw) ? raw : undefined;
-}
-
 function toolOutput(data: Record<string, unknown>): string | undefined {
   if (typeof data.rawOutput === 'string') return data.rawOutput;
   if (typeof data.output === 'string') return data.output;
@@ -846,19 +815,4 @@ function acpUsagePayload(value: Record<string, unknown> | undefined): Record<str
   const cost = isRecord(usage.cost) ? usage.cost : undefined;
   copyNumberLike(cost ?? usage, output, ['amount', 'cost'], 'costUsd');
   return Object.keys(output).length > 0 ? output : undefined;
-}
-
-function copyNumberLike(
-  source: Record<string, unknown>,
-  target: Record<string, unknown>,
-  from: string[],
-  to: string,
-): void {
-  for (const key of from) {
-    const value = source[key];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      target[to] = value;
-      return;
-    }
-  }
 }
