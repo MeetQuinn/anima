@@ -488,7 +488,9 @@ test('pi bash timeout does not abort when tool_execution_end wins the same-turn 
   const previousYield = process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS;
   process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = '200';
   // Widen the timeout callback gap so the fake's late end is processed before abort is considered.
-  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = '80';
+  // The fake ends the tool at 400ms: ~200ms after the timeout fires and ~800ms before the gap
+  // closes, so a slow CI runner can't move the end to either side of the race.
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = '1000';
   try {
     await withAnimaHome(stateDir, async () => {
       const callsPath = join(stateDir, 'calls.jsonl');
@@ -499,13 +501,16 @@ test('pi bash timeout does not abort when tool_execution_end wins the same-turn 
         "  if (msg.type === 'prompt') {",
         '    respond(msg);',
         "    send({ type: 'tool_execution_start', toolCallId: 'pi-bash-race', toolName: 'bash', args: { command: 'sleep 999' } });",
-        '    // Complete during the timeout callback await — must cancel the pending abort.',
+        '    // End the tool during the timeout callback await; that must cancel the pending abort.',
         '    setTimeout(() => {',
         "      send({ type: 'tool_execution_end', toolCallId: 'pi-bash-race', toolName: 'bash', result: { content: [{ type: 'text', text: 'finished just in time' }] }, isError: false });",
+        '    }, 400);',
+        '    // Keep the turn open until after the await, so an abort that survived it lands in this turn.',
+        '    setTimeout(() => {',
         "      send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'recovered' } });",
         "      send({ type: 'message_end', message: assistant('recovered', { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } }, 'stop') });",
         "      send({ type: 'agent_settled' });",
-        '    }, 220);',
+        '    }, 1500);',
         '    return;',
         '  }',
         "  if (msg.type === 'abort') {",
@@ -565,7 +570,9 @@ test('pi bash timeout claims failure before writes so late error end cannot dupl
   process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_MS = '200';
   process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_YIELD_MS = '0';
   // After the failure slot is claimed, delay writes so an error end can arrive first.
-  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_RECORD_YIELD_MS = '80';
+  // The fake ends the tool at 400ms: ~200ms after the claim and ~800ms before the writes,
+  // so a slow CI runner can't move the end to either side of the race.
+  process.env.ANIMA_PI_BASH_TOOL_TIMEOUT_RECORD_YIELD_MS = '1000';
   try {
     await withAnimaHome(stateDir, async () => {
       const callsPath = join(stateDir, 'calls.jsonl');
@@ -580,7 +587,7 @@ test('pi bash timeout claims failure before writes so late error end cannot dupl
         "      send({ type: 'tool_execution_end', toolCallId: 'pi-bash-err-race', toolName: 'bash', result: { content: [{ type: 'text', text: 'Command aborted' }] }, isError: true });",
         "      send({ type: 'message_end', message: assistant('', { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1, cost: { total: 0 } }, 'aborted', 'tool ended during timeout write') });",
         "      send({ type: 'agent_settled' });",
-        '    }, 220);',
+        '    }, 400);',
         '    return;',
         '  }',
         "  if (msg.type === 'abort') {",
