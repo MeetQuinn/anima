@@ -342,7 +342,7 @@ test('served files open in a sandbox with an opaque origin, except PDFs', async 
         const pdf = await fetch(`${base}/api/agents/anima/home/raw/notes/guide.pdf`);
         assert.equal(pdf.status, 200);
         assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff');
-        assert.equal(pdf.headers.get('content-security-policy'), null, 'a sandbox breaks the built-in PDF viewer');
+        assert.equal(pdf.headers.get('content-security-policy'), null, 'PDFs keep the built-in viewer as it was');
       },
       { slackTeamId: 'T-demo' },
     );

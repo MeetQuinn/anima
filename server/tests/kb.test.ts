@@ -776,7 +776,7 @@ test('kb raw route serves tracked bytes with hardened headers', async () => {
       assert.equal(pdf.status, 200);
       assert.equal(pdf.headers.get('content-type'), 'application/pdf');
       assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff');
-      assert.doesNotMatch(pdf.headers.get('content-security-policy') ?? '', /sandbox/, 'a sandbox breaks the built-in PDF viewer');
+      assert.doesNotMatch(pdf.headers.get('content-security-policy') ?? '', /sandbox/, 'PDFs keep the built-in viewer as it was');
       assert.deepEqual(Buffer.from(await pdf.arrayBuffer()), pdfBytes);
     });
   } finally {
