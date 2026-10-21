@@ -220,7 +220,7 @@ Current process model:
 Protocol:
 
 1. send JSON-RPC `initialize`;
-2. send `thread/start` or `thread/resume`;
+2. send `thread/start`, or `thread/resume` with `excludeTurns: true` so Codex leaves the thread's turn history out of the response;
 3. persist the returned thread id as the `codex-cli` provider session;
 4. send `turn/start` with the bridge-built delivery prompt;
 5. collect `item/agentMessage/delta` notifications as internal text;

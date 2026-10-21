@@ -25,6 +25,14 @@ import type { ProviderSessionCorruptionReason } from './session-corruption.js';
 import { providerUsageFromStats } from './provider-usage.js';
 import { ProviderTurnFailedError } from './provider-failure.js';
 
+// Anima reads only a resumed thread's id and metadata. Without excludeTurns,
+// Codex answers thread/resume with the thread's whole turn history, every
+// command's output included, on one JSON line. A long thread's line runs to
+// hundreds of megabytes, and the server spends minutes reading and parsing it.
+// Codex 0.129-0.150 accept the flag only with the experimentalApi capability,
+// which initialize requests.
+const RESUME_WITHOUT_HISTORY = { excludeTurns: true } as const;
+
 interface CodexThread {
   id: string;
 }
@@ -157,7 +165,7 @@ export class CodexAppServerController {
   }
 
   async resumeThread(threadId: string, params: Record<string, unknown>): Promise<CodexThread> {
-    const result = await this.request('thread/resume', { ...params, threadId });
+    const result = await this.request('thread/resume', { ...params, threadId, ...RESUME_WITHOUT_HISTORY });
     return threadFromResponse(result);
   }
 
@@ -625,7 +633,7 @@ export class CodexAppServerController {
   }
 
   private async readSubagentThreadMetadata(threadId: string): Promise<Record<string, unknown>> {
-    const result = asRecord(await this.request('thread/resume', { threadId }));
+    const result = asRecord(await this.request('thread/resume', { threadId, ...RESUME_WITHOUT_HISTORY }));
     try {
       await this.request('thread/unsubscribe', { threadId });
     } catch {
