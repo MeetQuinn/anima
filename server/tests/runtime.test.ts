@@ -305,6 +305,97 @@ test('runtime host idles with zero agents and starts a newly runnable agent once
   assert.deepEqual(stopped, ['aria']);
 });
 
+test('runtime host starts up to six agents at once and a slow start does not hold up the rest', async () => {
+  const ids = ['a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7'];
+  const gates = new Map<string, () => void>();
+  const entered: string[] = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const stopped: string[] = [];
+  const host = new RuntimeHost({}, {
+    animaHome: testHome,
+    loadAgents: async () => ids.map((id) => runtimeHostAgent(id, { connected: true })),
+    logger: silentLogger,
+    startAgent: async (agent) => {
+      entered.push(agent.id);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise<void>((resolve) => gates.set(agent.id, resolve));
+      inFlight -= 1;
+      return stopHandle(agent.id, stopped);
+    },
+    validateAgent: async () => {},
+  });
+  const release = (id: string) => {
+    const open = gates.get(id);
+    assert.ok(open, `${id} has not started`);
+    open();
+  };
+
+  const reconcile = host.reconcileOnce();
+  await waitFor(() => inFlight === 6, { description: 'six starts in flight' });
+  await sleep(50);
+  assert.deepEqual(entered, ['a0', 'a1', 'a2', 'a3', 'a4', 'a5']);
+
+  // a0 stays slow; the freed slots pick up the remaining agents.
+  for (const id of ['a1', 'a2', 'a3', 'a4', 'a5']) release(id);
+  await waitFor(() => entered.length === 8, { description: 'remaining agents start beside the slow one' });
+  for (const id of ['a6', 'a7']) release(id);
+  await waitFor(() => inFlight === 1, { description: 'only the slow start left' });
+  release('a0');
+  await reconcile;
+
+  assert.equal(maxInFlight, 6);
+  assert.deepEqual(host.runningAgentIds().sort(), ids);
+  await host.stop();
+});
+
+test('runtime host stop waits for in-flight starts even when recording a start failure fails', async () => {
+  class FailingHealthStore extends AgentHealthStore {
+    override async update(
+      agentId: string,
+      apply: Parameters<AgentHealthStore['update']>[1],
+    ): Promise<void> {
+      if (agentId === 'bad' && apply(undefined)?.state === 'unhealthy') throw new Error('health write failed');
+      await super.update(agentId, apply);
+    }
+  }
+  const homeDir = await mkdtemp(join(tmpdir(), 'anima-runtime-start-pool-failure-'));
+  try {
+    let releaseSlow!: () => void;
+    let slowEntered = false;
+    const stopped: string[] = [];
+    const host = new RuntimeHost({}, {
+      animaHome: homeDir,
+      healthStore: new FailingHealthStore({ animaHome: homeDir }),
+      loadAgents: async () => ['bad', 'slow'].map((id) => runtimeHostAgent(id, { connected: true })),
+      logger: silentLogger,
+      startAgent: async (agent) => {
+        if (agent.id === 'bad') throw new Error('bad start');
+        slowEntered = true;
+        await new Promise<void>((resolve) => { releaseSlow = resolve; });
+        return stopHandle(agent.id, stopped);
+      },
+      validateAgent: async () => {},
+    });
+
+    const reconcile = host.reconcileOnce().then(() => undefined, (error: unknown) => error);
+    await waitFor(() => slowEntered, { description: 'slow start in flight' });
+    let stopReturned = false;
+    const stopping = host.stop().then(() => { stopReturned = true; });
+    await sleep(50);
+    assert.equal(stopReturned, false, 'stop waits for the in-flight start');
+
+    releaseSlow();
+    await stopping;
+    assert.match(String(await reconcile), /health write failed/);
+    assert.deepEqual(stopped, ['slow']);
+    assert.deepEqual(host.runningAgentIds(), []);
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime host publishes a health round in one snapshot-file rewrite', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'anima-runtime-health-round-'));
   const healthStore = new AgentHealthStore({ animaHome: homeDir });
