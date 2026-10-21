@@ -38,8 +38,7 @@
     "docs/agent/*.md",
     "docs/architecture/*.md",
     "docs/guide/*.md",
-    "templates/",
-    "examples/"
+    "templates/"
   ],
   "scripts": {
     "build": "rm -rf packages/animactl/dist && pnpm --dir server build && pnpm build:ui && pnpm build:handoff && node scripts/prepare-animactl-package.mjs",
