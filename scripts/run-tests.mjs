@@ -177,6 +177,15 @@ const timeoutProfiles = {
   all: { perTestMs: 60_000, suiteBaseMs: 60_000 },
 };
 
+// Each test file runs in its own process. Unit and api files use temp homes and
+// the per-run provider CLI lock directory below, so four can run at once. Runtime
+// files drive real child processes on tight timings and stay one at a time.
+const fileConcurrency = { unit: 4, api: 4, fast: 4, runtime: 1, all: 1 };
+
+export function testConcurrencyFor(group) {
+  return fileConcurrency[group] ?? 1;
+}
+
 const fallbackTimeoutProfile = {
   perTestMs: 60_000,
   suiteBaseMs: 60_000,
@@ -209,10 +218,11 @@ export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
     );
   }
 
-  const args = ['--test', `--test-timeout=${perTestMs}`, '--test-concurrency=1', ...testPaths];
+  const concurrency = testConcurrencyFor(group);
+  const args = ['--test', `--test-timeout=${perTestMs}`, `--test-concurrency=${concurrency}`, ...testPaths];
 
   console.log(
-    `Running ${group} tests (${testPaths.length} files, ` +
+    `Running ${group} tests (${testPaths.length} files, ${concurrency} at a time, ` +
       `per-test ${formatSeconds(perTestMs)}, suite ${formatSeconds(suiteMs)})`,
   );
   // Provider CLI locks are machine-wide by default and shared with any live
