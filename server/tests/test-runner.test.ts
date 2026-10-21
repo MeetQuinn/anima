@@ -39,6 +39,21 @@ test('runtime timeout profile separates one test from the serial suite budget', 
   });
 });
 
+test('unit and api files run four at a time; runtime files run one at a time', async () => {
+  const result = await runWrapper(`
+    import { nodeTestArgs } from ${JSON.stringify(runnerUrl())};
+    const groups = ['unit', 'api', 'fast', 'runtime', 'all', 'unknown'];
+    const concurrencyArg = (group) =>
+      nodeTestArgs({ group, perTestMs: 1_000, testPaths: ['a.test.js'] }).find((arg) => arg.startsWith('--test-concurrency='));
+    console.log(JSON.stringify(Object.fromEntries(groups.map((group) => [group, concurrencyArg(group)]))));
+  `);
+
+  assert.equal(result.code, 0);
+  const one = '--test-concurrency=1';
+  const four = '--test-concurrency=4';
+  assert.deepEqual(JSON.parse(result.stdout.trim()), { all: one, api: four, fast: four, runtime: one, unit: four, unknown: one });
+});
+
 test('the derived suite budget stays above the per-test timeout with no files', async () => {
   const result = await runWrapper(`
     import { testTimeoutsFor } from ${JSON.stringify(runnerUrl())};
