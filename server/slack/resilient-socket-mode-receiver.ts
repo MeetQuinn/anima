@@ -6,6 +6,12 @@ import { errorMessage } from '../ids.js';
 
 const RECONNECT_DELAY_MS = 5_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
+// The SDK pings Slack every third of this timeout and drops the socket once the
+// last pong is older than the timeout. With its 5 s default, a stall of about 5 s,
+// in a proxy or in the event loop of the process that holds every agent's socket,
+// drops them all at once. Allow 30 s, the same as the SDK's timeout for pings
+// from Slack.
+const CLIENT_PING_TIMEOUT_MS = 30_000;
 
 interface ResilientSocketModeReceiverOptions extends SocketModeReceiverOptions {
   random?: () => number;
@@ -33,13 +39,14 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
 
   constructor(options: ResilientSocketModeReceiverOptions) {
     const {
+      clientPingTimeout = CLIENT_PING_TIMEOUT_MS,
       reconnectDelayMs = RECONNECT_DELAY_MS,
       reconnectMaxDelayMs = MAX_RECONNECT_DELAY_MS,
       random = Math.random,
       runtimeLogger = console,
       ...receiverOptions
     } = options;
-    super({ ...receiverOptions, autoReconnectEnabled: false });
+    super({ ...receiverOptions, autoReconnectEnabled: false, clientPingTimeout });
     this.reconnectDelayMs = reconnectDelayMs;
     this.reconnectMaxDelayMs = reconnectMaxDelayMs;
     this.random = random;

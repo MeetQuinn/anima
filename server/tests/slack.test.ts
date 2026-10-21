@@ -400,6 +400,14 @@ test('Slack workspace directory errors surface to callers', async () => {
   await assert.rejects(() => new SlackWorkspaceDirectoryService({ client }).getUserByHandle('alice'), /not_in_channel/);
 });
 
+test('Slack Socket Mode allows 30 s for a pong before dropping the socket', () => {
+  const pongTimeout = (receiver: ResilientSocketModeReceiver) =>
+    (receiver.client as unknown as { clientPingTimeoutMS: number }).clientPingTimeoutMS;
+  // With the SDK's 5 s default, a stall of about 5 s drops every socket at once.
+  assert.equal(pongTimeout(new ResilientSocketModeReceiver({ appToken: 'xapp-test' })), 30_000);
+  assert.equal(pongTimeout(new ResilientSocketModeReceiver({ appToken: 'xapp-test', clientPingTimeout: 10_000 })), 10_000);
+});
+
 test('Slack Socket Mode retries a disconnect without an unhandled rejection', async () => {
   const receiver = new ResilientSocketModeReceiver({
     appToken: 'xapp-test',
