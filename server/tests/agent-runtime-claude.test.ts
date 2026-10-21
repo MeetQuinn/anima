@@ -1613,9 +1613,11 @@ async function withClaudeLifecycleFixture(
           async emit(frames, final = false) {
             const commandCount = frames.reduce((count, frame) => Math.max(count,
               typeof frame['commandIndex'] === 'number' ? frame['commandIndex'] + 1 : 0,
-            ), 0);
+            ), traces.filter((trace) => trace['phase'] === 'input.written').length);
             if (commandCount > 0) {
-              // Native lifecycle frames can only refer to input the CLI received.
+              // Native lifecycle frames can only refer to input the CLI received,
+              // and the CLI must read every line the runtime wrote before it acts
+              // on new frames, or an exit frame can win the race with a follow-up.
               // Use the real event loop while confirmation tests mock setTimeout.
               const deadline = Date.now() + 1_000;
               while ((await readFile(callsPath, 'utf8')).trim().split('\n').filter(Boolean).length < commandCount) {
@@ -1648,9 +1650,13 @@ async function withClaudeLifecycleFixture(
       }
     });
   } finally {
+    // Setup can fail before the inner finally is reached; settle trace writes
+    // here too so a timeout is reported instead of rm's ENOTEMPTY.
+    releaseTrace.resolve();
     releaseTool.resolve();
     releaseCompletion.resolve();
     await runtime?.close?.();
+    await Promise.allSettled(traceWrites);
     await rm(stateDir, { force: true, recursive: true });
   }
 }
