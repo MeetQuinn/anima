@@ -98,6 +98,7 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
         '      if (promptCount === 1) {',
         '        pendingPromptId = msg.id;',
         "        send({ jsonrpc: '2.0', id: 'agent-request-1', method: 'fs/read_text_file', params: { path: 'PROBE.txt' } });",
+        "        send({ jsonrpc: '2.0', id: 'agent-permission-1', method: 'session/request_permission', params: { sessionId: 'grok-session-1', options: [{ optionId: 'reject-once', kind: 'reject_once', name: 'Reject' }, { optionId: 'allow-once', kind: 'allow_once', name: 'Allow once' }, { optionId: 'allow-always', kind: 'allow_always', name: 'Always allow' }] } });",
         '      } else {',
         "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'appended' } });",
         "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', _meta: { modelId: 'grok-4.5', inputTokens: 20, outputTokens: 4, totalTokens: 24 } } });",
@@ -163,6 +164,8 @@ test('grok-cli ACP starts, appends, dispatches agent requests, and reports actua
       assertFollowupPrompt(promptText(prompts[1]), 'Continue Grok.');
       assert.ok(calls.some((call) => call['method'] === 'session/cancel'), 'mid-turn follow-up must cancel the active prompt');
       assert.ok(calls.some((call) => call['id'] === 'agent-request-1' && isErrorCode(call, -32601)));
+      const permissionReply = calls.find((call) => call['id'] === 'agent-permission-1');
+      assert.deepEqual(permissionReply?.['result'], { outcome: { optionId: 'allow-always', outcome: 'selected' } });
       assert.deepEqual(await providerSessionStartedPayload(first.item.id), {
         kind: 'grok-cli',
         resumed: false,
