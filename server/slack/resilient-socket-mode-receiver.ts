@@ -25,6 +25,7 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
   private readonly reconnectMaxDelayMs: number;
   private readonly random: () => number;
   private readonly runtimeLogger: Pick<Console, 'error' | 'log' | 'warn'>;
+  private lastSocketError?: unknown;
   private reconnectLoop?: Promise<void>;
   private retryDelay?: { resolve(): void; timer: NodeJS.Timeout };
   private started = false;
@@ -44,6 +45,9 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
     this.random = random;
     this.runtimeLogger = runtimeLogger;
     this.client.on('disconnected', () => this.onDisconnected());
+    this.client.on('error', (error: unknown) => {
+      this.lastSocketError = error;
+    });
   }
 
   override async start(): Promise<AppsConnectionsOpenResponse> {
@@ -100,6 +104,7 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
   private async connectUntilStopped(): Promise<SocketConnectOutcome> {
     let failures = 0;
     while (!this.stopping) {
+      this.lastSocketError = undefined;
       try {
         const response = await this.client.start();
         // The SDK resolves undefined after a real successful hello despite its
@@ -121,7 +126,7 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
           this.random,
         );
         this.runtimeLogger.warn(
-          `Slack Socket Mode connection failed; retrying in ${delayMs}ms: ${errorMessage(error)}`,
+          `Slack Socket Mode connection failed; retrying in ${delayMs}ms: ${connectFailureMessage(error, this.lastSocketError)}`,
         );
         await this.waitForRetry(delayMs);
         if (this.stopping) return { kind: 'stopped' };
@@ -154,6 +159,14 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
       this.runtimeLogger.warn(`Slack Socket Mode disconnect failed: ${errorMessage(error)}`);
     });
   }
+}
+
+// The SDK rejects start() with no reason when the WebSocket closes before
+// Slack's hello. Its WebSocket error event, if any, carries the cause.
+function connectFailureMessage(error: unknown, socketError: unknown): string {
+  if (error !== undefined) return errorMessage(error);
+  const closed = 'WebSocket closed before Slack sent hello';
+  return socketError === undefined ? closed : `${closed}: ${errorMessage(socketError)}`;
 }
 
 function fatalSocketStartError(error: unknown): boolean {

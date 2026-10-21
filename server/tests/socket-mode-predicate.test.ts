@@ -235,3 +235,31 @@ test('start() resolves undefined, and the receiver is still connected (no truthi
 
   await receiver.stop();
 });
+
+test('a socket that closes before hello is logged with its cause, not "undefined"', async () => {
+  const warnings: string[] = [];
+  const receiver = new ResilientSocketModeReceiver({
+    appToken: 'xapp-test',
+    reconnectDelayMs: 2,
+    runtimeLogger: { log() {}, error() {}, warn: (m: string) => { warnings.push(m); } },
+  });
+  (receiver.client as { disconnect: () => Promise<void> }).disconnect = async () => {};
+  let attempts = 0;
+  (receiver.client as { start: () => Promise<unknown> }).start = async () => {
+    attempts += 1;
+    // The SDK rejects start() with undefined, then emits the WebSocket error.
+    if (attempts === 1) {
+      const closed = Promise.reject(undefined);
+      receiver.client.emit('error', new Error('getaddrinfo ENOTFOUND wss-primary.slack.com'));
+      return closed;
+    }
+    if (attempts === 2) return Promise.reject(undefined);
+    return undefined;
+  };
+  await receiver.start();
+  await receiver.stop();
+  assert.deepEqual(warnings.map((m) => m.replace(/in \d+ms/, 'in Nms')), [
+    'Slack Socket Mode connection failed; retrying in Nms: WebSocket closed before Slack sent hello: getaddrinfo ENOTFOUND wss-primary.slack.com',
+    'Slack Socket Mode connection failed; retrying in Nms: WebSocket closed before Slack sent hello',
+  ]);
+});
