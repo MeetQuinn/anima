@@ -493,6 +493,61 @@ test('server-info exposes blocked standalone restart results for honest UI error
   await rm(stateDir, { force: true, recursive: true });
 });
 
+test('server-info shows the last restart result only to a signed-in dashboard', async () => withTempAnimaHome(async (stateDir) => {
+  await writeAgentConfigs(stateDir);
+  await mkdir(join(stateDir, 'run'), { recursive: true });
+  await writeFile(
+    join(stateDir, 'run', 'services-restart-result.json'),
+    `${JSON.stringify({
+      blockers: [{
+        agentId: 'runner',
+        itemId: 'item_running',
+        since: '2026-05-29T12:38:45.950Z',
+        status: 'running',
+        summary: 'synthetic message preview',
+      }],
+      completedAt: '2026-05-29T12:46:22.000Z',
+      message: 'Agents still working — restart did not run.',
+      reason: 'drain_timeout',
+      status: 'blocked',
+    })}\n`,
+    'utf8',
+  );
+  const app = buildWebApp();
+  const serverInfo = (cookie?: string) => app.inject({
+    headers: cookie ? { cookie } : {},
+    method: 'GET',
+    url: '/api/server-info',
+  });
+  try {
+    // Without a dashboard password, every caller is signed in.
+    assert.equal((await serverInfo()).json().lastRestart?.status, 'blocked');
+
+    await defaultDashboardAuthService.setPassword('synthetic-dashboard-password');
+    const anonymous = await serverInfo();
+    assert.equal(anonymous.statusCode, 200);
+    const anonymousBody = anonymous.json();
+    assert.equal(anonymousBody.ok, true);
+    assert.equal(anonymousBody.animaHome, stateDir);
+    assert.equal(typeof anonymousBody.version, 'string');
+    assert.equal(typeof anonymousBody.startedAt, 'string');
+    assert.equal('lastRestart' in anonymousBody, false);
+    assert.doesNotMatch(anonymous.body, /synthetic message preview/);
+
+    const login = await app.inject({
+      method: 'POST',
+      payload: { password: 'synthetic-dashboard-password' },
+      url: '/api/auth/login',
+    });
+    assert.equal(login.statusCode, 200);
+    const cookie = String(login.headers['set-cookie']).split(';')[0];
+    const signedIn = (await serverInfo(cookie)).json();
+    assert.equal(signedIn.lastRestart?.blockers?.[0]?.summary, 'synthetic message preview');
+  } finally {
+    await app.close();
+  }
+}));
+
 test('dashboard auth protects dashboard APIs and static app while leaving health checks public', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-dashboard-auth-test-'));
   const kbRepoDir = await mkdtemp(join(tmpdir(), 'anima-dashboard-auth-kb-'));
