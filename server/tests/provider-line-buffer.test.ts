@@ -37,9 +37,10 @@ test('line buffer matches a whole-text split however the stream is chunked', () 
 });
 
 test('line buffer takes linear time for a long line that arrives in many chunks', () => {
-  // A provider CLI writes a 32 MB event line to a pipe that delivers 16 KB at a
-  // time. Re-splitting the pending text on every chunk scans about 32 GB and
-  // takes seconds; scanning only each new chunk takes milliseconds.
+  // A provider CLI writes one event line of 32 Mi characters, which arrives in
+  // 2048 chunks of 16 Ki characters. Re-splitting the pending text on every
+  // chunk scans about 32 Gi characters in all and takes seconds; scanning only
+  // each new chunk takes milliseconds.
   const buffer = new LineBuffer();
   const piece = 'é'.repeat(16 * 1024);
   const started = performance.now();
