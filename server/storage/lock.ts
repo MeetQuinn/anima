@@ -5,6 +5,8 @@ import { ensureParentDirectory } from './write-root.js';
 
 const LOCK_WAIT_MS = 25;
 const LOCK_STALE_MS = 5 * 60 * 1000;
+// A steal takes milliseconds; a steal marker this old was left by a waiter that died mid-steal.
+const STEAL_STALE_MS = 30 * 1000;
 
 interface LockOwner {
   createdAt: number;
@@ -72,18 +74,34 @@ async function acquireLock(lockDir: string): Promise<void> {
   }
 }
 
+// Waiters that find the same stale lock must not each remove it: the first
+// one removes it and takes a fresh lock, and a second removal would delete
+// that fresh lock, leaving two holders. So removal happens under a steal
+// marker (a second mkdir lock), one waiter at a time, and only after checking
+// again under the marker that the lock is still stale.
 async function removeStaleLock(lockDir: string): Promise<boolean> {
-  const owner = await readLockOwner(lockDir);
-  if (!owner) {
-    if (!await isStaleLockDirectory(lockDir)) return false;
+  if (!await isStaleLock(lockDir)) return false;
+  const stealDir = `${lockDir}.steal`;
+  try {
+    await mkdir(stealDir);
+  } catch (error) {
+    if (!isEexist(error)) throw error;
+    if (await isOlderThan(stealDir, STEAL_STALE_MS)) await rm(stealDir, { force: true, recursive: true });
+    return false;
+  }
+  try {
+    if (!await isStaleLock(lockDir)) return false;
     await rm(lockDir, { force: true, recursive: true });
     return true;
+  } finally {
+    await rm(stealDir, { force: true, recursive: true });
   }
-  const staleByAge = Date.now() - owner.createdAt > LOCK_STALE_MS;
-  const staleByPid = !isPidRunning(owner.pid);
-  if (!staleByAge && !staleByPid) return false;
-  await rm(lockDir, { force: true, recursive: true });
-  return true;
+}
+
+async function isStaleLock(lockDir: string): Promise<boolean> {
+  const owner = await readLockOwner(lockDir);
+  if (!owner) return isOlderThan(lockDir, LOCK_STALE_MS);
+  return Date.now() - owner.createdAt > LOCK_STALE_MS || !isPidRunning(owner.pid);
 }
 
 async function readLockOwner(lockDir: string): Promise<LockOwner | undefined> {
@@ -96,9 +114,9 @@ async function readLockOwner(lockDir: string): Promise<LockOwner | undefined> {
   }
 }
 
-async function isStaleLockDirectory(lockDir: string): Promise<boolean> {
+async function isOlderThan(path: string, ms: number): Promise<boolean> {
   try {
-    return Date.now() - (await stat(lockDir)).mtimeMs > LOCK_STALE_MS;
+    return Date.now() - (await stat(path)).mtimeMs > ms;
   } catch {
     return false;
   }
