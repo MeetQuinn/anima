@@ -33,11 +33,13 @@ export const READ_ONLY_ENV = 'ANIMA_READ_ONLY';
 export const READ_ONLY_REFUSAL = 'read-only runtime: machine-scoped mutation disabled';
 
 export interface GovernedRoute {
-  /** Stable id, used in the refusal body and in tests. */
+  /**
+   * `METHOD /registered/route/:pattern`, exactly as the route is registered. The
+   * guard matches it against the route the router actually chose, so an encoded or
+   * otherwise unusual request path cannot slip past. Also used in the refusal body.
+   */
   readonly id: string;
   readonly method: 'DELETE' | 'GET' | 'POST' | 'PUT';
-  /** Matched against the pathname only (query string stripped). */
-  readonly pattern: RegExp;
   /**
    * WHY this route is machine-scoped. This is evidence read out of the code, not
    * a guess. Guessing a list manufactures exactly the "looks contained" illusion
@@ -78,77 +80,66 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
   {
     id: 'PUT /api/provider-runtime-commands',
     method: 'PUT',
-    pattern: /^\/api\/provider-runtime-commands$/,
     evidence:
       "Changes which machine-user executable and argv every agent of a provider launches. The command can resolve through the machine user's PATH or name an absolute executable outside ANIMA_HOME, and arguments can enable machine-user integrations or redirect provider behavior, so an isolated runtime must not redirect live provider processes to host code or capabilities it does not own.",
   },
   {
     id: 'POST /api/provider-login/:provider',
     method: 'POST',
-    pattern: /^\/api\/provider-login\/[^/]+$/,
     evidence:
       "Runs the machine user's provider CLI login, which writes a new OAuth credential to the provider's own store outside ANIMA_HOME (for example ~/.codex/auth.json). That credential is shared by every provider process this machine user owns, across Anima homes.",
   },
   {
     id: 'DELETE /api/provider-login/:provider',
     method: 'DELETE',
-    pattern: /^\/api\/provider-login\/[^/]+$/,
     evidence:
       'Terminates a running machine-user provider login process started by the route above; the pair is governed together so an isolated runtime cannot interfere with a sign-in it could not have started.',
   },
   {
     id: 'PUT /api/provider-context-limits',
     method: 'PUT',
-    pattern: /^\/api\/provider-context-limits$/,
     evidence:
       "Writes the machine user's Kimi or Grok CLI configuration outside ANIMA_HOME. Those files control every provider process owned by this machine user, including processes started by other Anima homes.",
   },
   {
     id: 'POST /api/provider-cli-status/:provider/apply',
     method: 'POST',
-    pattern: /^\/api\/provider-cli-status\/[^/]+\/apply$/,
     evidence:
       'Installs a provider CLI binary. Provider binaries are shared by every Anima process owned by this machine user, even across different ANIMA_HOME values — server/provider-cli/launch-gate.ts acquires a machine-wide advisory lease under ~/.cache/anima/ for exactly that reason. A home-scoped operation would not need a machine-wide lease.',
   },
   {
     id: 'POST /api/system-update/apply',
     method: 'POST',
-    pattern: /^\/api\/system-update\/apply$/,
     evidence:
       'Replaces the installed Anima runtime for this machine user, then respawns. Every live agent runs the installed build, not this process.',
   },
   {
     id: 'POST /api/services/restart',
     method: 'POST',
-    pattern: /^\/api\/services\/restart$/,
     evidence:
       'Restarts OS service-manager labels owned by this machine user, terminating live agent processes this runtime does not own.',
   },
   {
     id: 'GET /api/provider-usage',
     method: 'GET',
-    pattern: /^\/api\/provider-usage$/,
     evidence:
       'Reads every provider usage adapter. Claude usage is credential-read-only, but Codex, Kimi, and Grok adapters can still refresh expiring OAuth credentials and write the rotated token outside ANIMA_HOME. Those machine-user credentials are shared by live provider processes, so the all-provider GET remains machine-write governed.',
   },
   {
     id: 'GET /api/provider-usage/:provider',
     method: 'GET',
-    pattern: /^\/api\/provider-usage\/[^/]+$/,
     evidence:
       'Runs one provider usage adapter. The Claude adapter is credential-read-only, while other supported adapters can still refresh and persist machine-user OAuth credentials; the parameterized route remains conservatively machine-write governed.',
   },
   {
     id: 'POST /api/filesystem/mkdir',
     method: 'POST',
-    pattern: /^\/api\/filesystem\/mkdir$/,
     evidence:
       'Creates a directory at a CALLER-SUPPLIED host path, outside ANIMA_HOME, on the filesystem this machine user shares (server/kb/kb.service.ts createKbDirectory()). The browse root bounds HOW FAR the caller may write; it does not decide WHETHER the write lands outside ANIMA_HOME, so the root\'s location is configuration, not exemption. Today that root is realpath(homedir()) — the machine user\'s home — but this route stays governed wherever the root points: a guard keyed on a knob is a guard a misconfigured runtime silently loses.',
   },
   {
     id: 'POST /api/agents',
     method: 'POST',
-    pattern: /^\/api\/agents$/,
     evidence:
       'Materializes an agent home at a caller-supplied host path: createAgent() honors an explicit homePath "as-is", then ensureCreateAgentHome(), writeSeedMemory(), and mkdir(<home>/notes). Those files land outside ANIMA_HOME, on the machine the operator shares.',
   },
@@ -247,11 +238,6 @@ export function resolveMachineWriteMode(env: NodeJS.ProcessEnv = process.env): M
   return machineWriteMode(isReadOnlyRuntime(env), allowsMachineWrites(env));
 }
 
-function pathnameOf(url: string): string {
-  const queryAt = url.indexOf('?');
-  return queryAt === -1 ? url : url.slice(0, queryAt);
-}
-
 /**
  * Fastify serves HEAD for every GET route, and a HEAD still runs the handler — so
  * a HEAD on a governed GET would still refresh and rewrite the credential.
@@ -260,11 +246,15 @@ function normalizeMethod(method: string): string {
   return method === 'HEAD' ? 'GET' : method;
 }
 
-/** Pure, so the table can be tested without standing up a server. */
-export function governedRouteFor(method: string, url: string): GovernedRoute | undefined {
-  const wanted = normalizeMethod(method.toUpperCase());
-  const pathname = pathnameOf(url);
-  return GOVERNED_ROUTES.find((route) => route.method === wanted && route.pattern.test(pathname));
+/**
+ * Pure, so the table can be tested without standing up a server. `routeUrl` is the
+ * matched route's registered pattern (`request.routeOptions.url`), not the request
+ * path; it is undefined when no route matched.
+ */
+export function governedRouteFor(method: string, routeUrl: string | undefined): GovernedRoute | undefined {
+  if (routeUrl === undefined) return undefined;
+  const id = `${normalizeMethod(method.toUpperCase())} ${routeUrl}`;
+  return GOVERNED_ROUTES.find((route) => route.id === id);
 }
 
 export interface ReadOnlyGuardOptions {
@@ -365,7 +355,7 @@ export function registerReadOnlyGuard(fastify: FastifyInstance, options: ReadOnl
   const warnedRoutes = new Set<string>();
 
   fastify.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
-    const governed = governedRouteFor(request.method, request.url);
+    const governed = governedRouteFor(request.method, request.routeOptions.url);
     if (!governed) return;
 
     // Set BEFORE the branch, so it rides on every outcome: the 403, the handler's 200, and

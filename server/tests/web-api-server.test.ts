@@ -475,6 +475,20 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
         const unauthenticatedKbRawBody = (await unauthenticatedKbRaw.json()) as { error?: string };
         assert.equal(unauthenticatedKbRawBody.error, 'authentication_required');
 
+        // The router percent-decodes paths before matching, so these reach the same
+        // handlers as /api/... and /kb/raw/... and must be refused the same way.
+        for (const [method, path] of [
+          ['GET', '/%61pi/agents'],
+          ['GET', '/api/%61gents/anima'],
+          ['POST', '/%61pi/agents/anima/disable'],
+          ['GET', '/%6bb/raw/test/docs/report.html'],
+          ['GET', '/api/no-such-route'],
+        ] as const) {
+          const encoded = await fetch(`${base}${path}`, { method });
+          await assertStatus(encoded, 401, `unauthenticated ${method} ${path}`);
+          assert.equal(((await encoded.json()) as { error?: string }).error, 'authentication_required');
+        }
+
         const rootRedirect = await fetch(`${base}/`, { redirect: 'manual' });
         await assertStatus(rootRedirect, 302, 'dashboard root redirect');
         assert.equal(rootRedirect.headers.get('location'), '/login?next=%2F');
