@@ -58,7 +58,7 @@ export async function writeFakeServiceManager(
     ...status,
     `if [ -e '${logPath}.1' ]; then rotated=yes; else rotated=no; fi`,
     `echo "$action rotated=$rotated" >> '${callsPath}'`,
-    `case "$action" in kickstart|start) : > '${runningPath}' ;; esac`,
+    `case "$action" in kickstart|start|restart) : > '${runningPath}' ;; esac`,
     'exit 0',
     '',
   ].join('\n'), { mode: 0o755 });
