@@ -35,9 +35,8 @@ import type { InboxItem } from '../../shared/inbox.js';
 import { sleep, waitFor } from './helpers/harness.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { enqueueInbox, FollowupRuntime, queueFor, waitForInboxItemAppendedTo } from './helpers/runtime-worker.js';
-import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
 import { SealedSecretHandoffPendingStore } from '../env/sealed-secret-handoff-store.js';
-import { createHandoffKeyPair, createHandoffRequest } from '../../shared/secret-handoff.js';
+import { createHandoffKeyPair } from '../../shared/secret-handoff.js';
 
 // Several RuntimeHost tests reach the health and restart stores through
 // reconcileOnce(), which - unlike start() - does not provision. They used to
@@ -186,18 +185,6 @@ test('runtime host startup reconciliation deletes expired handoff private keys',
   let host: RuntimeHost | undefined;
   try {
     const keys = createHandoffKeyPair();
-    const pending = new SecretHandoffPendingStore('alpha', stateDir);
-    const request = createHandoffRequest({
-      recipientAgentId: 'alpha',
-      targetKey: 'SERVICE_TOKEN',
-      purpose: 'Expired runtime cleanup fixture',
-      sender: { kind: 'agent', agentId: 'bravo' },
-      now: new Date(Date.now() - 2 * 60 * 60 * 1000),
-      expiresAt: new Date(Date.now() - 60 * 60 * 1000),
-      publicKey: keys.publicKey,
-    });
-    await pending.create(request, keys.privateKey);
-    const path = pending.pendingPath(request.requestId);
     const sealed = new SealedSecretHandoffPendingStore('alpha', stateDir);
     const sealedId = await sealed.create(
       keys.publicKey,
@@ -206,7 +193,6 @@ test('runtime host startup reconciliation deletes expired handoff private keys',
       new Date(Date.now() - 2 * 60 * 60 * 1000),
     );
     const sealedPath = sealed.pendingPath(sealedId);
-    assert.equal((await stat(path)).isFile(), true);
     assert.equal((await stat(sealedPath)).isFile(), true);
 
     host = new RuntimeHost({}, {
@@ -218,7 +204,6 @@ test('runtime host startup reconciliation deletes expired handoff private keys',
     });
     await host.reconcileOnce();
 
-    await assert.rejects(() => stat(path), /ENOENT/);
     await assert.rejects(() => stat(sealedPath), /ENOENT/);
   } finally {
     await host?.stop();

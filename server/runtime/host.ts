@@ -11,7 +11,6 @@ import {
 } from '../agents/agent-config-ops.js';
 import { ensureDefaultSkills } from '../agents/default-skills.js';
 import { resolveAnimaHome } from '../anima-home.js';
-import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
 import { SealedSecretHandoffPendingStore } from '../env/sealed-secret-handoff-store.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
@@ -372,21 +371,15 @@ export class RuntimeHost {
     const now = Date.now();
     if (now - this.lastHandoffCleanupAt < HANDOFF_CLEANUP_INTERVAL_MS) return;
     this.lastHandoffCleanupAt = now;
-    const cleanups = agents.flatMap((agent) => [
-      {
-        agentId: agent.id,
-        run: () => new SecretHandoffPendingStore(agent.id, this.animaHome).cleanupExpired(),
-      },
-      {
-        agentId: agent.id,
-        run: () => new SealedSecretHandoffPendingStore(agent.id, this.animaHome).cleanupExpired(),
-      },
-    ]);
-    const results = await Promise.allSettled(cleanups.map((cleanup) => cleanup.run()));
+    const results = await Promise.allSettled(
+      agents.map((agent) =>
+        new SealedSecretHandoffPendingStore(agent.id, this.animaHome).cleanupExpired(),
+      ),
+    );
     for (const [index, result] of results.entries()) {
       if (result.status === 'fulfilled') continue;
       this.logger.error(
-        `Agent ${cleanups[index]?.agentId ?? 'unknown'} handoff cleanup failed: ${errorMessage(result.reason)}`,
+        `Agent ${agents[index]?.id ?? 'unknown'} handoff cleanup failed: ${errorMessage(result.reason)}`,
       );
     }
   }

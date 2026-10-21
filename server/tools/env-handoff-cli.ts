@@ -3,29 +3,21 @@ import { z } from 'zod';
 
 import {
   DEFAULT_HANDOFF_EXPIRY_MS,
-  SEALED_HANDOFF_BOX_PREFIX,
-  SEALED_HANDOFF_KEY_PREFIX,
   MAX_HANDOFF_EXPIRY_MS,
   MIN_HANDOFF_EXPIRY_MS,
   createHandoffKeyPair,
-  assertHandoffSenderForRequest,
   encodeSealedHandoffPublicKey,
-  encryptHandoffSecret,
   encryptSealedHandoffSecret,
-  formatHandoffBoxForSlack,
   formatSealedHandoffBoxForSlack,
   handoffSecretFingerprint,
   parseSealedHandoffBox,
   parseSealedHandoffPublicKey,
-  parseHandoffBox,
-  parseHandoffRequest,
 } from '../../shared/secret-handoff.js';
 import {
   AgentEnvExistsError,
   AgentEnvStore,
   assertEnvKeyAllowed,
 } from '../env/agent-env-store.js';
-import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
 import { SealedSecretHandoffPendingStore } from '../env/sealed-secret-handoff-store.js';
 import { resolveAgentIdFrom } from '../cli/shared.js';
 import { outcomeLine } from './outcome-line.js';
@@ -93,7 +85,7 @@ export function registerEnvHandoffCommands(env: Command): void {
       "Explicitly decrypt and store a handoff box in this agent's encrypted env.",
     )
     .option('--agent <agent>', 'recipient agent id; defaults to ANIMA_AGENT_ID')
-    .option('--key <key>', 'destination secret env key for a sealed box')
+    .option('--key <key>', 'destination secret env key')
     .option(
       '--replace',
       'replace an existing secret env value with the same key',
@@ -142,13 +134,7 @@ async function runHandoffReceive(opts: ReceiveOptions): Promise<void> {
 async function runHandoffSend(opts: SendOptions): Promise<void> {
   const agentId = resolveHandoffAgentId(opts.agent);
   assertEnvKeyAllowed(opts.fromKey);
-  const sealed = handoffCodeStartsWith(opts.publicKey, SEALED_HANDOFF_KEY_PREFIX);
-  const legacyRequest = sealed ? undefined : parseHandoffRequest(opts.publicKey);
-  if (legacyRequest?.senderKind === 'human')
-    throw new Error('Legacy human handoff requests must be completed in the browser');
-  if (legacyRequest)
-    assertHandoffSenderForRequest(legacyRequest, { kind: 'agent', agentId });
-  if (sealed) parseSealedHandoffPublicKey(opts.publicKey);
+  parseSealedHandoffPublicKey(opts.publicKey);
 
   const snapshot = await new AgentEnvStore(agentId).load();
   const value = snapshot.secret[opts.fromKey];
@@ -156,81 +142,13 @@ async function runHandoffSend(opts: SendOptions): Promise<void> {
     throw new Error(
       `Secret env key ${opts.fromKey} was not found for agent ${agentId}`,
     );
-  if (sealed) {
-    const box = await encryptSealedHandoffSecret(opts.publicKey, value);
-    console.log(
-      outcomeLine('handoff box prepared', [['kind', 'secret']]),
-    );
-    console.log(formatSealedHandoffBoxForSlack(box));
-    return;
-  }
-
-  // Accept old request envelopes until their bounded pending keys expire.
-  if (!legacyRequest) throw new Error('Legacy handoff request is missing');
-  const box = await encryptHandoffSecret(legacyRequest, {
-    sender: { kind: 'agent', agentId },
-    value,
-  });
-  console.log(
-    outcomeLine('handoff box prepared', [
-      ['id', legacyRequest.requestId],
-      ['key', legacyRequest.targetKey],
-      ['recipient', legacyRequest.recipientAgentId],
-    ]),
-  );
-  console.log(formatHandoffBoxForSlack(box));
+  const box = await encryptSealedHandoffSecret(opts.publicKey, value);
+  console.log(outcomeLine('handoff box prepared', [['kind', 'secret']]));
+  console.log(formatSealedHandoffBoxForSlack(box));
 }
 
 async function runHandoffAccept(opts: AcceptOptions): Promise<void> {
   const agentId = resolveHandoffAgentId(opts.agent);
-  if (handoffCodeStartsWith(opts.box, SEALED_HANDOFF_BOX_PREFIX)) {
-    await runSealedHandoffAccept(agentId, opts);
-    return;
-  }
-  if (opts.key)
-    throw new Error('--key is only valid when accepting a sealed box');
-  const box = parseHandoffBox(opts.box);
-  const pending = new SecretHandoffPendingStore(agentId);
-  const env = new AgentEnvStore(agentId);
-  try {
-    const result = await pending.consume(
-      box.requestId,
-      opts.box,
-      async (payload) => {
-        await env.set(payload.targetKey, payload.value, 'secret', {
-          replace: opts.replace,
-        });
-        return {
-          key: payload.targetKey,
-          sender:
-            payload.senderKind === 'agent' ? payload.senderAgentId : 'human',
-          fingerprint: await handoffSecretFingerprint(payload.value),
-        };
-      },
-    );
-    console.log(
-      outcomeLine('handoff accepted', [
-        ['key', result.key],
-        ['kind', 'secret'],
-        ['from', result.sender],
-        ['fingerprint', result.fingerprint],
-      ]),
-    );
-  } catch (error) {
-    if (error instanceof AgentEnvExistsError) {
-      await pending.resetRejectedWrite(box.requestId);
-      if (error.kind === 'secret') {
-        throw new Error(`${error.message}. Pass --replace to replace it.`);
-      }
-    }
-    throw error;
-  }
-}
-
-async function runSealedHandoffAccept(
-  agentId: string,
-  opts: AcceptOptions,
-): Promise<void> {
   if (!opts.key)
     throw new Error('Pass --key <key> to choose where to store this secret');
   const key = opts.key;
@@ -265,17 +183,9 @@ async function runSealedHandoffAccept(
 
 async function runHandoffCancel(opts: CancelOptions): Promise<void> {
   const agentId = resolveHandoffAgentId(opts.agent);
-  const cancelled = /^s_[A-Za-z0-9_-]{22}$/.test(opts.id)
-    ? await new SealedSecretHandoffPendingStore(agentId).cancel(opts.id)
-    : await new SecretHandoffPendingStore(agentId).cancel(opts.id);
+  const cancelled = await new SealedSecretHandoffPendingStore(agentId).cancel(opts.id);
   if (!cancelled) throw new Error('Pending handoff key was not found');
   console.log(outcomeLine('handoff cancelled', [['id', opts.id]]));
-}
-
-function handoffCodeStartsWith(input: string, prefix: string): boolean {
-  const trimmed = input.trim();
-  const fenced = trimmed.match(/^```(?:text)?\s*\n([\s\S]*?)\n```$/);
-  return (fenced?.[1] ?? trimmed).trim().startsWith(prefix);
 }
 
 function resolveHandoffAgentId(agent: string | undefined): string {
