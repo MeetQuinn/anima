@@ -105,7 +105,7 @@ A filesystem copy does not move every dependency. Before starting the restored a
 
    ```bash
    ANIMA_HOME=/restored/anima-home \
-     npx -y @meetquinn/animactl@latest services start --only web
+     npx -y @meetquinn/animactl@latest start --only web
    ```
 
    Use the dashboard to update each team and agent home to an existing directory. Re-register any
