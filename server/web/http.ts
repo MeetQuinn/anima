@@ -42,12 +42,13 @@ export function queryParam(rawUrl: string | undefined, key: string): string | un
 
 // Agent homes, knowledge bases, and chat uploads hold files the operator did
 // not write. Served inline from the dashboard origin, an HTML or SVG file
-// opened in its own tab would run with the dashboard's own access. A CSP
-// sandbox without allow-same-origin gives the document an opaque origin: it
-// still renders, runs its scripts, and follows links, but it cannot read the
-// dashboard API, and the cross-site write guard refuses its writes. A sandbox
-// often breaks the browser's built-in PDF viewer (the dashboard's PDF preview
-// skips its iframe sandbox for the same reason), so PDFs keep only nosniff.
+// opened in its own tab would run with the dashboard's own access. The CSP
+// sandbox below grants exactly these tokens and leaves out allow-same-origin,
+// so the document gets an opaque origin: it still renders, runs its scripts,
+// follows links and opens popups, but it cannot read the dashboard API, and
+// the cross-site write guard refuses its writes. PDFs keep only nosniff so the
+// browser's built-in viewer behaves as it always has; the dashboard's PDF
+// preview iframe is unsandboxed for the same reason.
 const UNTRUSTED_FILE_SANDBOX =
   'sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads';
 

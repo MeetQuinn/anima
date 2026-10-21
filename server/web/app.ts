@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 
-import { registerAgentRoutes } from './agent-routes.js';
+import { registerAgentIdGuard, registerAgentRoutes } from './agent-routes.js';
 import { registerClientErrorRoutes } from './client-error-routes.js';
 import { registerDashboardAuthGuard, registerDashboardAuthRoutes } from './dashboard-auth.js';
 import { registerErrorHandler } from './http.js';
@@ -36,6 +36,7 @@ export function buildWebApp(access?: WebListenerAccess): FastifyInstance {
   // Still ahead of the handler, so the governed handler never runs. And it cannot
   // be a UI state: `curl` reaches the route regardless of what the dashboard draws.
   registerReadOnlyGuard(fastify);
+  registerAgentIdGuard(fastify);
   registerSystemRoutes(fastify);
   registerDoNotContactRoutes(fastify);
   registerClientErrorRoutes(fastify);

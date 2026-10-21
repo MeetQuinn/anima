@@ -1,5 +1,7 @@
 import { PrivateKey, decrypt, encrypt } from 'eciesjs';
 
+import { PATH_SAFE_ID } from './path-ids.js';
+
 export const HANDOFF_REQUEST_PREFIX = 'asec_req_v1_';
 export const HANDOFF_BOX_PREFIX = 'asec_box_v1_';
 export const SEALED_HANDOFF_KEY_PREFIX = 'asec_key_v1_';
@@ -10,7 +12,7 @@ export const DEFAULT_HANDOFF_EXPIRY_MS = 24 * 60 * 60 * 1000;
 export const MIN_HANDOFF_EXPIRY_MS = 5 * 60 * 1000;
 export const MAX_HANDOFF_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
-const AGENT_ID = /^[A-Za-z0-9._-]+$/;
+const AGENT_ID = PATH_SAFE_ID;
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const REQUEST_ID = /^[A-Za-z0-9_-]{22}$/;
 const PUBLIC_KEY = /^[0-9a-f]{66}$/;

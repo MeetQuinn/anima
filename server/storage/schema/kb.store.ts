@@ -7,11 +7,12 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
+import { PATH_SAFE_ID } from '../../../shared/path-ids.js';
 import { DEFAULT_TEAM_ID } from '../../../shared/server-settings.js';
 import { resolveAnimaHome } from '../../anima-home.js';
 import { JsonStore } from '../json-store.js';
 
-export const KB_ID = /^[A-Za-z0-9._-]+$/;
+export const KB_ID = PATH_SAFE_ID;
 
 export const KbRecord = z.object({
   // URL-safe slug used in /kb/<id>/... routes. This is not a filesystem path.
