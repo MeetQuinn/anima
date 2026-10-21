@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../providers/factory.js';
+import { classifyProviderRetry } from '../providers/provider-retry.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
@@ -537,6 +538,55 @@ test('kimi-cli mid-turn follow-up cancels active prompt then runs the follow-up 
       const cancelIdx = methods.indexOf('session/cancel');
       const secondPromptIdx = methods.lastIndexOf('session/prompt');
       assert.ok(cancelIdx >= 0 && secondPromptIdx > cancelIdx);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('a Kimi process that exits cleanly mid-turn is retried as a crash', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-kimi-exit-mid-turn-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const fakeKimi = join(stateDir, 'kimi');
+      await writeFile(
+        fakeKimi,
+        [
+          '#!/usr/bin/env node',
+          "process.stdin.setEncoding('utf8');",
+          "let buffer = '';",
+          "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+          "process.stdin.on('data', (chunk) => {",
+          '  buffer += chunk;',
+          '  const lines = buffer.split(/\\r?\\n/);',
+          "  buffer = lines.pop() || '';",
+          '  for (const line of lines) {',
+          '    if (!line.trim()) continue;',
+          '    const msg = JSON.parse(line);',
+          "    if (msg.method === 'session/prompt') process.exit(0);",
+          "    if (msg.id === undefined || !msg.method) continue;",
+          "    if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });",
+          "    else if (msg.method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'kimi-session-exit' } });",
+          "    else send({ jsonrpc: '2.0', id: msg.id, result: {} });",
+          '  }',
+          '});',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeKimi, 0o755);
+      const ctx = await ingestEvent(
+        makeSlackEvent({ channelId: 'D-kimi-exit', teamId: 'T-demo', text: 'Exit mid-turn.', ts: '1770000701.000001', userId: 'U1' }),
+        { agentId: 'anima', stateDir },
+      );
+      runtime = createAgentRuntime({ env: runtimeTestEnv(stateDir), kind: 'kimi-cli' });
+
+      const error = await runtime.run(await runtimeInput(runtime, ctx, await loadState())).then(
+        () => assert.fail('the turn should fail'),
+        (failure: unknown) => failure,
+      );
+      assert.equal(classifyProviderRetry(error), 'crash', String(error));
     });
   } finally {
     await runtime?.close?.();
