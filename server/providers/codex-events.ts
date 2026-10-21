@@ -127,65 +127,70 @@ export function codexSubagentSpawnOutputFromRawResponseItem(
   };
 }
 
-export function codexSubagentSpawnPairsFromSessionJsonl(contents: string, turnId: string): CodexSubagentSpawnPair[] {
-  const pending = new Map<string, CodexSubagentSpawnCall>();
-  const pairs: CodexSubagentSpawnPair[] = [];
-  let inTurn = false;
+/**
+ * Collects one turn's subagent spawns and web searches from Codex rollout
+ * lines fed in file order. The turn starts at the first `turn_context` or
+ * `event_msg` that carries its id and ends at its `task_complete`.
+ */
+export class CodexSessionTurnScanner {
+  readonly spawnPairs: CodexSubagentSpawnPair[] = [];
+  readonly webSearches: Record<string, unknown>[] = [];
+  /** Byte offset of the line that started the turn, once seen. */
+  turnStartOffset?: number;
+  complete = false;
+  private readonly pendingSpawns = new Map<string, CodexSubagentSpawnCall>();
+  private readonly turnIdText: string;
 
-  for (const line of contents.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const record = parseJsonRecord(line);
-    if (!record) continue;
-    const type = stringField(record, 'type');
-    const payload = asRecord(record['payload']);
-    if (!payload) continue;
-    const payloadTurnId = stringField(payload, 'turn_id') ?? stringField(payload, 'turnId');
-    if ((type === 'turn_context' || type === 'event_msg') && payloadTurnId === turnId) {
-      inTurn = true;
-    }
-    if (type === 'event_msg' && inTurn && payloadTurnId === turnId && stringField(payload, 'type') === 'task_complete') {
-      break;
-    }
-    if (!inTurn || type !== 'response_item') continue;
-    const spawn = codexSubagentSpawnCallFromRawResponseItem(payload);
-    if (spawn) {
-      pending.set(spawn.parentToolCallId, spawn);
-      continue;
-    }
-    const output = codexSubagentSpawnOutputFromRawResponseItem(payload);
-    if (!output) continue;
-    const matched = pending.get(output.callId);
-    if (!matched) continue;
-    pending.delete(output.callId);
-    pairs.push({ output, spawn: matched });
+  constructor(private readonly turnId: string) {
+    // Before the turn starts, only a line that names it matters, so the
+    // other lines can skip JSON.parse.
+    this.turnIdText = JSON.stringify(turnId).slice(1, -1);
   }
 
-  return pairs;
-}
-
-export function codexWebSearchesFromSessionJsonl(contents: string, turnId: string): Record<string, unknown>[] {
-  const searches: Record<string, unknown>[] = [];
-  let inTurn = false;
-
-  for (const line of contents.split(/\r?\n/)) {
-    if (!line.trim()) continue;
+  push(line: string, offset: number): void {
+    if (this.complete) return;
+    if (this.turnStartOffset === undefined && !line.includes(this.turnIdText)) return;
     const record = parseJsonRecord(line);
-    if (!record) continue;
+    if (!record) return;
     const type = stringField(record, 'type');
     const payload = asRecord(record['payload']);
-    if (!payload) continue;
+    if (!payload) return;
     const payloadTurnId = stringField(payload, 'turn_id') ?? stringField(payload, 'turnId');
-    if ((type === 'turn_context' || type === 'event_msg') && payloadTurnId === turnId) {
-      inTurn = true;
+    if ((type === 'turn_context' || type === 'event_msg') && payloadTurnId === this.turnId) {
+      this.turnStartOffset ??= offset;
     }
-    if (type === 'event_msg' && inTurn && payloadTurnId === turnId && stringField(payload, 'type') === 'task_complete') {
-      break;
+    if (this.turnStartOffset === undefined) return;
+    const payloadType = stringField(payload, 'type');
+    if (type === 'event_msg' && payloadTurnId === this.turnId && payloadType === 'task_complete') {
+      this.complete = true;
+      return;
     }
-    if (!inTurn || type !== 'event_msg' || stringField(payload, 'type') !== 'web_search_end') continue;
+    if (type === 'response_item') {
+      this.pushResponseItem(payload);
+      return;
+    }
+    if (type === 'event_msg' && payloadType === 'web_search_end') this.pushWebSearch(payload);
+  }
+
+  private pushResponseItem(payload: Record<string, unknown>): void {
+    const spawn = codexSubagentSpawnCallFromRawResponseItem(payload);
+    if (spawn) {
+      this.pendingSpawns.set(spawn.parentToolCallId, spawn);
+      return;
+    }
+    const output = codexSubagentSpawnOutputFromRawResponseItem(payload);
+    if (!output) return;
+    const matched = this.pendingSpawns.get(output.callId);
+    if (!matched) return;
+    this.pendingSpawns.delete(output.callId);
+    this.spawnPairs.push({ output, spawn: matched });
+  }
+
+  private pushWebSearch(payload: Record<string, unknown>): void {
     const callId = stringField(payload, 'call_id') ?? stringField(payload, 'callId');
     const details = webSearchDetails(payload);
-    if (!callId || !hasWebSearchDetails(details)) continue;
-    searches.push({
+    if (!callId || !hasWebSearchDetails(details)) return;
+    this.webSearches.push({
       provider: 'codex-cli',
       providerToolId: callId,
       providerToolName: 'webSearch',
@@ -193,8 +198,6 @@ export function codexWebSearchesFromSessionJsonl(contents: string, turnId: strin
       tool: 'codex.webSearch',
     });
   }
-
-  return searches;
 }
 
 export function runtimeEventFromAppServerItem(

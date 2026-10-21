@@ -1,19 +1,13 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
 import { asRecord, stringField } from '../json.js';
 import { type RunningChildProcess } from './child-process.js';
 import {
   codexContextStatsFromTokenUsage,
   codexReasoningEventFromNotification,
-  codexSubagentSpawnPairsFromSessionJsonl,
   codexSubagentSpawnCallFromRawResponseItem,
   codexSubagentSpawnOutputFromRawResponseItem,
   codexRuntimeEventFromNotification,
   codexSubagentLinkageFromRecord,
   codexSessionStatsFromTurn,
-  codexWebSearchesFromSessionJsonl,
   providerToolCallsFromAppServerItem,
   providerToolFailuresFromAppServerItem,
   recordParam,
@@ -21,6 +15,7 @@ import {
   stringParam,
   type JsonRpcMessage,
 } from './codex-events.js';
+import { codexSessionsRoot, findCodexSessionFile, scanCodexSessionFile } from './codex-session-file.js';
 import type { AgentRuntimeInput } from './contract.js';
 import { truncateForActivity } from '../activities/format.js';
 import type { ProviderChildHealthSnapshot, ProviderWorkSnapshot } from '../../shared/snapshot.js';
@@ -90,6 +85,7 @@ export class CodexAppServerController {
   private sessionCorruptionReported = false;
   private stderrTail = '';
   private sessionFilePath?: string;
+  private sessionScanOffset = 0;
   threadId = '';
   readonly completion: Promise<{ stdout: string; stderr: string }>;
 
@@ -567,14 +563,20 @@ export class CodexAppServerController {
 
   private async recordSessionFileDetails(input: AgentRuntimeInput, turnId: string): Promise<void> {
     if (!this.threadId) return;
-    const session = await readCodexSessionFile(this.threadId, input.env, this.sessionFilePath).catch(() => undefined);
-    if (!session) return;
-    this.sessionFilePath = session.path;
-    for (const pair of codexSubagentSpawnPairsFromSessionJsonl(session.contents, turnId)) {
+    // Read the offset before any await. Turns run one at a time, so the start
+    // of the last turn scanned cannot be past the start of this one.
+    const offset = this.sessionScanOffset;
+    const path = this.sessionFilePath ?? await findCodexSessionFile(codexSessionsRoot(input.env), this.threadId);
+    if (!path) return;
+    this.sessionFilePath = path;
+    const scan = await scanCodexSessionFile(path, offset, turnId).catch(() => undefined);
+    if (!scan) return;
+    if (scan.turnStartOffset !== undefined) this.sessionScanOffset = scan.turnStartOffset;
+    for (const pair of scan.spawnPairs) {
       await this.recordSubagentParentTool(input, pair.spawn);
       await this.recordSpawnedSubagent(input, pair.spawn, pair.output);
     }
-    for (const search of codexWebSearchesFromSessionJsonl(session.contents, turnId)) {
+    for (const search of scan.webSearches) {
       const providerToolId = stringField(search, 'providerToolId');
       if (!providerToolId || this.recordedWebSearchDetails.has(providerToolId)) continue;
       this.recordedWebSearchDetails.add(providerToolId);
@@ -640,40 +642,6 @@ function codexVersionFromUserAgent(userAgent: string | undefined): string | unde
 
 function codexMissingToolOutputMessage(text: string): boolean {
   return /Custom tool call output is missing for call id:\s*call_[A-Za-z0-9_-]+/i.test(text);
-}
-
-async function readCodexSessionFile(
-  threadId: string,
-  env: NodeJS.ProcessEnv,
-  cachedPath: string | undefined,
-): Promise<{ contents: string; path: string } | undefined> {
-  if (cachedPath) {
-    return { contents: await readFile(cachedPath, 'utf8'), path: cachedPath };
-  }
-  const path = await findCodexSessionFile(codexSessionsRoot(env), threadId);
-  return path ? { contents: await readFile(path, 'utf8'), path } : undefined;
-}
-
-async function findCodexSessionFile(root: string, threadId: string): Promise<string | undefined> {
-  const stack: Array<{ depth: number; path: string }> = [{ depth: 0, path: root }];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-    const entries = await readdir(current.path, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const path = join(current.path, entry.name);
-      if (entry.isFile() && entry.name.endsWith('.jsonl') && entry.name.includes(threadId)) {
-        return path;
-      }
-      if (entry.isDirectory() && current.depth < 4) stack.push({ depth: current.depth + 1, path });
-    }
-  }
-  return undefined;
-}
-
-function codexSessionsRoot(env: NodeJS.ProcessEnv): string {
-  const codexHome = env.CODEX_HOME?.trim() || join(homedir(), '.codex');
-  return join(codexHome, 'sessions');
 }
 
 function deferred<T>(): Deferred<T> {
