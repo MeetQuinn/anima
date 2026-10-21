@@ -25,6 +25,7 @@ import {
   slackTsToIso,
 } from '../slack/slack.helper.js';
 import { slackMessagePreviewsFromAttachments } from '../slack/message-previews.js';
+import { slackVisibleMessageText } from '../slack/message-text.js';
 
 export interface SlackTranscriptRequest {
   channel: string;
@@ -39,6 +40,7 @@ export interface SlackFileCacheContext {
 
 export interface SlackConversationMessage {
   attachments?: unknown[];
+  blocks?: unknown;
   bot_id?: string;
   files?: SlackFileInfo[];
   reply_count?: number;
@@ -88,10 +90,10 @@ export async function slackTranscriptUserLabels(
   const userIds = [
     ...new Set([
       ...messages.map((message) => message.user).filter((value): value is string => Boolean(value)),
-      ...messages.flatMap((message) => extractSlackUserMentionIds(message.text ?? '')),
+      ...messages.flatMap((message) => extractSlackUserMentionIds(slackVisibleMessageText(message) ?? '')),
     ]),
   ];
-  const channelIds = [...new Set(messages.flatMap((message) => extractSlackChannelMentionIds(message.text ?? '')))];
+  const channelIds = [...new Set(messages.flatMap((message) => extractSlackChannelMentionIds(slackVisibleMessageText(message) ?? '')))];
   const actors = new Map<string, string>();
   const channelMentions = new Map<string, string>();
   const timezones = new Map<string, UserTimezone>();
@@ -199,8 +201,10 @@ function slackTranscriptLine(
     { key: 'user_local_time', value: timezone ? formatUserLocalTime(isoTs, timezone) : undefined },
     { key: 'user_tz', value: timezone?.name },
   ]);
+  // Read the body the way inbound messages are read: blocks first. Our own
+  // posts carry a top-level text cut at 3500 bytes; the full body is a block.
   const text = decodeSlackEntities(replaceSlackChannelMentions(
-    replaceSlackUserMentions(message.text ?? '', userLabels.userMentions),
+    replaceSlackUserMentions(slackVisibleMessageText(message) ?? '', userLabels.userMentions),
     userLabels.channelMentions,
   ));
   const fileAnnotations = slackTranscriptFileAnnotations(message.files, cacheContext);
