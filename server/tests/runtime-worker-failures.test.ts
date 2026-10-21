@@ -541,7 +541,7 @@ test('runtime worker idle watchdog resets on provider activity effects', async (
       agentId: 'scout',
       agentRuntime: runtime,
       queue: queueFor('scout'),
-      idleTimeoutMs: 220,
+      idleTimeoutMs: 600,
       pollIntervalMs: 10_000,
       stateDir,
       workerId: 'test-worker',

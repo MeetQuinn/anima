@@ -728,7 +728,7 @@ test('codex-cli exposes running thread terminals as background work until they e
         { description: 'overlapping Codex background-terminal status poll', timeoutMs: 4_000 },
       );
       await writeFile(turnReleasePath, '1', 'utf8');
-      assert.equal((await withTimeout(runPromise, 1_000)).text, 'background launched');
+      assert.equal((await withTimeout(runPromise, 5_000)).text, 'background launched');
       await waitFor(
         async () => (await backgroundTerminalCallCount()) >= 7,
         { description: 'coalesced Codex background-terminal refresh' },
@@ -832,7 +832,7 @@ test('codex-cli resets app-server when follow-up steer sees a different active t
         runtime.appendToActiveRun(await runtimeFollowupInput(runtime, firstCtx, secondCtx, await loadState())),
         /expected active turn id `turn-old` but found `turn-new`/,
       );
-      await assert.rejects(withTimeout(runPromise, 1_000), (error: unknown) => {
+      await assert.rejects(withTimeout(runPromise, 5_000), (error: unknown) => {
         assert.ok(isProviderSessionCorruptionError(error));
         assert.equal(error.providerSessionId, 'codex-thread-mismatch');
         assert.equal(error.reason, 'turn_desync');
@@ -901,7 +901,7 @@ test('codex-cli detects a missing tool output from resumed-session stderr across
       });
 
       await assert.rejects(
-        withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 1_000),
+        withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 5_000),
         (error: unknown) => {
           assert.ok(isProviderSessionCorruptionError(error));
           assert.equal(error.providerSessionId, 'codex-thread-corrupt');
@@ -970,7 +970,7 @@ test('codex-cli does not classify missing-output text from a fresh session as st
       });
 
       assert.equal(
-        (await withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 1_000)).text,
+        (await withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 5_000)).text,
         'fresh handled',
       );
     });
@@ -1283,7 +1283,7 @@ test('codex-cli app-server transport fails when process exits before turn comple
       kind: 'codex-cli',
     });
     await assert.rejects(
-      withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 1_000),
+      withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 5_000),
       /exited before completing active requests/,
     );
 

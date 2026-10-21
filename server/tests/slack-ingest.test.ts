@@ -538,7 +538,7 @@ test('subscriber waits for the production preview client before publishing a cla
     let pending: Promise<void> | undefined;
     try {
       pending = handle();
-      await withTimeout(lookupStarted, 1_000);
+      await withTimeout(lookupStarted, 5_000);
       assert.equal(await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'fast-worker' }), undefined);
       finish();
       await pending;

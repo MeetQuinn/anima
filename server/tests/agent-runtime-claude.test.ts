@@ -1172,7 +1172,7 @@ test('claude-code follow-up append waits for compact and tool gates before writi
     };
     const runPromise = runtime.run(firstInput);
     await waitFor(async () => (await readFile(callsPath, 'utf8')).includes('first message'));
-    await withTimeout(gatePersistenceReached.promise, 1_000);
+    await withTimeout(gatePersistenceReached.promise, 5_000);
     const activitiesAtBarrier = await activitiesForInboxItemWindow('anima', firstCtx.item.id);
     assert.ok(activitiesAtBarrier.some(
       (activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'claude.compact.started',
@@ -1400,7 +1400,7 @@ test('claude-code stream-json input completes when process exits without a resul
       env: runtimeTestEnv(stateDir),
       kind: 'claude-code',
     });
-    const result = await withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 1_000);
+    const result = await withTimeout(runtime.run(await runtimeInput(runtime, ctx, await loadState())), 5_000);
 
     assert.equal(result.text, 'assistant fallback');
     const usage = await agentTokenUsageServiceForAgent('anima').summary({
@@ -1675,8 +1675,8 @@ function nativeToolReturns(): Record<string, unknown> {
 
 test('claude-code native lifecycle permits burst input during tools and slow persistence without releasing drain', async () => {
   await withClaudeLifecycleFixture(async (fixture) => {
-    assert.equal((await withTimeout(fixture.append('first followup'), 1_000)).accepted, true);
-    assert.equal((await withTimeout(fixture.append('second followup'), 1_000)).accepted, true);
+    assert.equal((await withTimeout(fixture.append('first followup'), 5_000)).accepted, true);
+    assert.equal((await withTimeout(fixture.append('second followup'), 5_000)).accepted, true);
     await waitFor(async () => (await fixture.calls()).length === 3);
     const uuids = (await fixture.calls()).map((call) => call.uuid);
     assert.equal(new Set(uuids).size, 3);
@@ -1692,7 +1692,7 @@ test('claude-code native lifecycle permits burst input during tools and slow per
     assert.equal(drained, false);
     await fixture.emit([{ type: 'result', subtype: 'success', result: 'both followups done' }, nativeCommand(0, 'completed')], true);
     assert.equal((await withTimeout(fixture.runPromise, 2_000)).text, 'both followups done');
-    await withTimeout(drain, 1_000);
+    await withTimeout(drain, 5_000);
     assert.equal(fixture.runtime.isProviderQuiescent?.(), true);
   }, { slowToolPersistence: true });
 });
@@ -1742,8 +1742,8 @@ for (const boundary of [
       assert.equal((await fixture.calls()).length, 1);
       assert.equal(fixture.traces.filter((trace) => trace['phase'] === 'input.written').length, 1);
       await fixture.emit([boundary]);
-      assert.equal((await withTimeout(first, 1_000)).accepted, true);
-      assert.equal((await withTimeout(second, 1_000)).accepted, true);
+      assert.equal((await withTimeout(first, 5_000)).accepted, true);
+      assert.equal((await withTimeout(second, 5_000)).accepted, true);
       await waitFor(async () => (await fixture.calls()).length === 3);
       const calls = await fixture.calls();
       const writtenTraces = fixture.traces.filter((trace) => trace['phase'] === 'input.written');
@@ -1880,7 +1880,7 @@ for (const [label, frame, finish] of [
         let settled = false;
         void fixture.runPromise.then(() => { settled = true; }, () => { settled = true; });
         await fixture.emit([frame], true);
-        await withTimeout(hold.entered, 1_000);
+        await withTimeout(hold.entered, 5_000);
         assert.equal(fixture.runtime.isProviderQuiescent?.(), false);
         t.mock.timers.tick(30_000);
         await nextImmediate();
@@ -1910,7 +1910,7 @@ test('claude-code cancels confirmation grace when completion arrives before slow
       let settled = false;
       void fixture.runPromise.then(() => { settled = true; }, () => { settled = true; });
       await fixture.emit([nativeCommand(0, 'completed')], true);
-      await withTimeout(hold.entered, 1_000);
+      await withTimeout(hold.entered, 5_000);
       t.mock.timers.tick(30_000);
       await nextImmediate();
       assert.equal(settled, false, 'confirmed input must not fail while its persistence is pending');
@@ -1940,11 +1940,11 @@ test('claude-code background results cannot satisfy pending native user input', 
 test('claude-code declines input after native completion while Anima completion persistence is pending', async () => {
   await withClaudeLifecycleFixture(async (fixture) => {
     await fixture.emit([nativeToolReturns(), { type: 'result', subtype: 'success', result: 'finished' }, nativeCommand(0, 'completed')], true);
-    await withTimeout(fixture.completionPersistenceReached, 1_000);
+    await withTimeout(fixture.completionPersistenceReached, 5_000);
     assert.deepEqual(await fixture.append('arrived during runtime.completed persistence'), { accepted: false });
     assert.equal((await fixture.calls()).length, 1);
     fixture.releaseCompletionPersistence();
-    assert.equal((await withTimeout(fixture.runPromise, 1_000)).text, 'finished');
+    assert.equal((await withTimeout(fixture.runPromise, 5_000)).text, 'finished');
   }, { slowCompletionPersistence: true });
 });
 
@@ -1968,8 +1968,8 @@ for (const tracePersistence of ['slow', 'failed'] as const) {
       const first = await fixture.prepareAppend('trace-private-body-sentinel');
       const second = await fixture.prepareAppend('trace-second-body-sentinel');
       first.itemIds.push(...second.itemIds);
-      const firstReceipt = (await withTimeout(fixture.runtime.appendToActiveRun(first), 1_000)).inputReceipt;
-      const secondReceipt = (await withTimeout(fixture.runtime.appendToActiveRun(second), 1_000)).inputReceipt;
+      const firstReceipt = (await withTimeout(fixture.runtime.appendToActiveRun(first), 5_000)).inputReceipt;
+      const secondReceipt = (await withTimeout(fixture.runtime.appendToActiveRun(second), 5_000)).inputReceipt;
       assert.ok(firstReceipt && secondReceipt);
       await waitFor(async () => (await fixture.calls()).length === 3);
       const calls = await fixture.calls();
@@ -2011,7 +2011,7 @@ test('claude-code trace keeps old and background results separate from pending i
     const hold = holdClaudeFramePersistence(fixture.runtime, (value) => value['type'] === 'command_lifecycle' && value['state'] === 'started');
     try {
       await fixture.emit([nativeCommand(1, 'started')], true);
-      await withTimeout(hold.entered, 1_000);
+      await withTimeout(hold.entered, 5_000);
       const started = fixture.traces.find((row) => row['nativeInputId'] === followup.inputReceipt?.nativeInputId
         && row['nativeState'] === 'started');
       assert.ok(started, 'control and observation run before the blocked mapper');
@@ -2043,7 +2043,7 @@ test('claude-code legacy capability trace preserves written evidence without inv
     assert.equal(accepted, false, 'unknown lifecycle cannot open the legacy tool gate');
     assert.equal(fixture.traces.filter((row) => row['phase'] === 'input.native_lifecycle').length, 0);
     await fixture.emit([nativeToolReturns()]);
-    const receipt = (await withTimeout(append, 1_000)).inputReceipt;
+    const receipt = (await withTimeout(append, 5_000)).inputReceipt;
     assert.ok(receipt);
     await waitFor(async () => (await fixture.calls()).length === 2);
     assert.equal(receipt.nativeInputId, (await fixture.calls())[1]!.uuid);

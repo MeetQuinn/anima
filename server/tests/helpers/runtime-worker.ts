@@ -443,18 +443,21 @@ export class DrainableRuntime extends AbortableRuntime {
   }
 }
 
+const ACTIVITY_RUNTIME_HALF_MS = 400;
+
 export class ActivityBeforeFinishRuntime implements AgentRuntime {
   readonly kind = 'activity-runtime';
   readonly calls: AgentRuntimeInput[] = [];
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
     this.calls.push(input);
-    // fixed delay: keep the fake runtime active long enough to observe mid-run activity.
-    await sleep(150);
+    // fixed delay: each half stays under the idle test's 600ms timeout and both
+    // together exceed it, so the run finishes only if the output reset the timer.
+    await sleep(ACTIVITY_RUNTIME_HALF_MS);
     if (input.signal?.aborted) throw new Error(`aborted: ${String(input.signal.reason)}`);
     await input.effects.recordOutput('stdout', 'still running');
-    // fixed delay: keep the fake runtime active after output so drain/close behavior can be observed.
-    await sleep(150);
+    // fixed delay: the second half, after the output.
+    await sleep(ACTIVITY_RUNTIME_HALF_MS);
     if (input.signal?.aborted) throw new Error(`aborted: ${String(input.signal.reason)}`);
     return { text: 'finished after activity' };
   }
