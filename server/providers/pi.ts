@@ -254,8 +254,6 @@ class PiRpcController {
   private readonly quiescentWaiters = new QuiescentWaiterSet();
   /** Timers that abort hung shell tools (pi bash has no default timeout). */
   private readonly toolTimeouts = new Map<string, NodeJS.Timeout>();
-  /** Shell tools claimed by the timeout path; suppress duplicate tool.call.failed on a later end. */
-  private readonly timedOutToolIds = new Set<string>();
   /** Timeout still owes an abort until tool_execution_end arrives (same-turn late end clears this). */
   private readonly pendingShellTimeoutAborts = new Set<string>();
   /** tool.call.failed already written for a timed-out tool id. */
@@ -681,7 +679,6 @@ class PiRpcController {
     this.clearShellToolTimeout(id);
     // A real tool end always cancels a pending timeout abort (same-turn late end race).
     this.pendingShellTimeoutAborts.delete(id);
-    this.timedOutToolIds.delete(id);
     const alreadyRecordedTimeoutFailure = this.recordedShellTimeoutFailures.delete(id);
     const name = stringField(event, 'toolName') ?? 'tool';
     const isError = event.isError === true;
@@ -750,7 +747,6 @@ class PiRpcController {
     if (!this.activeToolIds.has(toolCallId)) return;
 
     const message = `pi ${toolName} timed out after ${timeoutMs}ms (Anima default; pi bash has no built-in timeout)`;
-    this.timedOutToolIds.add(toolCallId);
     this.pendingShellTimeoutAborts.add(toolCallId);
     this.activeToolIds.delete(toolCallId);
     this.resolveQuiescentWaitersIfReady();
@@ -798,7 +794,6 @@ class PiRpcController {
   private clearCurrentTurn(): void {
     this.currentTurn = undefined;
     this.activeToolIds.clear();
-    this.timedOutToolIds.clear();
     this.pendingShellTimeoutAborts.clear();
     this.recordedShellTimeoutFailures.clear();
     this.clearAllShellToolTimeouts();

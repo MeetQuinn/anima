@@ -670,7 +670,7 @@ test('machine gates serialize upgrades and provider launches across Node process
       (error: unknown) =>
         error instanceof ProviderCliConflictError && /already running on this machine/.test(error.message),
     );
-    assert.equal(await tryAcquireProviderCliUpgradeLease('claude-code'), undefined);
+    assert.equal(await tryAcquireProviderCliUpgradeLease(), undefined);
   } finally {
     await upgrade.release();
   }
@@ -678,7 +678,7 @@ test('machine gates serialize upgrades and provider launches across Node process
 
   const crashed = await holdMachineGate('upgrade');
   await crashed.terminate();
-  const recovered = await tryAcquireProviderCliUpgradeLease('claude-code');
+  const recovered = await tryAcquireProviderCliUpgradeLease();
   assert.ok(recovered);
   await recovered.release();
 
@@ -712,7 +712,7 @@ test('ANIMA_PROVIDER_CLI_LOCK_DIR moves the machine locks', async () => {
   const previous = process.env.ANIMA_PROVIDER_CLI_LOCK_DIR;
   process.env.ANIMA_PROVIDER_CLI_LOCK_DIR = lockDir;
   try {
-    const lease = await tryAcquireProviderCliUpgradeLease('claude-code');
+    const lease = await tryAcquireProviderCliUpgradeLease();
     assert.ok(lease);
     try {
       assert.ok((await stat(join(lockDir, 'upgrade.lock'))).isFile());
@@ -969,7 +969,7 @@ async function holdMachineGate(
     const [moduleUrl, mode] = process.argv.slice(1);
     const gate = await import(moduleUrl);
     if (mode === 'upgrade') {
-      const lease = await gate.tryAcquireProviderCliUpgradeLease('codex-cli');
+      const lease = await gate.tryAcquireProviderCliUpgradeLease();
       if (!lease) throw new Error('failed to acquire upgrade lease');
       process.stdout.write('LOCKED\n');
       await once(process.stdin, 'data');
@@ -1032,7 +1032,7 @@ async function assertSingleUpgradeWinner(round: number): Promise<void> {
     const gate = await import(process.argv[1]);
     process.stdout.write('READY\n');
     await once(process.stdin, 'data');
-    const lease = await gate.tryAcquireProviderCliUpgradeLease('codex-cli');
+    const lease = await gate.tryAcquireProviderCliUpgradeLease();
     if (!lease) {
       process.stdout.write('BLOCKED\n');
       process.exit(0);

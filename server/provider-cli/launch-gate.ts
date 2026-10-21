@@ -31,14 +31,12 @@ interface AdvisoryLockCommand {
 
 let advisoryLockCommandPromise: Promise<AdvisoryLockCommand> | undefined;
 
-export async function tryAcquireProviderCliUpgradeLease(
-  provider: ProviderUsageKind,
-): Promise<ProviderCliMachineLease | undefined> {
-  return tryAcquireLock('upgrade', provider);
+export async function tryAcquireProviderCliUpgradeLease(): Promise<ProviderCliMachineLease | undefined> {
+  return tryAcquireLock('upgrade');
 }
 
 export async function providerCliUpgradeLocked(): Promise<boolean> {
-  const lease = await tryAcquireLock('upgrade', 'claude-code');
+  const lease = await tryAcquireLock('upgrade');
   if (!lease) return true;
   await lease.release();
   return false;
@@ -48,7 +46,7 @@ export async function withProviderCliInstallGate<T>(
   provider: ProviderUsageKind,
   task: () => Promise<T>,
 ): Promise<T> {
-  const lease = await acquireLock(`provider-${provider}`, provider);
+  const lease = await acquireLock(`provider-${provider}`);
   try {
     return await task();
   } finally {
@@ -60,7 +58,7 @@ export async function withProviderCliConfigurationGate<T>(
   provider: ProviderUsageKind,
   task: () => Promise<T>,
 ): Promise<T> {
-  const lease = await acquireLock(`provider-${provider}`, provider);
+  const lease = await acquireLock(`provider-${provider}`);
   try {
     return await task();
   } finally {
@@ -73,7 +71,7 @@ export async function withProviderCliLaunchPermit<T>(
   signal: AbortSignal | undefined,
   task: () => T | Promise<T>,
 ): Promise<T> {
-  const lease = await acquireLock(`provider-${provider}`, provider, signal);
+  const lease = await acquireLock(`provider-${provider}`, signal);
   try {
     return await task();
   } finally {
@@ -83,13 +81,12 @@ export async function withProviderCliLaunchPermit<T>(
 
 async function acquireLock(
   name: string,
-  provider: ProviderUsageKind,
   signal?: AbortSignal,
 ): Promise<ProviderCliMachineLease> {
   while (true) {
     if (signal?.aborted)
       throw signal.reason ?? new Error('Provider launch aborted');
-    const lease = await tryAcquireLock(name, provider);
+    const lease = await tryAcquireLock(name);
     if (lease) {
       if (signal?.aborted) {
         await lease.release();
@@ -101,10 +98,7 @@ async function acquireLock(
   }
 }
 
-async function tryAcquireLock(
-  name: string,
-  _provider: ProviderUsageKind,
-): Promise<ProviderCliMachineLease | undefined> {
+async function tryAcquireLock(name: string): Promise<ProviderCliMachineLease | undefined> {
   const root = lockRoot();
   await mkdir(root, { mode: 0o700, recursive: true });
   const file = await open(join(root, `${name}.lock`), 'a+', 0o600);
