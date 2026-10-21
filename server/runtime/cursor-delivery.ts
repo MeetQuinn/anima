@@ -95,7 +95,7 @@ export interface CursorDeliveryPlan {
 
 export type PrepareCursorDeliveryResult =
   | { kind: 'disabled' }
-  | { kind: 'already_delivered'; settledItemIds: string[] }
+  | { kind: 'already_delivered' }
   | { kind: 'prepared'; plan: CursorDeliveryPlan }
   | { kind: 'failed'; error: CursorDeliveryError };
 
@@ -263,7 +263,7 @@ export async function prepareCursorDelivery(input: {
         !bypassesCursorAlreadyDelivered(item.handling.resumeReason)
         && primaryCursor.deliveredOrdinal >= triggerEntry.ordinal
       ) {
-        return { kind: 'already_delivered', settledItemIds: [item.id] };
+        return { kind: 'already_delivered' };
       }
     }
 

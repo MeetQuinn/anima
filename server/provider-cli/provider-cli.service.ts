@@ -107,7 +107,7 @@ export class ProviderCliService {
     this.applying = true;
     let machineLease;
     try {
-      machineLease = await tryAcquireProviderCliUpgradeLease(provider);
+      machineLease = await tryAcquireProviderCliUpgradeLease();
       if (!machineLease) throw new ProviderCliConflictError('A provider CLI update is already running on this machine');
       return await this.applyExclusive(provider);
     } finally {
