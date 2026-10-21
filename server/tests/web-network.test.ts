@@ -115,6 +115,44 @@ test('actual web app gates health and assets, while loopback retains the existin
   });
 });
 
+test('the web app refuses cross-site browser writes and leaves other clients alone', async () => {
+  await withTempAnimaHome(async () => {
+    const app = buildWebApp();
+    // A public, harmless write route: 200 means the request reached the handler.
+    const url = '/api/auth/logout';
+    try {
+      for (const headers of [
+        { host: '127.0.0.1:4174', 'sec-fetch-site': 'cross-site' },
+        { host: '127.0.0.1:4174', 'sec-fetch-site': 'same-site' },
+        { host: '127.0.0.1:4174', origin: 'https://evil.invalid' },
+        { host: '127.0.0.1:4174', origin: 'null' },
+        { host: '127.0.0.1:4174', origin: 'https://evil.invalid', 'sec-fetch-site': 'cross-site' },
+      ]) {
+        for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+          const response = await app.inject({ method, url, headers });
+          assert.equal(response.statusCode, 403, `${method} ${JSON.stringify(headers)}`);
+          assert.deepEqual(response.json(), { error: 'cross_site_request_denied' });
+          assert.equal(response.headers['cache-control'], 'no-store');
+        }
+      }
+      for (const headers of [
+        // curl, the CLI and other non-browser clients send neither header.
+        { host: '127.0.0.1:4174' },
+        { host: '127.0.0.1:4174', origin: 'http://127.0.0.1:4174', 'sec-fetch-site': 'same-origin' },
+        // Vite's dev proxy rewrites Host but forwards the browser's Sec-Fetch-Site.
+        { host: 'localhost:14174', origin: 'http://localhost:5173', 'sec-fetch-site': 'same-origin' },
+        // A TLS-terminating reverse proxy forwards the public Host over plain HTTP.
+        { host: 'home.example.com', origin: 'https://home.example.com' },
+      ]) {
+        const response = await app.inject({ method: 'POST', url, headers });
+        assert.equal(response.statusCode, 200, JSON.stringify(headers));
+      }
+      const crossSiteRead = await app.inject({ url: '/api/health', headers: { 'sec-fetch-site': 'cross-site' } });
+      assert.equal(crossSiteRead.statusCode, 200, 'reads are not refused');
+    } finally { await app.close(); }
+  });
+});
+
 const close = async (servers: Server[]) => {
   for (const server of servers) server.closeAllConnections();
   await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));

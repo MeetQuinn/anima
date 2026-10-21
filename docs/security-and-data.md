@@ -86,6 +86,8 @@ If the dashboard is reachable beyond its intended operators:
 - treat the dashboard as access to agent configuration, activity, knowledge bases, and operational controls;
 - verify that proxies do not bypass authentication or cache private responses.
 
+The dashboard refuses writes that a browser marks as coming from another site, so a page open in the operator's browser cannot change agents or restart services through it. Clients that are not browsers, such as `curl`, are not affected. Reads are not covered by this check, and it is not a substitute for authentication.
+
 The URL displayed for local access does not prove that the listener is isolated to the host. Binding, port forwarding, tunnels, proxies, and host network policy all determine the real exposure boundary.
 
 ## Credentials and secret handling

@@ -12,13 +12,14 @@ import { registerStaticRoutes } from './static.js';
 import { registerSystemRoutes } from './system-routes.js';
 import { registerKbRoutes } from './kb-routes.js';
 import { registerAgentTokenUsageRoutes } from './agent-token-usage-routes.js';
-import { registerWebListenerAccess, type WebListenerAccess } from './listener-access.js';
+import { registerCrossSiteWriteGuard, registerWebListenerAccess, type WebListenerAccess } from './listener-access.js';
 import { registerDoNotContactRoutes } from './do-not-contact-routes.js';
 
 export function buildWebApp(access?: WebListenerAccess): FastifyInstance {
   const fastify: FastifyInstance = Fastify({ logger: false });
 
   if (access) registerWebListenerAccess(fastify, access);
+  registerCrossSiteWriteGuard(fastify);
   registerErrorHandler(fastify);
   registerDashboardAuthRoutes(fastify);
   registerDashboardAuthGuard(fastify);
