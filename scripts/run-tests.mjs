@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const distTestsDir = 'dist/server/tests';
 const sourceTestsDir = 'server/tests';
@@ -296,7 +296,9 @@ function compositeTierFileBudgetMs(group, file) {
   throw new Error(`Cannot derive ${group}-tier timeout budget for unknown test file: ${file}`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Node resolves symlinks in the main module's URL but not in argv[1]. Compare
+// real paths, or a symlinked path such as macOS /tmp exits 0 without running.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.exitCode = await main();
 }
 

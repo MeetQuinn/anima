@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -175,6 +175,26 @@ test('the runner keeps a lock directory that is already set', async () => {
 
   assert.equal(result.code, 0, result.output);
   assert.equal(await readFile(seen, 'utf8'), lockDir);
+});
+
+test('the runner runs when started through a symlinked path', async () => {
+  const link = join(await fixtureDir(), 'repo');
+  await symlink(process.cwd(), link);
+  const { NODE_TEST_CONTEXT: _testContext, ...env } = process.env;
+  const child = spawn(process.execPath, [join(link, 'scripts', 'run-tests.mjs'), 'no-such-group'], {
+    env,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', resolve);
+  });
+
+  assert.equal(code, 2, stderr);
+  assert.match(stderr, /Unknown test group "no-such-group"/);
 });
 
 function runFilesSource(testPaths: string[], perTestMs: number, suiteMs: number): string {
