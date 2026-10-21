@@ -52,7 +52,8 @@ one, and Anima keeps five old copies (`.1` to `.5`).
 
 - A running service checks its own log every ten minutes. It copies a full log to `.1` and empties
   the file in place. This needs stdout opened for append, as launchd, systemd, and detached starts
-  open it. Under a plain `> file` redirect, the check turns itself off and prints a warning.
+  open it. Under a plain `> file` redirect, the check writes one warning line into the log and turns
+  itself off.
 - `services start` and `services restart`, which runtime upgrades use, rotate before they start a
   stopped service. `services install` does not rotate.
 - Rotation is best effort. A failure prints a warning, and the service keeps running or starts with

@@ -122,7 +122,9 @@ test('live log rotation copies an append-mode log to .1 and truncates it in plac
   }
 });
 
-test('live log rotation leaves a non-append fd and a foreign file untouched', async () => {
+const notAppendNotice = (path: string): string => `live log rotation off for ${path}: stdout does not append\n`;
+
+test('live log rotation keeps a non-append log whole and writable, and skips a foreign file', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'anima-live-log-rotate-guard-'));
   const path = join(tempDir, 'agent.log');
   const other = join(tempDir, 'other.log');
@@ -130,12 +132,15 @@ test('live log rotation leaves a non-append fd and a foreign file untouched', as
   const plainFd = openSync(path, 'w');
   const otherFd = openSync(other, 'a');
   try {
-    writeSync(plainFd, 'kept as is\n');
+    writeSync(plainFd, 'BEFORE\n');
     writeSync(otherFd, 'not the service log\n');
 
     assert.equal(rotateOwnServiceLogIfNeeded(path, { fd: otherFd, maxBytes: 1 }), 'not-own-log');
     assert.equal(rotateOwnServiceLogIfNeeded(path, { fd: plainFd, maxBytes: 1 }), 'not-append');
-    assert.equal(await readFile(path, 'utf8'), 'kept as is\n');
+    // The fd keeps writing at its own offset: the next line must follow the
+    // notice directly, with no NUL in between.
+    writeSync(plainFd, 'AFTER\n');
+    assert.equal(await readFile(path, 'utf8'), `BEFORE\n${notAppendNotice(path)}AFTER\n`);
     assert.equal(await readFile(other, 'utf8'), 'not the service log\n');
     await assert.rejects(stat(`${path}.1`), /ENOENT/);
     assert.equal(rotateOwnServiceLogIfNeeded(join(tempDir, 'missing.log'), { fd: otherFd, maxBytes: 1 }), 'not-own-log');
@@ -146,7 +151,7 @@ test('live log rotation leaves a non-append fd and a foreign file untouched', as
   }
 });
 
-test('live log rotation timer turns itself off when stdout does not append', async () => {
+test('live log rotation timer stops after one notice when stdout does not append', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'anima-live-log-rotate-off-'));
   const path = join(tempDir, 'agent.log');
   const fd = openSync(path, 'w');
@@ -155,16 +160,49 @@ test('live log rotation timer turns itself off when stdout does not append', asy
   console.warn = (...args: unknown[]) => {
     warnings.push(args.map(String).join(' '));
   };
+  writeSync(fd, 'kept\n');
   const rotation = startLiveServiceLogRotation(path, { fd, intervalMs: 5, maxBytes: 1 });
   try {
-    writeSync(fd, 'kept\n');
     await new Promise((resolveWait) => setTimeout(resolveWait, 80));
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0] ?? '', /live log rotation off for .*agent\.log: stdout does not append/);
+    writeSync(fd, 'after\n');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 40));
+    assert.deepEqual(warnings, []);
+    assert.equal(await readFile(path, 'utf8'), `kept\n${notAppendNotice(path)}after\n`);
     await assert.rejects(stat(`${path}.1`), /ENOENT/);
   } finally {
     rotation.stop();
     console.warn = originalWarn;
+    closeSync(fd);
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
+test('live log rotation check leaves a `> file` stdout writable in a running process', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'anima-live-log-rotate-plain-child-'));
+  const path = join(tempDir, 'agent.log');
+  // What a shell `> agent.log` redirect hands the process.
+  const fd = openSync(path, 'w');
+  try {
+    const moduleUrl = pathToFileURL(resolve('dist/server/services/service-log.js')).href;
+    const script = [
+      `const { rotateOwnServiceLogIfNeeded } = await import(${JSON.stringify(moduleUrl)});`,
+      "console.log('BEFORE');",
+      `console.error(rotateOwnServiceLogIfNeeded(${JSON.stringify(path)}, { maxBytes: 1 }));`,
+      "console.log('AFTER');",
+    ].join('\n');
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+      stdio: ['ignore', fd, 'pipe'],
+    });
+    let stderr = '';
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    const [code] = await once(child, 'exit');
+    assert.equal(code, 0, stderr);
+    assert.equal(stderr.trim(), 'not-append');
+    assert.equal(await readFile(path, 'utf8'), `BEFORE\n${notAppendNotice(path)}AFTER\n`);
+  } finally {
     closeSync(fd);
     await rm(tempDir, { force: true, recursive: true });
   }

@@ -78,8 +78,10 @@ export type LiveLogRotation = 'not-append' | 'not-own-log' | 'rotated' | 'under-
  *
  * Everything runs synchronously, so no log line from this process can land
  * between the copy and the truncate. Only a file that is this process's own
- * stdout is touched, and only after a probe shows that stdout appends; a
- * non-append fd would keep writing at its old offset and leave a hole.
+ * stdout is touched, and only after a probe shows that stdout appends: a
+ * non-append fd would keep writing at its old offset and leave a hole. When
+ * the probe finds a non-append stdout, it leaves one notice line at the end
+ * of the log and the fd offset at the new end, and nothing is rotated.
  */
 export function rotateOwnServiceLogIfNeeded(
   path: string,
@@ -98,7 +100,7 @@ export function rotateOwnServiceLogIfNeeded(
   }
   if (!own.isFile() || own.dev !== onDisk.dev || own.ino !== onDisk.ino) return 'not-own-log';
   if (own.size < maxBytes) return 'under-limit';
-  if (!fdAppends(fd, own.size)) return 'not-append';
+  if (!fdAppends(fd, own.size, path)) return 'not-append';
 
   rmSync(`${path}.${keep}`, { force: true });
   for (let index = keep - 1; index >= 1; index -= 1) {
@@ -116,7 +118,8 @@ export function rotateOwnServiceLogIfNeeded(
 /**
  * Check every ten minutes whether this process's own service log needs
  * rotating. Stops for good if stdout turns out not to append, so a manual
- * `> file` redirect is never truncated.
+ * `> file` redirect is never truncated. The probe has already written the
+ * notice into that log, so the timer adds no warning of its own.
  */
 export function startLiveServiceLogRotation(
   path: string,
@@ -125,10 +128,7 @@ export function startLiveServiceLogRotation(
   const timer = setInterval(() => {
     try {
       const result = rotateOwnServiceLogIfNeeded(path, options);
-      if (result === 'not-append') {
-        clearInterval(timer);
-        console.warn(`live log rotation off for ${path}: stdout does not append`);
-      }
+      if (result === 'not-append') clearInterval(timer);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn(`live log rotation skipped for ${path}: ${reason}`);
@@ -139,19 +139,31 @@ export function startLiveServiceLogRotation(
 }
 
 /**
- * Grow the file by one zero byte, then write one newline. An append fd writes
- * after that byte, so the file grows by two; a non-append fd writes at its own
- * offset, inside the first `size + 1` bytes. Either way the file is cut back to
- * its original size afterwards. Service logs are often write-only, so the
- * probe never reads.
+ * Tell an append fd from a non-append one without leaving a hole. Grow the
+ * file by one zero byte, then write the notice line with a plain write:
+ *
+ * - An append fd writes it after the zero byte, so the file grows by
+ *   1 + notice. Cutting back to `size` removes both.
+ * - A non-append fd writes at its own offset. Under a single writer that
+ *   offset is the old end of the file, so the notice replaces the zero byte
+ *   and the fd now sits at the new end. Its offset cannot be moved back, so
+ *   the notice stays: the log keeps every byte it had, gains one line, and
+ *   the next write follows it with no NUL.
+ *
+ * Service logs are often write-only, so the probe never reads.
  */
-function fdAppends(fd: number, size: number): boolean {
+function fdAppends(fd: number, size: number, path: string): boolean {
+  const notice = `live log rotation off for ${path}: stdout does not append\n`;
   ftruncateSync(fd, size + 1);
+  let grown: number;
   try {
-    writeSync(fd, '\n');
-    return fstatSync(fd).size === size + 2;
-  } finally {
+    writeSync(fd, notice);
+    grown = fstatSync(fd).size;
+  } catch (error) {
     ftruncateSync(fd, size);
+    throw error;
   }
+  if (grown !== size + 1 + Buffer.byteLength(notice)) return false;
+  ftruncateSync(fd, size);
+  return true;
 }
-
