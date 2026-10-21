@@ -1138,6 +1138,102 @@ test('codex-cli records subagent delegation from session response items when app
   }
 });
 
+test('codex-cli scans the rollout for a later turn from where the previous turn started', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const codexHome = join(stateDir, 'codex-home');
+      const sessionDir = join(codexHome, 'sessions', '2026', '06', '03');
+      await mkdir(sessionDir, { recursive: true });
+      const turnContext = (turnId: string) => JSON.stringify({ type: 'turn_context', payload: { turn_id: turnId } });
+      const webSearchEnd = (callId: string) => JSON.stringify({ type: 'event_msg', payload: { call_id: callId, query: `query ${callId}`, type: 'web_search_end' } });
+      const taskComplete = (turnId: string) => JSON.stringify({ type: 'event_msg', payload: { turn_id: turnId, type: 'task_complete' } });
+      // The leading turn-b lines sit before turn-a starts. The turn-b scan
+      // starts at turn-a's offset, so it must not record ws-stale.
+      await writeFile(
+        join(sessionDir, 'rollout-2026-06-03T07-13-00-codex-two-turn-session.jsonl'),
+        [
+          turnContext('turn-b'),
+          webSearchEnd('ws-stale'),
+          turnContext('turn-a'),
+          webSearchEnd('ws-a'),
+          taskComplete('turn-a'),
+          turnContext('turn-b'),
+          webSearchEnd('ws-b'),
+          taskComplete('turn-b'),
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const fakeCodex = join(stateDir, 'codex');
+      await writeFile(
+        fakeCodex,
+        [
+          '#!/usr/bin/env node',
+          "import readline from 'node:readline';",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+          "let turns = 0;",
+          "rl.on('line', (line) => {",
+          "  const msg = JSON.parse(line);",
+          "  if (msg.method === 'initialize') {",
+          "    send({ id: msg.id, result: { userAgent: 'fake-codex' } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'initialized') return;",
+          "  if (msg.method === 'thread/start') {",
+          "    send({ id: msg.id, result: { thread: { id: 'codex-two-turn-session', cwd: process.cwd(), cliVersion: 'test' } } });",
+          "    return;",
+          "  }",
+          "  if (msg.method === 'turn/start') {",
+          "    turns += 1;",
+          "    const id = turns === 1 ? 'turn-a' : 'turn-b';",
+          "    send({ id: msg.id, result: { turn: { id, status: 'inProgress', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: null, durationMs: null } } });",
+          "    send({ method: 'item/agentMessage/delta', params: { threadId: 'codex-two-turn-session', turnId: id, itemId: 'item-' + id, delta: 'handled ' + id } });",
+          "    send({ method: 'turn/completed', params: { threadId: 'codex-two-turn-session', turn: { id, status: 'completed', items: [], itemsView: 'full', error: null, startedAt: 1, completedAt: 2, durationMs: 1000 } } });",
+          "  }",
+          "});",
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeCodex, 0o755);
+
+      const config = { agentId: 'anima', stateDir };
+      const firstCtx = await ingestEvent(
+        makeSlackEvent({ channelId: 'D-anima', teamId: 'T-demo', text: 'first rollout turn', userId: 'U1' }),
+        config,
+      );
+      const secondCtx = await ingestEvent(
+        makeSlackEvent({ channelId: 'D-anima', teamId: 'T-demo', text: 'second rollout turn', userId: 'U1' }),
+        config,
+      );
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CODEX_HOME: codexHome }),
+        kind: 'codex-cli',
+        model: 'gpt-test',
+        reasoningEffort: 'xhigh',
+      });
+      const recordedSearch = async (itemId: string, callId: string) =>
+        (await activitiesForInboxItemWindow('anima', itemId)).some((activity) =>
+          activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === callId);
+
+      assert.equal((await runtime.run(await runtimeInput(runtime, firstCtx, await loadState()))).text, 'handled turn-a');
+      // The scan runs after the turn returns; wait so the next turn sees its offset.
+      await waitFor(() => recordedSearch(firstCtx.item.id, 'ws-a'));
+      assert.equal((await runtime.run(await runtimeInput(runtime, secondCtx, await loadState()))).text, 'handled turn-b');
+      await waitFor(() => recordedSearch(secondCtx.item.id, 'ws-b'));
+      assert.equal(await recordedSearch(firstCtx.item.id, 'ws-stale'), false);
+      assert.equal(await recordedSearch(secondCtx.item.id, 'ws-stale'), false);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('codex-cli app-server transport fails when process exits before turn completion', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
   try {
