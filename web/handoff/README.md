@@ -24,6 +24,11 @@ Commands:
 
 ```sh
 pnpm --dir web exec vitest run src/handoff/page.test.ts
+pnpm --dir web type-check
 pnpm --dir web build:handoff
 pnpm --dir web dev:handoff --host 127.0.0.1 --port 14176
 ```
+
+`build:handoff` does not type-check the page source in `src/handoff/`, so run
+`type-check` first. The root `pnpm build` already does: its `build:ui` step
+checks the whole web project.
