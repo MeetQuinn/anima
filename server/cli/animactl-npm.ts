@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 
 import { errorMessage } from '../ids.js';
+import { cliPackageVersion } from './cli-version.js';
 import { registerDashboardAuthCommand } from './dashboard-auth-cli.js';
 import { registerTopLevelRuntimeCommands } from './runtime-cli.js';
 
@@ -11,7 +12,7 @@ async function main(): Promise<void> {
 
 export function createAnimactlNpmProgram(): Command {
   const program = new Command();
-  program.name('animactl');
+  program.name('animactl').version(cliPackageVersion());
   registerTopLevelRuntimeCommands(program);
   registerDashboardAuthCommand(program, { managedRuntimeHome: true });
   return program;
