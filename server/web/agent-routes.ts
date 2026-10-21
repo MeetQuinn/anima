@@ -221,13 +221,10 @@ export function registerAgentRoutes(fastify: FastifyInstance): void {
   // active channel subscriptions. A single cache-backed Slack directory read
   // decorates those existing rows with current channel names; directory entries
   // never create rows. See server/web/agent-channels.ts.
-  //
-  // `/channels` is the current name; `/subscriptions` is kept as a back-compat
-  // alias for any client still on the old path.
-  const serveChannelList = (request: { params: { agentId: string } }) =>
-    buildAgentChannelList(request.params.agentId);
-  fastify.get<{ Params: { agentId: string } }>('/api/agents/:agentId/channels', serveChannelList);
-  fastify.get<{ Params: { agentId: string } }>('/api/agents/:agentId/subscriptions', serveChannelList);
+  fastify.get<{ Params: { agentId: string } }>(
+    '/api/agents/:agentId/channels',
+    async (request) => buildAgentChannelList(request.params.agentId),
+  );
 
   // -------------------------------------------------------------------------
   // Sessions

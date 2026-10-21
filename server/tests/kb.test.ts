@@ -153,10 +153,10 @@ test('kb roots can be added and removed without restarting the web app', async (
 
       // The mutation clears the 5 s root cache, so the new root is browsable
       // immediately without a serve bounce.
-      const tree = await fetch(`${base}/api/kbs/second/tree`);
-      assert.equal(tree.status, 200);
-      const treeBody = (await tree.json()) as { nodes: Array<{ name: string }> };
-      assert.deepEqual(treeBody.nodes.map((node) => node.name), ['SECOND.md']);
+      const entries = await fetch(`${base}/api/kbs/second/entries`);
+      assert.equal(entries.status, 200);
+      const entriesBody = (await entries.json()) as { entries: Array<{ name: string }> };
+      assert.deepEqual(entriesBody.entries.map((entry) => entry.name), ['SECOND.md']);
 
       const duplicate = await fetch(`${base}/api/kbs`, {
         body: JSON.stringify({ id: 'second', label: 'Duplicate', path: secondRepo, teamId: 'content' }),
@@ -197,8 +197,8 @@ test('kb roots can be added and removed without restarting the web app', async (
       assert.equal(remove.status, 200);
       assert.deepEqual(await remove.json(), { kbs: [{ id: 'test', label: 'Test', teamId: 'default' }] });
 
-      const removedTree = await fetch(`${base}/api/kbs/second/tree`);
-      assert.equal(removedTree.status, 404);
+      const removedEntries = await fetch(`${base}/api/kbs/second/entries`);
+      assert.equal(removedEntries.status, 404);
 
       const config = JSON.parse(await readFile(join(homeDir, 'kbs', 'test', 'config.json'), 'utf8')) as unknown;
       assert.deepEqual(config, { label: 'Test', path: repoDir });
@@ -367,18 +367,18 @@ test('kb directory mkdir creates a subfolder and enforces the root boundary', as
   }
 });
 
-test('kb tree exposes every file, gitignored or not, in a nested shape', async () => {
-  const { homeDir, repoDir } = await setupKb('anima-kb-tree');
+test('kb directory entries expose every file, gitignored or not', async () => {
+  const { homeDir, repoDir } = await setupKb('anima-kb-entries');
   try {
     await withServer(homeDir, async (base) => {
-      const res = await fetch(`${base}/api/kbs/test/tree`);
+      const res = await fetch(`${base}/api/kbs/test/entries`);
       assert.equal(res.status, 200);
       const body = (await res.json()) as {
         kb: { id: string; label: string };
-        nodes: Array<{ name: string; path: string; type: string; children?: unknown[] }>;
+        entries: Array<{ name: string; path: string; type: string }>;
       };
       assert.equal(body.kb.id, 'test');
-      const topNames = body.nodes.map((n) => n.name);
+      const topNames = body.entries.map((n) => n.name);
       assert.ok(topNames.includes('docs'), 'docs dir present');
       assert.ok(topNames.includes('README.md'), 'README present');
       assert.ok(topNames.includes('.gitignore'), '.gitignore is itself content');
@@ -389,9 +389,11 @@ test('kb tree exposes every file, gitignored or not, in a nested shape', async (
       assert.ok(topNames.includes('fake.env'), 'glob-gitignored env file is still content');
       assert.ok(!topNames.includes('.git'), '.git metadata absent');
 
-      const docs = body.nodes.find((n) => n.name === 'docs');
-      assert.equal(docs?.type, 'dir');
-      const docChildren = (docs?.children ?? []).map((c) => (c as { name: string }).name);
+      assert.equal(body.entries.find((n) => n.name === 'docs')?.type, 'dir');
+      const docs = await fetch(`${base}/api/kbs/test/entries?path=docs`);
+      assert.equal(docs.status, 200);
+      const docsBody = (await docs.json()) as { entries: Array<{ name: string }> };
+      const docChildren = docsBody.entries.map((entry) => entry.name);
       assert.deepEqual([...docChildren].sort(), ['app.ts', 'data.json', 'report.html', 'untracked-target.md']);
     });
   } finally {
@@ -468,9 +470,6 @@ test('kb directory pages and file reads stay bounded when an unrelated subtree i
       assert.equal(searchBody.matches.length, 200, 'search returns a bounded result set');
       assert.equal(searchBody.truncated, true, 'search reports that more matches exist');
 
-      const legacyTree = await fetch(`${base}/api/kbs/test/tree`);
-      assert.equal(legacyTree.status, 413, 'legacy full-tree callers fail explicitly instead of hanging');
-      assert.match(await legacyTree.text(), /kb_tree_too_large/);
     });
   } finally {
     await rm(homeDir, { force: true, recursive: true });
@@ -549,11 +548,9 @@ test('kb paged browser accepts a configured root symlink without traversing nest
   }
 });
 
-test('kb tree stamps file mtimes and bubbles the latest into ancestor dirs', async () => {
+test('kb directory entries stamp file mtimes', async () => {
   const { homeDir, repoDir } = await setupKb('anima-kb-mtime');
   try {
-    // Pin every docs/ file so the dir's bubbled max is deterministic (a file
-    // left at "now" would win over any fixed past timestamp).
     const newest = new Date('2026-01-02T03:04:05.000Z');
     const older = new Date('2025-05-05T05:05:05.000Z');
     await utimes(join(repoDir, 'docs', 'data.json'), newest, newest);
@@ -562,19 +559,17 @@ test('kb tree stamps file mtimes and bubbles the latest into ancestor dirs', asy
     }
 
     await withServer(homeDir, async (base) => {
-      const res = await fetch(`${base}/api/kbs/test/tree`);
+      const docs = await fetch(`${base}/api/kbs/test/entries?path=docs`);
+      assert.equal(docs.status, 200);
+      const docsBody = (await docs.json()) as { entries: Array<{ name: string; mtime?: string }> };
+      assert.equal(docsBody.entries.find((c) => c.name === 'data.json')?.mtime, newest.toISOString());
+      assert.equal(docsBody.entries.find((c) => c.name === 'app.ts')?.mtime, older.toISOString());
+
+      const res = await fetch(`${base}/api/kbs/test/entries`);
       assert.equal(res.status, 200);
-      const body = (await res.json()) as {
-        nodes: Array<{ name: string; type: string; mtime?: string; children?: Array<{ name: string; mtime?: string }> }>;
-      };
-
-      const docs = body.nodes.find((n) => n.name === 'docs');
-      assert.equal(docs?.children?.find((c) => c.name === 'data.json')?.mtime, newest.toISOString());
-      assert.equal(docs?.children?.find((c) => c.name === 'app.ts')?.mtime, older.toISOString());
-      // Dir mtime is the max of its descendants, not the dir inode's own stamp.
-      assert.equal(docs?.mtime, newest.toISOString());
-
-      const readme = body.nodes.find((n) => n.name === 'README.md');
+      const body = (await res.json()) as { entries: Array<{ name: string; type: string; mtime?: string }> };
+      assert.equal(body.entries.find((n) => n.name === 'docs')?.mtime, undefined, 'directory entries carry no mtime');
+      const readme = body.entries.find((n) => n.name === 'README.md');
       assert.ok(readme?.mtime, 'file node carries an mtime');
       assert.ok(!Number.isNaN(Date.parse(readme!.mtime!)), 'mtime is parseable ISO 8601');
     });
@@ -602,12 +597,10 @@ test('kb without root gitignore exposes all files except git metadata (unchanged
     await writeTestKbConfig(homeDir, { id: 'plain', label: 'Plain', path: rootDir });
 
     await withServer(homeDir, async (base) => {
-      const res = await fetch(`${base}/api/kbs/plain/tree`);
+      const res = await fetch(`${base}/api/kbs/plain/entries`);
       assert.equal(res.status, 200);
-      const body = (await res.json()) as {
-        nodes: Array<{ name: string; children?: Array<{ name: string }> }>;
-      };
-      const topNames = body.nodes.map((node) => node.name);
+      const body = (await res.json()) as { entries: Array<{ name: string }> };
+      const topNames = body.entries.map((entry) => entry.name);
       assert.ok(topNames.includes('notes.md'));
       assert.ok(topNames.includes('.env'), 'without .gitignore, dot/env files are content');
       assert.ok(topNames.includes('nested'));
@@ -743,7 +736,7 @@ test('kb boundary serves gitignored files but refuses traversal and unsafe symli
       const escapeSymlink = await fetch(`${base}/api/kbs/test/file?path=escape-link.md`);
       assert.equal(escapeSymlink.status, 404, 'symlink target must stay under the same root');
 
-      const unknownRoot = await fetch(`${base}/api/kbs/nope/tree`);
+      const unknownRoot = await fetch(`${base}/api/kbs/nope/entries`);
       assert.equal(unknownRoot.status, 404, 'unknown kb root');
     });
   } finally {
