@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,6 +8,7 @@ import assert from 'node:assert/strict';
 import { renderCliError } from '../cli/cli-errors.js';
 import { FeishuApiError } from '../feishu/client.js';
 import { startSlackApiMock } from './helpers/slack-api.js';
+import { runNode } from './helpers/run-node.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
@@ -216,25 +215,3 @@ async function writeSlackConfig(configDir: string): Promise<void> {
   await writeFile(join(agentDir, 'config.json'), `${JSON.stringify(agent, null, 2)}\n`, 'utf8');
 }
 
-async function runNode(
-  args: string[],
-  options: { env?: NodeJS.ProcessEnv; input?: string } = {},
-): Promise<{ status: number | null; stderr: string; stdout: string }> {
-  const child = spawn(process.execPath, args, {
-    env: options.env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk;
-  });
-  child.stdin.end(options.input);
-  const [status] = (await once(child, 'exit')) as [number | null];
-  return { status, stderr, stdout };
-}

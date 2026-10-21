@@ -231,8 +231,9 @@ test('OpenCode usage reports only global DeepSeek credential presence and never 
   }
 });
 
-test('Kimi usage reads Kimi Code credentials before legacy migrated credentials', async () => {
+test('Kimi usage reads Kimi Code credentials before legacy migrated credentials', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-kimi-usage-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.kimi-code', 'credentials'), { recursive: true });
   await mkdir(join(home, '.kimi', 'credentials'), { recursive: true });
   await writeFile(
@@ -308,8 +309,9 @@ test('Codex account prefers profile/email over opaque org account ids', () => {
   assert.equal(codexAccount({ account_id: orgId }), undefined);
 });
 
-test('Codex usage refreshes an expired access token before fetching usage', async () => {
+test('Codex usage refreshes an expired access token before fetching usage', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-codex-usage-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.codex'), { recursive: true });
   const authPath = join(home, '.codex', 'auth.json');
   await writeFile(
@@ -362,8 +364,9 @@ test('Codex usage refreshes an expired access token before fetching usage', asyn
   }
 });
 
-test('Kimi usage refreshes and retries once after a usage 401', async () => {
+test('Kimi usage refreshes and retries once after a usage 401', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-kimi-refresh-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.kimi-code', 'credentials'), { recursive: true });
   await writeFile(join(home, '.kimi-code', 'device_id'), 'test-device-id', 'utf8');
   const credentialPath = join(home, '.kimi-code', 'credentials', 'kimi-code.json');
@@ -421,8 +424,9 @@ test('Kimi usage refreshes and retries once after a usage 401', async () => {
   }
 });
 
-test('Claude usage never refreshes or rewrites expired credentials', async () => {
+test('Claude usage never refreshes or rewrites expired credentials', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-claude-refresh-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.claude'), { recursive: true });
   await writeFile(
     join(home, '.claude.json'),
@@ -475,8 +479,9 @@ test('Claude usage never refreshes or rewrites expired credentials', async () =>
   }
 });
 
-test('Claude usage coalesces concurrent read-only requests without refreshing credentials', async () => {
+test('Claude usage coalesces concurrent read-only requests without refreshing credentials', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-claude-singleflight-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.claude'), { recursive: true });
   await writeFile(
     join(home, '.claude', '.credentials.json'),
@@ -516,8 +521,9 @@ test('Claude usage coalesces concurrent read-only requests without refreshing cr
   }
 });
 
-test('Claude usage adopts credentials refreshed concurrently by Claude Code', async () => {
+test('Claude usage adopts credentials refreshed concurrently by Claude Code', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-claude-reread-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.claude'), { recursive: true });
   const credentialPath = join(home, '.claude', '.credentials.json');
   await writeFile(
@@ -904,8 +910,9 @@ test('Grok billing parser extracts used percent from gRPC-Web protobuf', () => {
   assert.equal(parsed.snapshot?.usedPercent, 9);
 });
 
-test('Grok usage reads ~/.grok/auth.json key and calls billing endpoint', async () => {
+test('Grok usage reads ~/.grok/auth.json key and calls billing endpoint', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-grok-usage-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.grok'), { recursive: true });
   const authPath = join(home, '.grok', 'auth.json');
   await writeFile(
@@ -968,8 +975,9 @@ test('Grok usage reads ~/.grok/auth.json key and calls billing endpoint', async 
   }
 });
 
-test('Grok usage prefers first_name when email is absent and skips opaque ids', async () => {
+test('Grok usage prefers first_name when email is absent and skips opaque ids', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-grok-name-only-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.grok'), { recursive: true });
   const authPath = join(home, '.grok', 'auth.json');
   await writeFile(
@@ -1020,8 +1028,9 @@ test('Grok usage prefers first_name when email is absent and skips opaque ids', 
   }
 });
 
-test('Grok usage refreshes an expired access token before billing', async () => {
+test('Grok usage refreshes an expired access token before billing', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-grok-refresh-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.grok'), { recursive: true });
   const authPath = join(home, '.grok', 'auth.json');
   const scope = 'https://auth.x.ai::test-client';
@@ -1084,8 +1093,9 @@ test('Grok usage refreshes an expired access token before billing', async () => 
   }
 });
 
-test('Grok usage reports not_configured without auth.json', async () => {
+test('Grok usage reports not_configured without auth.json', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-grok-empty-home-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   const originalHome = process.env.ANIMA_PROVIDER_USAGE_HOME;
   process.env.ANIMA_PROVIDER_USAGE_HOME = home;
   try {
@@ -1108,8 +1118,9 @@ test('Grok billing parser rejects body trailer grpc-status 16 before accepting d
   assert.equal(parsed.error?.type, 'unauthorized');
 });
 
-test('Grok usage refreshes and retries after body trailer grpc-status 16', async () => {
+test('Grok usage refreshes and retries after body trailer grpc-status 16', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-grok-trailer-auth-'));
+  t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.grok'), { recursive: true });
   const authPath = join(home, '.grok', 'auth.json');
   const scope = 'https://auth.x.ai::test-client';

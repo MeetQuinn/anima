@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { writeSlackAgentConfig } from './helpers/harness.js';
@@ -14,6 +13,7 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { readHttpBody, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { withAnimaHome } from './anima-home.js';
+import { runNode } from './helpers/run-node.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
@@ -737,26 +737,6 @@ function exampleSlackThread() {
     ts: '1770000200.000002',
     userId: 'U-alice',
   });
-}
-
-async function runNode(
-  args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string; keepStdinOpen?: boolean } = {},
-): Promise<{ status: number | null; stderr: string; stdout: string }> {
-  const child = spawn(process.execPath, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  if (!options.keepStdinOpen) child.stdin.end(options.input);
-  const [status] = (await once(child, 'exit')) as [number | null];
-  return { status, stderr, stdout };
 }
 
 function parseFilesField(value: unknown): Array<{ id: string; title?: string }> {

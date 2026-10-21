@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -18,11 +16,13 @@ import { InteractiveAskStore } from '../storage/schema/interactive-ask.store.js'
 import { SubscriptionStore } from '../storage/schema/subscription.store.js';
 import { slackBlocks, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import type { InteractiveAskRecord } from '../storage/schema/interactive-ask.store.js';
+import { runNode } from './helpers/run-node.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
-test('anima ask posts Block Kit buttons, stores the ask, and subscribes to typed replies', async () => {
+test('anima ask posts Block Kit buttons, stores the ask, and subscribes to typed replies', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-cli-'));
+  t.after(() => rm(stateDir, { force: true, recursive: true }));
   const posts: Array<Record<string, unknown>> = [];
   const slackApi = await startSlackApiMock((method, body) => {
     if (method === 'conversations.info') {
@@ -147,8 +147,9 @@ test('anima ask in a DM by channel id follows no thread', async () => {
   }
 });
 
-test('interactive ask answer enqueues one choice_response with envelope context', async () => {
+test('interactive ask answer enqueues one choice_response with envelope context', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-answer-'));
+  t.after(() => rm(stateDir, { force: true, recursive: true }));
   await withAnimaHome(stateDir, async () => {
     await writeAgentConfig('scout', {
       slack: { appToken: 'xapp-test', botToken: 'xoxb-test', teamId: 'T-demo' },
@@ -215,8 +216,9 @@ test('interactive ask answer enqueues one choice_response with envelope context'
   });
 });
 
-test('interactive ask rejects non-addressee clicks without waking the agent', async () => {
+test('interactive ask rejects non-addressee clicks without waking the agent', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-forbidden-'));
+  t.after(() => rm(stateDir, { force: true, recursive: true }));
   await withAnimaHome(stateDir, async () => {
     await writeAgentConfig('scout', {
       slack: { appToken: 'xapp-test', botToken: 'xoxb-test', teamId: 'T-demo' },
@@ -246,8 +248,9 @@ test('interactive ask rejects non-addressee clicks without waking the agent', as
   });
 });
 
-test('interactive ask retention prunes old answered asks but keeps pending asks', async () => {
+test('interactive ask retention prunes old answered asks but keeps pending asks', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-retention-'));
+  t.after(() => rm(stateDir, { force: true, recursive: true }));
   await withAnimaHome(stateDir, async () => {
     const store = new InteractiveAskStore('scout');
     await store.create(askRecord({
@@ -270,8 +273,9 @@ test('interactive ask retention prunes old answered asks but keeps pending asks'
   });
 });
 
-test('interactive ask store preserves concurrent creates', async () => {
+test('interactive ask store preserves concurrent creates', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-concurrent-create-'));
+  t.after(() => rm(stateDir, { force: true, recursive: true }));
   await withAnimaHome(stateDir, async () => {
     const store = new InteractiveAskStore('scout');
     await Promise.all([
@@ -286,8 +290,9 @@ test('interactive ask store preserves concurrent creates', async () => {
   });
 });
 
-test('interactive ask duplicate create throws and leaves file unchanged', async () => {
+test('interactive ask duplicate create throws and leaves file unchanged', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-duplicate-create-'));
+  t.after(() => rm(stateDir, { force: true, recursive: true }));
   await withAnimaHome(stateDir, async () => {
     const store = new InteractiveAskStore('scout');
     const ask = askRecord({ askId: 'ask-duplicate' });
@@ -303,8 +308,9 @@ test('interactive ask duplicate create throws and leaves file unchanged', async 
   });
 });
 
-test('anima ask rejects bot users as explicit answer targets', async () => {
+test('anima ask rejects bot users as explicit answer targets', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-bot-target-'));
+  t.after(() => rm(stateDir, { force: true, recursive: true }));
   const posts: Array<Record<string, unknown>> = [];
   const slackApi = await startSlackApiMock((method, body) => {
     if (method === 'conversations.info') {
@@ -487,22 +493,3 @@ function fakeSlackClient(output: { ephemerals?: unknown[]; updates?: unknown[] }
   } as unknown as WebClient;
 }
 
-async function runNode(
-  args: string[],
-  opts: { env?: NodeJS.ProcessEnv; input?: string } = {},
-): Promise<{ stdout: string; stderr: string; status: number | null }> {
-  const child = spawn(process.execPath, args, {
-    env: opts.env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  if (opts.input) child.stdin.end(opts.input);
-  else child.stdin.end();
-  const [code] = await once(child, 'close') as [number | null];
-  return { stdout, stderr, status: code };
-}

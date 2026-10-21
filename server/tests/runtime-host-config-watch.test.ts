@@ -7,8 +7,9 @@ import assert from 'node:assert/strict';
 import { invalidateConfigCacheForWatchEvent } from '../runtime/host.js';
 import { cacheSet, JsonFile, statOrNull } from '../storage/json-file.js';
 
-test('runtime host config watch event invalidates changed agent config cache', async () => {
+test('runtime host config watch event invalidates changed agent config cache', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-config-watch-'));
+  t.after(() => rm(dir, { force: true, recursive: true }));
   const agentDir = join(dir, 'agents', 'scout');
   const configPath = join(agentDir, 'config.json');
   await mkdir(agentDir, { recursive: true });
