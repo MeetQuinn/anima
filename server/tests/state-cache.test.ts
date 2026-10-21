@@ -218,6 +218,7 @@ test('JsonlAppendLog tail read of long rows reads the file about once', async ()
 
 test('JsonlAppendLog readNewestMatching does not read segments past its row budget', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-jsonl-newest-budget-'));
+  const realStat = fsPromises.stat;
   try {
     const path = join(dir, 'messages.jsonl');
     const archiveDir = join(dir, 'messages.archive');
@@ -225,21 +226,35 @@ test('JsonlAppendLog readNewestMatching does not read segments past its row budg
     const log = new JsonlAppendLog<{ id: number }>(path, { archiveDir, maxBytes: 1024 * 1024 });
     const none = () => false;
     await mkdir(archiveDir, { recursive: true });
-    // An unreadable archive: reading it makes the call reject.
-    await writeFile(join(archiveDir, '0000000000001-messages-000.jsonl'), 'not json\n');
+    // Reading a segment starts with a stat of it, cached or not.
+    const oldest = join(archiveDir, '0000000000001-messages-000.jsonl');
+    await writeFile(oldest, rows([0]));
+    let oldestRead = false;
+    fsPromises.stat = (async (...args: Parameters<typeof realStat>) => {
+      if (String(args[0]) === oldest) oldestRead = true;
+      return realStat(...args);
+    }) as typeof realStat;
+    syncBuiltinESMExports();
+    const readsOldest = async (withinNewest: number): Promise<boolean> => {
+      oldestRead = false;
+      assert.deepEqual(await log.readNewestMatching(1, none, { withinNewest }), []);
+      return oldestRead;
+    };
 
     // The budget runs out exactly at the end of the live segment.
     await writeFile(path, rows([1, 2, 3]));
-    assert.deepEqual(await log.readNewestMatching(1, none, { withinNewest: 3 }), []);
-    await assert.rejects(log.readNewestMatching(1, none, { withinNewest: 4 }), SyntaxError);
+    assert.equal(await readsOldest(3), false);
+    assert.equal(await readsOldest(4), true);
 
     // The budget runs out at the end of a newer archive.
     await writeFile(join(archiveDir, '0000000000002-messages-000.jsonl'), rows([1, 2]));
     await writeFile(path, rows([3]));
-    assert.deepEqual(await log.readNewestMatching(1, none, { withinNewest: 3 }), []);
+    assert.equal(await readsOldest(3), false);
     assert.deepEqual((await log.readNewestMatching(1, (row) => row.id === 1, { withinNewest: 3 })).map((row) => row.id), [1]);
-    await assert.rejects(log.readNewestMatching(1, none, { withinNewest: 4 }), SyntaxError);
+    assert.equal(await readsOldest(4), true);
   } finally {
+    fsPromises.stat = realStat;
+    syncBuiltinESMExports();
     await rm(dir, { force: true, recursive: true });
   }
 });

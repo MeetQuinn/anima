@@ -63,6 +63,7 @@ const groups = {
     'input-trace.test.js',
     'history-pagination.test.js',
     'history-tail-read.test.js',
+    'jsonl-torn-line.test.js',
     'history-after.test.js',
     'deferred-wake-retry.test.js',
     'ingest-golden.test.js',

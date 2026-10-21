@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fsPromises, { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import fsPromises, { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -614,7 +614,11 @@ test('memory coherence activity gate matches legacy decisions across rotated log
   }
 });
 
-test('memory coherence activity gate ignores irrelevant older message archives', async () => {
+test('memory coherence activity gate ignores irrelevant older message archives', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('root ignores file modes');
+    return;
+  }
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-ledger-bound-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -638,8 +642,10 @@ test('memory coherence activity gate ignores irrelevant older message archives',
 
       const oldestArchive = (await readdir(archiveDir)).sort((a, b) => a.localeCompare(b))[0];
       assert.ok(oldestArchive);
-      await writeFile(join(archiveDir, oldestArchive), '{not-json}\n', 'utf8');
-      await assert.rejects(store.readAll(), SyntaxError);
+      // An archive the gate must not open: reading it fails.
+      await writeFile(join(archiveDir, oldestArchive), '\n', 'utf8');
+      await chmod(join(archiveDir, oldestArchive), 0o000);
+      await assert.rejects(store.readAll(), { code: 'EACCES' });
 
       assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
     });
@@ -648,7 +654,11 @@ test('memory coherence activity gate ignores irrelevant older message archives',
   }
 });
 
-test('memory coherence activity gate with zero outcomes stops before old activity archives', async () => {
+test('memory coherence activity gate with zero outcomes stops before old activity archives', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('root ignores file modes');
+    return;
+  }
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-memory-coherence-zero-outcome-bound-test-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -668,8 +678,10 @@ test('memory coherence activity gate with zero outcomes stops before old activit
 
       const oldestArchive = (await readdir(archiveDir)).sort((a, b) => a.localeCompare(b))[0];
       assert.ok(oldestArchive);
-      await writeFile(join(archiveDir, oldestArchive), '{not-json}\n', 'utf8');
-      await assert.rejects(activityServiceForAgent('aria').readAll(), SyntaxError);
+      // An archive the gate must not open: reading it fails.
+      await writeFile(join(archiveDir, oldestArchive), '\n', 'utf8');
+      await chmod(join(archiveDir, oldestArchive), 0o000);
+      await assert.rejects(activityServiceForAgent('aria').readAll(), { code: 'EACCES' });
 
       assert.equal(await hasMeaningfulActivitySinceLastMemoryPass('aria'), true);
     });

@@ -78,8 +78,16 @@ function pairFor<T>(path: string, idOf: (record: T) => string, rotation: JsonlRo
   (oracle as unknown as { readPageSegment: (segment: { path: string }) => Promise<T[]> }).readPageSegment =
     async (segment) => {
       coldReads += 1;
-      return (await readFile(segment.path)).toString('utf8').split(/\r?\n/)
-        .filter((s) => s.trim() !== '').map((s) => JSON.parse(s) as T);
+      const records: T[] = [];
+      for (const text of (await readFile(segment.path)).toString('utf8').split(/\r?\n/)) {
+        if (text.trim() === '') continue;
+        try {
+          records.push(JSON.parse(text) as T);
+        } catch {
+          // A line that is not valid JSON is skipped.
+        }
+      }
+      return records;
     };
   return { log, oracle, idOf, coldReads: () => coldReads };
 }
@@ -353,7 +361,7 @@ test('same-size rewrite, shrink, and shrink-then-grow past the cached size all p
   });
 });
 
-test('a half-written trailing line fails like the full parse, then completes incrementally', async () => {
+test('a half-written trailing line is skipped like the full parse, then read once complete', async () => {
   await withTempAnimaHome(async (dir) => {
     const path = join(dir, 'log.jsonl');
     const pair = pairFor<Rec>(path, recId, liveOnly(dir));
@@ -361,12 +369,13 @@ test('a half-written trailing line fails like the full parse, then completes inc
     await writeFile(path, ['a', 'b'].map((id) => line(rec(id))).join(''));
     await ledger.step('seed', { full: 1, incremental: 0 }, () => assertSame(pair, 'seed'));
     await appendFile(path, '{"id":"c","text":"hal');
-    await ledger.step('half line', { full: 0, incremental: 0 }, async () => {
+    await ledger.step('half line', { full: 0, incremental: 1 }, async () => {
       await assertSame(pair, 'half line');
-      assert.match(String(ids(await outcome(pair.log, all(pair)))), /^SyntaxError::/);
+      assert.deepEqual(ids(await outcome(pair.log, all(pair))), ['b', 'a']);
     });
+    // The cached bytes now end partway through a line, so they are never extended.
     await appendFile(path, 'f"}\n');
-    await ledger.step('line completed', { full: 0, incremental: 1 }, async () => {
+    await ledger.step('line completed', { full: 1, incremental: 0 }, async () => {
       await assertSame(pair, 'line completed');
       assert.deepEqual(ids(await outcome(pair.log, all(pair))), ['c', 'b', 'a']);
     });
@@ -374,7 +383,7 @@ test('a half-written trailing line fails like the full parse, then completes inc
   });
 });
 
-test('a cached read without a trailing newline is never extended: objects, the joined line throws', async () => {
+test('a cached read without a trailing newline is never extended: objects, the joined line is skipped', async () => {
   await withTempAnimaHome(async (dir) => {
     const path = join(dir, 'log.jsonl');
     const pair = pairFor<Rec>(path, recId, liveOnly(dir));
@@ -382,9 +391,9 @@ test('a cached read without a trailing newline is never extended: objects, the j
     await writeFile(path, line(rec('a')) + JSON.stringify(rec('b')));
     await ledger.step('seed without newline', { full: 1, incremental: 0 }, () => assertSame(pair, 'seed'));
     await appendFile(path, line(rec('c')));
-    await ledger.step('append continues line', { full: 0, incremental: 0 }, async () => {
+    await ledger.step('append continues line', { full: 1, incremental: 0 }, async () => {
       await assertSame(pair, 'append continues line');
-      assert.match(String(ids(await outcome(pair.log, all(pair)))), /^SyntaxError::/);
+      assert.deepEqual(ids(await outcome(pair.log, all(pair))), ['a']);
     });
     ledger.verify();
   });
