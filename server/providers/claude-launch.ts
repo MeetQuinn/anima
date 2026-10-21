@@ -5,6 +5,10 @@ import type { AgentRuntimeInput, ClaudeCodeAgentProviderConfig } from './contrac
 
 export const CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW = 272000;
 export const CLAUDE_DISABLE_AUTO_MEMORY = '1';
+// Claude Code waits on an MCP tool call until the server answers, so a hung
+// server stalls the whole turn until Anima's idle timeout. Ten minutes leaves
+// room for slow tools; a server's own `timeout` setting still wins.
+export const CLAUDE_DEFAULT_MCP_TOOL_TIMEOUT_MS = 10 * 60 * 1000;
 export const CLAUDE_FAST_MODE_SETTINGS = JSON.stringify({ fastMode: true });
 export const CLAUDE_DISALLOWED_TOOLS = [
   'AskUserQuestion',
@@ -19,6 +23,7 @@ export const CLAUDE_DISALLOWED_TOOLS = [
 export function claudeProviderEnv(config: ClaudeCodeAgentProviderConfig): Record<string, string> {
   return {
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
+    MCP_TOOL_TIMEOUT: String(CLAUDE_DEFAULT_MCP_TOOL_TIMEOUT_MS),
     ...(config.env ?? {}),
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: CLAUDE_DISABLE_AUTO_MEMORY,
   };
