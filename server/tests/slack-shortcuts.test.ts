@@ -8,155 +8,27 @@ import type { WebClient } from '@slack/web-api';
 import { slackShortcutHandoffServiceForAgent } from '../inbox/slack-shortcut-handoff.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { SlackShortcutService, type ShortcutModalView } from '../slack-interactions/shortcut.service.js';
-import {
-  SLACK_SHORTCUTS,
-  ensureSlackShortcutManifest,
-  hasCommandsScope,
-  inspectSlackShortcutManifest,
-  parseOauthScopesHeader,
-  slackShortcutManifestUpdateYaml,
-} from '../slack/shortcuts.js';
+import { slackAppManifestYaml } from '../slack/app-manifest.js';
+import { missingRequiredSlackManifestBotScopes, parseOauthScopesHeader } from '../slack/shortcuts.js';
 import {
   ObservedConversationStore,
   surfaceIdForObservation,
 } from '../storage/schema/observed-conversation.store.js';
 import { withAnimaHome } from './anima-home.js';
 
-test('shortcut manifest helper adds commands scope and required shortcuts idempotently', () => {
-  const manifest = {
-    display_information: { name: 'Iris' },
-    features: {
-      app_home: {
-        home_tab_enabled: false,
-        messages_tab_enabled: true,
-      },
-      shortcuts: [
-        {
-          callback_id: 'existing.action',
-          description: 'Keep me',
-          name: 'Existing',
-          type: 'message',
-        },
-        {
-          callback_id: 'anima.stop',
-          description: 'Old stop shortcut',
-          name: 'Stop current turn',
-          type: 'global',
-        },
-        {
-          callback_id: 'anima.status',
-          description: 'Old status shortcut',
-          name: 'Show status',
-          type: 'global',
-        },
-        {
-          callback_id: 'anima.toggle_enabled',
-          description: 'Old enable shortcut',
-          name: 'Disable or enable',
-          type: 'global',
-        },
-        {
-          callback_id: 'anima.reminders',
-          description: 'Old reminders shortcut',
-          name: 'Show reminders',
-          type: 'global',
-        },
-      ],
-    },
-    oauth_config: {
-      scopes: {
-        bot: ['chat:write', 'users:read'],
-      },
-    },
-  };
-
-  assert.deepEqual(inspectSlackShortcutManifest(manifest), {
-    commandsScope: false,
-    missingRequiredBotScopes: ['commands', 'canvases:read', 'canvases:write', 'lists:read', 'lists:write'],
-    missingShortcutCallbackIds: SLACK_SHORTCUTS.map((shortcut) => shortcut.callback_id),
-    ready: false,
-  });
-
-  const first = ensureSlackShortcutManifest(manifest);
-  assert.equal(first.updated, true);
-  assert.deepEqual(first.status, {
-    commandsScope: true,
-    missingRequiredBotScopes: [],
-    missingShortcutCallbackIds: [],
-    ready: true,
-  });
-  const features = first.manifest.features as Record<string, unknown>;
-  const shortcuts = features.shortcuts as Array<Record<string, unknown>>;
-  assert.equal(shortcuts.length, 1 + SLACK_SHORTCUTS.length);
-  assert.ok(shortcuts.some((shortcut) => shortcut.callback_id === 'existing.action'));
-  assert.ok(shortcuts.some((shortcut) => shortcut.callback_id === 'anima.home' && shortcut.name === 'Home'));
-  assert.ok(shortcuts.some((shortcut) => shortcut.callback_id === 'anima.hand_to_agent' && shortcut.type === 'message'));
-  assert.equal(shortcuts.some((shortcut) => shortcut.callback_id === 'anima.reminders'), false);
-  assert.equal(shortcuts.some((shortcut) => shortcut.callback_id === 'anima.status'), false);
-  assert.equal(shortcuts.some((shortcut) => shortcut.callback_id === 'anima.stop'), false);
-  assert.equal(shortcuts.some((shortcut) => shortcut.callback_id === 'anima.toggle_enabled'), false);
-
-  const scopes = ((first.manifest.oauth_config as Record<string, unknown>).scopes as Record<string, unknown>).bot;
-  assert.deepEqual(scopes, [
-    'canvases:read',
-    'canvases:write',
-    'chat:write',
-    'commands',
-    'lists:read',
-    'lists:write',
-    'users:read',
-  ]);
-
-  const second = ensureSlackShortcutManifest(first.manifest);
-  assert.equal(second.updated, false);
-  assert.deepEqual(second.manifest, first.manifest);
-});
-
-test('shortcut manifest helper corrects wrong shortcut type without byte-equality matching', () => {
-  const manifest = {
-    features: {
-      shortcuts: [
-        {
-          callback_id: 'anima.hand_to_agent',
-          description: 'Wrong type',
-          name: 'Hand to agent',
-          type: 'global',
-        },
-      ],
-    },
-    oauth_config: { scopes: { bot: ['commands'] } },
-  };
-
-  const before = inspectSlackShortcutManifest(manifest);
-  assert.equal(before.commandsScope, true);
-  assert.deepEqual(before.missingRequiredBotScopes, ['canvases:read', 'canvases:write', 'lists:read', 'lists:write']);
-  assert.ok(before.missingShortcutCallbackIds.includes('anima.hand_to_agent'));
-
-  const updated = ensureSlackShortcutManifest(manifest);
-  const shortcuts = (updated.manifest.features as Record<string, unknown>).shortcuts as Array<Record<string, unknown>>;
-  assert.ok(shortcuts.some((shortcut) => shortcut.callback_id === 'anima.hand_to_agent' && shortcut.type === 'message'));
-  assert.equal(updated.status.ready, true);
-});
-
-test('oauth scope header parser detects commands scope', () => {
+test('oauth scope header parser splits and trims the scope list', () => {
   assert.deepEqual(parseOauthScopesHeader('chat:write, commands,users:read'), ['chat:write', 'commands', 'users:read']);
-  assert.equal(hasCommandsScope(parseOauthScopesHeader('chat:write,users:read')), false);
-  assert.equal(hasCommandsScope(parseOauthScopesHeader('chat:write,commands')), true);
+  assert.deepEqual(parseOauthScopesHeader(null), []);
 });
 
-test('shortcut manifest update YAML describes the manual migration block', () => {
-  const yaml = slackShortcutManifestUpdateYaml();
-  assert.match(yaml, /oauth_config:\n  scopes:\n    bot:\n      - commands/);
-  assert.match(yaml, /- canvases:read/);
-  assert.match(yaml, /- canvases:write/);
-  assert.match(yaml, /- lists:read/);
-  assert.match(yaml, /- lists:write/);
-  assert.match(yaml, /callback_id: anima.home/);
-  assert.match(yaml, /callback_id: anima.hand_to_agent/);
-  assert.doesNotMatch(yaml, /callback_id: anima.reminders/);
-  assert.doesNotMatch(yaml, /callback_id: anima.status/);
-  assert.doesNotMatch(yaml, /callback_id: anima.stop/);
-  assert.doesNotMatch(yaml, /callback_id: anima.toggle_enabled/);
+test('the bundled Slack manifest requests every required bot scope and both shortcuts', async () => {
+  const manifest = await slackAppManifestYaml({ id: 'scout' } as never);
+  const botScopes = /\n    bot:\n((?: {6}- .+\n)+)/.exec(manifest)?.[1]?.trim().split('\n').map((line) => line.trim().replace(/^- /, ''));
+  assert.ok(botScopes && botScopes.length > 0, 'manifest lists bot scopes');
+  assert.deepEqual(missingRequiredSlackManifestBotScopes(botScopes), []);
+  // slack-subscriber.ts registers these callback ids with these shortcut types.
+  assert.match(manifest, /type: global\n {6}callback_id: anima\.home\n/);
+  assert.match(manifest, /type: message\n {6}callback_id: anima\.hand_to_agent\n/);
 });
 
 test('home shortcut opens a read-only agent home without queueing agent work', async () => {
