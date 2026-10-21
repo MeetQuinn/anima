@@ -93,6 +93,8 @@ Server tests use Node's test runner over compiled files in `dist/server/tests`. 
 
 The test tiers are listed in `scripts/run-tests.mjs`. That runner audits tier membership, so a new `server/tests/*.test.ts` file must be added to exactly one tier or the runner fails.
 
+Provider CLI locks are machine-wide by default, shared by every Anima process for the same user. The runner gives each run its own lock directory through `ANIMA_PROVIDER_CLI_LOCK_DIR`, so a test run never waits on, or blocks, a live service on the same machine. Set that variable yourself when running a single dist test file on a machine that also runs Anima.
+
 ## Style Expectations
 
 TypeScript is strict, NodeNext ESM. Source imports use `.js` suffixes even when the file on disk is `.ts`.

@@ -706,6 +706,27 @@ test('machine gate grants one contender after a holder crashes', async () => {
   }
 });
 
+test('ANIMA_PROVIDER_CLI_LOCK_DIR moves the machine locks', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-lock-dir-'));
+  const lockDir = join(root, 'locks');
+  const previous = process.env.ANIMA_PROVIDER_CLI_LOCK_DIR;
+  process.env.ANIMA_PROVIDER_CLI_LOCK_DIR = lockDir;
+  try {
+    const lease = await tryAcquireProviderCliUpgradeLease('claude-code');
+    assert.ok(lease);
+    try {
+      assert.ok((await stat(join(lockDir, 'upgrade.lock'))).isFile());
+      assert.equal(await providerCliUpgradeLocked(), true);
+    } finally {
+      await lease.release();
+    }
+  } finally {
+    if (previous === undefined) delete process.env.ANIMA_PROVIDER_CLI_LOCK_DIR;
+    else process.env.ANIMA_PROVIDER_CLI_LOCK_DIR = previous;
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test('provider checks reuse validators and keep failures isolated by provider', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-checks-'));
   let round = 0;
