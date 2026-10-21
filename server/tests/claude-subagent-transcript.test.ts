@@ -347,3 +347,36 @@ for (const transition of ['append', 'visible truncation', 'rewrite larger', 'rew
     assert.deepEqual(await (await activityConsumer()).lookup('new-tool'), expected);
   });
 }
+
+test('root-thread work is recorded while a subagent runs; unmarked lines wait for it', async (t) => {
+  await fixture(t);
+  const recorded: string[] = [];
+  const mapper = createClaudeJsonlActivityMapper({
+    persistProviderSession: async () => {},
+    recordAgentText: async (text) => { recorded.push(`text:${text}`); },
+    recordEvent: async () => {},
+    recordOutput: async () => {},
+    recordUsage: async () => {},
+    recordRuntime: async () => {},
+    recordToolFailed: async () => {},
+    recordToolStarted: async (tool) => { recorded.push(`tool:${String(tool['providerToolId'])}`); },
+  }, 'synthetic');
+  const line = (value: Record<string, unknown>) => JSON.stringify({ session_id: 'session-one', ...value }) + '\n';
+  const toolUse = (id: string, name: string, extra: Record<string, unknown> = {}) =>
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input: {} }] }, ...extra });
+  const text = (body: string, extra: Record<string, unknown> = {}) =>
+    line({ type: 'assistant', message: { content: [{ type: 'text', text: body }] }, ...extra });
+
+  await mapper.accept(line({ type: 'system', subtype: 'init', cwd: '/test/project' }));
+  await mapper.accept(toolUse('agent-tool', 'Agent', { parent_tool_use_id: null }));
+  await mapper.accept(toolUse('root-read', 'Read', { parent_tool_use_id: null }));
+  await mapper.accept(toolUse('root-grep', 'Grep', { isSidechain: false }));
+  await mapper.accept(text('root note', { parent_tool_use_id: null }));
+  await mapper.accept(toolUse('unmarked-read', 'Read'));
+  await mapper.accept(text('unmarked note'));
+  const live = ['tool:agent-tool', 'tool:root-read', 'tool:root-grep', 'text:root note'];
+  assert.deepEqual(recorded, live);
+
+  await mapper.flush();
+  assert.deepEqual(recorded, [...live, 'tool:unmarked-read', 'text:unmarked note']);
+});

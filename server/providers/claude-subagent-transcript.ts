@@ -65,6 +65,15 @@ export interface ClaudeJsonlMapperState {
   subagentMetadataByKey: Map<string, Record<string, unknown>>;
 }
 
+/**
+ * Claude stream-json marks root messages with a null parent; native transcript
+ * rows use isSidechain=false. A line without either marker may belong to a
+ * subagent.
+ */
+export function isClaudeRootLine(value: unknown): boolean {
+  return isRecord(value) && (value['parent_tool_use_id'] === null || value['isSidechain'] === false);
+}
+
 export function hasSubagentLinkage(payload: Record<string, unknown>): boolean {
   return Boolean(stringField(payload, 'parentToolCallId') && stringField(payload, 'subRunId'));
 }
@@ -148,11 +157,8 @@ export async function subagentActivityLinkageFromClaudeJson(
     stringField(toolUseResult, 'agentId') ??
     stringField(toolUseResult, 'agent_id');
   const explicitLinkage = claudeSubagentLinkage(value, explicitAgentId, undefined);
-  // Claude stream-json marks root messages with a null parent; native transcript
-  // rows use isSidechain=false. Neither needs a historical ownership search.
-  if (!explicitAgentId && !hasSubagentLinkage(explicitLinkage) && (
-    value['parent_tool_use_id'] === null || value['isSidechain'] === false
-  )) return {};
+  // A line marked as root needs no historical ownership search.
+  if (!explicitAgentId && !hasSubagentLinkage(explicitLinkage) && isClaudeRootLine(value)) return {};
 
   const knownAgentId = explicitAgentId ?? stringField(explicitLinkage, 'subRunId');
   const subagentInfo = knownAgentId
