@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -207,10 +208,20 @@ export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
     `Running ${group} tests (${testPaths.length} files, ` +
       `per-test ${formatSeconds(perTestMs)}, suite ${formatSeconds(suiteMs)})`,
   );
+  // Provider CLI locks are machine-wide by default and shared with any live
+  // Anima service on this machine; give each run its own. Keep a value only
+  // when launch-gate would use it (it ignores a blank one).
+  const lockDir = process.env.ANIMA_PROVIDER_CLI_LOCK_DIR?.trim()
+    ? undefined
+    : mkdtempSync(join(tmpdir(), 'anima-test-provider-cli-locks-'));
   const child = spawn(process.execPath, args, {
     detached: process.platform !== 'win32',
+    env: lockDir ? { ...process.env, ANIMA_PROVIDER_CLI_LOCK_DIR: lockDir } : process.env,
     stdio: 'inherit',
   });
+  const removeLockDir = () => {
+    if (lockDir) rmSync(lockDir, { force: true, recursive: true });
+  };
 
   return new Promise((resolve) => {
     let didTimeout = false;
@@ -227,6 +238,7 @@ export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
     timer.unref();
 
     child.on('exit', (code, signal) => {
+      removeLockDir();
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       if (didTimeout) {
@@ -242,6 +254,7 @@ export function runTestFiles({ group, testPaths, perTestMs, suiteMs }) {
     });
 
     child.on('error', (error) => {
+      removeLockDir();
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       console.error(error);

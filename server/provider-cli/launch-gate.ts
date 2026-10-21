@@ -7,13 +7,15 @@ import { join } from 'node:path';
 import type { ProviderUsageKind } from '../../shared/provider-usage.js';
 
 // Provider binaries are shared by every Anima process owned by this machine
-// user, even when those processes use different ANIMA_HOME values.
-const LOCK_ROOT = join(
-  homedir(),
-  '.cache',
-  'anima',
-  'provider-cli-locks-v1',
-);
+// user, even when those processes use different ANIMA_HOME values, so the
+// locks live outside any Anima home. ANIMA_PROVIDER_CLI_LOCK_DIR moves them;
+// the test runner sets it so a test run never contends with a live service.
+function lockRoot(): string {
+  return (
+    process.env.ANIMA_PROVIDER_CLI_LOCK_DIR?.trim() ||
+    join(homedir(), '.cache', 'anima', 'provider-cli-locks-v1')
+  );
+}
 const LOCK_WAIT_MS = 50;
 const LOCK_FD = 3;
 
@@ -103,8 +105,9 @@ async function tryAcquireLock(
   name: string,
   _provider: ProviderUsageKind,
 ): Promise<ProviderCliMachineLease | undefined> {
-  await mkdir(LOCK_ROOT, { mode: 0o700, recursive: true });
-  const file = await open(join(LOCK_ROOT, `${name}.lock`), 'a+', 0o600);
+  const root = lockRoot();
+  await mkdir(root, { mode: 0o700, recursive: true });
+  const file = await open(join(root, `${name}.lock`), 'a+', 0o600);
   const command = await advisoryLockCommand();
   try {
     const child = spawn(
