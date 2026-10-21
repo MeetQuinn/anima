@@ -257,7 +257,7 @@ async function tryFollowupBatch(
       agentRuntime: input.agentRuntime.kind,
       event: 'runtime.followup_appended',
       itemIds,
-      text: result.text,
+      textLength: result.text?.length ?? 0,
       workerId: input.workerId,
     }, null, 2));
 

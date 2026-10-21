@@ -376,6 +376,61 @@ test('runtime worker appends queued follow-up messages into an active runtime', 
   }
 });
 
+test('runtime worker logs reply and follow-up text lengths, not the text', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-worker-log-text-test-'));
+  const runtime = new FollowupRuntime();
+  const logged: string[] = [];
+  const logger = {
+    error: (message: string) => logged.push(message),
+    log: (message: string) => logged.push(message),
+  };
+  const coordinator = { agentId: 'scout', stateDir };
+  let worker: AgentRuntimeWorker | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      worker = new AgentRuntimeWorker({
+        agentId: 'scout',
+        agentRuntime: runtime,
+        pollIntervalMs: 10_000,
+        queue: queueFor('scout'),
+        stateDir,
+        workerId: 'test-worker',
+      }, logger);
+      const first = await enqueueInbox(
+        makeSlackEvent({ channelId: 'D-user', eventId: 'evt-first', teamId: 'T-demo', text: 'first', ts: '1770000010.000001', userId: 'U1' }),
+        coordinator,
+      );
+      const drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+      const second = await enqueueInbox(
+        makeSlackEvent({ channelId: 'D-user', eventId: 'evt-second', teamId: 'T-demo', text: 'second', ts: '1770000011.000001', userId: 'U1' }),
+        coordinator,
+      );
+      await waitForInboxItemAppendedTo('scout', second.ctx.item.id, first.ctx.item.id);
+      runtime.finishNext();
+      assert.equal(await drain, 1);
+
+      const entries = logged.flatMap((message) => {
+        try {
+          return [JSON.parse(message) as Record<string, unknown>];
+        } catch {
+          return [];
+        }
+      });
+      const completed = entries.find((entry) => entry['event'] === 'runtime.completed');
+      const appended = entries.find((entry) => entry['event'] === 'runtime.followup_appended');
+      assert.equal(completed?.['textLength'], `completed ${first.ctx.item.id}`.length);
+      assert.equal(appended?.['textLength'], `appended ${second.ctx.item.id}`.length);
+      const output = logged.join('\n');
+      assert.equal(output.includes(`completed ${first.ctx.item.id}`), false);
+      assert.equal(output.includes(`appended ${second.ctx.item.id}`), false);
+    });
+  } finally {
+    await worker?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('runtime worker appends newly queued inbound follow-ups into an active runtime', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-worker-immediate-followup-test-'));
   const runtime = new FollowupRuntime();
