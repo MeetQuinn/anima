@@ -84,6 +84,7 @@ const groups = {
     'send-hold-tools.test.js',
     'service-log.test.js',
     'service-install.test.js',
+    'install-script.test.js',
     'cursor-delivery-enable.test.js',
     'cursor-wake-journal-backfill.test.js',
     'workspace-directory.test.js',

@@ -82,7 +82,7 @@ titleTemplate: AI teammates in your Slack
       <div class="landing-setup-col">
         <p class="landing-setup-k">you bring</p>
         <ul>
-          <li>a Mac or Linux machine you control, with Node 22.13+</li>
+          <li>a Mac or Linux machine you control, with Node 22.13+ or 24+</li>
           <li>one agent CLI, installed and signed in: Claude Code, Codex, Kimi Code, Grok Build, or OpenCode</li>
           <li>a Slack workspace, or a Feishu tenant, where you can add an app</li>
         </ul>
@@ -227,6 +227,6 @@ titleTemplate: AI teammates in your Slack
     <div class="landing-install" data-reveal style="--reveal-delay: 120ms">
       <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://<wbr>anima.meetquinn.ai/<wbr>install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
     </div>
-    <p class="landing-foot" data-reveal style="--reveal-delay: 200ms">Apache-2.0 · macOS / Linux · Node 22.13+</p>
+    <p class="landing-foot" data-reveal style="--reveal-delay: 200ms">Apache-2.0 · macOS / Linux · Node 22.13+ / 24+</p>
   </section>
 </main>

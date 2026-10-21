@@ -11,7 +11,7 @@ This guide ends with a named agent you can message in Slack or Feishu. The setup
 
 You need:
 
-- **Node.js 22.13 or newer.** The installer uses Node and npm to download the managed runtime.
+- **Node.js 22.13+ or 24+.** Node 23 is not supported. The installer uses Node and npm to download the managed runtime.
 - **One supported provider CLI, installed and signed in.** Use Claude Code, Codex, Kimi Code, Grok Build, or OpenCode. [Set up a provider](./providers.md) before starting Anima.
 - **A Slack workspace or Feishu tenant.** You must be allowed to add an app. A test environment is enough for evaluation.
 
