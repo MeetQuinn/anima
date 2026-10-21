@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import fsPromises, { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import fsPromises, { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -10,10 +10,12 @@ import { withFileLock } from '../storage/lock.js';
 
 const realReadFile = fsPromises.readFile;
 const realRm = fsPromises.rm;
+const realWriteFile = fsPromises.writeFile;
 
 function restoreFs(): void {
   fsPromises.readFile = realReadFile;
   fsPromises.rm = realRm;
+  fsPromises.writeFile = realWriteFile;
   syncBuiltinESMExports();
 }
 
@@ -187,6 +189,30 @@ test('a holder that was taken over leaves the lock to its successor', { timeout:
   }
 });
 
+// Pauses the first recursive removal of a lock that the caller spelled as
+// `lockPath`, just before it runs. Release goes through this removal, wherever
+// it deletes from.
+function pauseRemoval(lockPath: string, beforePause?: (path: string) => Promise<void>): {
+  paused: Promise<void>;
+  resume: () => void;
+} {
+  const paused = deferred();
+  const resume = deferred();
+  let pausedOnce = false;
+  fsPromises.rm = (async (...args: Parameters<typeof realRm>) => {
+    const path = String(args[0]);
+    if (!pausedOnce && path.startsWith(lockPath) && args[1]?.recursive) {
+      pausedOnce = true;
+      await beforePause?.(path);
+      paused.resolve();
+      await resume.promise;
+    }
+    return realRm(...args);
+  }) as typeof realRm;
+  syncBuiltinESMExports();
+  return { paused: paused.promise, resume: resume.resolve };
+}
+
 test('a releasing holder never makes an earlier dead holder look current', { timeout: 5_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-lock-release-order-'));
   try {
@@ -195,36 +221,77 @@ test('a releasing holder never makes an earlier dead holder look current', { tim
     await writeRecord(join(lockDir, 'owner.json'), { pid: deadPid(), token: 'dead-root' });
 
     // The first caller takes over from the dead root. When it releases, the
-    // directory removal deletes its own record first and then pauses: the
+    // removal deletes that caller's own record first and then pauses: the
     // worst order a recursive remove could take.
-    const firstLockDir = resolve(`${spelling(dir, 1)}.lock`);
-    const removalPaused = deferred();
-    const resumeRemoval = deferred();
-    let pausedOnce = false;
-    fsPromises.rm = (async (...args: Parameters<typeof realRm>) => {
-      if (!pausedOnce && resolve(String(args[0])) === firstLockDir && args[1]?.recursive) {
-        pausedOnce = true;
-        await realRm(join(lockDir, 'next-dead-root.json'), { force: true });
-        removalPaused.resolve();
-        await resumeRemoval.promise;
-      }
-      return realRm(...args);
-    }) as typeof realRm;
-    syncBuiltinESMExports();
+    const removal = pauseRemoval(`${spelling(dir, 1)}.lock`, async (path) => {
+      await realRm(join(path, 'next-dead-root.json'), { force: true });
+    });
 
     const seen = occupancy();
     const first = withFileLock(spelling(dir, 1), dir, () => seen.hold(Promise.resolve()));
-    await removalPaused.promise;
+    await removal.paused;
 
     const releaseSecond = deferred();
     const second = withFileLock(spelling(dir, 2), dir, () => seen.hold(releaseSecond.promise));
     await delay(150);
-    resumeRemoval.resolve();
+    removal.resume();
     await first;
     const third = withFileLock(spelling(dir, 3), dir, () => seen.hold(Promise.resolve()));
     await delay(150);
     releaseSecond.resolve();
     await Promise.all([second, third]);
+    assert.equal(seen.max(), 1, 'two callers held the lock at once');
+  } finally {
+    restoreFs();
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('a waiter that found an old ownerless lock is not removed by a release in progress', { timeout: 5_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-lock-ownerless-release-'));
+  try {
+    // A lock directory left with no root record, over 5 minutes ago.
+    const lockDir = join(dir, 'value.json.lock');
+    await mkdir(lockDir);
+    const staleAt = new Date(Date.now() - 6 * 60 * 1000);
+    await utimes(lockDir, staleAt, staleAt);
+
+    // A decides the lock is free and pauses just before writing its root
+    // record (the first root record written). B then takes the lock, leaves,
+    // and pauses partway through removing it. A resumes and enters, then B
+    // finishes.
+    const aDecided = deferred();
+    const resumeA = deferred();
+    let aPaused = false;
+    fsPromises.writeFile = (async (...args: Parameters<typeof realWriteFile>) => {
+      if (!aPaused && String(args[0]).endsWith('/owner.json')) {
+        aPaused = true;
+        aDecided.resolve();
+        await resumeA.promise;
+      }
+      return realWriteFile(...args);
+    }) as typeof realWriteFile;
+    const removal = pauseRemoval(`${spelling(dir, 2)}.lock`);
+
+    const seen = occupancy();
+    const aEntered = deferred();
+    const releaseA = deferred();
+    const a = withFileLock(spelling(dir, 1), dir, async () => {
+      aEntered.resolve();
+      await seen.hold(releaseA.promise);
+    });
+    await aDecided.promise;
+    const b = withFileLock(spelling(dir, 2), dir, () => seen.hold(Promise.resolve()));
+    await removal.paused;
+    resumeA.resolve();
+    await aEntered.promise;
+    removal.resume();
+    await b;
+
+    const c = withFileLock(spelling(dir, 3), dir, () => seen.hold(Promise.resolve()));
+    await delay(150);
+    releaseA.resolve();
+    await Promise.all([a, c]);
     assert.equal(seen.max(), 1, 'two callers held the lock at once');
   } finally {
     restoreFs();
