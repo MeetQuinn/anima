@@ -43,6 +43,8 @@ modification time and size, so the first read after a save sees the new contents
     `Runtime host reconcile failed` and stops applying config changes;
   - Slack wakes are requeued instead of delivered, and Slack sends are refused;
   - dashboard API requests fail.
+- Unknown keys inside `sidebarOrder` don't cause an error. Anima drops them, so a misspelled key
+  there is ignored.
 - Write valid JSON to a temporary file beside `config.json` and move it into place.
 - When the dashboard or a CLI command saves a setting, Anima rewrites the whole file as indented
   JSON. Your own formatting is not kept.
@@ -124,10 +126,10 @@ Provider keys are `claude-code`, `codex-cli`, `kimi-cli`, `grok-cli`, `opencode-
 
 ## Release track (`releaseTrack`)
 
-| Key            | Type                               | Default                         | What it does                                                                                                                                                                     |
-| -------------- | ---------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `releaseTrack` | `"stable"` or `"canary"`           | `"stable"`                      | The npm tag the dashboard update check follows: `latest` for stable, `canary` for canary. **Update** installs the newest version on that tag.                                    |
-| `track`        | `"dev"`, `"canary"`, or `"stable"` | `releaseTrack`, then `"stable"` | Managed by Anima; don't edit by hand. It is written together with `releaseTrack`, shown in **Server**, and set to `dev` for a development home, which turns off managed updates. |
+| Key            | Type                               | Default                                                | What it does                                                                                                                                                                     |
+| -------------- | ---------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `releaseTrack` | `"stable"` or `"canary"`           | `track` if it is `canary` or `stable`, then `"stable"` | The npm tag the dashboard update check follows: `latest` for stable, `canary` for canary. **Update** installs the newest version on that tag.                                    |
+| `track`        | `"dev"`, `"canary"`, or `"stable"` | `releaseTrack`, then `"stable"`                        | Managed by Anima; don't edit by hand. It is written together with `releaseTrack`, shown in **Server**, and set to `dev` for a development home, which turns off managed updates. |
 
 Use the CLI instead of editing the file. It writes both keys, so on a development home setting a
 track replaces `dev` and turns managed updates on:
