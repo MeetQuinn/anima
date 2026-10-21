@@ -189,49 +189,6 @@ test("Claude malformed settings and profile auth remain unknown, not a false log
   );
 });
 
-test(
-  "Claude distinguishes denied Keychain reads from verified absence",
-  { skip: process.platform !== "darwin" },
-  async (t) => {
-    const f = await fixture(t);
-    const bin = join(f.home, "bin");
-    await mkdir(bin);
-    const original = process.env.PATH;
-    process.env.PATH = `${bin}:${original ?? ""}`;
-    t.after(() => {
-      process.env.PATH = original;
-    });
-    const fake = async (exit: number) =>
-      writeFile(
-        join(bin, "security"),
-        `#!/bin/sh\nprintf called > "$0.called"\nexit ${exit}\n`,
-        { mode: 0o755 },
-      );
-    await fake(36);
-    const denied = await fetchClaudeConnectionUsage({ home: f.home, env: {} });
-    assert.equal(
-      await readFile(join(bin, "security.called"), "utf8"),
-      "called",
-    );
-    assert.equal(denied.connection?.status, "unknown");
-    assert.equal(denied.error?.type, "unknown");
-    await fake(44);
-    const absent = await fetchClaudeConnectionUsage({ home: f.home, env: {} });
-    assert.equal(absent.connection?.status, "not-configured");
-    assert.equal(absent.error?.type, "not_configured");
-    await writeFile(join(f.home, ".claude", ".credentials.json"), "{invalid");
-    const malformed = await fetchClaudeConnectionUsage({
-      home: f.home,
-      env: {},
-    });
-    assert.equal(
-      malformed.connection?.status,
-      "unknown",
-      "bad file plus absent Keychain is still unknown",
-    );
-  },
-);
-
 test("Claude stored-login evidence survives a quota HTTP503 without a credential write", async (t) => {
   const f = await fixture(t);
   const path = join(f.home, ".claude", ".credentials.json");

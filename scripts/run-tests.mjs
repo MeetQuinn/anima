@@ -155,6 +155,7 @@ const groups = {
     'cli-errors.test.js',
     'cli-file.test.js',
     'cli-message.test.js',
+    'provider-connection-keychain.test.js',
     'runtime-worker-coherence.test.js',
     'runtime-worker-failures.test.js',
     'runtime-worker-followups.test.js',
