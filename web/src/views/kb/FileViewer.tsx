@@ -6,9 +6,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
-import rehypeKatex from 'rehype-katex';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
-import 'katex/dist/katex.min.css';
 import { Highlight, themes } from 'prism-react-renderer';
 import { useNavigate } from 'react-router-dom';
 import { buildKbPath, buildKbRawPath } from '@/lib/url-state';
@@ -22,6 +20,7 @@ import { FrontmatterTable } from './FrontmatterTable';
 import { ImageLightbox } from './ImageLightbox';
 import { MermaidBlock } from './MermaidBlock';
 import { ALERT_META, alertTypeFromClassName, rehypeGithubAlerts } from './lib/github-alerts';
+import { useMathRendering } from './lib/math-rendering';
 export { extractToc, lineFromHash } from './lib/markdown-toc';
 import {
   extractToc,
@@ -265,6 +264,9 @@ export function FileContent({
     () => (markdownBody ? stripExplicitHeadingIds(markdownBody) : ''),
     [markdownBody],
   );
+  // KaTeX loads on first use; a math document's body waits for it (see
+  // math-rendering.ts), so the scroll effects below re-run when it appears.
+  const math = useMathRendering(renderMarkdownBody);
   const headingIdsByLine = useMemo(
     () => new Map(tocEntries.map((entry) => [entry.line, entry.id])),
     [tocEntries],
@@ -351,7 +353,7 @@ export function FileContent({
       }, 100);
       return () => clearTimeout(t);
     }
-  }, [file, mode, tocEntries, headingIdList, beginProgrammaticScroll]);
+  }, [file, mode, tocEntries, headingIdList, beginProgrammaticScroll, math.state]);
 
   // Keep the hash aligned with the heading closest to the top of the markdown
   // scroller. This preserves shareable anchors while reading long KB docs.
@@ -417,7 +419,7 @@ export function FileContent({
       root.removeEventListener('scroll', onScroll);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [file, mode, headingIdList]);
+  }, [file, mode, headingIdList, math.state]);
 
   // Memoised so ReactMarkdown sees stable component references (avoids remounting
   // all links on every parent re-render while the file content stays the same).
@@ -712,20 +714,23 @@ export function FileContent({
                     styling instead of inheriting the Markdown code-block / table look. */}
                 {frontmatter && <FrontmatterTable entries={frontmatter} />}
                 <div className="md-prose">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
-                    rehypePlugins={[
-                      rehypeRaw,
-                      rehypeGithubAlerts,
-                      [rehypeSanitize, sanitizeSchema],
-                      // KaTeX last: it renders trusted markup from the (already
-                      // sanitized) LaTeX text, so its output bypasses sanitize.
-                      rehypeKatex,
-                    ]}
-                    components={markdownComponents}
-                  >
-                    {renderMarkdownBody}
-                  </ReactMarkdown>
+                  {math.state !== 'loading' && (
+                    <ReactMarkdown
+                      // Single-dollar math is off: "$5 today and $10" is prose.
+                      remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkBreaks]}
+                      rehypePlugins={[
+                        rehypeRaw,
+                        rehypeGithubAlerts,
+                        [rehypeSanitize, sanitizeSchema],
+                        // KaTeX last: it renders trusted markup from the (already
+                        // sanitized) LaTeX text, so its output bypasses sanitize.
+                        ...(math.state === 'ready' ? [math.plugin] : []),
+                      ]}
+                      components={markdownComponents}
+                    >
+                      {renderMarkdownBody}
+                    </ReactMarkdown>
+                  )}
                 </div>
               </div>
               {showTocRail && (
