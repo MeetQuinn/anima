@@ -4,9 +4,9 @@ import { nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { truncateForActivity } from '../activities/format.js';
 import { raceWithTimeout } from '../race-timeout.js';
+import { AcpJsonRpcError, AcpJsonRpcPeer } from './acp-json-rpc.js';
 import { type RunningChildProcess } from './child-process.js';
 import { exposedReasoningEvent } from './reasoning-events.js';
-import { LineBuffer } from './line-buffer.js';
 import { ControllerAgentRuntime } from './provider-runtime.js';
 import { QuiescentWaiterSet } from './quiescent-waiters.js';
 import { withProviderCliLaunchPermit } from '../provider-cli/launch-gate.js';
@@ -51,16 +51,6 @@ export function grokAcpLaunchArgs(
     ...(model ? ['-m', model] : []),
     'stdio',
   ];
-}
-
-class GrokJsonRpcError extends Error {
-  constructor(
-    readonly method: string,
-    readonly error: Record<string, unknown>,
-  ) {
-    super(jsonRpcErrorMessage(method, error));
-    this.name = 'GrokJsonRpcError';
-  }
 }
 
 export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpController> {
@@ -172,13 +162,6 @@ export class GrokCliAgentRuntime extends ControllerAgentRuntime<GrokAcpControlle
   }
 }
 
-interface PendingRpc {
-  cleanup(): void;
-  method: string;
-  reject(error: unknown): void;
-  resolve(value: Record<string, unknown> | undefined): void;
-}
-
 interface GrokTurn {
   acceptingFollowups: boolean;
   followups: string[];
@@ -196,10 +179,8 @@ interface PendingTool {
 }
 
 class GrokAcpController {
-  private readonly stdoutLines = new LineBuffer();
+  private readonly rpc: AcpJsonRpcPeer;
   private initialized?: Promise<void>;
-  private nextRequestId = 1;
-  private readonly pending = new Map<string, PendingRpc>();
   private readonly pendingTools = new Map<string, PendingTool>();
   private currentTurn?: GrokTurn;
   private readonly activeToolIds = new Set<string>();
@@ -227,15 +208,24 @@ class GrokAcpController {
     private readonly configuredEffort?: string,
     private readonly configuredModel?: string,
   ) {
+    this.rpc = new AcpJsonRpcPeer(child, {
+      label: 'Grok',
+      onNotification: (message) => this.handleNotification(message),
+      onRequest: (message) => this.handleAgentRequest(message),
+      onUnstructuredOutput: async (text) => {
+        const turn = this.currentTurn;
+        if (turn) await turn.input.effects.recordOutput('stdout', text);
+      },
+    });
     this.completion = child.completion.then(
       (result) => {
-        this.rejectAllPending(new Error('Grok ACP runtime exited'));
+        this.rpc.rejectAll(new Error('Grok ACP runtime exited'));
         this.rejectQuiescentWaiters(new Error('Grok ACP runtime exited before drain reached a quiescent point'));
         this.abortCurrentTurn(new Error('Grok ACP runtime exited before completing active turn'));
         return result;
       },
       (error) => {
-        this.rejectAllPending(error);
+        this.rpc.rejectAll(error);
         this.rejectQuiescentWaiters(error);
         this.abortCurrentTurn(error);
         throw error;
@@ -277,7 +267,7 @@ class GrokAcpController {
     if (!turn || !this.sessionId) return;
     turn.acceptingFollowups = false;
     turn.followups.length = 0;
-    this.notify('session/cancel', { sessionId: this.sessionId });
+    this.rpc.notify('session/cancel', { sessionId: this.sessionId });
     const completion = this.turnCompletion;
     if (!completion) return;
     await raceWithTimeout(completion.catch(() => undefined), 2_000, undefined);
@@ -285,7 +275,7 @@ class GrokAcpController {
 
   appendPrompt(prompt: string): boolean {
     return appendAcpFollowupPrompt({
-      cancelSession: (sessionId) => this.notify('session/cancel', { sessionId }),
+      cancelSession: (sessionId) => this.rpc.notify('session/cancel', { sessionId }),
       prompt,
       promptInFlight: this.promptInFlight,
       sessionId: this.sessionId || undefined,
@@ -293,10 +283,8 @@ class GrokAcpController {
     });
   }
 
-  async acceptStdoutChunk(chunk: string): Promise<void> {
-    for (const line of this.stdoutLines.accept(chunk)) {
-      await this.acceptLine(line);
-    }
+  acceptStdoutChunk(chunk: string): Promise<void> {
+    return this.rpc.acceptStdoutChunk(chunk);
   }
 
   async acceptStderrChunk(chunk: string): Promise<void> {
@@ -317,7 +305,7 @@ class GrokAcpController {
   }
 
   private async initializeSession(input: AgentRuntimeInput): Promise<void> {
-    const initResult = await this.request('initialize', {
+    const initResult = await this.rpc.request('initialize', {
       clientCapabilities: {},
       clientInfo: { name: 'anima', version: '0.1.0' },
       protocolVersion: 1,
@@ -331,7 +319,7 @@ class GrokAcpController {
     const requestedSessionId = input.providerSession?.id;
     if (requestedSessionId) {
       try {
-        const result = await this.request('session/load', {
+        const result = await this.rpc.request('session/load', {
           cwd: input.cwd,
           mcpServers: [],
           sessionId: requestedSessionId,
@@ -366,7 +354,7 @@ class GrokAcpController {
   }
 
   private async createSession(input: AgentRuntimeInput): Promise<string> {
-    const result = await this.request('session/new', {
+    const result = await this.rpc.request('session/new', {
       cwd: input.cwd,
       mcpServers: [],
     });
@@ -405,7 +393,7 @@ class GrokAcpController {
         (value) => {
           this.promptInFlight = value;
         },
-        () => this.request('session/prompt', {
+        () => this.rpc.request('session/prompt', {
           prompt: [{ text: prompt, type: 'text' }],
           sessionId: this.sessionId,
         }),
@@ -459,77 +447,20 @@ class GrokAcpController {
     });
   }
 
-  private async acceptLine(line: string): Promise<void> {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      await this.currentTurn?.input.effects.recordOutput('stdout', trimmed);
-      return;
-    }
-    if (!isRecord(parsed)) return;
-    if ('id' in parsed && ('result' in parsed || 'error' in parsed)) {
-      this.handleResponse(parsed);
-      return;
-    }
-    if ('id' in parsed && typeof parsed['method'] === 'string') {
-      this.handleAgentRequest(parsed);
-      return;
-    }
-    if (
-      stringField(parsed, 'method') === 'session/update' ||
-      stringField(parsed, 'method') === 'session/notification'
-    ) {
-      await this.handleNotification(parsed);
-    }
-  }
-
-  private handleResponse(message: Record<string, unknown>): void {
-    const id = rpcIdKey(message['id']);
-    if (!id) return;
-    const pending = this.pending.get(id);
-    if (!pending) return;
-    pending.cleanup();
-    this.pending.delete(id);
-    const error = isRecord(message['error']) ? message['error'] : undefined;
-    if (error) {
-      pending.reject(new GrokJsonRpcError(pending.method, error));
-      return;
-    }
-    pending.resolve(isRecord(message['result']) ? message['result'] : undefined);
-  }
-
   private handleAgentRequest(message: Record<string, unknown>): void {
     const id = message['id'];
     const method = stringField(message, 'method');
     if (id === undefined || !method) return;
     if (method === 'session/request_permission') {
-      this.writeJson({
-        id,
-        jsonrpc: '2.0',
-        result: {
-          outcome: {
-            optionId: grokPermissionApprovalOptionId(message) ?? 'approve_for_session',
-            outcome: 'selected',
-          },
+      this.rpc.respond(id, {
+        outcome: {
+          optionId: grokPermissionApprovalOptionId(message) ?? 'approve_for_session',
+          outcome: 'selected',
         },
       });
       return;
     }
-    this.writeJson({
-      error: {
-        code: -32601,
-        message: `method not found: ${method}`,
-      },
-      id,
-      jsonrpc: '2.0',
-    });
-  }
-
-  private notify(method: string, params: Record<string, unknown>): void {
-    this.writeJson({ jsonrpc: '2.0', method, params });
+    this.rpc.respondError(id, -32601, `method not found: ${method}`);
   }
 
   private captureModelAuthority(result: Record<string, unknown> | undefined): void {
@@ -568,7 +499,7 @@ class GrokAcpController {
     const model = this.actualModel;
     const snapshot = this.currentEffortSnapshot;
     if (!model || snapshot?.modelId !== model || !snapshot.efforts.includes(effort)) return;
-    const result = await this.request('session/set_model', {
+    const result = await this.rpc.request('session/set_model', {
       _meta: { reasoningEffort: effort },
       modelId: model,
       sessionId: this.sessionId,
@@ -584,6 +515,8 @@ class GrokAcpController {
   }
 
   private async handleNotification(message: Record<string, unknown>): Promise<void> {
+    const method = stringField(message, 'method');
+    if (method !== 'session/update' && method !== 'session/notification') return;
     const params = isRecord(message['params']) ? message['params'] : undefined;
     const update = params?.['update'];
     if (!update) return;
@@ -749,28 +682,6 @@ class GrokAcpController {
     });
   }
 
-  private request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
-    const id = this.nextRequestId++;
-    const idKey = String(id);
-    return new Promise((resolve, reject) => {
-      const pending: PendingRpc = {
-        cleanup: () => {
-          this.pending.delete(idKey);
-        },
-        method,
-        reject,
-        resolve,
-      };
-      this.pending.set(idKey, pending);
-      try {
-        this.writeJson({ id, jsonrpc: '2.0', method, params });
-      } catch (error) {
-        pending.cleanup();
-        reject(error);
-      }
-    });
-  }
-
   private abortCurrentTurn(error: unknown): void {
     const turn = this.currentTurn;
     if (!turn) return;
@@ -816,16 +727,6 @@ class GrokAcpController {
     this.quiescentWaiters.reject(error);
   }
 
-  private rejectAllPending(error: unknown): void {
-    for (const pending of [...this.pending.values()]) {
-      pending.cleanup();
-      pending.reject(error);
-    }
-  }
-
-  private writeJson(payload: Record<string, unknown>): void {
-    this.child.writeStdin(`${JSON.stringify(payload)}\n`);
-  }
 }
 
 function grokPrimaryPrompt(input: AgentRuntimeInput): string {
@@ -834,7 +735,7 @@ function grokPrimaryPrompt(input: AgentRuntimeInput): string {
 }
 
 function isGrokSessionNotFoundError(error: unknown): boolean {
-  if (!(error instanceof GrokJsonRpcError)) return false;
+  if (!(error instanceof AcpJsonRpcError)) return false;
   if (error.method !== 'session/load') return false;
   return /(?:unknown|missing|not\s+found|no\s+such).{0,40}session|session.{0,40}(?:unknown|missing|not\s+found|no\s+such)|fs_not_found/i.test(
     error.message,
@@ -1534,22 +1435,4 @@ function grokReplacementDiff(input: Record<string, unknown>): string | undefined
     stringField(edit, 'new');
   if (!before && !after) return undefined;
   return truncateForActivity(`--- old\n${before ?? ''}\n+++ new\n${after ?? ''}`);
-}
-
-function rpcIdKey(id: unknown): string | undefined {
-  return typeof id === 'string' || typeof id === 'number' ? String(id) : undefined;
-}
-
-function jsonRpcErrorMessage(method: string, error: Record<string, unknown>): string {
-  const message = stringField(error, 'message') ?? 'Unknown JSON-RPC error';
-  const code = numberField(error, 'code');
-  const data = error['data'];
-  const renderedData = typeof data === 'string' ? data : data === undefined ? undefined : JSON.stringify(data);
-  return [
-    `${method}: ${message}`,
-    code === undefined ? undefined : `code=${code}`,
-    renderedData ? `data=${renderedData}` : undefined,
-  ]
-    .filter(Boolean)
-    .join(' ');
 }
