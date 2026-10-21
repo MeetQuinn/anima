@@ -93,7 +93,6 @@
   "dependencies": {
     "@dotenvx/dotenvx": "^1.71.0",
     "@larksuiteoapi/node-sdk": "^1.66.1",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@slack/bolt": "^4.7.2",
     "@slack/socket-mode": "^2.0.7",
     "@slack/web-api": "^7.15.2",
