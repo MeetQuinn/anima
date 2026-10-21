@@ -378,11 +378,12 @@ function scrubLogLine(line: string): string {
     .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g, '<redacted-token>')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer <redacted-token>')
     .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1<redacted>@')
-    // A secret-named value: a whole quoted string, an auth scheme with its
+    // A secret-named value: a whole quoted string (escapes included; an
+    // unclosed quote runs to the end of the line), an auth scheme with its
     // credential, or one bare word. Only a count field (`input_tokens=300`)
     // keeps a plain number.
     .replace(
-      /([A-Za-z0-9_-]*(?:token|secret|password|passwd|key|authorization|cookie|credential)[A-Za-z0-9_-]*)(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|(?:(?:Bearer|Basic)\s+)?[^\s"',;}]+)/gi,
+      /([A-Za-z0-9_-]*(?:token|secret|password|passwd|key|authorization|cookie|credential)[A-Za-z0-9_-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|(?:(?:Bearer|Basic)\s+)?[^\s"',;}]+)/gi,
       (match, name: string, separator: string, value: string) => {
         if (/tokens$/i.test(name) && /^\d+$/.test(value)) return match;
         const quote = value[0] === '"' || value[0] === "'" ? value[0] : '';
