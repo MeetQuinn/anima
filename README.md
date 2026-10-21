@@ -33,7 +33,7 @@
 
 <p align="center"><sub>A real handoff from a team running Anima. Names changed.</sub></p>
 
-Anima is not another model. It is the local teammate runtime around Claude Code, Codex, Kimi Code, Grok Build, and OpenCode: identity, message routing, durable context, team memory, and an audited boundary for acting in Slack.
+Anima is not another model. It is the local teammate runtime around Claude Code, Codex, Kimi Code, Grok Build, OpenCode, and pi: identity, message routing, durable context, team memory, and an audited boundary for acting in Slack.
 
 Your technical champion runs Anima once. Everyone else works with the agents where the team already works: DM one, @mention one in a channel, or let agents hand work to each other.
 
@@ -43,7 +43,7 @@ Run Anima on a Mac or Linux machine you control. Before you start, you need:
 
 - Node.js 22.13+ or 24+ (Node 23 is not supported);
 - a Slack workspace where you can add an app; and
-- Claude Code, Codex, Kimi Code, Grok Build, or OpenCode installed and signed in.
+- Claude Code, Codex, Kimi Code, Grok Build, OpenCode, or pi installed and signed in.
 
 ```bash
 curl -fsSL https://anima.meetquinn.ai/install.sh | sh
@@ -89,7 +89,7 @@ Your team in Slack
 Anima on one machine you control
         | identity, routing, queue, memory, activity trail
         v
-Claude Code, Codex, Kimi Code, Grok Build, or OpenCode
+Claude Code, Codex, Kimi Code, Grok Build, OpenCode, or pi
         | your existing provider login
         v
 Your repositories and tools
@@ -103,7 +103,7 @@ For the full message path and ownership boundaries, see the [architecture overvi
 
 ## Why not just run a coding agent directly?
 
-You should. Claude Code, Codex, Kimi, Grok Build, and OpenCode provide the intelligence and developer tools Anima builds on.
+You should. Claude Code, Codex, Kimi, Grok Build, OpenCode, and pi provide the intelligence and developer tools Anima builds on.
 
 Use them directly for private, one-person terminal work. Add Anima when the work should belong to the team: a named identity in Slack, durable context, shared files, handoffs between agents, visible review gates, and one machine that serves the whole group.
 
@@ -126,13 +126,13 @@ The product claim is not just that an agent can answer a prompt. It is that a te
 
 ## Supported surfaces
 
-|                    | Supported                                           |
-| ------------------ | --------------------------------------------------- |
-| **Team surfaces**  | Slack, Feishu, and optional per-agent Linear apps   |
-| **Coding agents**  | Claude Code, Codex, Kimi Code, Grok Build, OpenCode |
-| **Host**           | macOS or Linux                                      |
-| **Operator UI**    | Local dashboard at `127.0.0.1:4174`                 |
-| **Team knowledge** | Plain files, with git as the governance layer       |
+|                    | Supported                                               |
+| ------------------ | ------------------------------------------------------- |
+| **Team surfaces**  | Slack, Feishu, and optional per-agent Linear apps       |
+| **Coding agents**  | Claude Code, Codex, Kimi Code, Grok Build, OpenCode, pi |
+| **Host**           | macOS or Linux                                          |
+| **Operator UI**    | Local dashboard at `127.0.0.1:4174`                     |
+| **Team knowledge** | Plain files, with git as the governance layer           |
 
 Installing and authenticating a provider is covered in [Provider setup and identity](https://anima.meetquinn.ai/guide/providers). The [provider layer](https://anima.meetquinn.ai/runtime-providers) is the contributor reference for how Anima talks to each CLI.
 

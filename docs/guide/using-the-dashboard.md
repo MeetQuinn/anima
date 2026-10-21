@@ -72,7 +72,8 @@ The desktop sidebar holds three levels of navigation:
 
 - The team switcher sets the team you are currently working in.
 - **Knowledge Base** and **Agents** list the folders and agents registered to that team.
-- **Usage**, **Providers**, and **Server** open machine-wide operational panels.
+- **Settings**, at the foot of the sidebar, opens the machine-wide panels: **Server**, **Providers**,
+  and **Token usage** under Runtime, and **Outreach limits** under Policies.
 
 Collapse the sidebar when you need more room. On mobile, the same information opens as a full
 navigation screen; once you open an agent, a fixed bottom bar switches between its five tabs:
@@ -138,10 +139,10 @@ The **Setup** ledger then shows the operational configuration:
 
 - **Home**: the folder that owns the agent's memory, notes, and local files.
 - **Team**: the current team assignment, including repair when a saved team no longer exists.
-- **Provider**: provider, model, and reasoning settings.
-- **Launch env**: provider-specific environment values.
+- **Runtime**: provider, model, reasoning settings, and provider-specific launch environment values.
 - **Owner**: the human responsible for the agent. Ownership is not an access-control boundary.
 - **Slack** and **Feishu**: connected identities, setup state, and any manifest or permission work.
+- **Linear**: the optional Linear app connection and its webhook listener state.
 
 Provider changes require confirmation. Moving to another provider starts a fresh provider session,
 but the agent's memory, notes, files, and Anima activity remain. Changes made while an agent is busy
@@ -154,7 +155,7 @@ reports it, compaction information, and start time. The **Skills** region is des
 ## Compare agent token usage
 
 Each agent's **Profile** includes a 52-week token heatmap and a breakdown of uncached input, cache
-read, cache write, and output tokens. Open **Usage** in the main navigation to compare the same
+read, cache write, and output tokens. Open **Settings > Token usage** to compare the same
 period across all agents. Days use the browser's local timezone, and every agent row uses the same
 color scale so intensity is comparable.
 
@@ -190,9 +191,9 @@ the corresponding activity.
 
 ## Use lifecycle actions deliberately
 
-The agent action menu controls the local runtime:
+While the agent is working, a **Stop** button in its header interrupts the current work. The agent
+action menu controls the local runtime:
 
-- **Stop** interrupts the current work.
 - **Disable** prevents new work until you enable the agent again. Its config and files remain.
 - **Rotate session** lets current work finish, archives the current provider session, and starts
   future work in a fresh session. A `provider_error` health flag from the old session (for example

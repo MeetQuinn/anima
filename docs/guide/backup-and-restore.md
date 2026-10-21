@@ -18,7 +18,7 @@ Before copying anything, record these paths and systems:
 
 | Authority                  | Where to find it                   | What it owns                                                       |
 | -------------------------- | ---------------------------------- | ------------------------------------------------------------------ |
-| Anima home                 | **Server** -> **Home**             | config, agent records, queues, sessions, activity, reminders, logs |
+| Anima home                 | **Settings > Server** -> **Home**  | config, agent records, queues, sessions, activity, reminders, logs |
 | Team homes                 | team switcher edit view            | shared files and default location for future agents                |
 | Agent homes                | each agent **Profile** -> **Home** | `MEMORY.md`, notes, local skills, and working files                |
 | Knowledge bases            | sidebar knowledge-base entries     | registered shared folders, which may live outside the team home    |

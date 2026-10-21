@@ -128,22 +128,21 @@ and [Codex authentication options](https://learn.chatgpt.com/docs/auth).
 During agent creation, select the provider, model, and reasoning level. The effort menu follows the
 selected model exactly:
 
-| Provider    | Models                                                                                | Reasoning effort                                                                                       |
-| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Claude Code | Opus, Sonnet, Fable; Opus 4.8                                                         | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
-| Claude Code | Opus 4.6, Sonnet 4.6                                                                  | `low`, `medium`, `high`, `max`                                                                         |
-| Claude Code | Haiku                                                                                 | Provider default; no adjustable effort                                                                 |
-| Codex       | GPT-6 Astra                                                                           | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
-| Codex       | GPT-5.6 Sol, GPT-5.6 Terra                                                            | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
-| Codex       | GPT-5.6 Luna                                                                          | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
-| Codex       | GPT-5.5                                                                               | `low`, `medium`, `high`, `xhigh`                                                                       |
-| Kimi Code   | K3                                                                                    | `low`, `high`, `max`                                                                                   |
-| Kimi Code   | Kimi for Coding, Kimi for Coding Highspeed                                            | Always thinking; no adjustable level                                                                   |
-| OpenCode    | DeepSeek V4 Pro, DeepSeek V4 Flash                                                    | `high`, `max`                                                                                          |
-| pi          | Gemini 2.5 Pro/Flash, Gemini 3.1 Pro Preview, Gemini 3.7 Flash, DeepSeek V4 Pro/Flash | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (pi `--thinking`; the model decides what it honors) |
-| Grok Build  | Live model catalog                                                                    | Whatever the selected model advertises                                                                 |
+| Provider    | Models                                                          | Reasoning effort                                                                                       |
+| ----------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Claude Code | Opus, Sonnet, Fable; Claude Opus 4.8                            | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
+| Claude Code | Claude Opus 4.6, Claude Sonnet 4.6                              | `low`, `medium`, `high`, `max`                                                                         |
+| Claude Code | Haiku                                                           | Provider default; no adjustable effort                                                                 |
+| Codex       | GPT-6.1 Sol, GPT-6 Astra, GPT-6 Sol, GPT-5.6 Sol, GPT-5.6 Terra | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
+| Codex       | GPT-6 Luna, GPT-5.6 Luna                                        | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
+| Codex       | GPT-5.5                                                         | `low`, `medium`, `high`, `xhigh`                                                                       |
+| Kimi Code   | K3                                                              | `low`, `high`, `max`                                                                                   |
+| Kimi Code   | K2.7 Coding, K2.7 Coding Highspeed                              | Always thinking; no adjustable level                                                                   |
+| OpenCode    | DeepSeek V4 Pro, DeepSeek V4.1 Flash                            | `high`, `max`                                                                                          |
+| pi          | Live from pi (`get_available_models`)                           | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (pi `--thinking`; the model decides what it honors) |
+| Grok Build  | Live model catalog                                              | Whatever the selected model advertises                                                                 |
 
-OpenCode agents can use DeepSeek V4 Pro or DeepSeek V4 Flash. Their DeepSeek API key stays in
+OpenCode agents can use DeepSeek V4 Pro or DeepSeek V4.1 Flash. Their DeepSeek API key stays in
 OpenCode's machine-level credential store; Anima does not copy it into the agent's Launch
 environment.
 
@@ -160,7 +159,7 @@ You can change the provider later from the agent's Profile tab. A provider chang
 
 ## Manage provider versions
 
-Open **Providers** in the dashboard navigation to inspect the machine-wide CLI that Anima actually
+Open **Settings > Providers** in the dashboard to inspect the machine-wide CLI that Anima actually
 resolves. Each provider row reports its path, installed version, detected installation source,
 latest check, update state, affected agents, and usage information when those sources expose it.
 
