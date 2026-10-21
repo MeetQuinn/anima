@@ -118,9 +118,13 @@ export interface RuntimeUpgradeWorkerSpawnPlan {
   waitForExit: boolean;
 }
 
-export class RuntimeUpgradeConflictError extends Error {}
+export class RuntimeUpgradeConflictError extends Error {
+  readonly statusCode = 409;
+}
 
-export class RuntimeUpgradeUnavailableError extends Error {}
+export class RuntimeUpgradeUnavailableError extends Error {
+  readonly statusCode = 503;
+}
 
 export class RuntimeUpgradeService {
   private readonly checkStore: RuntimeUpgradeCheckStore;

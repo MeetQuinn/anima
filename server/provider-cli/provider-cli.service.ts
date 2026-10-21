@@ -63,8 +63,12 @@ export interface ProviderCliServiceOptions {
   runCommand?: ProviderCliCommandRunner;
 }
 
-export class ProviderCliConflictError extends Error {}
-export class ProviderCliUnavailableError extends Error {}
+export class ProviderCliConflictError extends Error {
+  readonly statusCode = 409;
+}
+export class ProviderCliUnavailableError extends Error {
+  readonly statusCode = 503;
+}
 
 export class ProviderCliService {
   private readonly checkStore: Pick<ProviderCliCheckStore, 'read' | 'write'>;

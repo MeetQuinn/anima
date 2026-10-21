@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import Fastify from 'fastify';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { writeAgentConfigs } from './helpers/harness.js';
@@ -7,6 +8,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWebServer } from '../web/app.js';
+import { registerErrorHandler } from '../web/http.js';
+import { ProviderCliConflictError, ProviderCliUnavailableError } from '../provider-cli/provider-cli.service.js';
+import { RuntimeUpgradeConflictError, RuntimeUpgradeUnavailableError } from '../runtime-management/runtime-upgrade.js';
 import { defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
 import { defaultKbRegistryService } from '../kb/kb.service.js';
 import { withAnimaHome } from './anima-home.js';
@@ -609,6 +613,69 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
     });
   } finally {
     await rm(kbRepoDir, { force: true, recursive: true });
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('route errors carry their own status through the shared error handler', async () => {
+  const fastify = Fastify({ logger: false });
+  registerErrorHandler(fastify);
+  const errors = {
+    'cli-conflict': new ProviderCliConflictError('update running'),
+    'cli-unavailable': new ProviderCliUnavailableError('not installed'),
+    'upgrade-conflict': new RuntimeUpgradeConflictError('upgrade running'),
+    'upgrade-unavailable': new RuntimeUpgradeUnavailableError('already up to date'),
+  };
+  fastify.get<{ Params: { kind: keyof typeof errors } }>('/:kind', async (request) => {
+    throw errors[request.params.kind];
+  });
+  try {
+    const seen: Record<string, [number, unknown]> = {};
+    for (const kind of Object.keys(errors)) {
+      const response = await fastify.inject({ method: 'GET', url: `/${kind}` });
+      seen[kind] = [response.statusCode, response.json()];
+    }
+    assert.deepEqual(seen, {
+      'cli-conflict': [409, { error: 'update running' }],
+      'cli-unavailable': [503, { error: 'not installed' }],
+      'upgrade-conflict': [409, { error: 'upgrade running' }],
+      'upgrade-unavailable': [503, { error: 'already up to date' }],
+    });
+  } finally {
+    await fastify.close();
+  }
+});
+
+test('team routes report service errors with their status', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-team-errors-'));
+  await writeAgentConfigs(stateDir);
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const server = await createWebServer();
+      try {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+        const base = `http://127.0.0.1:${address.port}`;
+        const send = (method: string, path: string, body: object) => fetch(`${base}${path}`, {
+          body: JSON.stringify(body),
+          headers: { 'content-type': 'application/json' },
+          method,
+        });
+
+        assert.equal((await send('POST', '/api/teams', { name: 'Ops' })).status, 201);
+        const duplicate = await send('POST', '/api/teams', { name: 'Ops' });
+        assert.equal(duplicate.status, 409);
+        assert.deepEqual(await duplicate.json(), { error: 'team already exists: ops' });
+        const missing = await send('PATCH', '/api/teams/nope', { name: 'Other' });
+        assert.equal(missing.status, 404);
+        assert.deepEqual(await missing.json(), { error: 'unknown team: nope' });
+      } finally {
+        server.close();
+      }
+    });
+  } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
 });

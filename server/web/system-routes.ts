@@ -5,35 +5,20 @@ import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 
 import { defaultServerSettingsService } from '../settings/settings.service.js';
-import { defaultSystemService, SystemServiceError } from '../services/system.service.js';
+import { defaultSystemService } from '../services/system.service.js';
 import { defaultProviderUsageService } from '../provider-usage/provider-usage.service.js';
-import {
-  defaultProviderCliService,
-  ProviderCliConflictError,
-  ProviderCliUnavailableError,
-} from '../provider-cli/provider-cli.service.js';
-import {
-  defaultRuntimeUpgradeService,
-  RuntimeUpgradeConflictError,
-  RuntimeUpgradeUnavailableError,
-} from '../runtime-management/runtime-upgrade.js';
+import { defaultProviderCliService } from '../provider-cli/provider-cli.service.js';
+import { defaultRuntimeUpgradeService } from '../runtime-management/runtime-upgrade.js';
 import { ProviderUsageKind } from '../../shared/provider-usage.js';
 import { SidebarOrder, WorkspacePlatform } from '../../shared/server-settings.js';
 import { ProviderContextLimitRequest } from '../../shared/provider-context-limits.js';
 import { ProviderRuntimeCommandRequest } from '../../shared/provider-runtime-commands.js';
 import { ProviderLoginStartRequest } from '../../shared/provider-login.js';
-import { defaultProviderLoginService, ProviderLoginError } from '../providers/login.service.js';
-import {
-  defaultProviderContextLimitService,
-  ProviderContextLimitError,
-} from '../provider-context/provider-context-limit.service.js';
-import {
-  defaultProviderRuntimeCommandService,
-  ProviderRuntimeCommandError,
-} from '../providers/runtime-command.service.js';
-import { defaultTeamService, TeamServiceError } from '../teams/team.service.js';
+import { defaultProviderLoginService } from '../providers/login.service.js';
+import { defaultProviderContextLimitService } from '../provider-context/provider-context-limit.service.js';
+import { defaultProviderRuntimeCommandService } from '../providers/runtime-command.service.js';
+import { defaultTeamService } from '../teams/team.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { HttpError } from './http.js';
 import { z } from 'zod';
 
 const TeamCreateRequest = z.object({
@@ -78,13 +63,7 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
   fastify.post('/api/provider-cli-status/:provider/apply', async (request, reply) => {
     const parsed = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider CLI provider' });
-    try {
-      return await defaultProviderCliService.apply(parsed.data);
-    } catch (error) {
-      if (error instanceof ProviderCliConflictError) throw new HttpError(409, error.message);
-      if (error instanceof ProviderCliUnavailableError) throw new HttpError(503, error.message);
-      throw error;
-    }
+    return defaultProviderCliService.apply(parsed.data);
   });
   fastify.get('/api/provider-context-limits', async () =>
     defaultProviderContextLimitService.status(),
@@ -96,13 +75,7 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
         .status(400)
         .send({ error: 'Invalid provider context limit payload' });
     }
-    try {
-      return await defaultProviderContextLimitService.set(parsed.data);
-    } catch (error) {
-      if (error instanceof ProviderContextLimitError)
-        throw new HttpError(error.statusCode, error.message);
-      throw error;
-    }
+    return defaultProviderContextLimitService.set(parsed.data);
   });
   fastify.get('/api/provider-runtime-commands', async () =>
     defaultProviderRuntimeCommandService.status(),
@@ -114,13 +87,7 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
         .status(400)
         .send({ error: 'Invalid provider runtime launch payload' });
     }
-    try {
-      return await defaultProviderRuntimeCommandService.set(parsed.data);
-    } catch (error) {
-      if (error instanceof ProviderRuntimeCommandError)
-        throw new HttpError(error.statusCode, error.message);
-      throw error;
-    }
+    return defaultProviderRuntimeCommandService.set(parsed.data);
   });
 
   fastify.get('/api/provider-login', async (request) => {
@@ -133,53 +100,32 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     if (!provider.success) return reply.status(400).send({ error: 'Invalid provider login provider' });
     const parsed = ProviderLoginStartRequest.safeParse(request.body);
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider login payload' });
-    try {
-      return await defaultProviderLoginService.start(provider.data, parsed.data.mode);
-    } catch (error) {
-      if (error instanceof ProviderLoginError) throw new HttpError(error.statusCode, error.message);
-      throw error;
-    }
+    return defaultProviderLoginService.start(provider.data, parsed.data.mode);
   });
 
   fastify.delete('/api/provider-login/:provider', async (request, reply) => {
     const provider = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
     if (!provider.success) return reply.status(400).send({ error: 'Invalid provider login provider' });
-    try {
-      return await defaultProviderLoginService.cancel(provider.data);
-    } catch (error) {
-      if (error instanceof ProviderLoginError) throw new HttpError(error.statusCode, error.message);
-      throw error;
-    }
+    return defaultProviderLoginService.cancel(provider.data);
   });
   fastify.get('/api/system-update', async () => defaultRuntimeUpgradeService.status());
   fastify.post('/api/system-update/check', async () => defaultRuntimeUpgradeService.checkNow());
   fastify.get('/api/server-info', async () => defaultSystemService.serverInfo());
   fastify.post('/api/system-update/apply', async (_request, reply) => {
-    try {
-      const config = await defaultServerSettingsService.readConfig();
-      const prepared = await defaultRuntimeUpgradeService.prepareApply({
-        animactlScript: ANIMACTL_SCRIPT,
-        dashboardHost: config.dashboardHost ?? '127.0.0.1',
-        dashboardPort: config.dashboardPort ?? 4174,
-        previousStartedAt: defaultSystemService.serverStartedAt(),
-      });
-      queueAfterResponse(reply.raw, prepared.response.delayMs, prepared.spawn, 'Failed to queue runtime upgrade');
-      return reply.status(202).send(prepared.response);
-    } catch (error) {
-      if (error instanceof RuntimeUpgradeConflictError) throw new HttpError(409, error.message);
-      if (error instanceof RuntimeUpgradeUnavailableError) throw new HttpError(503, error.message);
-      throw error;
-    }
+    const config = await defaultServerSettingsService.readConfig();
+    const prepared = await defaultRuntimeUpgradeService.prepareApply({
+      animactlScript: ANIMACTL_SCRIPT,
+      dashboardHost: config.dashboardHost ?? '127.0.0.1',
+      dashboardPort: config.dashboardPort ?? 4174,
+      previousStartedAt: defaultSystemService.serverStartedAt(),
+    });
+    queueAfterResponse(reply.raw, prepared.response.delayMs, prepared.spawn, 'Failed to queue runtime upgrade');
+    return reply.status(202).send(prepared.response);
   });
   fastify.post('/api/services/restart', async (_request, reply) => {
-    try {
-      const prepared = defaultSystemService.prepareServicesRestart();
-      queueAfterResponse(reply.raw, prepared.response.delayMs, prepared.spawn, 'Failed to queue services restart');
-      return reply.status(202).send(prepared.response);
-    } catch (error) {
-      if (error instanceof SystemServiceError) throw new HttpError(500, error.message);
-      throw error;
-    }
+    const prepared = defaultSystemService.prepareServicesRestart();
+    queueAfterResponse(reply.raw, prepared.response.delayMs, prepared.spawn, 'Failed to queue services restart');
+    return reply.status(202).send(prepared.response);
   });
 
   // Sidebar order — global, persisted in ANIMA_HOME/config.json.
@@ -216,15 +162,8 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     if (!parsed.success) {
       return reply.status(400).send({ error: 'Invalid team payload' });
     }
-    try {
-      const team = await defaultTeamService.createTeam(parsed.data);
-      return reply.status(201).send({ team });
-    } catch (error) {
-      if (error instanceof TeamServiceError) {
-        return reply.status(error.statusCode).send({ error: error.message });
-      }
-      throw error;
-    }
+    const team = await defaultTeamService.createTeam(parsed.data);
+    return reply.status(201).send({ team });
   });
 
   fastify.patch('/api/teams/:teamId', async (request, reply) => {
@@ -234,15 +173,8 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
     if (!parsed.success) {
       return reply.status(400).send({ error: 'Invalid team update payload' });
     }
-    try {
-      const team = await defaultTeamService.updateTeam(teamId, parsed.data);
-      return reply.send({ team });
-    } catch (error) {
-      if (error instanceof TeamServiceError) {
-        return reply.status(error.statusCode).send({ error: error.message });
-      }
-      throw error;
-    }
+    const team = await defaultTeamService.updateTeam(teamId, parsed.data);
+    return reply.send({ team });
   });
 
   // Workspace platform — global default inherited by newly-created agents.
