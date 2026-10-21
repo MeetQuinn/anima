@@ -2,12 +2,12 @@ import { once } from 'node:events';
 import Fastify from 'fastify';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
-import { writeAgentConfigs } from './helpers/harness.js';
+import { withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWebServer } from '../web/app.js';
+import { buildWebApp, createWebServer } from '../web/app.js';
 import { registerErrorHandler } from '../web/http.js';
 import { ProviderCliConflictError, ProviderCliUnavailableError } from '../provider-cli/provider-cli.service.js';
 import { RuntimeUpgradeConflictError, RuntimeUpgradeUnavailableError } from '../runtime-management/runtime-upgrade.js';
@@ -679,3 +679,31 @@ test('team routes report service errors with their status', async () => {
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+test('failed-login limit keys on the connecting address, or the last address a local proxy added', async () => withTempAnimaHome(async () => {
+  await defaultDashboardAuthService.setPassword('synthetic-dashboard-password');
+  const app = buildWebApp();
+  const login = (remoteAddress: string, forwardedFor?: string) => app.inject({
+    headers: forwardedFor ? { 'x-forwarded-for': forwardedFor } : {},
+    method: 'POST',
+    payload: { password: 'wrong-password' },
+    remoteAddress,
+    url: '/api/auth/login',
+  });
+  try {
+    // Behind a local proxy, rotating the client-supplied entries does not reset the budget.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      assert.equal((await login('127.0.0.1', `198.51.100.${attempt}, 203.0.113.7`)).statusCode, 401);
+    }
+    assert.equal((await login('127.0.0.1', '198.51.100.99, 203.0.113.7')).statusCode, 429);
+    // Another client behind the same proxy keeps its own budget.
+    assert.equal((await login('127.0.0.1', '203.0.113.8')).statusCode, 401);
+    // A direct peer cannot pick its key with the header.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      assert.equal((await login('192.0.2.5', `198.51.100.${attempt}`)).statusCode, 401);
+    }
+    assert.equal((await login('192.0.2.5', '203.0.113.9')).statusCode, 429);
+  } finally {
+    await app.close();
+  }
+}));

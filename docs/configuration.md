@@ -195,6 +195,10 @@ npx -y @meetquinn/animactl@latest dashboard-auth disable
 - `--session-ttl-hours` sets how long a login lasts: 1 to 8760 hours, default 336 (14 days).
   Without the flag, `set` keeps the current value, or uses 336 after a `disable`.
 - `disable` removes the stored hash, secret, and session length.
+- A client that enters 10 wrong passwords is refused (`429`) until five minutes after its first
+  wrong one. Clients are told apart by connecting address. Behind a proxy on the same host, such as
+  cloudflared, Anima uses the last `X-Forwarded-For` address, which that proxy adds; a proxy that
+  sends none puts all its clients on one count.
 - Changes apply to the next dashboard request. Add `ANIMA_HOME=/absolute/path` for a non-default
   home.
 

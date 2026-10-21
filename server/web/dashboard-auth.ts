@@ -149,10 +149,22 @@ function requestIsSecure(request: FastifyRequest): boolean {
   return (request as { protocol?: string }).protocol === 'https';
 }
 
+/**
+ * Failed logins are counted per client. A direct client is its socket address. A loopback
+ * socket is a local proxy (cloudflared, Tailscale Serve, a reverse proxy on this host); the
+ * client is then the last X-Forwarded-For entry, which that proxy wrote. Earlier entries come
+ * from the client itself, so keying on them gave every guess a fresh budget.
+ */
 function failedLoginKey(request: FastifyRequest): string {
+  const peer = request.raw.socket.remoteAddress ?? 'unknown';
+  if (!isLoopbackAddress(peer)) return peer;
   const forwarded = request.headers['x-forwarded-for'];
-  const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  return forwardedValue?.split(',')[0]?.trim() || request.ip || 'unknown';
+  const forwardedValue = Array.isArray(forwarded) ? forwarded.join(',') : forwarded;
+  return forwardedValue?.split(',').at(-1)?.trim() || peer;
+}
+
+function isLoopbackAddress(address: string): boolean {
+  return address === '::1' || address.startsWith('127.') || address.startsWith('::ffff:127.');
 }
 
 function isRateLimited(key: string): boolean {
