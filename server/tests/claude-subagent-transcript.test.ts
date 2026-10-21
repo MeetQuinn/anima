@@ -7,6 +7,7 @@ import test, { type TestContext } from 'node:test';
 import { createClaudeJsonlActivityMapper } from '../providers/claude-events.js';
 import {
   claudeSubagentsDir,
+  claudeTranscriptPath,
   resetClaudeSubagentTranscriptIndexesForTests,
   subagentActivityLinkageFromClaudeJson,
   type ClaudeJsonlMapperState,
@@ -379,4 +380,52 @@ test('root-thread work is recorded while a subagent runs; unmarked lines wait fo
 
   await mapper.flush();
   assert.deepEqual(recorded, [...live, 'tool:unmarked-read', 'text:unmarked note']);
+});
+
+test('the end-of-run fallback finds a pending Agent result in a large parent transcript', async (t) => {
+  const f = await fixture(t);
+  const events: string[] = [];
+  const tools: Record<string, unknown>[] = [];
+  const mapper = createClaudeJsonlActivityMapper({
+    persistProviderSession: async () => {},
+    recordAgentText: async () => {},
+    recordEvent: async (event) => { events.push(String(event['eventType'])); },
+    recordOutput: async () => {},
+    recordUsage: async () => {},
+    recordRuntime: async () => {},
+    recordToolFailed: async () => {},
+    recordToolStarted: async (tool) => { tools.push(tool); },
+  }, 'synthetic');
+  await f.writeChild('late-child', row('child-read'));
+  // Parallel Agent calls can return in one user message, so the line naming
+  // the pending tool also carries a result for a tool this run is not waiting on.
+  const results = JSON.stringify({
+    type: 'user',
+    message: { content: [
+      { type: 'tool_result', tool_use_id: 'other-agent-tool', content: 'done', tool_use_result: { agentId: 'other-child' } },
+      { type: 'tool_result', tool_use_id: 'parent-late-child', content: 'r'.repeat(600_000), tool_use_result: { agentId: 'late-child' } },
+    ] },
+  }) + '\n';
+  // The result line is longer than two read chunks and comes after a line that
+  // names the tool id but is not JSON.
+  const padding = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '漢'.repeat(200_000) }] } }) + '\n';
+  await fs.writeFile(
+    claudeTranscriptPath('/test/project', 'session-one'),
+    padding + 'parent-late-child is not json\n' + results,
+  );
+
+  const line = (value: Record<string, unknown>) => JSON.stringify({ session_id: 'session-one', ...value }) + '\n';
+  await mapper.accept(line({ type: 'system', subtype: 'init', cwd: '/test/project' }));
+  await mapper.accept(line({
+    type: 'assistant',
+    message: { content: [{ type: 'tool_use', id: 'parent-late-child', name: 'Agent', input: {} }] },
+    parent_tool_use_id: null,
+  }));
+  await mapper.flush();
+
+  const child = tools.find((tool) => tool['providerToolId'] === 'child-read');
+  assert.equal(child?.['subRunId'], 'late-child');
+  assert.equal(child?.['parentToolCallId'], 'parent-late-child');
+  assert.equal(tools.some((tool) => tool['subRunId'] === 'other-child'), false);
+  assert.equal(events.includes('claude.subagent.flush.unresolved'), false);
 });

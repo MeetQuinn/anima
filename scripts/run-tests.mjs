@@ -54,6 +54,7 @@ const groups = {
     'feishu-messages.test.js',
     'feishu-files.test.js',
     'file-cache-eviction.test.js',
+    'file-lines.test.js',
     'inbox.test.js',
     'linear-identity.test.js',
     'linear-intake.test.js',

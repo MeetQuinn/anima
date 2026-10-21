@@ -12,6 +12,7 @@ import {
   copyNumber,
   copyString,
 } from '../activities/format.js';
+import { forEachFileLine } from '../file-lines.js';
 import { nowIso } from '../ids.js';
 import { providerUsageFromStats } from './provider-usage.js';
 import { isNonEmptyString, isRecord, singleLine, singleLineForActivity, stringField } from '../json.js';
@@ -800,27 +801,30 @@ async function ingestPendingClaudeSubagentResultsFromTranscript(
   const cwd = state.context.cwd;
   const sessionId = state.context.sessionId;
   if (!cwd || !sessionId || state.pendingAgentToolIds.size === 0) return { skipped: true };
-  let contents: string;
+  // The parent transcript can pass a gigabyte, so read it line by line and
+  // parse only lines that name a pending Agent tool.
+  const toolIdBytes = [...state.pendingAgentToolIds].map((id) => Buffer.from(JSON.stringify(id).slice(1, -1)));
+  const results: ClaudeSubagentResult[] = [];
   try {
-    contents = await readFile(claudeTranscriptPath(cwd, sessionId), 'utf8');
+    await forEachFileLine(claudeTranscriptPath(cwd, sessionId), 0, (line) => {
+      if (!toolIdBytes.some((id) => line.includes(id))) return;
+      const parsed = parseClaudeJsonlLine(line.toString('utf8'));
+      if (parsed) results.push(...claudeSubagentResultsFromClaudeJson(parsed));
+    });
   } catch {
     return { read: false };
   }
 
   let resultCount = 0;
   let ingestedCount = 0;
-  for (const line of contents.split(/\r?\n/)) {
-    const parsed = parseClaudeJsonlLine(line);
-    if (!parsed) continue;
-    for (const result of claudeSubagentResultsFromClaudeJson(parsed)) {
-      if (!state.pendingAgentToolIds.has(result.parentToolCallId)) continue;
-      resultCount += 1;
-      state.pendingAgentToolIds.delete(result.parentToolCallId);
-      state.pendingSubagentResultsByAgentId.set(result.agentId, result);
-      if (await ingestClaudeSubagentLog(effects, runtimeKind, result, state)) {
-        state.pendingSubagentResultsByAgentId.delete(result.agentId);
-        ingestedCount += 1;
-      }
+  for (const result of results) {
+    if (!state.pendingAgentToolIds.has(result.parentToolCallId)) continue;
+    resultCount += 1;
+    state.pendingAgentToolIds.delete(result.parentToolCallId);
+    state.pendingSubagentResultsByAgentId.set(result.agentId, result);
+    if (await ingestClaudeSubagentLog(effects, runtimeKind, result, state)) {
+      state.pendingSubagentResultsByAgentId.delete(result.agentId);
+      ingestedCount += 1;
     }
   }
   return { ingestedCount, read: true, resultCount };
