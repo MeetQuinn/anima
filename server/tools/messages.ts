@@ -296,17 +296,19 @@ async function recordFeishuOwnerGreetingDelivery(input: {
   if (input.item?.kind !== 'feishu_onboarding') return;
   if (!input.response.chatId && !input.response.messageId) return;
 
-  const service = defaultAgentRegistryService.serviceFor(input.agentId);
-  const current = await service.getConfig();
-  if (current.feishu.ownerOpenId !== input.item.owner.openId) return;
-  await service.saveConfig({
-    ...current,
-    feishu: {
-      ...current.feishu,
-      ...(input.response.chatId ? { ownerGreetingChatId: input.response.chatId } : {}),
-      ownerGreetingDeliveredAt: nowIso(),
-      ...(input.response.messageId ? { ownerGreetingMessageId: input.response.messageId } : {}),
-    },
+  const ownerOpenId = input.item.owner.openId;
+  const { chatId, messageId } = input.response;
+  await defaultAgentRegistryService.serviceFor(input.agentId).updateConfig((current) => {
+    if (current.feishu.ownerOpenId !== ownerOpenId) return current;
+    return {
+      ...current,
+      feishu: {
+        ...current.feishu,
+        ...(chatId ? { ownerGreetingChatId: chatId } : {}),
+        ownerGreetingDeliveredAt: nowIso(),
+        ...(messageId ? { ownerGreetingMessageId: messageId } : {}),
+      },
+    };
   });
 }
 
