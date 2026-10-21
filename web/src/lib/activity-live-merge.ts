@@ -2,7 +2,8 @@ import { replaceEqualDeep, type InfiniteData } from '@tanstack/react-query';
 import type { AgentActivityFeedPage } from '@shared/activity';
 import type { AgentMessageHistoryPage } from '@shared/messages';
 
-// Live-tail merge for the Activity tab's two infinite feeds.
+// Live-tail merge for the Activity tab's two infinite feeds (the Channels
+// detail pane reuses the message merge for one channel's history).
 //
 // An infinite query refetch re-fetches EVERY loaded page in sequence (TanStack
 // `infiniteQueryBehavior`): with the coverage auto-fetch holding 40+ pages of

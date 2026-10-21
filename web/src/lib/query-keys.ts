@@ -22,6 +22,9 @@ export const queryKeys = {
   // the channel (not the global stream filtered client-side).
   agentChannelMessages: (agentId: string, channelId: string) =>
     ['agent-messages', agentId, 'channel', channelId] as const,
+  // Live tail for one channel's history, merged into the cache above. Own root
+  // key for the same reason as agentFeedLive.
+  agentChannelLive: (agentId: string, channelId: string) => ['agent-channel-live', agentId, channelId] as const,
   agentChannels: (agentId: string) => ['agent-channels', agentId] as const,
   agentReminders: (agentId: string) => ['reminders', agentId] as const,
   agentSessions: (agentId: string) => ['agent-session', agentId] as const,
