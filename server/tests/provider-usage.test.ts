@@ -797,7 +797,7 @@ test('provider usage service force refresh bypasses TTL cache', async () => {
   assert.equal(calls, 2);
 });
 
-test('Grok usage keeps the last good reading on a 5xx, but not on a 401', async (t) => {
+test('Grok usage keeps the last good reading on a 503, but not on a 401', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'anima-grok-usage-status-'));
   t.after(() => rm(home, { force: true, recursive: true }));
   await mkdir(join(home, '.grok'), { recursive: true });
