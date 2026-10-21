@@ -23,6 +23,7 @@ import {
   claudeSubagentTextKey,
   claudeTranscriptPath,
   hasSubagentLinkage,
+  isClaudeRootLine,
   parseClaudeJsonlLine,
   readClaudeSubagentMetadata,
   subagentActivityLinkageFromClaudeJson,
@@ -185,11 +186,12 @@ async function recordJsonlLine(
     return reasoningExposed;
   }
 
+  const rootLine = isClaudeRootLine(parsed);
   const providerTools = providerToolCallsFromClaudeEvent(parsed, subagentLinkage);
   for (const tool of providerTools) {
     const providerToolId = stringField(tool, 'providerToolId');
     if (providerToolId) state.providerToolsById.set(providerToolId, tool);
-    await recordClaudeToolStarted(effects, tool, state);
+    await recordClaudeToolStarted(effects, tool, state, rootLine);
   }
 
   const providerToolFailures = providerToolFailuresFromClaudeEvent(parsed, runtimeKind, state.providerToolsById, eventType, subagentLinkage);
@@ -215,7 +217,7 @@ async function recordJsonlLine(
       eventType,
       ...subagentLinkage,
     };
-    if (shouldBufferUnlinkedClaudeText(payload, state)) {
+    if (shouldBufferUnlinkedClaudeText(payload, state, rootLine)) {
       state.pendingUnlinkedTexts.push({ payload, text });
     } else {
       await effects.recordAgentText(text, payload);
@@ -723,6 +725,7 @@ async function recordClaudeToolStarted(
   effects: AgentRuntimeEffects,
   tool: Record<string, unknown>,
   state: ClaudeJsonlMapperState,
+  rootLine: boolean,
 ): Promise<void> {
   const providerToolId = stringField(tool, 'providerToolId');
   if (isClaudeAgentSpawnTool(tool)) {
@@ -735,7 +738,9 @@ async function recordClaudeToolStarted(
     await effects.recordToolStarted(tool);
     return;
   }
-  if (providerToolId && state.pendingAgentToolIds.size > 0) {
+  // While a subagent runs, an unmarked call may be the subagent's own; hold it
+  // until the subagent transcript can claim it.
+  if (providerToolId && !rootLine && state.pendingAgentToolIds.size > 0) {
     state.pendingUnlinkedToolsById.set(providerToolId, tool);
     return;
   }
@@ -747,8 +752,12 @@ function isClaudeAgentSpawnTool(tool: Record<string, unknown>): boolean {
   return name === 'agent' || name === 'task';
 }
 
-function shouldBufferUnlinkedClaudeText(payload: Record<string, unknown>, state: ClaudeJsonlMapperState): boolean {
-  return state.pendingAgentToolIds.size > 0 && !hasSubagentLinkage(payload);
+function shouldBufferUnlinkedClaudeText(
+  payload: Record<string, unknown>,
+  state: ClaudeJsonlMapperState,
+  rootLine: boolean,
+): boolean {
+  return !rootLine && state.pendingAgentToolIds.size > 0 && !hasSubagentLinkage(payload);
 }
 
 async function flushPendingUnlinkedClaudeEvents(
