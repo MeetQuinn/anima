@@ -7,6 +7,7 @@ import test from 'node:test';
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { openCodeLaunchEnvironment } from '../providers/opencode.js';
+import { classifyProviderRetry } from '../providers/provider-retry.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
@@ -552,6 +553,44 @@ test('opencode-cli mid-turn follow-up cancels active prompt then runs the follow
       const cancelIdx = methods.indexOf('session/cancel');
       const secondPromptIdx = methods.lastIndexOf('session/prompt');
       assert.ok(cancelIdx >= 0 && secondPromptIdx > cancelIdx);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('an OpenCode process that exits cleanly mid-turn is retried as a crash', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-opencode-exit-mid-turn-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await installFakeOpenCode(stateDir, [
+        "process.stdin.setEncoding('utf8');",
+        "let buffer = '';",
+        "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+        "process.stdin.on('data', (chunk) => {",
+        '  buffer += chunk;',
+        '  const lines = buffer.split(/\\r?\\n/);',
+        "  buffer = lines.pop() || '';",
+        '  for (const line of lines) {',
+        '    if (!line.trim()) continue;',
+        '    const msg = JSON.parse(line);',
+        "    if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentInfo: { name: 'OpenCode', version: '1.18.4' } } });",
+        "    if (msg.method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'opencode-session-exit', configOptions: [] } });",
+        "    if (msg.method === 'session/set_config_option') send({ jsonrpc: '2.0', id: msg.id, result: {} });",
+        "    if (msg.method === 'session/prompt') process.exit(0);",
+        '  }',
+        '});',
+      ]);
+      const ctx = await ingestOpenCodeEvent(stateDir, 'Exit mid-turn.', '1785000013.000001');
+      runtime = createAgentRuntime({ env: runtimeTestEnv(stateDir), kind: 'opencode-cli' });
+
+      const error = await runtime.run(await runtimeInput(runtime, ctx, await loadState())).then(
+        () => assert.fail('the turn should fail'),
+        (failure: unknown) => failure,
+      );
+      assert.equal(classifyProviderRetry(error), 'crash', String(error));
     });
   } finally {
     await runtime?.close?.();

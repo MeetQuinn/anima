@@ -7,6 +7,7 @@ import test from 'node:test';
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import { piBashToolTimeoutMs, piLaunchArgs, piLaunchEnvironment } from '../providers/pi.js';
+import { classifyProviderRetry } from '../providers/provider-retry.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
@@ -319,6 +320,41 @@ test('pi turns a provider auth error into machine-level credential guidance', as
       });
       assert.equal(usage.reportedRuns, 0);
       assert.equal(usage.unknownRuns, 1);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('a pi process that exits cleanly mid-turn is retried as a crash', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-exit-mid-turn-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await installFakePi(stateDir, [
+        ...FAKE_PI_PRELUDE,
+        'function handle(msg) {',
+        "  if (msg.type === 'get_state') return respond(msg, state());",
+        "  if (msg.type === 'prompt') {",
+        '    respond(msg);',
+        '    process.exit(0);',
+        '  }',
+        '  respond(msg);',
+        '}',
+      ]);
+      const ctx = await ingestPiEvent(stateDir, 'Exit mid-turn.', '1786000016.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: join(stateDir, 'calls.jsonl') }),
+        kind: 'pi',
+        model: 'google/gemini-2.5-pro',
+      });
+
+      const error = await runtime.run(await runtimeInput(runtime, ctx, await loadState())).then(
+        () => assert.fail('the turn should fail'),
+        (failure: unknown) => failure,
+      );
+      assert.equal(classifyProviderRetry(error), 'crash', String(error));
     });
   } finally {
     await runtime?.close?.();

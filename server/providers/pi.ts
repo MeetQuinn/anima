@@ -280,7 +280,7 @@ class PiRpcController {
     this.sessionId = sessionId;
     this.completion = child.completion.then(
       (result) => {
-        this.fail(new Error('pi RPC runtime exited'));
+        this.fail(new Error('pi RPC runtime exited'), new Error('pi RPC runtime exited before completing active turn'));
         return result;
       },
       (error) => {
@@ -841,14 +841,15 @@ class PiRpcController {
     this.quiescentWaiters.resolveIfReady(() => this.activeToolIds.size === 0);
   }
 
-  private fail(error: unknown): void {
+  /** `turnError` settles the active turn before the rejected requests' handlers run, so it decides how the turn is retried. */
+  private fail(error: unknown, turnError: unknown = error): void {
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(error);
       this.pending.delete(id);
     }
     this.quiescentWaiters.reject(error);
-    this.abortCurrentTurn(error);
+    this.abortCurrentTurn(turnError);
   }
 }
 

@@ -202,7 +202,10 @@ class OpenCodeAcpController {
     });
     this.completion = child.completion.then(
       (result) => {
-        this.fail(new Error('OpenCode ACP runtime exited'));
+        this.fail(
+          new Error('OpenCode ACP runtime exited'),
+          new Error('OpenCode ACP runtime exited before completing active turn'),
+        );
         return result;
       },
       (error) => {
@@ -633,10 +636,11 @@ class OpenCodeAcpController {
     this.quiescentWaiters.resolveIfReady(() => this.activeToolIds.size === 0);
   }
 
-  private fail(error: unknown): void {
+  /** `turnError` settles the active turn before the rejected requests' handlers run, so it decides how the turn is retried. */
+  private fail(error: unknown, turnError: unknown = error): void {
     this.rpc.rejectAll(error);
     this.quiescentWaiters.reject(error);
-    this.abortCurrentTurn(error);
+    this.abortCurrentTurn(turnError);
   }
 }
 
