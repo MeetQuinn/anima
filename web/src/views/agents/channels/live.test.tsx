@@ -1,5 +1,5 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -57,12 +57,12 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  focusManager.setFocused(undefined);
   vi.clearAllMocks();
 });
 
-function renderChannel() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+function renderChannel(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/agents/scout/channels?c=C-prod']}>
         <Routes>
@@ -71,7 +71,7 @@ function renderChannel() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return client;
+  return { client, unmount: view.unmount };
 }
 
 // Message reads (not the channel list) made from call `from` on.
@@ -81,15 +81,20 @@ function readsSince(from: number) {
 
 async function openWithOlderPage() {
   append(450);
-  renderChannel();
+  const view = renderChannel();
   await screen.findByText('message 449');
   fireEvent.click(await screen.findByRole('button', { name: 'Load older messages' }));
   await screen.findByText('message 50');
-  return mockedFetchAgentMessages.mock.calls.length;
+  return { ...view, loaded: mockedFetchAgentMessages.mock.calls.length };
+}
+
+// Reads that re-fetch history pages (the probe always reads 50 newest rows).
+function historyReadsSince(from: number) {
+  return readsSince(from).filter((read) => read.limit !== 50);
 }
 
 it('polls only the newest rows once older history is loaded, and merges what is new', async () => {
-  const loaded = await openWithOlderPage();
+  const { loaded } = await openWithOlderPage();
 
   append(1);
   await screen.findByText('message 450');
@@ -103,11 +108,47 @@ it('polls only the newest rows once older history is loaded, and merges what is 
 });
 
 it('re-fetches the history when more new rows arrive than one poll reads', async () => {
-  const loaded = await openWithOlderPage();
+  const { loaded } = await openWithOlderPage();
 
   append(60);
   await screen.findByText('message 509');
   // No hole between what was loaded and what arrived.
   for (const i of [449, 450, 480, 508]) expect(screen.getByText(`message ${i}`)).toBeTruthy();
   expect(readsSince(loaded).some((read) => read.limit === 200)).toBe(true);
+});
+
+it('does not re-read loaded history pages on window focus or remount', async () => {
+  const { client, unmount, loaded } = await openWithOlderPage();
+
+  act(() => {
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+  });
+  // Several 40ms polls run meanwhile, so the probe is live throughout.
+  await waitFor(() => expect(readsSince(loaded).length).toBeGreaterThanOrEqual(3));
+  expect(historyReadsSince(loaded)).toEqual([]);
+
+  unmount();
+  const remounted = mockedFetchAgentMessages.mock.calls.length;
+  renderChannel(client);
+  await screen.findByText('message 50');
+  await waitFor(() => expect(readsSince(remounted).length).toBeGreaterThanOrEqual(2));
+  expect(historyReadsSince(remounted)).toEqual([]);
+});
+
+it('retries a failed first history read from the probe', async () => {
+  append(10);
+  let failFirst = true;
+  mockedFetchAgentMessages.mockImplementation(async (_agentId, input = {}) => {
+    if (failFirst && input.limit === 200) {
+      failFirst = false;
+      throw new Error('HTTP 503');
+    }
+    return page(input);
+  });
+  renderChannel();
+
+  // No user action: the probe sees the failed history and re-fetches it.
+  await screen.findByText('message 9');
+  expect(screen.getByText('message 0')).toBeTruthy();
 });
