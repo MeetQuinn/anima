@@ -14,6 +14,8 @@ await mkdir(packageDist, { recursive: true });
 for (const dir of ['server', 'shared', 'web']) {
   await cp(join('dist', dir), join(packageDist, dir), { recursive: true });
 }
+// Compiled tests are not part of the CLI; they were 4 MB of the package.
+await rm(join(packageDist, 'server', 'tests'), { force: true, recursive: true });
 
 await cp('templates', packageTemplates, { recursive: true });
 await cp('docs', packageDocs, { recursive: true });

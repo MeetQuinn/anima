@@ -91,6 +91,7 @@ async function runPackSmoke() {
     assertPackedFile(packInfo, "docs/agent/reference.md");
     assertPackedFile(packInfo, "docs/agent/recipes.md");
     assertPackedFile(packInfo, "docs/agent/feishu.md");
+    assertNotPacked(packInfo, "dist/server/tests/");
     const tarballPath = join(packDir, basename(packInfo.filename));
 
     await writeFile(
@@ -168,6 +169,16 @@ function assertPackedFile(packInfo, path) {
   const files = Array.isArray(packInfo.files) ? packInfo.files : [];
   if (!files.some((file) => file?.path === path)) {
     throw new Error(`animactl package is missing required file: ${path}`);
+  }
+}
+
+function assertNotPacked(packInfo, prefix) {
+  const files = Array.isArray(packInfo.files) ? packInfo.files : [];
+  const packed = files.filter((file) => file?.path?.startsWith(prefix));
+  if (packed.length > 0) {
+    throw new Error(
+      `animactl package must not include ${prefix} (${packed.length} files, e.g. ${packed[0].path})`,
+    );
   }
 }
 
