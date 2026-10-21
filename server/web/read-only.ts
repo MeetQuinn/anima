@@ -39,7 +39,11 @@ export interface GovernedRoute {
    * otherwise unusual request path cannot slip past. Also used in the refusal body.
    */
   readonly id: string;
-  readonly method: 'DELETE' | 'GET' | 'POST' | 'PUT';
+  /**
+   * No GET is governed. Fastify serves HEAD for every GET route and runs the GET
+   * handler, so governing a GET would also mean mapping HEAD to it in governedRouteFor().
+   */
+  readonly method: 'DELETE' | 'POST' | 'PUT';
   /**
    * WHY this route is machine-scoped. This is evidence read out of the code, not
    * a guess. Guessing a list manufactures exactly the "looks contained" illusion
@@ -63,9 +67,10 @@ export interface GovernedRoute {
  * Note carefully what the criterion is NOT. It is not "the route takes the
  * machine-wide advisory lease", and it is not "the route is a POST". The lease
  * proves machine scope where it is taken; its *absence* proves nothing. The two
- * provider-usage GETs below took no lease and were not POSTs, yet they rewrote the
- * machine user's OAuth credentials. The usage adapters are read-only now; the GETs
- * stay governed until this set is re-audited.
+ * provider-usage GETs took no lease and were not POSTs, yet they were governed while
+ * their adapters refreshed and rewrote the machine user's OAuth credentials. Once every
+ * adapter only read credentials (#613, #873), they left the set: reading machine
+ * credentials is not a mutation.
  *
  * Cross-checked against Milo's source-first capability inventory
  * (anima-team @ bb0e7ad). Applying the property above independently reproduced his
@@ -119,18 +124,6 @@ export const GOVERNED_ROUTES: readonly GovernedRoute[] = [
     method: 'POST',
     evidence:
       'Restarts OS service-manager labels owned by this machine user, terminating live agent processes this runtime does not own.',
-  },
-  {
-    id: 'GET /api/provider-usage',
-    method: 'GET',
-    evidence:
-      'Reads every provider usage adapter. Governed because the adapters used to refresh OAuth credentials and write the rotated token outside ANIMA_HOME, where live provider processes share it. Every adapter is now credential-read-only; the GET stays governed until the read-only set is re-audited.',
-  },
-  {
-    id: 'GET /api/provider-usage/:provider',
-    method: 'GET',
-    evidence:
-      'Runs one provider usage adapter. Governed with the all-provider GET: adapters used to refresh and persist machine-user OAuth credentials. Every adapter is now credential-read-only; the route stays governed until the read-only set is re-audited.',
   },
   {
     id: 'POST /api/filesystem/mkdir',
@@ -240,21 +233,13 @@ export function resolveMachineWriteMode(env: NodeJS.ProcessEnv = process.env): M
 }
 
 /**
- * Fastify serves HEAD for every GET route, and a HEAD still runs the handler — so
- * a HEAD on a governed GET would still do whatever the GET does.
- */
-function normalizeMethod(method: string): string {
-  return method === 'HEAD' ? 'GET' : method;
-}
-
-/**
  * Pure, so the table can be tested without standing up a server. `routeUrl` is the
  * matched route's registered pattern (`request.routeOptions.url`), not the request
  * path; it is undefined when no route matched.
  */
 export function governedRouteFor(method: string, routeUrl: string | undefined): GovernedRoute | undefined {
   if (routeUrl === undefined) return undefined;
-  const id = `${normalizeMethod(method.toUpperCase())} ${routeUrl}`;
+  const id = `${method.toUpperCase()} ${routeUrl}`;
   return GOVERNED_ROUTES.find((route) => route.id === id);
 }
 

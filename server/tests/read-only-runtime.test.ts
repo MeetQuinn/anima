@@ -94,8 +94,9 @@ function inertApp(readOnly: boolean, authenticated = true, extra: InertOptions =
   for (const route of GOVERNED_ROUTES) {
     fastify.route({ method: route.method, url: pathOf(route), handler: async () => INERT });
   }
-  // An ungoverned route, for the positive control.
+  // Ungoverned routes, for the positive control.
   fastify.get('/api/health', async () => ({ ok: true }));
+  fastify.get('/api/provider-usage', async () => ({ ok: true }));
   return fastify;
 }
 
@@ -165,9 +166,6 @@ test('#524 every governed id maps to a really-mounted route (enumeration only, n
     );
   }
 
-  // Fastify auto-registers HEAD for every GET, and a HEAD runs the GET handler.
-  assert.ok(mounted.has('HEAD /api/provider-usage'), 'HEAD is auto-registered for the governed GET');
-
   await fastify.close();
 });
 
@@ -193,21 +191,17 @@ test('#524 read-only ON: every governed route is refused 403 with a readable rea
   await fastify.close();
 });
 
-test('#524 read-only ON: HEAD on a governed GET is refused too', async () => {
-  const fastify = inertApp(true);
-  await fastify.ready();
-  const response = await fastify.inject({ method: 'HEAD', url: '/api/provider-usage' });
-  assert.equal(response.statusCode, 403);
-  await fastify.close();
-});
-
 /** POSITIVE CONTROL 1: the guard is a ruler, not a wall. */
 test('#524 read-only ON: an ungoverned route still succeeds', async () => {
   const fastify = inertApp(true);
   await fastify.ready();
-  const response = await fastify.inject({ method: 'GET', url: '/api/health' });
-  assert.equal(response.statusCode, 200, 'read-only must not refuse ungoverned routes');
-  assert.deepEqual(response.json(), { ok: true });
+  for (const url of ['/api/health', '/api/provider-usage']) {
+    const response = await fastify.inject({ method: 'GET', url });
+    assert.equal(response.statusCode, 200, `read-only must not refuse GET ${url}`);
+    assert.deepEqual(response.json(), { ok: true });
+    const head = await fastify.inject({ method: 'HEAD', url });
+    assert.equal(head.statusCode, 200, `read-only must not refuse HEAD ${url}`);
+  }
   await fastify.close();
 });
 
@@ -306,9 +300,6 @@ test('#524 buildWebApp registers the guards in the order the contract requires',
 
 test('#524 the governed table matches on method and the matched route pattern', () => {
   assert.ok(governedRouteFor('POST', '/api/services/restart'));
-  assert.ok(governedRouteFor('GET', '/api/provider-usage'));
-  assert.ok(governedRouteFor('GET', '/api/provider-usage/:provider'));
-  assert.ok(governedRouteFor('HEAD', '/api/provider-usage'), 'HEAD must normalize to GET');
   assert.ok(governedRouteFor('POST', '/api/provider-cli-status/:provider/apply'));
   assert.ok(governedRouteFor('PUT', '/api/provider-runtime-commands'));
   assert.ok(governedRouteFor('PUT', '/api/provider-context-limits'));
@@ -321,7 +312,7 @@ test('#524 the governed table matches on method and the matched route pattern', 
   // The input is the route pattern, never a request path: no route matched, or a
   // concrete path, governs nothing here. Request-level tests cover concrete paths.
   assert.equal(governedRouteFor('POST', undefined), undefined);
-  assert.equal(governedRouteFor('GET', '/api/provider-usage/claude-code'), undefined);
+  assert.equal(governedRouteFor('POST', '/api/provider-login/codex-cli'), undefined);
 
   // Ungoverned: reads that do not cross the ANIMA_HOME boundary.
   assert.equal(governedRouteFor('GET', '/api/health'), undefined);
@@ -340,8 +331,13 @@ test('#524 the governed table matches on method and the matched route pattern', 
   assert.equal(governedRouteFor('GET', '/api/provider-login'), undefined);
   // The `check` routes take no machine-wide lease and write nothing.
   assert.equal(governedRouteFor('POST', '/api/provider-cli-status/:provider/check'), undefined);
-  // Method matters: the governed set is not "every POST".
-  assert.equal(governedRouteFor('POST', '/api/provider-usage'), undefined);
+  // Method matters: the governed set is not "every POST" or "every route on a path".
+  assert.equal(governedRouteFor('POST', '/api/provider-runtime-commands'), undefined);
+  // The usage adapters only read credentials (#613, #873); provider-usage.test.ts
+  // checks that none of them refreshes or rewrites one. If one ever writes again,
+  // these GETs return to the set, together with HEAD.
+  assert.equal(governedRouteFor('GET', '/api/provider-usage'), undefined);
+  assert.equal(governedRouteFor('GET', '/api/provider-usage/:provider'), undefined);
 
   // CONSIDERED AND EXCLUDED: ensureExistingAgentHome() stats the path and throws
   // unless it is already a directory. It validates; it does not create. Over-blocking
@@ -359,11 +355,11 @@ test('#524 read-only ON: encoded and query-string forms of a governed path are r
     ['PUT', '/%61pi/provider-runtime-commands'],
     ['PUT', '/api/provider-runtime-%63ommands'],
     ['POST', '/api/provider-login/%63odex-cli'],
-    ['GET', '/api/provider-usage?refresh=1'],
-    ['GET', '/%61pi/provider-usage/claude-code'],
+    ['POST', '/api/services/restart?now=1'],
+    ['POST', '/%61pi/provider-cli-status/claude-code/apply'],
   ];
   for (const [method, url] of variants) {
-    const response = await fastify.inject({ method: method as 'GET', url });
+    const response = await fastify.inject({ method: method as 'POST', url });
     assert.equal(response.statusCode, 403, `${method} ${url} must be refused in a read-only runtime`);
     assert.equal((response.json() as { error?: string }).error, READ_ONLY_REFUSAL);
   }
@@ -702,20 +698,4 @@ test('#524 the default is STILL permit — the flip waits on live carrying the f
     'implicit-default',
     'if this went red, someone flipped the default: confirm LIVE sets ANIMA_ALLOW_MACHINE_WRITES first, or live 403s on its own machine writes',
   );
-});
-
-/**
- * The GETs that started this. They took no machine-wide lease and were not POSTs,
- * yet they refreshed OAuth credentials and wrote the rotated token back to the
- * machine user's provider credential files. The usage adapters are read-only now;
- * this keeps the GETs from quietly dropping out of the governed set before the
- * set is re-audited.
- */
-test('#524 the provider-usage GETs stay governed (machine scope is not "is a POST", and not "takes the lease")', () => {
-  const usage = governedRouteFor('GET', '/api/provider-usage');
-  assert.ok(usage, 'GET /api/provider-usage stays governed until the read-only set is re-audited');
-  assert.match(usage.evidence, /credential/i);
-
-  const perProvider = governedRouteFor('GET', '/api/provider-usage/:provider');
-  assert.ok(perProvider, 'the per-provider usage GET is governed with it');
 });
