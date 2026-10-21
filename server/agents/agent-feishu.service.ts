@@ -70,8 +70,7 @@ export class AgentFeishuService {
   async connect(input: AgentConnectFeishuRequest) {
     this.abortActiveRegistration('Manual Feishu credentials were connected instead.');
     const service = defaultAgentRegistryService.serviceFor(this.agentId);
-    const current = await service.getConfig();
-    const saved = await service.saveConfig({
+    const saved = await service.updateConfig((current) => ({
       ...current,
       feishu: {
         ...current.feishu,
@@ -87,7 +86,7 @@ export class AgentFeishuService {
         ownerTenantBrand: undefined,
         verificationToken: input.verificationToken ?? '',
       },
-    });
+    }));
     // Legacy/API callers may already know the bot open_id. Keep that connect
     // path fast; explicit/profile/background sync can still refresh avatar.
     if (input.botOpenId?.trim()) return saved;
@@ -265,17 +264,15 @@ export class AgentFeishuService {
 
   private async connectRegisteredApp(session: FeishuAppRegistrationSession, result: FeishuRegisterAppResult) {
     const service = defaultAgentRegistryService.serviceFor(this.agentId);
-    const current = await service.getConfig();
     if (!this.isRegistrationSessionActive(session)) return undefined;
     const ownerOpenId = result.userOpenId?.trim() || undefined;
-    const ownerChanged = ownerOpenId !== current.feishu.ownerOpenId;
-    const saved = await service.saveConfig({
+    const saved = await service.updateConfig((current) => ({
       ...current,
       feishu: {
         ...current.feishu,
         appId: result.appId,
         appSecret: result.appSecret,
-        ...(ownerChanged ? {
+        ...(ownerOpenId !== current.feishu.ownerOpenId ? {
           ownerGreetingChatId: undefined,
           ownerGreetingDeliveredAt: undefined,
           ownerGreetingMessageId: undefined,
@@ -284,7 +281,7 @@ export class AgentFeishuService {
         ownerOpenId,
         ownerTenantBrand: result.tenantBrand,
       },
-    });
+    }));
     if (!this.isRegistrationSessionActive(session)) return undefined;
     const synced = await this.syncDisplayInfoForAgent(saved).catch(() => saved);
     if (!this.isRegistrationSessionActive(session)) return undefined;
@@ -294,22 +291,19 @@ export class AgentFeishuService {
     if (!ownerGreetingPromptedAt || synced.feishu.ownerGreetingPromptedAt === ownerGreetingPromptedAt) {
       return synced;
     }
-    const latest = await service.getConfig();
-    if (!this.isRegistrationSessionActive(session)) return undefined;
-    return service.saveConfig({
+    return service.updateConfig((latest) => ({
       ...latest,
       feishu: {
         ...latest.feishu,
         ownerGreetingPromptedAt,
       },
-    });
+    }));
   }
 
   private async syncDisplayInfoForAgent(agent: AgentConfig): Promise<AgentConfig> {
     if (!agent.feishu.connected) return agent;
     const info = await this.fetchDisplayInfo(agent.feishu);
-    const latest = await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
-    return defaultAgentRegistryService.serviceFor(this.agentId).saveConfig({
+    return defaultAgentRegistryService.serviceFor(this.agentId).updateConfig((latest) => ({
       ...latest,
       feishu: {
         ...latest.feishu,
@@ -317,7 +311,7 @@ export class AgentFeishuService {
         botProfileSyncedAt: nowIso(),
         ...(info.openId ? { botOpenId: info.openId } : {}),
       },
-    });
+    }));
   }
 
   private fetchDisplayInfo(config: AgentConfig['feishu']): Promise<FeishuBotInfo> {

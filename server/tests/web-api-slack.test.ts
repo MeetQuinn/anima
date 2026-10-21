@@ -693,9 +693,9 @@ test('runtime start syncs Slack display info only when it is stale or lacks the 
 
 test('syncDisplayInfoIfStale does not clobber a concurrent config edit made mid-sync', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-sync-race-test-'));
-  // Simulate an operator editing config (here: display name) WHILE the
-  // background sync is in flight — kicked off during the first Slack call so it
-  // commits before the post-call save. A pre-call snapshot save would revert it.
+  // Simulate an operator editing config (here: display name) while the
+  // background sync is in flight, started during the first Slack call. The edit
+  // and the sync's save may land in either order; both changes must survive.
   let operatorEdit: Promise<unknown> | undefined;
   const slackApi = await startSlackApiMock((method) => {
     if (method === 'auth.test') {

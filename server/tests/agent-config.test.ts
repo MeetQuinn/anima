@@ -82,6 +82,42 @@ test('agent config update writes editable fields and UI redacts secrets', async 
   }
 });
 
+test('concurrent partial edits to one agent config all survive', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-config-race-test-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [
+        {
+          id: 'milo',
+          homePath: 'agents/milo',
+          profile: { displayName: 'Before', role: 'Before role' },
+          provider: { kind: 'codex-cli' },
+        },
+      ],
+    });
+
+    await withAnimaHome(configDir, async () => {
+      const milo = agentService('milo');
+      // Each edit rewrites the whole file. An edit built from a copy read
+      // before another edit landed would put the old values back.
+      await Promise.all([
+        milo.updateProfile({ displayName: 'After' }),
+        milo.updateProfile({ role: 'After role' }),
+        milo.setEnabled(false),
+        milo.updateProvider({ model: 'gpt-5.6-luna' }),
+      ]);
+
+      const agent = await readRawAgentFile(configDir, 'milo');
+      assert.equal(agent.profile?.displayName, 'After');
+      assert.equal(agent.profile?.role, 'After role');
+      assert.equal(agent.enabled, false);
+      assert.equal(agent.provider?.model, 'gpt-5.6-luna');
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
 test('agent store lists and gets agent configs', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-profile-test-'));
   try {

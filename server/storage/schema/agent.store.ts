@@ -61,7 +61,7 @@ export class AgentStore {
     return agent;
   }
 
-  update(op: (agent: AgentConfig) => AgentConfig): Promise<AgentConfig> {
+  update(op: (agent: AgentConfig) => AgentConfig | Promise<AgentConfig>): Promise<AgentConfig> {
     return this.file.update(op);
   }
 

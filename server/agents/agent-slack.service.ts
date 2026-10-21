@@ -52,8 +52,7 @@ export class AgentSlackService {
     }
     const connection = validation.connection;
     const hasCurrentManifest = hasRequiredSlackManifestBotScopes(await getBotTokenScopes(input.botToken).catch(() => []));
-    const current = await this.agentService.getConfig();
-    return this.agentService.saveConfig({
+    return this.agentService.updateConfig((current) => ({
       ...current,
       slack: {
         ...current.slack,
@@ -69,7 +68,7 @@ export class AgentSlackService {
         workspaceIconUrl: connection.workspaceIconUrl || '',
         workspaceName: connection.workspaceName || '',
       },
-    });
+    }));
   }
 
   async getManifestUpdateInfo(): Promise<AgentSlackManifestUpdateInfo> {
@@ -112,11 +111,11 @@ export class AgentSlackService {
     }
 
     const connection = validation.connection;
-    return this.agentService.saveConfig({
-      ...agent,
+    return this.agentService.updateConfig((latest) => ({
+      ...latest,
       slack: {
-        ...agent.slack,
-        appId: connection.appId || agent.slack.appId || '',
+        ...latest.slack,
+        appId: connection.appId || latest.slack.appId || '',
         avatarUrl: connection.botAvatarUrl || '',
         ...(connection.botHandle ? { botHandle: connection.botHandle } : {}),
         ...(connection.botName ? { botName: connection.botName } : {}),
@@ -127,7 +126,7 @@ export class AgentSlackService {
         workspaceIconUrl: connection.workspaceIconUrl || '',
         workspaceName: connection.workspaceName || '',
       },
-    });
+    }));
   }
 
   async syncDisplayInfo(): Promise<AgentConfig> {
@@ -167,22 +166,20 @@ export class AgentSlackService {
     info: Awaited<ReturnType<typeof getSlackDisplayInfo>>,
     botProfileSyncedAt?: string,
   ): Promise<AgentConfig> {
-    // Re-read the latest config AFTER the (slow) Slack API calls, then merge in
-    // only the display fields. The automatic on-message refresh runs fire-and-
-    // forget, so an operator could edit config in the dashboard while a sync is
-    // in flight — saving a pre-call snapshot here would silently clobber that
-    // edit. Reading now closes the seconds-long network window; the residual
-    // sub-call window matches every other AgentService mutator.
-    const latest = await this.agentService.getConfig();
-    const appId = info.appId ?? appIdFromAppToken(latest.slack.appToken);
-    return this.agentService.saveConfig({
-      ...latest,
-      slack: {
-        ...latest.slack,
-        ...info,
-        ...(appId ? { appId } : {}),
-        ...(botProfileSyncedAt ? { botProfileSyncedAt } : {}),
-      },
+    // The Slack calls are done; merge only the display fields into the config
+    // as it is now. The on-message refresh runs fire-and-forget, so a dashboard
+    // edit can land while a sync is in flight, and updateConfig keeps it.
+    return this.agentService.updateConfig((latest) => {
+      const appId = info.appId ?? appIdFromAppToken(latest.slack.appToken);
+      return {
+        ...latest,
+        slack: {
+          ...latest.slack,
+          ...info,
+          ...(appId ? { appId } : {}),
+          ...(botProfileSyncedAt ? { botProfileSyncedAt } : {}),
+        },
+      };
     });
   }
 
@@ -221,10 +218,10 @@ export class AgentSlackService {
       ? await this.ensureOwnerOnboardingPrompt(agent, owner, input.openerNote)
       : (agent.owner?.slackUserId === owner.slackUserId ? agent.owner.onboardingPromptedAt : undefined);
 
-    return this.agentService.saveConfig({
-      ...agent,
+    return this.agentService.updateConfig((latest) => ({
+      ...latest,
       owner: { ...owner, ...(onboardingPromptedAt ? { onboardingPromptedAt } : {}) },
-    });
+    }));
   }
 
   async getInstallUrl(): Promise<string> {

@@ -96,17 +96,16 @@ export class AgentService {
   }
 
   async setEnabled(enabled: boolean): Promise<AgentConfig> {
-    return this.saveConfig({ ...(await this.getConfig()), enabled });
+    return this.updateConfig((current) => ({ ...current, enabled }));
   }
 
   async updateHome(homePath: string): Promise<AgentConfig> {
     await ensureExistingAgentHome(homePath);
-    return this.saveConfig({ ...(await this.getConfig()), homePath });
+    return this.updateConfig((current) => ({ ...current, homePath }));
   }
 
   async updateProfile(profile: AgentUpdateProfileRequest): Promise<AgentConfig> {
-    const current = await this.getConfig();
-    return this.saveConfig({ ...current, profile: { ...current.profile, ...profile } });
+    return this.updateConfig((current) => ({ ...current, profile: { ...current.profile, ...profile } }));
   }
 
   async updateProvider(provider: AgentUpdateProviderRequest): Promise<AgentConfig> {
@@ -119,10 +118,12 @@ export class AgentService {
     const availability = nextKind === 'grok-cli'
       ? await loadGrokReasoningAvailability()
       : undefined;
-    const next = await this.saveConfig(
-      agentConfigWithProviderUpdate(current, provider, availability),
-    );
-    const archiveNote = providerSessionArchiveNote(current.provider, next.provider);
+    let previousProvider = current.provider;
+    const next = await this.updateConfig((latest) => {
+      previousProvider = latest.provider;
+      return agentConfigWithProviderUpdate(latest, provider, availability);
+    });
+    const archiveNote = providerSessionArchiveNote(previousProvider, next.provider);
     if (archiveNote) {
       await this.archiveCurrentProviderSession(archiveNote);
     }
@@ -159,11 +160,31 @@ export class AgentService {
     return agent;
   }
 
+  // Writes a whole config. To change part of an existing config, use
+  // updateConfig so a concurrent edit isn't overwritten by a stale copy.
   async saveConfig(agent: AgentConfig): Promise<AgentConfig> {
     const next = normalizeAgentConfig(this.agentId, agent);
     await validateAgentConfig(next);
     await this.store.write(next);
     return this.getConfig();
+  }
+
+  // Reads, changes and writes the config under the file lock. A caller that
+  // saves a copy it read earlier would silently revert any edit made in
+  // between, such as a dashboard save landing during a background Slack sync.
+  // `change` runs inside the lock: do network calls before, not inside it.
+  // Returning `current` unchanged skips the write.
+  async updateConfig(change: (current: AgentConfig) => AgentConfig): Promise<AgentConfig> {
+    const path = this.store.path();
+    if (!this.store.exists()) throw new AgentConfigError(404, `Agent not found in config: ${this.agentId}`);
+    return this.store.update(async (current) => {
+      assertAgentConfigId(this.agentId, current, path);
+      const changed = change(current);
+      if (changed === current) return current;
+      const next = normalizeAgentConfig(this.agentId, changed);
+      await validateAgentConfig(next);
+      return next;
+    });
   }
 
   private async archiveCurrentProviderSession(note?: string): Promise<ArchiveProviderSessionResult | undefined> {
@@ -264,8 +285,7 @@ export class AgentRegistryService {
   async assignTeam(agentId: string, teamId: string): Promise<AgentConfig> {
     const team = await this.teamService.requireTeam(teamId);
     const service = this.serviceFor(agentId);
-    const current = await service.getConfig();
-    return service.saveConfig({ ...current, teamId: team.id });
+    return service.updateConfig((current) => ({ ...current, teamId: team.id }));
   }
 
   serviceFor(agentId: string): AgentService {
