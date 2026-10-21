@@ -528,8 +528,8 @@ test("Slack transcript lines read a long post from its block, not the cut fallba
 });
 
 test("Slack transcript labels cover mentions that only a block carries", async () => {
-  const content = slackMessageContentForText(`${"x".repeat(4000)} <@U0NORA>`);
-  assert.ok(!content.text.includes("U0NORA"), "fallback text is cut");
+  const content = slackMessageContentForText(`${"x".repeat(4000)} <@U0NORA> in <#C0OPS>`);
+  assert.ok(!content.text.includes("U0NORA") && !content.text.includes("C0OPS"), "fallback text is cut");
   const stateDir = await mkdtemp(join(tmpdir(), "anima-transcript-labels-"));
   try {
     const looked: string[] = [];
@@ -540,13 +540,20 @@ test("Slack transcript labels cover mentions that only a block carries", async (
           return { ok: true, user: { id: user, name: "nora", profile: { display_name: "Nora" } } };
         },
       },
+      conversations: {
+        info: async ({ channel }: { channel: string }) => {
+          looked.push(channel);
+          return { ok: true, channel: { id: channel, is_channel: true, name: "ops" } };
+        },
+      },
     } as unknown as WebClient;
     const labels = await withAnimaHome(stateDir, () => slackTranscriptUserLabels(
       [{ blocks: content.blocks, text: content.text, ts: "1770000200.000004" }],
       client,
     ));
-    assert.deepEqual(looked, ["U0NORA"]);
+    assert.deepEqual(looked.sort(), ["C0OPS", "U0NORA"]);
     assert.ok(labels.userMentions.has("U0NORA"));
+    assert.ok(labels.channelMentions.has("C0OPS"));
   } finally {
     await rm(stateDir, { force: true, recursive: true });
   }
