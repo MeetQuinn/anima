@@ -1,6 +1,5 @@
-import { existsSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -70,7 +69,7 @@ async function serveStatic(
     return false;
   }
 
-  if (existsSync(filePath)) {
+  if (await isFile(filePath)) {
     const content = await readFile(filePath);
     response.writeHead(200, {
       'cache-control': 'no-store',
@@ -83,7 +82,7 @@ async function serveStatic(
   if (!options.fallbackToIndex) return false;
 
   const indexPath = join(UI_DIST_DIR, 'index.html');
-  if (existsSync(indexPath)) {
+  if (await isFile(indexPath)) {
     const content = await readFile(indexPath);
     response.writeHead(200, {
       'cache-control': 'no-store',
@@ -94,6 +93,15 @@ async function serveStatic(
   }
 
   return false;
+}
+
+// Directories such as dist/web/assets exist too; reading one would throw EISDIR.
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function mimeType(path: string): string {

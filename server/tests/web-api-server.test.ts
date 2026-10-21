@@ -560,6 +560,8 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
         const missingAsset = await fetch(`${base}/assets/missing.js`);
         await assertStatus(missingAsset, 404, 'missing asset');
         assert.doesNotMatch(missingAsset.headers.get('content-type') ?? '', /text\/html/);
+        const assetDirectory = await fetch(`${base}/assets/`);
+        await assertStatus(assetDirectory, 404, 'asset directory');
         const assetLikeAppRoute = await fetch(`${base}/agents/anima/activity.json`);
         await assertStatus(assetLikeAppRoute, 404, 'asset-like app route');
         assert.doesNotMatch(assetLikeAppRoute.headers.get('content-type') ?? '', /text\/html/);
@@ -585,6 +587,9 @@ test('dashboard auth protects dashboard APIs and static app while leaving health
           200,
           'authenticated agents',
         );
+        const appRouteNamedLikeDirectory = await fetch(`${base}/assets`, { headers: { cookie: sessionCookie } });
+        await assertStatus(appRouteNamedLikeDirectory, 200, 'app route named like a directory');
+        assert.match(appRouteNamedLikeDirectory.headers.get('content-type') ?? '', /text\/html/);
         const authenticatedKbRaw = await fetch(`${base}/kb/raw/test/docs/report.html`, {
           headers: { cookie: sessionCookie },
         });
