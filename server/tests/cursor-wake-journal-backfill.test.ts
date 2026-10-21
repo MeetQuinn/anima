@@ -15,6 +15,7 @@ import {
   silentLogger,
   waitForInboxItemRemoved,
 } from './helpers/runtime-worker.js';
+import { slackMessageEventId } from '../ids.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import {
   prepareCursorDelivery,
@@ -24,7 +25,6 @@ import {
   ACTORLESS_SLACK_WAKE_BOT_ID,
   backfillActiveSlackWakeJournal,
   compareSlackWakesForBackfill,
-  eventIdForSlackWake,
   observeInputFromSlackWake,
 } from '../runtime/cursor-wake-journal-backfill.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
@@ -269,7 +269,7 @@ test('pin: restart-before-journal → restart → recovered wake runs and later 
         recovered.messageTs,
         later.messageTs,
       ]);
-      assert.equal(eventIdForSlackWake(recovered), rows[0]?.eventId);
+      assert.equal(slackMessageEventId(recovered.teamId, recovered.channelId, recovered.messageTs), rows[0]?.eventId);
 
       runtime.finishNext();
       await waitFor(() => runtime.calls.length === 2, { timeoutMs: 5_000 });

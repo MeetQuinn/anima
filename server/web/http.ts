@@ -69,11 +69,6 @@ export function sendJsonRaw(response: ServerResponse, statusCode: number, body: 
   response.end(`${JSON.stringify(body, null, 2)}\n`);
 }
 
-export function stringValue(value: unknown, key: string): string {
-  if (typeof value !== 'string') throw new HttpError(400, `${key} must be a string`);
-  return value.trim();
-}
-
 export class HttpError extends Error {
   readonly statusCode: number;
 

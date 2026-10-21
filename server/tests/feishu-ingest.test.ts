@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { writeFeishuAgentConfig } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { feishuReactionEventFromData, feishuReceiveMessageEventFromData, normalizeFeishuMessage, normalizeFeishuReaction, shouldWakeFeishuRuntime } from '../feishu/events.js';
+import { feishuMessageMentionsBot, feishuReactionEventFromData, feishuReceiveMessageEventFromData, normalizeFeishuMessage, normalizeFeishuReaction } from '../feishu/events.js';
 import { FeishuDirectoryService } from '../feishu/directory.service.js';
 import { muteSubscriptionForAgent } from '../inbox/subscription.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -510,7 +510,7 @@ test('normalizes Feishu rich text post with inline images into attachments', () 
   assert.ok(item.files?.some((f) => f.mimetype === 'image/*'));
 });
 
-test('Feishu group wake policy requires the configured bot mention', () => {
+test('Feishu mention detection matches only the configured bot', () => {
   const event = makeFeishuEvent({
     message: {
       chat_type: 'group',
@@ -523,7 +523,7 @@ test('Feishu group wake policy requires the configured bot mention', () => {
     },
   });
 
-  assert.equal(shouldWakeFeishuRuntime(event, 'ou_anima_bot'), false);
+  assert.equal(feishuMessageMentionsBot(event, 'ou_anima_bot'), false);
 
   event.message.mentions = [{
     id: { open_id: 'ou_anima_bot' },
@@ -531,7 +531,7 @@ test('Feishu group wake policy requires the configured bot mention', () => {
     mentioned_type: 'app',
     name: 'Anima',
   }];
-  assert.equal(shouldWakeFeishuRuntime(event, 'ou_anima_bot'), true);
+  assert.equal(feishuMessageMentionsBot(event, 'ou_anima_bot'), true);
 });
 
 test('normalizes Feishu group messages even when they are not direct mentions', () => {

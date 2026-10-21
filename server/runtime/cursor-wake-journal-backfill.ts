@@ -14,7 +14,7 @@
 
 import type { SlackInboxItem, SlackFileMeta } from '../../shared/inbox.js';
 import { WakeQueueService, wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
-import { errorMessage, slackMessageEventId } from '../ids.js';
+import { errorMessage } from '../ids.js';
 import {
   observedConversationStoreForAgent,
   surfaceIdForObservation,
@@ -168,10 +168,6 @@ export function observeInputFromSlackWake(item: SlackInboxItem): ObserveSlackMes
   if (item.receivedAt) input.receivedAt = item.receivedAt;
   if (files.length > 0) input.files = files;
   return input;
-}
-
-export function eventIdForSlackWake(item: SlackInboxItem): string {
-  return slackMessageEventId(item.teamId, item.channelId, item.messageTs);
 }
 
 function observedFilesFromInbox(files: SlackFileMeta[] | undefined): ObservedFileDescriptor[] {

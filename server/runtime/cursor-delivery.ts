@@ -830,24 +830,6 @@ export function mergeCursorDeliveryPlans(
 }
 
 /**
- * Newest-fitting by conversation time using only line bytes (unit tests /
- * internal). Prefer selectNewestFittingForEnvelope when advancing cursors.
- */
-export function selectNewestFitting(
-  candidates: ObservedConversationEntry[],
-  options: {
-    maxMessages: number;
-    maxBytes: number;
-    mustIncludeEventId?: string;
-  },
-): { entries: ObservedConversationEntry[]; omittedCount: number } {
-  return selectNewestFittingForEnvelope(candidates, {
-    ...options,
-    totalCandidates: candidates.length,
-  });
-}
-
-/**
  * Newest-fitting selection measured against the final provider-facing envelope
  * (rows + Latest wake + previews + files). Only rows that fit are returned;
  * nextDeliveredOrdinal must be derived from this set alone.
