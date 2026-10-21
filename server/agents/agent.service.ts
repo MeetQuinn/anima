@@ -173,7 +173,8 @@ export class AgentService {
   // saves a copy it read earlier would silently revert any edit made in
   // between, such as a dashboard save landing during a background Slack sync.
   // `change` runs inside the lock: do network calls before, not inside it.
-  // Returning `current` unchanged skips the write.
+  // Returning `current` unchanged skips normalize and validate. The file can
+  // still be rewritten if its JSON isn't already in normalized form.
   async updateConfig(change: (current: AgentConfig) => AgentConfig): Promise<AgentConfig> {
     const path = this.store.path();
     if (!this.store.exists()) throw new AgentConfigError(404, `Agent not found in config: ${this.agentId}`);

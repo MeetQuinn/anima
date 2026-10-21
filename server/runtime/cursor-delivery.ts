@@ -1,4 +1,4 @@
-// Cut (b): cursor delivery + same-surface queue coalescing (flag off by default).
+// Cut (b): cursor delivery + same-surface queue coalescing (on unless `cursorDelivery.enabled` is false).
 //
 // One service prepares a consistent observed snapshot + commit plan at claim/start,
 // then commits once at the provider-neutral runtime.started seam (idempotent on
@@ -105,7 +105,7 @@ function bypassesCursorAlreadyDelivered(
   return resumeReason === 'runtime_restart' || resumeReason === 'deferred_retry';
 }
 
-/** Test override: undefined = read server config (default off). */
+/** Test override: undefined = read server config (default on). */
 let enabledOverride: boolean | undefined;
 
 export function setCursorDeliveryEnabledForTests(enabled: boolean | undefined): void {

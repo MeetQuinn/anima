@@ -37,7 +37,7 @@ Detection proves that an executable exists. The first real turn proves that its 
 ## Customize the runtime launch
 
 Each provider has machine-wide **Runtime command** and **Arguments** fields under
-**Providers → Settings**. Leave the command blank to use the default shown in the placeholder:
+**Settings > Providers**. Leave the command blank to use the default shown in the placeholder:
 `claude`, `codex`, `kimi`, `grok`, `opencode`, or `pi`. Set it to another executable name or an absolute
 executable path when every Anima agent using that provider should launch through a compatible
 wrapper, for example `mcodex` for Codex.
