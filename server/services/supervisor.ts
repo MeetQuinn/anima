@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { cleanServiceEnv } from './env.js';
@@ -21,6 +21,7 @@ import {
   systemdSupported,
   uninstallSystemdService,
 } from './systemd.js';
+import { rotateServiceLogIfNeeded, serviceLogDir, serviceLogPath } from './service-log.js';
 
 export interface ServiceSpec {
   args: string[];
@@ -51,9 +52,6 @@ export interface SupervisorOptions {
   cwd: string;
 }
 
-const LOG_ROTATE_BYTES = 20 * 1024 * 1024;
-const LOG_ROTATE_KEEP = 5;
-
 export async function startService(spec: ServiceSpec, options: SupervisorOptions): Promise<ServiceStatusEntry> {
   if (await launchdServiceInstalled(spec)) {
     const status = await startLaunchdService(spec);
@@ -79,9 +77,9 @@ export async function startService(spec: ServiceSpec, options: SupervisorOptions
   }
 
   await mkdir(pidDir(spec), { recursive: true });
-  await mkdir(logDir(spec), { recursive: true });
+  await mkdir(serviceLogDir(spec), { recursive: true });
   const logPath = serviceLogPath(spec);
-  await rotateLogIfNeeded(logPath);
+  await rotateServiceLogIfNeeded(logPath);
   const log = await open(logPath, 'a');
   await log.write(`\n[${new Date().toISOString()}] starting ${spec.id}\n`);
   const child = spawn(
@@ -301,10 +299,6 @@ function pidDir(spec: ServiceSpec): string {
   return join(spec.animaHome, 'run');
 }
 
-function logDir(spec: ServiceSpec): string {
-  return join(spec.animaHome, 'logs');
-}
-
 function pidPath(spec: ServiceSpec): string {
   return pidPathForId(spec, spec.id);
 }
@@ -313,36 +307,12 @@ function pidPathForId(spec: ServiceSpec, id: string): string {
   return join(pidDir(spec), `${id}.pid`);
 }
 
-function serviceLogPath(spec: ServiceSpec): string {
-  return join(logDir(spec), spec.logName);
-}
-
 function specIds(spec: ServiceSpec): string[] {
   return [spec.id, ...(spec.legacyIds ?? [])];
 }
 
 async function rmPidFiles(spec: ServiceSpec): Promise<void> {
   await Promise.all(specIds(spec).map((id) => rm(pidPathForId(spec, id), { force: true })));
-}
-
-async function rotateLogIfNeeded(path: string): Promise<void> {
-  let size = 0;
-  try {
-    size = (await stat(path)).size;
-  } catch {
-    return;
-  }
-  if (size < LOG_ROTATE_BYTES) return;
-
-  await rm(`${path}.${LOG_ROTATE_KEEP}`, { force: true });
-  for (let index = LOG_ROTATE_KEEP - 1; index >= 1; index -= 1) {
-    try {
-      await rename(`${path}.${index}`, `${path}.${index + 1}`);
-    } catch {
-      // Missing older generations are fine.
-    }
-  }
-  await rename(path, `${path}.1`);
 }
 
 function sleep(ms: number): Promise<void> {
