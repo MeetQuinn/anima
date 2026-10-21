@@ -615,8 +615,12 @@ test('pi bash timeout claims failure before writes so late error end cannot dupl
             && activity.payload?.['providerToolId'] === 'pi-bash-err-race');
         return failed.length >= 1;
       });
-      const calls = await readJsonLines(callsPath);
-      assert.ok(!calls.some((call) => call.type === 'abort'), 'late error end must cancel the timeout abort');
+      // A stale abort would follow the failure write within milliseconds; give it 300ms to arrive.
+      const sawAbort = await waitFor(
+        async () => (await readJsonLines(callsPath)).some((call) => call.type === 'abort'),
+        { timeoutMs: 300 },
+      ).then(() => true, () => false);
+      assert.equal(sawAbort, false, 'late error end must cancel the timeout abort');
       const failed = allActivities(await loadState()).filter((activity) =>
         activity.type === 'tool.call.failed'
           && activity.payload?.['providerToolId'] === 'pi-bash-err-race');
