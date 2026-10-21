@@ -30,6 +30,7 @@ import {
   type ServicesRestartResultDraft,
   writeServicesRestartResult,
 } from '../services/restart-result.js';
+import { AGENT_SERVICE_LOG, WEB_SERVICE_LOG } from '../services/service-log.js';
 import {
   isServiceRunning,
   installService,
@@ -222,7 +223,7 @@ async function resolveServices(opts: ServicesCliOptions): Promise<{ specs: Servi
       args: ['server'],
       animaHome,
       id: 'agent',
-      logName: 'agent.log',
+      logName: AGENT_SERVICE_LOG,
       matchAny: [' server'],
     },
     {
@@ -230,7 +231,7 @@ async function resolveServices(opts: ServicesCliOptions): Promise<{ specs: Servi
       animaHome,
       id: 'web',
       legacyIds: ['ui'],
-      logName: 'web.log',
+      logName: WEB_SERVICE_LOG,
       matchAny: [' web ', ' ui '],
       url: `http://${dashboardDisplayHost}:${dashboardPort}`,
     },

@@ -47,10 +47,16 @@ $ANIMA_HOME/logs/web.log
 Use the agent log for transport, scheduler, queue, worker, and provider-child failures. Use the web
 log for dashboard and local API failures.
 
-Each start of a stopped service rotates its log once the log reaches 20 MiB: `agent.log` becomes
-`agent.log.1`, older copies move up one, and Anima keeps five old copies (`.1` to `.5`). This holds
-under launchd, systemd, and detached starts. A service that runs a long time without a restart keeps
-writing to one file.
+Both services rotate their logs at 20 MiB: `agent.log` becomes `agent.log.1`, older copies move up
+one, and Anima keeps five old copies (`.1` to `.5`).
+
+- A running service checks its own log every ten minutes. It copies a full log to `.1` and empties
+  the file in place. This needs stdout opened for append, as launchd, systemd, and detached starts
+  open it. Under a plain `> file` redirect, the check turns itself off and prints a warning.
+- `services start` and `services restart`, which runtime upgrades use, rotate before they start a
+  stopped service. `services install` does not rotate.
+- Rotation is best effort. A failure prints a warning, and the service keeps running or starts with
+  the old log.
 
 Logs can contain message context, paths, provider diagnostics, and errors. Treat them as sensitive
 operator data. Do not paste a full log into a public issue; extract the narrow relevant lines and
