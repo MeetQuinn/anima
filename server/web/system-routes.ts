@@ -47,13 +47,6 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
   fastify.get('/api/provider-usage', async (request) => defaultProviderUsageService.list({
     force: providerUsageRefreshRequested(request.query),
   }));
-  fastify.get('/api/provider-usage/:provider', async (request, reply) => {
-    const parsed = ProviderUsageKind.safeParse((request.params as { provider?: unknown }).provider);
-    if (!parsed.success) return reply.status(400).send({ error: 'Invalid provider usage provider' });
-    return defaultProviderUsageService.get(parsed.data, {
-      force: providerUsageRefreshRequested(request.query),
-    });
-  });
   fastify.get('/api/provider-cli-status', async () => defaultProviderCliService.status());
   fastify.post('/api/provider-cli-status/check', async () => defaultProviderCliService.checkNow());
   fastify.post('/api/provider-cli-status/:provider/check', async (request, reply) => {

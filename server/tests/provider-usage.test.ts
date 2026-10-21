@@ -958,38 +958,6 @@ test('provider usage service stops serving last-good data after the stale budget
   assert.equal(expired.providers[0]?.stale, undefined);
 });
 
-test('provider usage service can refresh a single provider without calling the others', async () => {
-  let codexCalls = 0;
-  let claudeCalls = 0;
-  const service = new ProviderUsageService([
-    {
-      fetch: async () => {
-        codexCalls += 1;
-        return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 92 }] }];
-      },
-      label: 'Codex',
-      provider: 'codex-cli',
-      source: 'private-api',
-    },
-    {
-      fetch: async () => {
-        claudeCalls += 1;
-        return [{ extras: [], status: 'available', windows: [{ label: '5h', remainingPercent: 88 }] }];
-      },
-      label: 'Claude',
-      provider: 'claude-code',
-      source: 'private-api',
-    },
-  ]);
-
-  const row = await service.get('codex-cli');
-
-  assert.equal(row.provider, 'codex-cli');
-  assert.equal(row.status, 'available');
-  assert.equal(codexCalls, 1);
-  assert.equal(claudeCalls, 0);
-});
-
 // Captured live response from GetGrokCreditsConfig (usedPercent=9), matching Raycast Agent Usage.
 const GROK_BILLING_FIXTURE = Buffer.from(
   '00000000560a540d0000104112001a00220c08eebfcfd20610d8a4b890032a0c08eeb4f4d20610d8a4b890033a0708021500001041421e0802120c08eebfcfd20610d8a4b890031a0c08eeb4f4d20610d8a4b89003580162006801800000000f677270632d7374617475733a300d0a',

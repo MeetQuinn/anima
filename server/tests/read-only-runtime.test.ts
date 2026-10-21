@@ -97,7 +97,6 @@ function inertApp(readOnly: boolean, authenticated = true, extra: InertOptions =
   // Ungoverned routes, for the positive control.
   fastify.get('/api/health', async () => ({ ok: true }));
   fastify.get('/api/provider-usage', async () => ({ ok: true }));
-  fastify.get('/api/provider-usage/:provider', async () => ({ ok: true }));
   return fastify;
 }
 
@@ -196,7 +195,7 @@ test('#524 read-only ON: every governed route is refused 403 with a readable rea
 test('#524 read-only ON: an ungoverned route still succeeds', async () => {
   const fastify = inertApp(true);
   await fastify.ready();
-  for (const url of ['/api/health', '/api/provider-usage', '/api/provider-usage/claude-code']) {
+  for (const url of ['/api/health', '/api/provider-usage']) {
     const response = await fastify.inject({ method: 'GET', url });
     assert.equal(response.statusCode, 200, `read-only must not refuse GET ${url}`);
     assert.deepEqual(response.json(), { ok: true });
@@ -336,9 +335,8 @@ test('#524 the governed table matches on method and the matched route pattern', 
   assert.equal(governedRouteFor('POST', '/api/provider-runtime-commands'), undefined);
   // The usage adapters only read credentials (#613, #873); provider-usage.test.ts
   // checks that none of them refreshes or rewrites one. If one ever writes again,
-  // these GETs return to the set, together with HEAD.
+  // this GET returns to the set, together with HEAD.
   assert.equal(governedRouteFor('GET', '/api/provider-usage'), undefined);
-  assert.equal(governedRouteFor('GET', '/api/provider-usage/:provider'), undefined);
 
   // CONSIDERED AND EXCLUDED: ensureExistingAgentHome() stats the path and throws
   // unless it is already a directory. It validates; it does not create. Over-blocking

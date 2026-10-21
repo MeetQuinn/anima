@@ -1,6 +1,6 @@
 import { apiRequest, jsonInit } from './client';
 import type { ProviderAvailability } from '@shared/provider-catalog';
-import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '@shared/provider-usage';
+import type { ProviderUsageKind, ProviderUsageResponse } from '@shared/provider-usage';
 import type { ProviderCliApplyResponse, ProviderCliStatusResponse } from '@shared/provider-cli';
 import type {
   ProviderContextLimitProvider,
@@ -58,10 +58,6 @@ export async function fetchProviderUsage(): Promise<ProviderUsageResponse> {
 
 export async function refreshProviderUsage(): Promise<ProviderUsageResponse> {
   return apiRequest('/api/provider-usage?refresh=1');
-}
-
-export async function fetchProviderUsageProvider(provider: ProviderUsageKind): Promise<ProviderUsageRow> {
-  return apiRequest(`/api/provider-usage/${encodeURIComponent(provider)}`);
 }
 
 export async function fetchProviderCliStatus(): Promise<ProviderCliStatusResponse> {

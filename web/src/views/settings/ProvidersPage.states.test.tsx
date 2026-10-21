@@ -136,7 +136,6 @@ vi.mock('@/api/system', () => ({
       },
     ],
   })),
-  fetchProviderUsageProvider: vi.fn(),
   refreshProviderUsage: vi.fn(async () => ({ providers: [] })),
   saveProviderContextLimit: contextApi.save,
   saveProviderRuntimeCommand: runtimeCommandApi.save,
