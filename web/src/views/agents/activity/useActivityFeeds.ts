@@ -45,9 +45,14 @@ export function useActivityFeeds(agentId: string | undefined) {
   // The two infinite feeds carry NO refetchInterval on purpose: an infinite
   // refetch re-fetches every loaded page in sequence, and the coverage
   // auto-fetch below routinely holds 40+ activity pages for a busy agent. The
-  // live tail is the separate single-page probe further down.
+  // live tail is the separate single-page probe further down. For the same
+  // reason they never go stale on their own (`staleTime: Infinity`), so a
+  // window focus, remount or reconnect does not re-fetch every page either;
+  // the probe catches up instead, and a gap or an explicit invalidate still
+  // re-fetches.
   const messageQuery = useInfiniteQuery({
     queryKey: messagesKey,
+    staleTime: Infinity,
     queryFn: ({ pageParam }) =>
       fetchAgentMessages(agentId!, { before: pageParam, limit: PAGE_LIMIT }),
     enabled: !!agentId,
@@ -58,6 +63,7 @@ export function useActivityFeeds(agentId: string | undefined) {
 
   const activityQuery = useInfiniteQuery({
     queryKey: activitiesKey,
+    staleTime: Infinity,
     queryFn: ({ pageParam }) =>
       fetchAgentActivities(agentId!, pageParam ? OLDER_PAGE_LIMIT : PAGE_LIMIT, pageParam),
     enabled: !!agentId,
