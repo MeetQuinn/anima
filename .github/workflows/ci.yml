@@ -19,7 +19,7 @@ jobs:
           node-version: "24"
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm type-check
+      # No separate type-check: `pnpm build` runs the same server and web tsc.
       - run: pnpm lint
       - run: pnpm check:docs-voice
       - run: pnpm build
@@ -38,5 +38,6 @@ jobs:
           node-version: "24"
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      # The runtime tier loads only dist/server and dist/shared.
+      - run: pnpm build:server
       - run: pnpm test:runtime:dist
