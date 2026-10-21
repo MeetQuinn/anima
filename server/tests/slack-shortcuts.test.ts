@@ -208,8 +208,9 @@ test('home shortcut keeps a long agent name inside the Slack title limit', async
   assert.equal(title, 'Scout the Extremely Tho…');
 });
 
-test('message shortcut hands the source message to the agent thread and responds ephemerally', async () => {
+test('message shortcut hands the source message to the agent thread and responds ephemerally', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-shortcuts-'));
+  t.after(() => rm(stateDir, { force: true, recursive: true }));
   await writeMinimalAgentConfig(stateDir, 'scout');
   const fetchCalls: Array<{ body: unknown; url: string }> = [];
   const previousFetch = globalThis.fetch;

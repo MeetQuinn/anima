@@ -20,6 +20,7 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { slackBlocks, slackPostBody, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { withAnimaHome } from './anima-home.js';
+import { runNode as runNodeProcess, type RunNodeOptions, type RunNodeResult } from './helpers/run-node.js';
 
 const adminCliPath = resolve('dist/server/cli/animactl.js');
 const cliPath = resolve('dist/server/cli/anima.js');
@@ -1664,29 +1665,8 @@ function exampleSlackThread() {
   });
 }
 
-async function runNode(
-  args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {},
-): Promise<{ status: number | null; stderr: string; stdout: string }> {
-  const env = cliMessageChildEnv(options.env);
-  const child = spawn(process.execPath, args, {
-    cwd: options.cwd,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk;
-  });
-  child.stdin.end(options.input);
-  const [status] = (await once(child, 'exit')) as [number | null];
-  return { status, stderr, stdout };
+function runNode(args: string[], options: RunNodeOptions = {}): Promise<RunNodeResult> {
+  return runNodeProcess(args, { ...options, env: cliMessageChildEnv(options.env) });
 }
 
 async function runNodeUntilOutput(

@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,6 +11,7 @@ import {
   encryptSealedHandoffSecret,
 } from '../../shared/secret-handoff.js';
 import { SecretHandoffPendingStore } from '../env/secret-handoff-store.js';
+import { runNode } from './helpers/run-node.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
@@ -520,30 +519,6 @@ test('env CLI reads dotenv values literally without command substitution', async
     await rm(stateDir, { force: true, recursive: true });
   }
 });
-
-async function runNode(
-  args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {},
-): Promise<{ status: number | null; stderr: string; stdout: string }> {
-  const child = spawn(process.execPath, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk;
-  });
-  child.stdin.end(options.input);
-  const [status] = (await once(child, 'exit')) as [number | null];
-  return { status, stderr, stdout };
-}
 
 function extractHandoffCode(output: string, prefix: string): string {
   const match = output.match(new RegExp(`${prefix}[A-Za-z0-9_-]+`));

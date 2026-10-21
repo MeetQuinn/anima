@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -607,8 +607,9 @@ test('buildAnimaRuntimeProfile falls back cleanly when bundled docs are unavaila
   assert.doesNotMatch(text, /\/opt\/anima\/docs/);
 });
 
-test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout roots', async () => {
+test('resolveAnimaReferencePathsFromRoots finds bundled docs and source checkout roots', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'anima-reference-root-'));
+  t.after(() => rm(root, { force: true, recursive: true }));
   mkdirSync(join(root, 'docs', 'agent'), { recursive: true });
   mkdirSync(join(root, 'docs', 'guide'), { recursive: true });
   mkdirSync(join(root, 'docs', 'architecture'), { recursive: true });

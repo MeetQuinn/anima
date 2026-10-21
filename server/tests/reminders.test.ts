@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -34,6 +32,7 @@ import type {
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { withAnimaHome } from './anima-home.js';
 import { waitFor } from './helpers/harness.js';
+import { runNode } from './helpers/run-node.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 const reminderService = reminderServiceForAgent('scout');
@@ -757,7 +756,6 @@ test('windowed next-due is red-controlled: removing window awareness breaks the 
   assert.match(afterFridayEnd, /^2026-05-25/);
 });
 
-
 test('recurring reminder rules respect IANA timezones', () => {
   const daily = parseRepeatRule('daily@09:00', 'Asia/Shanghai');
   assert.equal(
@@ -1160,25 +1158,3 @@ async function writeConfig(configDir: string): Promise<void> {
   await writeFile(join(configDir, 'agents', 'scout', 'config.json'), `${JSON.stringify({ id: 'scout' }, null, 2)}\n`, 'utf8');
 }
 
-async function runNode(
-  args: string[],
-  options: { env?: NodeJS.ProcessEnv; input?: string } = {},
-): Promise<{ status: number | null; stderr: string; stdout: string }> {
-  const child = spawn(process.execPath, args, {
-    env: options.env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk;
-  });
-  child.stdin.end(options.input);
-  const [status] = (await once(child, 'exit')) as [number | null];
-  return { status, stderr, stdout };
-}
