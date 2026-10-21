@@ -118,6 +118,20 @@ export function feishuMessageAttachmentsFromContent(input: {
   return [];
 }
 
+/**
+ * Replaces Feishu mention placeholders (`@_user_1`, `@_all`) with labels in one
+ * pass. Longer keys are tried first, so `@_user_1` never matches inside
+ * `@_user_10`, and an inserted label is never scanned for keys.
+ */
+export function replaceFeishuMentionKeys(text: string, labels: ReadonlyMap<string, string>): string {
+  if (labels.size === 0) return text;
+  const pattern = [...labels.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  return text.replace(new RegExp(pattern, 'g'), (key) => labels.get(key) ?? key);
+}
+
 export function feishuPostPlainTextFromContent(content: Record<string, unknown> | undefined): string | undefined {
   for (const section of feishuPostSections(content)) {
     const lines = [

@@ -571,6 +571,43 @@ test('normalizes Feishu mention keys to readable labels', () => {
   assert.equal(item?.text, '<mention open_id="ou_anima_bot" mentioned_type="app">Anima</mention> please check');
 });
 
+test('Feishu mention keys that share a prefix keep their own labels', () => {
+  const people = [
+    { key: '@_user_1', name: 'Ann', openId: 'ou_one' },
+    { key: '@_user_10', name: 'Kai @_user_2', openId: 'ou_ten' },
+    { key: '@_user_2', name: 'Bo', openId: 'ou_two' },
+  ];
+  const text = '@_user_10 and @_user_1 ping @_user_2';
+  const item = normalizeFeishuMessage({
+    event: makeFeishuEvent({
+      message: {
+        chat_type: 'group',
+        content: JSON.stringify({ text }),
+        mentions: people.map(({ key, name, openId }) => ({ id: { open_id: openId }, key, name })),
+      },
+    }),
+  });
+  assert.equal(
+    item?.text,
+    '<mention open_id="ou_ten">Kai @_user_2</mention> and <mention open_id="ou_one">Ann</mention> ping <mention open_id="ou_two">Bo</mention>',
+  );
+
+  const output = feishuTranscriptOutput(
+    [{
+      bodyContent: JSON.stringify({ text }),
+      chatId: 'oc_target_chat',
+      createTime: '1780410000000',
+      mentions: people.map(({ key, name, openId }) => ({ id: openId, idType: 'open_id', key, name })),
+      messageId: 'om_mentions',
+      messageType: 'text',
+      sender: { id: 'ou_alice', idType: 'open_id', senderName: 'Alice', senderType: 'user' },
+    }],
+    { chatId: 'oc_target_chat', limit: 1 },
+    { hasMore: false, nextCursor: '' },
+  );
+  assert.match(output, /Alice: @Kai @_user_2 and @Ann ping @Bo$/m);
+});
+
 test('accepts SDK direct events and wrapped raw Feishu events', () => {
   const event = makeFeishuEvent();
 

@@ -7,6 +7,7 @@ import {
   feishuMessageAttachmentsFromContent,
   feishuPostPlainTextFromContent,
   parseFeishuContent,
+  replaceFeishuMentionKeys,
   type FeishuMessageAttachmentMeta,
 } from '../feishu/message-content.js';
 
@@ -54,11 +55,11 @@ function feishuTranscriptText(message: FeishuConversationMessage): string {
   const content = parseFeishuContent(message.bodyContent);
   if (messageType === 'text') {
     const text = typeof content?.['text'] === 'string' ? content['text'] : '';
-    return replaceFeishuMentionKeys(text, message.mentions ?? []) || '[empty text]';
+    return replaceFeishuMentionKeys(text, feishuMentionLabels(message.mentions)) || '[empty text]';
   }
   if (messageType === 'post') {
     const text = feishuPostPlainTextFromContent(content) ?? '';
-    return replaceFeishuMentionKeys(text, message.mentions ?? []) || '[empty rich text]';
+    return replaceFeishuMentionKeys(text, feishuMentionLabels(message.mentions)) || '[empty rich text]';
   }
   if (messageType === 'image' && typeof content?.['image_key'] === 'string') {
     const attachment = feishuTranscriptAttachmentMeta(message, content);
@@ -137,13 +138,12 @@ function feishuTranscriptAttachment(input: {
   return `  attached: id=${input.fileId}${name}${size} (use \`anima file fetch ${input.fileId}\` to download)`;
 }
 
-function replaceFeishuMentionKeys(text: string, mentions: FeishuConversationMention[]): string {
-  let result = text;
-  for (const mention of mentions) {
-    if (!mention.key || !mention.name) continue;
-    result = result.replaceAll(mention.key, `@${mention.name}`);
+function feishuMentionLabels(mentions: FeishuConversationMention[] | undefined): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const mention of mentions ?? []) {
+    if (mention.key && mention.name && !labels.has(mention.key)) labels.set(mention.key, `@${mention.name}`);
   }
-  return result;
+  return labels;
 }
 
 function feishuTimestampToIso(timestamp: string | undefined): string {

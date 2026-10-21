@@ -3,6 +3,7 @@ import {
   feishuMessageAttachmentsFromContent,
   feishuPostPlainTextFromContent,
   parseFeishuContent,
+  replaceFeishuMentionKeys,
   type FeishuMessageAttachmentMeta,
 } from './message-content.js';
 import type { FeishuInboxItem, InboxFileMeta } from '../../shared/inbox.js';
@@ -212,7 +213,7 @@ function feishuTextFromMessage(
       ? feishuPostPlainTextFromContent(parsed)
       : undefined;
   if (!rawText?.trim()) return undefined;
-  return replaceFeishuMentionKeys(rawText, message.mentions ?? []);
+  return replaceFeishuMentionKeys(rawText, feishuMentionLabels(message.mentions ?? []));
 }
 
 function feishuFilesFromMessage(
@@ -246,25 +247,23 @@ function feishuAttachmentText(files: InboxFileMeta[]): string | undefined {
   return `[file] ${file.name}`;
 }
 
-function replaceFeishuMentionKeys(
-  text: string,
+function feishuMentionLabels(
   mentions: NonNullable<FeishuReceiveMessageEvent['message']['mentions']>,
-): string {
-  let result = text;
+): Map<string, string> {
+  const labels = new Map<string, string>();
   for (const mention of mentions) {
-    if (!mention.key || !mention.name) continue;
+    if (!mention.key || !mention.name || labels.has(mention.key)) continue;
     const { open_id, union_id, user_id } = mention.id;
     const attrs: string[] = [];
     if (open_id) attrs.push(`open_id="${open_id}"`);
     if (union_id) attrs.push(`union_id="${union_id}"`);
     if (user_id) attrs.push(`user_id="${user_id}"`);
     if (mention.mentioned_type) attrs.push(`mentioned_type="${mention.mentioned_type}"`);
-    const replacement = attrs.length > 0
+    labels.set(mention.key, attrs.length > 0
       ? `<mention ${attrs.join(' ')}>${mention.name}</mention>`
-      : `@${mention.name}`;
-    result = result.replaceAll(mention.key, replacement);
+      : `@${mention.name}`);
   }
-  return result;
+  return labels;
 }
 
 function isFeishuReceiveMessageEvent(data: unknown): data is FeishuReceiveMessageEvent {
