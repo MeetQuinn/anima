@@ -97,6 +97,7 @@ function inertApp(readOnly: boolean, authenticated = true, extra: InertOptions =
   // Ungoverned routes, for the positive control.
   fastify.get('/api/health', async () => ({ ok: true }));
   fastify.get('/api/provider-usage', async () => ({ ok: true }));
+  fastify.get('/api/provider-usage/:provider', async () => ({ ok: true }));
   return fastify;
 }
 
@@ -195,7 +196,7 @@ test('#524 read-only ON: every governed route is refused 403 with a readable rea
 test('#524 read-only ON: an ungoverned route still succeeds', async () => {
   const fastify = inertApp(true);
   await fastify.ready();
-  for (const url of ['/api/health', '/api/provider-usage']) {
+  for (const url of ['/api/health', '/api/provider-usage', '/api/provider-usage/claude-code']) {
     const response = await fastify.inject({ method: 'GET', url });
     assert.equal(response.statusCode, 200, `read-only must not refuse GET ${url}`);
     assert.deepEqual(response.json(), { ok: true });
