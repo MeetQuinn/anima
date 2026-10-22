@@ -1764,3 +1764,39 @@ function cliMessageChildEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEn
   assert.equal(env.ANIMA_RUNTIME_HOME, undefined);
   return env;
 }
+
+for (const operation of ['send', 'update'] as const) {
+  test(`message ${operation} resolves a readable heading mention before formatting the actual Slack payload`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-heading-mention-'));
+    const posts: Array<Record<string, unknown>> = [];
+    const slackApi = await startSlackApiMock((method, body) => {
+      if (method === 'conversations.info') return {
+        ok: true, channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' },
+      };
+      if (method === 'users.list') return { ok: true, members: [{ id: 'U123', name: 'alice' }] };
+      if (method === 'users.conversations') return { ok: true, channels: [] };
+      if (method === 'conversations.members') return { ok: true, members: ['U123'] };
+      if (method === 'auth.test') return { ok: true, team_id: 'T-demo', user_id: 'U-scout' };
+      assert.equal(method, operation === 'send' ? 'chat.postMessage' : 'chat.update');
+      posts.push(slackRequestBody(body));
+      return { ok: true, channel: 'C-product', ts: '1770000200.000127' };
+    });
+    try {
+      await writeSlackConfig(stateDir);
+      const itemId = await ingestSlackThread(stateDir);
+      const args = [cliPath, 'message', operation, '--channel', 'C-product'];
+      if (operation === 'update') args.push('--message-ts', '1770000200.000123');
+      const result = await runNode(args, {
+        env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
+        input: '## @alice please review\n\nKeep the original body.',
+      });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(posts.length, 1, 'formatting does not add a second notification post');
+      assert.deepEqual(slackBlocks(posts[0]!), [{ type: 'markdown', text: '**<@U123> please review**\n\nKeep the original body.' }]);
+      assert.equal(posts[0]?.['text'], '**<@U123> please review**\n\nKeep the original body.');
+    } finally {
+      await slackApi.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}

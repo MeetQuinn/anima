@@ -175,6 +175,23 @@ async function runPackSmoke() {
       );
     }
 
+    // Exercise the lazy ESM Markdown parser from the installed package, also
+    // on the minimum supported Node version; importing the wrapper is not enough.
+    const messageFormatUrl = pathToFileURL(
+      join(serverDir, "tools", "slack-message-format.js"),
+    ).href;
+    await run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import assert from 'node:assert/strict';
+       const { slackMessageContentForText } = await import(${JSON.stringify(messageFormatUrl)});
+       assert.equal(slackMessageContentForText('## <@U123> review').blocks[0].text, '**<@U123> review**');`,
+      ],
+      { cwd: installDir },
+    );
+
     console.log("animactl package smoke OK");
   } finally {
     await rm(workDir, { force: true, recursive: true });
