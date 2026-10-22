@@ -124,7 +124,7 @@ export class ClaudeCodeAgentRuntime extends ControllerAgentRuntime<ClaudeStreamJ
             }
           }
         } catch (error) {
-          if (!(error instanceof ClaudeSessionNotFoundError) || !input.providerSession) throw error;
+          if (!(error instanceof ClaudeSessionNotFoundError) || !input.providerSession || input.signal?.aborted) throw error;
           await input.effects.recordEvent({
             eventType: 'claude.session.resume_missing',
             providerSession: providerSessionPayload(input.providerSession, this.kind),
@@ -236,8 +236,8 @@ class ClaudeProviderError extends Error {
 
 const CLAUDE_STDERR_TAIL_CHARS = 8_192;
 
-function claudeSessionNotFound(stderr: string): boolean {
-  return /No conversation found with session ID:/.test(stderr);
+function claudeSessionNotFound(output: string, sessionId: string): boolean {
+  return output.split(/\r?\n/).some((line) => line.trim() === `No conversation found with session ID: ${sessionId}`);
 }
 
 class ClaudeStreamJsonController {
@@ -262,6 +262,8 @@ class ClaudeStreamJsonController {
   private providerTurnActive = false;
   /** Recent stderr, for the session-not-found check when the child exits. */
   private stderrTail = '';
+  private providerActivityObserved = false;
+  private inputsWritten = 0;
   private currentTurn?: {
     commands: Map<string, {
       startedAfterResult?: number;
@@ -299,8 +301,9 @@ class ClaudeStreamJsonController {
         this.rejectQueuedMessages(exitError);
         await this.clearBackgroundObserver();
         const stderrOutput = stderr || this.stderrTail;
-        if (claudeSessionNotFound(stderrOutput)) {
-          this.rejectCurrentTurn(new ClaudeSessionNotFoundError(stderrOutput));
+        const missing = this.missingSessionError(stderrOutput);
+        if (missing) {
+          this.rejectCurrentTurn(missing);
           return;
         }
         if (this.commandLifecycleAvailable && this.currentTurn) {
@@ -314,8 +317,17 @@ class ClaudeStreamJsonController {
         this.rejectQuiescentWaiters(error);
         this.rejectQueuedMessages(error);
         await this.clearBackgroundObserver();
-        this.rejectCurrentTurn(error);
+        this.rejectCurrentTurn(this.missingSessionError(this.stderrTail) ?? error);
       });
+  }
+
+  private missingSessionError(output: string): ClaudeSessionNotFoundError | undefined {
+    const turn = this.currentTurn;
+    const id = turn?.input.providerSession?.id;
+    // Only a startup diagnostic for the exact requested session permits replay.
+    // Any protocol activity or additional written input makes that unsafe.
+    if (!id || turn.input.signal?.aborted || this.providerActivityObserved || this.inputsWritten !== 1) return;
+    if (claudeSessionNotFound(output, id)) return new ClaudeSessionNotFoundError(output);
   }
 
   get completion(): Promise<{ stdout: string; stderr: string }> {
@@ -405,6 +417,7 @@ class ClaudeStreamJsonController {
         type: 'user',
         uuid,
       })}\n`);
+      this.inputsWritten += 1;
     } catch (error) {
       turn?.commands.delete(uuid);
       if (turn) observeInputTrace((payload) => turn.input.effects.recordEvent(payload), {
@@ -443,6 +456,7 @@ class ClaudeStreamJsonController {
       // Close or open the stdin gate and select the native turn owner before
       // activity persistence can expose output to a concurrent Anima wake.
       if (value) {
+        if (stringField(value, 'type') !== 'result') this.providerActivityObserved = true;
         this.updateInputGate(value);
         this.refreshInputCompletionTimeout();
         this.observeNativeLifecycle(value);
@@ -527,8 +541,11 @@ class ClaudeStreamJsonController {
       });
       if (providerError) {
         if (owner !== 'background') {
-          this.rejectQueuedMessages(providerError);
-          this.rejectCurrentTurn(providerError);
+          const diagnostics = [parsed['result'], parsed['error'], ...(Array.isArray(parsed['errors']) ? parsed['errors'] : [])]
+            .filter((value): value is string => typeof value === 'string').join('\n');
+          const failure = this.missingSessionError(diagnostics) ?? this.missingSessionError(this.stderrTail) ?? providerError;
+          this.rejectQueuedMessages(failure);
+          this.rejectCurrentTurn(failure);
         }
         if (!this.currentTurn && this.isQuiescent()) await this.clearBackgroundObserver();
         return;

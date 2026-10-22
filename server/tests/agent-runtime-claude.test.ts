@@ -706,8 +706,9 @@ test('claude-code keeps native rewake output on its original item while a new wa
   }
 });
 
-test('claude-code runtime retries fresh when persisted session is missing', async () => {
+for (const exitCode of [0, 1]) for (const source of ['stderr', 'result', 'stderr-result', 'result-stderr']) test(`claude-code runtime retries fresh when persisted session is missing: exit=${exitCode}, source=${source}`, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-runtime-test-'));
+  let runtime: AgentRuntime | undefined;
   try {
     await withAnimaHome(stateDir, async () => {
     const callsPath = join(stateDir, 'claude-stale-session-calls.jsonl');
@@ -727,7 +728,12 @@ test('claude-code runtime retries fresh when persisted session is missing', asyn
         "    // Earlier stderr must not push the message out of the runtime's stderr tail.",
         "    // Exit from the write callback: a pipe write can still be queued on macOS.",
         "    process.stderr.write('x'.repeat(20_000) + '\\n');",
-        "    process.stderr.write('No conversation found with session ID: stale-claude-session\\n', () => process.exit(0));",
+        "    const diagnostic = 'No conversation found with session ID: stale-claude-session\\n';",
+        "    const result = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: [diagnostic.trim()] }) + '\\n';",
+        `    const finish = () => process.exit(${exitCode});`,
+        `    const source = ${JSON.stringify(source)};`,
+        "    if (source.startsWith('result')) process.stdout.write(result, () => source === 'result-stderr' ? process.stderr.write(diagnostic, finish) : finish());",
+        "    else process.stderr.write(diagnostic, () => source === 'stderr-result' ? process.stdout.write(result, finish) : finish());",
         "    return;",
         "  }",
         "  console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fresh-claude-session', cwd: process.cwd(), claude_code_version: 'test' }));",
@@ -764,7 +770,7 @@ test('claude-code runtime retries fresh when persisted session is missing', asyn
       'utf8',
     );
 
-    const runtime = createAgentRuntime({
+    runtime = createAgentRuntime({
       env: {
         CALLS_PATH: callsPath,
         ...runtimeTestEnv(stateDir),
@@ -787,9 +793,91 @@ test('claude-code runtime retries fresh when persisted session is missing', asyn
     assert.ok(activities.some((activity) => activity.type === 'runtime.event' && activity.payload?.['eventType'] === 'claude.session.resume_missing'));
     assert.ok(activities.some((activity) => activity.type === 'runtime.completed'));
     assert.equal(activities.some((activity) => activity.type === 'runtime.failed'), false);
-    await runtime.close?.();
     });
   } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+for (const evidence of ['init', 'assistant', 'tool', 'stream', 'native-start', 'hook', 'wrong-id', 'generic', 'fresh'] as const) {
+  test(`claude-code missing-session recovery never replays unsafe input: ${evidence}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-claude-missing-guard-'));
+    let runtime: AgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const callsPath = join(stateDir, 'calls.jsonl'), fakeClaude = join(stateDir, 'claude');
+        await writeFile(fakeClaude, [
+          '#!/usr/bin/env node',
+          "import { appendFileSync } from 'node:fs';",
+          "import readline from 'node:readline';",
+          `const evidence = ${JSON.stringify(evidence)};`,
+          "readline.createInterface({ input: process.stdin }).once('line', (line) => {",
+          "  const input = JSON.parse(line);",
+          "  appendFileSync(process.env.CALLS_PATH, JSON.stringify(process.argv.slice(2)) + '\\n');",
+          "  const events = {",
+          "    init: { type: 'system', subtype: 'init', session_id: 'stale-claude-session' },",
+          "    assistant: { type: 'assistant', message: { content: [{ type: 'text', text: 'Work began' }] } },",
+          "    tool: { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'synthetic-tool', name: 'Bash', input: { command: 'synthetic only' } }] } },",
+          "    stream: { type: 'stream_event', event: { type: 'message_start' } },",
+          "    'native-start': { type: 'command_lifecycle', command_uuid: input.uuid, state: 'started' },",
+          "    hook: { type: 'system', subtype: 'hook_started', hook_id: 'synthetic-hook' },",
+          "  };",
+          "  const finish = () => process.stderr.write(evidence === 'generic' ? 'Synthetic process failed\\n' : 'No conversation found with session ID: ' + (evidence === 'wrong-id' ? 'another-session' : 'stale-claude-session') + '\\n', () => process.exit(1));",
+          "  if (events[evidence]) process.stdout.write(JSON.stringify(events[evidence]) + '\\n', finish); else finish();",
+          "});", '',
+        ].join('\n'));
+        await chmod(fakeClaude, 0o755);
+        const ctx = await ingestEvent(makeSlackEvent({ channelId: 'D-control', teamId: 'T-control', text: 'Synthetic input', userId: 'U1' }), { agentId: 'anima', stateDir });
+        runtime = createAgentRuntime({ env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }), kind: 'claude-code' });
+        const input = await runtimeInput(runtime, ctx, await loadState());
+        if (evidence !== 'fresh') input.providerSession = { id: 'stale-claude-session', updatedAt: new Date().toISOString() };
+        await assert.rejects(runtime.run(input), /exited with code 1/);
+        const calls = (await readFile(callsPath, 'utf8')).trim().split('\n');
+        assert.equal(calls.length, 1, 'Possible work and unrelated failures must not trigger a fresh execution');
+        const activities = await activitiesForInboxItemWindow('anima', ctx.item.id);
+        assert.equal(activities.some((a) => a.type === 'runtime.event' && a.payload?.['eventType'] === 'claude.session.resume_missing'), false);
+      });
+    } finally { await runtime?.close?.(); await rm(stateDir, { force: true, recursive: true }); }
+  });
+}
+
+test('claude-code missing-session recovery does not replay after a follow-up was written', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-claude-missing-followup-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      const fakeClaude = join(stateDir, 'claude');
+      await writeFile(fakeClaude, [
+        '#!/usr/bin/env node',
+        "import { appendFileSync } from 'node:fs';",
+        "import readline from 'node:readline';",
+        'let count = 0;',
+        "readline.createInterface({ input: process.stdin }).on('line', (line) => {",
+        "  appendFileSync(process.env.CALLS_PATH, JSON.stringify({ pid: process.pid, line }) + '\\n');",
+        "  if (!process.argv.includes('--resume')) { console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'unexpected fresh replay' })); return; }",
+        "  if (++count === 2) process.stderr.write('No conversation found with session ID: stale-claude-session\\n', () => process.exit(1));",
+        '});', '',
+      ].join('\n'));
+      await chmod(fakeClaude, 0o755);
+      const config = { agentId: 'anima', stateDir };
+      const first = await ingestEvent(makeSlackEvent({ channelId: 'D-control', teamId: 'T-control', text: 'first input', userId: 'U1' }), config);
+      const second = await ingestEvent(makeSlackEvent({ channelId: 'D-control', teamId: 'T-control', text: 'follow-up input', userId: 'U1', messageTs: '200.002' }), config);
+      runtime = createAgentRuntime({ env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }), kind: 'claude-code' });
+      const input = await runtimeInput(runtime, first, await loadState());
+      input.providerSession = { id: 'stale-claude-session', updatedAt: new Date().toISOString() };
+      const rejected = assert.rejects(runtime.run(input), /exited with code 1/);
+      await waitFor(async () => (await readFile(callsPath, 'utf8').catch(() => '')).includes('first input'));
+      const appended = await runtime.appendToActiveRun(await runtimeFollowupInput(runtime, first, second, await loadState()));
+      assert.equal(appended.accepted, true);
+      await rejected;
+      const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { pid: number });
+      assert.equal(calls.length, 2);
+      assert.equal(new Set(calls.map((call) => call.pid)).size, 1, 'both inputs were sent to one child, with no fresh replay');
+    });
+  } finally {
+    await runtime?.close?.();
     await rm(stateDir, { force: true, recursive: true });
   }
 });
