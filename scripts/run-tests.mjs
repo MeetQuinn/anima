@@ -59,6 +59,7 @@ const groups = {
     'linear-identity.test.js',
     'linear-actions.test.js',
     'linear-intake.test.js',
+    'linear-notifications.test.js',
     'linear-listener-status.test.js',
     'linear-session.test.js',
     'linear-runtime.test.js',

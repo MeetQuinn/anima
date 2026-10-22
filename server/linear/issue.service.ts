@@ -71,12 +71,15 @@ export class LinearIssueService {
     const { installationId } = await this.identity.credentials();
     if (parsed.parentId) {
       const parent = await this.identity.graphql(installationId,
-        'query($id:String!) { comment(id:$id) { issue { id identifier } } }', { id: parsed.parentId },
-        z.object({ comment: z.object({ issue: z.object({ id: z.string(), identifier: z.string() }).nullable() }) }),
+        'query($id:String!) { comment(id:$id) { issue { id identifier } parent { id } } }', { id: parsed.parentId },
+        z.object({ comment: z.object({ issue: z.object({ id: z.string(), identifier: z.string() }).nullable(), parent: z.object({ id: z.string().uuid() }).nullable() }) }),
       );
       if (!parent.comment.issue || ![parent.comment.issue.id, parent.comment.issue.identifier].includes(parsed.issueId)) {
         throw new Error('The reply target does not belong to this issue.');
       }
+      // Linear has one level of replies. A notification can point at a reply;
+      // continuing that discussion must use its root, not create a nested thread.
+      parsed.parentId = parent.comment.parent?.id ?? parsed.parentId;
     }
     const result = await this.identity.graphql(installationId,
       `mutation($input:CommentCreateInput!) { commentCreate(input:$input) { success comment { ${commentFields} } } }`,

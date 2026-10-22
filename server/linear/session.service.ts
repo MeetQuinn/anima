@@ -48,7 +48,7 @@ export class LinearSessionService {
   constructor(readonly identity: LinearIdentityService) {}
   get agentId(): string { return this.identity.agentId; }
 
-  async receive(event: LinearWebhook, install: LinearInstallation): Promise<void> {
+  async receive(event: Extract<LinearWebhook, { type: 'OAuthApp' | 'AgentSessionEvent' }>, install: LinearInstallation): Promise<void> {
     if (event.type === 'OAuthApp') {
       await this.identity.store.update((file) => file.installation?.id === install.id ? { ...file, lastSignedWebhookAt: nowIso() } : file);
       await this.identity.revoke(install.id); return;

@@ -16,7 +16,7 @@ export const created = (session: string = sessionId): Extract<LinearWebhook, { t
   agentSession: { id: session, organizationId: install.organizationId, appUserId: install.appUserId, creatorId: randomUUID(), creator: { name: 'Synthetic requester' } },
   promptContext: 'Synthetic request body',
 });
-export const prompted = (session = sessionId, stop = false): LinearWebhook => ({ ...created(session), type: 'AgentSessionEvent', action: 'prompted',
+export const prompted = (session = sessionId, stop = false): Extract<LinearWebhook, { type: 'AgentSessionEvent' }> => ({ ...created(session), type: 'AgentSessionEvent', action: 'prompted',
   agentActivity: { id: randomUUID(), agentSessionId: session, content: { type: 'prompt', body: stop ? '' : 'Only this new prompt' }, signal: stop ? 'stop' : null },
 });
 

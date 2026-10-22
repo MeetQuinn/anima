@@ -32,7 +32,7 @@ const schema = buildSchema(`
   type IssueSearchPayload { nodes: [Issue!]!, pageInfo: PageInfo! }
   type IssuePayload { success: Boolean!, issue: Issue }
   type CommentPayload { success: Boolean!, comment: Comment }
-  type Comment { id: ID!, body: String!, url: String!, issue: Issue, parent: Comment, user: User }
+  type Comment { id: ID!, issueId: String, agentSession: AgentSession, body: String!, url: String!, issue: Issue, parent: Comment, user: User }
   type CommentConnection { nodes: [Comment!]!, pageInfo: PageInfo! }
   type TeamConnection { nodes: [Team!]!, pageInfo: PageInfo! }
   input IssueCreateInput { id: String, teamId: String!, title: String!, description: String }
