@@ -197,8 +197,8 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
         '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 5 }, content: [{ type: "tool_use", id: "toolu_read_1", name: "Read", input: { file_path: "/tmp/context.md" } }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_read_1", content: "file contents should stay out of agent text", is_error: false }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 11, cache_read_input_tokens: 200, cache_creation_input_tokens: 6 }, content: [{ type: "tool_use", id: "toolu_skill_1", name: "Skill", input: { skill: "deep-research", args: "research usage telemetry and summarize with citations" } }] }, session_id: "claude-session-1" }));',
-        '  console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_task_create_1", name: "TaskCreate", input: { subject: "Trace task activity", activeForm: "Tracing task activity", description: "long internal task description must not enter activity" } }] }, session_id: "claude-session-1" }));',
-        '  console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_task_update_1", name: "TaskUpdate", input: { taskId: "7", status: "completed", activeForm: "Tracing task activity", description: "updated internal task description must not enter activity" } }] }, session_id: "claude-session-1" }));',
+        '  console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_task_create_1", name: "TaskCreate", input: { subject: "Trace task activity", activeForm: "Tracing task activity", description: "long internal task description must not enter activity", metadata: { privateValue: "create metadata must not enter task activity", nested: { secret: "create nested metadata" } } } }] }, session_id: "claude-session-1" }));',
+        '  console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_task_update_1", name: "TaskUpdate", input: { taskId: "7", status: "completed", activeForm: "Tracing task activity", description: "updated internal task description must not enter activity", metadata: { privateValue: "update metadata must not enter task activity", nested: { secret: "update nested metadata" } } } }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 11, cache_read_input_tokens: 200, cache_creation_input_tokens: 6 }, content: [{ type: "tool_use", id: "toolu_anima_1", name: "Bash", input: { command: "ANIMA_HOME=/tmp/anima anima file send --channel C1 /tmp/image.png", description: "Upload file" } }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_anima_1", content: "uploaded successfully", is_error: false }] }, session_id: "claude-session-1" }));',
         '  console.log(JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 11, cache_read_input_tokens: 200, cache_creation_input_tokens: 6 }, content: [{ type: "tool_use", id: "toolu_parent_task", name: "Task", input: { description: "Research child" } }] }, session_id: "claude-session-1" }));',
@@ -328,6 +328,11 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
     assert.equal(taskUpdated?.payload?.['taskActiveForm'], 'Tracing task activity');
     assert.equal(taskUpdated?.payload?.['target'], 'Tracing task activity');
     assert.equal(taskUpdated?.payload?.['description'], undefined);
+    for (const task of [taskCreated, taskUpdated]) {
+      assert.equal(task?.payload?.['metadata'], undefined);
+      const summary = JSON.stringify(task?.payload);
+      assert.doesNotMatch(summary!, /internal task description|metadata must not enter task activity|nested metadata/);
+    }
     assert.equal(
       allActivities(stateAfterFirst).some((activity) => activity.payload?.['providerToolId'] === 'toolu_anima_1'),
       false,

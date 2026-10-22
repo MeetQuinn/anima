@@ -154,6 +154,16 @@ failures; successful completion rows aren't emitted yet (see [Known gaps](#known
 | `tool.call.failed` (provider tools)                                                                                                                                  | A provider tool errors or a command exits non-zero. | Conversation | `<verb> failed` + target/command + terse error. Failed shell leads with the command.                                                                                                        | Full error.                    |
 | `(missing)` legacy Kimi tool-calls without `payload.tool`                                                                                                            | Pre-rename Kimi logs.                               | Hidden       | —                                                                                                                                                                                           | —                              |
 
+For Claude `TaskCreate` and `TaskUpdate`, the task summary copies only `subject`,
+`activeForm` (or `active_form`), `taskId` (or `task_id`), and `status` from tool
+input. These become `taskSubject`, `taskActiveForm`, `taskId`, and `taskStatus`;
+`target` is derived from the same fields. It excludes `description` and arbitrary
+`metadata`, including nested values. This restriction applies to the task summary,
+not to the provider's own transcript.
+
+A terminal update containing only an ID and status displays the ID. The mapper
+does not recover a subject from an earlier create result or another session.
+
 ### 3. Chat actions
 
 Messages, files, reactions, and reads the agent performs in Slack or Feishu, plus
