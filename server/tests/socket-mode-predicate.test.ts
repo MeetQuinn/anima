@@ -1,8 +1,11 @@
 // Pins the reconnect predicate + shutdown semantics for ResilientSocketModeReceiver.
 // Written against INTENDED behavior (see #458 gate): retry every transient class,
-// fail closed ONLY on unrecoverable auth/config errors, and make the terminal state loud.
+// keep retrying invalid_auth after a previous hello, fail closed on other
+// unrecoverable auth/config errors, and make the terminal state loud.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setImmediate as nextImmediate } from 'node:timers/promises';
+import { ErrorCode as WebApiErrorCode } from '@slack/web-api';
 
 import { ResilientSocketModeReceiver } from '../slack/resilient-socket-mode-receiver.js';
 
@@ -25,7 +28,6 @@ const CASES: Rejection[] = [
   { label: 'RequestError (network)', make: coded('slack_webapi_request_error'), retry: true },
   { label: 'HTTPError (5xx)', make: coded('slack_webapi_http_error'), retry: true },
   { label: 'PlatformError (transient)', make: coded('slack_webapi_platform_error', 'internal_error'), retry: true },
-  { label: 'PlatformError invalid_auth', make: coded('slack_webapi_platform_error', 'invalid_auth'), retry: false },
   { label: 'PlatformError account_inactive', make: coded('slack_webapi_platform_error', 'account_inactive'), retry: false },
 ];
 
@@ -263,3 +265,156 @@ test('a socket that closes before hello is logged with its cause, not "undefined
     'Slack Socket Mode connection failed; retrying in Nms: WebSocket closed before Slack sent hello',
   ]);
 });
+
+test('Slack Socket Mode retries invalid_auth after hello with bounded slow backoff', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const logs: string[] = [];
+  const receiver = new ResilientSocketModeReceiver({
+    appToken: 'xapp-test',
+    random: () => 1,
+    runtimeLogger: {
+      error: (message) => errors.push(message),
+      log: (message) => logs.push(message),
+      warn: (message) => warnings.push(message),
+    },
+  });
+  let attempts = 0;
+  receiver.client.start = async () => {
+    attempts += 1;
+    if (attempts > 1 && attempts < 7) throw socketAuthError('invalid_auth');
+    return { ok: true };
+  };
+  receiver.client.disconnect = async () => {};
+  try {
+    await receiver.start();
+    receiver.client.emit('disconnected');
+    receiver.client.emit('disconnected');
+    await nextImmediate();
+    assert.equal(attempts, 2);
+    for (const [index, delay] of [60_000, 120_000, 240_000, 300_000, 300_000].entries()) {
+      assert.match(warnings[index] ?? '', new RegExp(`retrying in ${delay}ms: invalid_auth`));
+      t.mock.timers.tick(delay - 1);
+      await nextImmediate();
+      assert.equal(attempts, index + 2, 'no early retry or second reconnect loop');
+      t.mock.timers.tick(1);
+      await nextImmediate();
+      assert.equal(attempts, index + 3);
+    }
+    assert.deepEqual(errors, []);
+    assert.deepEqual(logs, ['Slack Socket Mode reconnected.']);
+  } finally {
+    await receiver.stop();
+  }
+});
+
+test('Slack Socket Mode stop cancels an auth retry and a later start validates again', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const receiver = new ResilientSocketModeReceiver({
+    appToken: 'xapp-test',
+    random: () => 0,
+    runtimeLogger: { error() {}, log() {}, warn() {} },
+  });
+  let attempts = 0;
+  receiver.client.start = async () => {
+    attempts += 1;
+    if (attempts > 1) throw socketAuthError('invalid_auth');
+    return { ok: true };
+  };
+  receiver.client.disconnect = async () => {};
+  try {
+    await receiver.start();
+    receiver.client.emit('disconnected');
+    await nextImmediate();
+    t.mock.timers.tick(29_999);
+    await nextImmediate();
+    assert.equal(attempts, 2, 'jitter never retries before half the base delay');
+    await receiver.stop();
+    t.mock.timers.tick(600_000);
+    await nextImmediate();
+    assert.equal(attempts, 2, 'stop cancels the pending timer');
+    let rejection: unknown;
+    const restart = receiver.start().catch((error: unknown) => { rejection = error; });
+    await nextImmediate();
+    assert.match(String(rejection), /app token apps.connections.open failed: invalid_auth/);
+    await restart;
+  } finally {
+    await receiver.stop();
+  }
+});
+
+test('Slack Socket Mode stop during an auth retry disconnects a late successful start', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const logs: string[] = [];
+  const receiver = new ResilientSocketModeReceiver({
+    appToken: 'xapp-test',
+    random: () => 1,
+    runtimeLogger: { error() {}, log: (message) => logs.push(message), warn() {} },
+  });
+  let attempts = 0;
+  let disconnects = 0;
+  let finishStart!: (response: { ok: boolean }) => void;
+  receiver.client.start = async () => {
+    attempts += 1;
+    if (attempts === 2) throw socketAuthError('invalid_auth');
+    if (attempts === 3) return new Promise((resolve) => { finishStart = resolve; });
+    return { ok: true };
+  };
+  receiver.client.disconnect = async () => { disconnects += 1; };
+  await receiver.start();
+  receiver.client.emit('disconnected');
+  await nextImmediate();
+  t.mock.timers.tick(60_000);
+  await nextImmediate();
+  assert.equal(attempts, 3);
+  const stop = receiver.stop();
+  finishStart({ ok: true });
+  await stop;
+  assert.equal(disconnects, 2, 'the late connection is closed after the initial stop');
+  assert.deepEqual(logs, [], 'a stopped receiver never reports reconnected');
+});
+
+for (const [connected, code] of [[false, 'invalid_auth'], [true, 'account_inactive']] as const) {
+  test(`Slack Socket Mode still rejects ${code} ${connected ? 'after hello' : 'at initial startup'}`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const errors: string[] = [];
+    const receiver = new ResilientSocketModeReceiver({
+      appToken: 'xapp-test',
+      runtimeLogger: { error: (message) => errors.push(message), log() {}, warn() {} },
+    });
+    let attempts = 0;
+    receiver.client.start = async () => {
+      attempts += 1;
+      if (connected && attempts === 1) return { ok: true };
+      throw socketAuthError(code);
+    };
+    receiver.client.disconnect = async () => {};
+    try {
+      if (connected) {
+        await receiver.start();
+        receiver.client.emit('disconnected');
+        await nextImmediate();
+        assert.match(errors.at(-1) ?? '', /reconnect stopped: account_inactive/);
+      } else {
+        let rejection: unknown;
+        const start = receiver.start().catch((error: unknown) => { rejection = error; });
+        await nextImmediate();
+        assert.match(String(rejection), /app token apps.connections.open failed: invalid_auth/);
+        await start;
+      }
+      t.mock.timers.tick(600_000);
+      await nextImmediate();
+      assert.equal(attempts, connected ? 2 : 1);
+    } finally {
+      await receiver.stop();
+    }
+  });
+}
+
+function socketAuthError(code: string): Error {
+  return Object.assign(new Error(code), {
+    code: WebApiErrorCode.PlatformError,
+    data: { error: code, ok: false },
+  });
+}
