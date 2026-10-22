@@ -184,3 +184,37 @@ test('accepted PR link survives bookkeeping failure and reconciles without anoth
   assert.equal((await service.attach(sessionId, 'https://github.com/example/repo/pull/1')).bookkeeping, 'recorded');
   assert.equal(fake.links.length, 1);
 }));
+
+test('the status tick locks only sessions with pending work', async (t) => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  await service.receive(created(), install); const first = await firstItem(); await service.markStarted(first, first.id);
+  await service.respond(sessionId, 'response', 'Done', first.id);
+  const pending = randomUUID(); await service.receive(created(pending), install);
+  await service.tick();
+  const lock = t.mock.method(service as unknown as { sessionLock(id: string, op: () => Promise<unknown>): Promise<unknown> }, 'sessionLock');
+  await service.tick();
+  assert.deepEqual(lock.mock.calls.map((call) => call.arguments[0]), [pending]);
+}));
+
+test('a webhook drops receipts finished over 30 days ago and the operations of their sessions', async () => withTempAnimaHome(async (home) => {
+  const { service, store } = await seedLinear(home);
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString();
+  const receipt = (session: string, receivedAt: string, extra: object) => ({ sessionId: session, receivedAt, acknowledgement: 'accepted' as const, acknowledgementId: randomUUID(), itemId: randomUUID(), ...extra });
+  const operation = (session: string) => ({ id: randomUUID(), sessionId: session, kind: 'activity' as const, state: 'accepted' as const, itemIds: [], contentHash: randomUUID() });
+  const [expired, recent, active, unfinished, stopped] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  await store.update((file) => ({ ...file,
+    receipts: {
+      expired: receipt(expired, daysAgo(31), { answered: true }),
+      recent: receipt(recent, daysAgo(29), { settled: true }),
+      active: receipt(active, daysAgo(40), { answered: true, lastActivityAt: daysAgo(1) }),
+      unfinished: receipt(unfinished, daysAgo(40), {}),
+      stopped: receipt(stopped, daysAgo(31), { stopped: true }),
+    },
+    operations: { expired: operation(expired), recent: operation(recent), stopped: operation(stopped) },
+  }));
+  await service.receive(created(), install);
+  const file = await store.read();
+  assert.deepEqual(Object.keys(file.receipts).filter((key) => !key.startsWith('linear:')).sort(), ['active', 'recent', 'unfinished']);
+  assert.equal(Object.keys(file.receipts).filter((key) => key.startsWith('linear:')).length, 1);
+  assert.deepEqual(Object.keys(file.operations), ['recent']);
+}));

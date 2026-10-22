@@ -23,6 +23,23 @@ const Issue = z.object({ issue: z.object({ id: z.string(), delegate: z.object({ 
 const IssueUpdated = z.object({ issueUpdate: z.object({ success: z.literal(true) }) });
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
 
+// Linear retries a delivery for at most a few hours, so a finished receipt has done its
+// deduplication long before 30 days. Without a limit, linear.json kept every receipt
+// of every session ever seen.
+const FINISHED_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+
+/** Drops receipts finished more than 30 days ago, then operations whose session has no receipt left. */
+function withoutExpiredReceipts(receipts: Record<string, LinearReceipt>, operations: Record<string, LinearOperation>, now: number) {
+  const cutoff = now - FINISHED_RECEIPT_RETENTION_MS;
+  const kept = Object.fromEntries(Object.entries(receipts).filter(([, r]) => {
+    if (!r.answered && !r.settled && !r.stopped) return true;
+    const last = Math.max(...[r.receivedAt, r.lastActivityAt, r.lastStatusAttemptAt].map((at) => (at ? Date.parse(at) : 0)));
+    return !(last < cutoff);
+  }));
+  const sessions = new Set(Object.values(kept).map((r) => r.sessionId));
+  return { receipts: kept, operations: Object.fromEntries(Object.entries(operations).filter(([, op]) => sessions.has(op.sessionId))) };
+}
+
 export class LinearSessionService {
   // Worker hooks are best effort. Keep the actual accepted owner until its journal
   // write succeeds, even when the queue has already removed the settled input.
@@ -63,7 +80,7 @@ export class LinearSessionService {
         else { receipts[key].itemId = item.id; receipts[key].item = item; }
         if (item.issueId) receipts[key].issueId = item.issueId;
       }
-      return { ...current, receipts, lastSignedWebhookAt: receivedAt };
+      return { ...current, ...withoutExpiredReceipts(receipts, current.operations, Date.parse(receivedAt)), lastSignedWebhookAt: receivedAt };
     });
     if (stopped) { await this.stop(session.id); return; }
     await this.publish(file.receipts[key]!);
@@ -247,10 +264,16 @@ export class LinearSessionService {
     await Promise.all(Object.entries(file.receipts).map(async ([key, receipt]) => {
       if (receipt.stopSignal && !receipt.settled) { await this.stop(receipt.sessionId); return; }
       await this.publish(receipt);
-      if (receipt.acknowledgement === 'pending' || receipt.acknowledgement === 'sending') await this.acknowledge(key, installId, receipt);
+      // acknowledge() skips a stopped or answered receipt, but only after taking its lock.
+      if ((receipt.acknowledgement === 'pending' || receipt.acknowledgement === 'sending') && !receipt.stopped && !receipt.answered) {
+        await this.acknowledge(key, installId, receipt);
+      }
     }));
+    // Lock only sessions that still have work. Locking every session each second cost a
+    // file lock per session ever seen; the lock re-checks the receipts it reads.
     const current = await this.identity.store.read();
-    for (const sessionId of new Set(Object.values(current.receipts).map((r) => r.sessionId))) {
+    const busy = Object.values(current.receipts).filter((r) => r.itemId && !r.stopped && !r.answered && !r.settled);
+    for (const sessionId of new Set(busy.map((r) => r.sessionId))) {
       await this.sessionLock(sessionId, async () => {
         const snapshot = await this.identity.store.read();
         if (snapshot.installation?.id !== installId || snapshot.installation.revoked) return;
