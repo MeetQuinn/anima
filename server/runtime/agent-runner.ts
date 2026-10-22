@@ -62,6 +62,14 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     : undefined;
   const slackClient = options.botToken ? createSlackWebClient(options.botToken) : undefined;
   const reactions = processingReactionsForRuns({ feishuClient, logger: console, reactionClient });
+  let stopping = false;
+  const isIdle = async (): Promise<boolean> => {
+    const pending = await queue.list();
+    // Recheck synchronous provider work after the queue read: native re-wakes
+    // can begin without creating an Anima inbox item.
+    return !stopping && !worker.isActive() && options.agentRuntime.isProviderQuiescent?.() !== false
+      && !pending.some((item) => !item.handling.settledAt && ['queued', 'running'].includes(item.handling.status));
+  };
   const worker = new AgentRuntimeWorker(
     {
       ...options,
@@ -87,8 +95,6 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
       },
       onItemSettled: async (context) => {
         await linear.markSettled(context.item);
-        await linear.completeRun(context.item.id)
-          .catch(() => console.error('Linear run ended; its final notice could not be confirmed.'));
         // Keep the legacy lifetime diagnostic populated while the exact daily
         // ledger becomes the source for the new usage surfaces.
         await recordLifetimeTokenUsageForItem(context.agentId, context.item).catch((error: unknown) => {
@@ -96,6 +102,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
         });
         await reactions.settle(context);
       },
+      onIdle: () => linear.completeIdleRuns(isIdle),
       onItemFollowupAppended: async (activeContext, context) => {
         await linear.markStarted(context.item, activeContext.item.id);
         await addProcessingReaction({ context, logger: console, reactionClient });
@@ -149,6 +156,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
       worker.setIntakePaused(paused);
     },
     async stop(stopOptions: AgentRuntimeWorkerCloseOptions = {}) {
+      stopping = true;
       await Promise.allSettled([
         subscriber.stop(),
         worker.close(stopOptions),

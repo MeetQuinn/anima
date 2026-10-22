@@ -1,4 +1,5 @@
 import { LinearInboxItem } from '../../../shared/inbox.js';
+import { LinearActivityKind } from '../../../shared/linear.js';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { resolveAnimaHome } from '../../anima-home.js';
@@ -22,6 +23,8 @@ const Receipt = z.object({
   itemId: z.string().optional(), stopped: z.boolean().optional(), stopSignal: z.boolean().optional(),
   runItemId: z.string().optional(), settled: z.boolean().optional(),
   answered: z.boolean().optional(),
+  // A failed automatic final notice needs inspection, not another idle-poll retry.
+  idleCompletionFailed: z.boolean().optional(),
   acknowledgement: z.enum(['pending', 'sending', 'accepted', 'unknown']),
   acknowledgementId: z.string(),
   lastActivityAt: z.string().optional(),
@@ -32,6 +35,8 @@ const Operation = z.object({
   id: z.string(), sessionId: z.string(), kind: z.enum(['activity', 'link']),
   state: z.enum(['sending', 'accepted', 'unknown']), itemIds: z.array(z.string()),
   contentHash: z.string(), ownerRunId: z.string().optional(), url: z.string().optional(),
+  // Older activity operations were all terminal responses.
+  activityKind: LinearActivityKind.optional(),
 });
 export type LinearOperation = z.infer<typeof Operation>;
 const LinearFile = z.object({

@@ -20,7 +20,7 @@ export function registerLinearCommands(program: Command): void {
     console.log(JSON.stringify(await serviceFor(opts.agent).read(z.string().uuid().parse(opts.session)), null, 2));
   });
   linear.command('respond').requiredOption('--session <id>', 'Linear session UUID')
-    .option('--kind <kind>', 'response, elicitation or error', 'response').action(async (_options, command: Command) => {
+    .option('--kind <kind>', 'thought (progress), response, elicitation or error', 'response').action(async (_options, command: Command) => {
       const opts = command.optsWithGlobals();
       const sessionId = z.string().uuid().parse(opts.session);
       const kind = LinearActivityKind.parse(opts.kind);

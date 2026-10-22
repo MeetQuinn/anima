@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { chmod, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createAgentRuntime } from '../providers/factory.js';
+import { runtimeTestEnv } from './helpers/agent-runtime.js';
 import { Readable } from 'node:stream';
 import { Command } from 'commander';
 import { startRunningAgent } from '../runtime/agent-runner.js';
@@ -13,6 +17,7 @@ import { created, install, seedLinear, sessionId, prompted } from './helpers/lin
 import { makeSlackEvent } from './helpers/slack.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { LinearStore } from '../storage/schema/linear.store.js';
+import { signalWake } from '../inbox/wake-signal.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 
 for (const queued of [false, true]) test(`Linear-only runtime and registered CLI report through the existing primary session, queued=${queued}`, async (t) => withTempAnimaHome(async (home) => {
@@ -89,11 +94,7 @@ for (const shared of [false, true]) for (const outcome of ['completed', 'failed'
     const { service, fake, agentStore, store } = await seedLinear(home);
     t.mock.method(globalThis, 'fetch', fake.fetch);
     t.mock.method(console, 'log', () => {}); t.mock.method(console, 'error', () => {});
-    let injected = false, completions = 0, runs = 0, appends = 0;
-    const completeRun = LinearSessionService.prototype.completeRun;
-    t.mock.method(LinearSessionService.prototype, 'completeRun', async function (this: LinearSessionService, runItemId: string) {
-      try { return await completeRun.call(this, runItemId); } finally { completions++; }
-    });
+    let injected = false, runs = 0, appends = 0;
     const update = LinearStore.prototype.update;
     t.mock.method(LinearStore.prototype, 'update', function (this: LinearStore, op: Parameters<LinearStore['update']>[0]) {
       return update.call(this, async (file) => {
@@ -130,7 +131,7 @@ for (const shared of [false, true]) for (const outcome of ['completed', 'failed'
       await waitFor(async () => fault ? injected : Object.values((await store.read()).receipts).some((r) => r.runItemId));
       if (shared) assert.equal((await queue.list()).find((i) => i.kind === 'linear')!.handling.appendedToItemId, actualRoot);
       if (outcome === 'interrupted') await queue.requestStop(actualRoot); else release();
-      await waitFor(() => completions >= 1, { timeoutMs: 3000 });
+      await waitFor(async () => Object.values((await store.read()).receipts).every((r) => r.answered), { timeoutMs: 3000 });
       await waitFor(async () => Object.values((await store.read()).receipts).every((r) => r.settled), { timeoutMs: 3000 });
       await service.tick();
       await waitFor(async () => (await queue.list()).length === 0, { timeoutMs: 3000 });
@@ -147,3 +148,139 @@ for (const shared of [false, true]) for (const outcome of ['completed', 'failed'
     } finally { release(); await runner.stop(); }
   }));
 }
+
+
+for (const finish of ['late-reply', 'idle', 'stop'] as const) test(`Linear progress survives a background hour and closes only on ${finish}`, async (t) => withTempAnimaHome(async (home) => {
+  const { service, fake, agentStore, store } = await seedLinear(home);
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  t.mock.method(console, 'log', () => {});
+  let body = 'Started';
+  t.mock.getter(process, 'stdin', () => Readable.from([body]) as typeof process.stdin);
+  const reply = async (kind: string) => {
+    const cli = new Command(); registerLinearCommands(cli);
+    await cli.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'respond', '--session', sessionId, '--kind', kind]);
+  };
+  let background = true, runs = 0, idleChecks = 0;
+  const inputs: string[] = [];
+  const completeIdleRuns = LinearSessionService.prototype.completeIdleRuns;
+  t.mock.method(LinearSessionService.prototype, 'completeIdleRuns', async function (this: LinearSessionService, idle: () => Promise<boolean>) {
+    try { await completeIdleRuns.call(this, idle); } finally { idleChecks++; }
+  });
+  const runtime = {
+    kind: 'synthetic',
+    isProviderQuiescent: () => !background,
+    async run(input: AgentRuntimeInput) {
+      runs++; inputs.push(input.itemId);
+      if (runs === 1) await reply('thought');
+      else {
+        for (let i = 0; i < 2; i++) {
+          const cli = new Command(); registerLinearCommands(cli);
+          await cli.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'attach-pr', '--session', sessionId,
+            '--url', 'https://github.com/example/repo/pull/1']);
+        }
+        body = 'Finished'; await reply('response'); await reply('response');
+      }
+      return { text: 'Synthetic completion' };
+    },
+    async appendToActiveRun() { return { accepted: false }; },
+    async close() {},
+  };
+  const queue = new WakeQueueService('scout');
+  await service.receive(created(), install);
+  const runner = await startRunningAgent({ agentId: 'scout', agentRuntime: runtime, animaHome: home, stateDir: home,
+    homePath: (await agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
+  const checkIdle = async () => { const before = idleChecks; signalWake('scout'); await waitFor(() => idleChecks > before); };
+  try {
+    await waitFor(() => idleChecks > 0);
+    assert.equal(runs, 1);
+    assert.equal((await queue.list()).length, 0);
+    const first = Object.values((await store.read()).receipts)[0]!;
+    assert.equal(first.settled, true); assert.notEqual(first.answered, true);
+    assert.deepEqual(fake.posts.map((p) => p.content), [{ type: 'thought', body: 'Started' }]);
+    // Advance wall time, not timers or a real paid provider call.
+    const now = Date.now(); t.mock.method(Date, 'now', () => now + 60 * 60_000);
+    await checkIdle();
+    assert.equal(fake.posts.length, 1, 'Background work keeps the request open after an hour');
+    if (finish === 'stop') {
+      await service.receive(prompted(sessionId, true), install);
+      await assert.rejects(service.respond(sessionId, 'response', 'Too late', inputs[0]), /No accepted input/);
+      assert.match(fake.posts.at(-1)!.content.body, /Stopped accepting replies/);
+    } else {
+      const wake = makeSlackEvent({ eventId: 'late-followup', channelId: 'D-control', userId: 'U-control', ts: '1770000030.000001', text: 'Continue work', teamId: 'T-control' });
+      // Staged publication avoids a race with the worker while setting notBefore.
+      await queue.enqueueStaged(wake);
+      await queue.requeueDeferred(wake.id, { deferrals: 1, notBefore: new Date(Date.now() + 60_000).toISOString() });
+      background = false;
+      await checkIdle();
+      assert.equal(fake.posts.length, 1, 'A deferred queued wake also keeps the request open');
+      if (finish === 'late-reply') {
+        await queue.requeue(wake.id); await queue.publishQueued(wake.id);
+        await waitFor(() => fake.posts.some((p) => p.content.type === 'response'));
+        await waitFor(() => idleChecks >= 4);
+        assert.notEqual(inputs[0], inputs[1], 'The final reply comes from a later inbox item');
+        assert.deepEqual(fake.links, ['https://github.com/example/repo/pull/1']);
+        assert.deepEqual(fake.posts.map((p) => p.content), [{ type: 'thought', body: 'Started' }, { type: 'response', body: 'Finished' }]);
+      } else {
+        await queue.fail(wake.id); await checkIdle();
+        assert.match(fake.posts.at(-1)!.content.body, /ended without a confirmed Linear response/);
+      }
+    }
+    await checkIdle();
+    assert.equal(fake.posts.length, 2, 'No duplicate reply or fallback after closure');
+    assert.ok(Object.values((await store.read()).receipts).filter((r) => r.itemId).every((r) => r.answered));
+  } finally { await runner.stop(); }
+}));
+
+
+test('Claude native background rewake keeps Linear reply ownership across the empty-list gap', async (t) => withTempAnimaHome(async (home) => {
+  const { service, fake, agentStore, store } = await seedLinear(home);
+  t.mock.method(globalThis, 'fetch', fake.fetch); t.mock.method(console, 'log', () => {});
+  const release = join(home, 'release'), finish = join(home, 'finish');
+  const fakeClaude = join(home, 'claude');
+  await writeFile(fakeClaude, [
+    '#!/usr/bin/env node',
+    "import { existsSync } from 'node:fs';",
+    "import readline from 'node:readline';",
+    "const send = m => process.stdout.write(JSON.stringify({...m, session_id:'linear-native'}) + '\\n');",
+    "send({type:'system', subtype:'init', cwd:process.cwd(), claude_code_version:'test'});",
+    "readline.createInterface({input:process.stdin}).once('line',()=>{",
+    "send({type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'work',task_type:'mcp_task'}]});",
+    "send({type:'result',subtype:'success',result:'background work'});",
+    "let phase=0; const timer=setInterval(()=>{",
+    "if(phase===0 && existsSync(process.env.RELEASE_PATH)){phase=1;send({type:'system',subtype:'background_tasks_changed',tasks:[]});}",
+    "if(phase===1 && existsSync(process.env.FINISH_PATH)){phase=2;clearInterval(timer);",
+    "send({type:'system',subtype:'task_notification',task_id:'work',status:'completed',output_file:'',summary:'Done'});",
+    "send({type:'system',subtype:'turn_starting',mode:'task-notification',task_id:'work'});",
+    "send({type:'assistant',message:{content:[{type:'text',text:'native result'}]}});",
+    "send({type:'result',subtype:'success',result:'native result'});}",
+    "},5);});",
+  ].join('\n'));
+  await chmod(fakeClaude, 0o755);
+  const runtime = createAgentRuntime({kind:'claude-code', env:runtimeTestEnv(home,{RELEASE_PATH:release,FINISH_PATH:finish})});
+  let idleChecks = 0;
+  const completeIdleRuns = LinearSessionService.prototype.completeIdleRuns;
+  t.mock.method(LinearSessionService.prototype, 'completeIdleRuns', async function (this: LinearSessionService, idle: () => Promise<boolean>) {
+    try { await completeIdleRuns.call(this, idle); } finally { idleChecks++; }
+  });
+  await service.receive(created(), install);
+  const runner = await startRunningAgent({agentId:'scout',agentRuntime:runtime,animaHome:home,stateDir:home,
+    homePath:(await agentStore.read()).homePath!,runtimeEnv:{},runLimiter:new TeamRunLimiter(1)});
+  try {
+    await waitFor(()=>idleChecks>0);
+    assert.equal(runtime.isProviderQuiescent?.(),false);
+    assert.equal(runtime.health?.().providerWork?.backgroundTaskCount,1);
+    const receipt = Object.values((await store.read()).receipts)[0]!;
+    assert.equal(receipt.settled,true); assert.notEqual(receipt.answered,true); assert.ok(receipt.runItemId);
+    await writeFile(release,'1');
+    await waitFor(()=>runtime.health?.().providerWork?.state==='working' && !runtime.health?.().providerWork?.backgroundTaskCount);
+    assert.equal(runtime.isProviderQuiescent?.(),false,'Empty list is followed by a pending native rewake');
+    const before=idleChecks;signalWake('scout');await waitFor(()=>idleChecks>before);
+    assert.equal(fake.posts.length,0);
+    // Same original owner, as in the long-lived provider subprocess environment.
+    await service.respond(sessionId,'response','Native task finished',receipt.runItemId);
+    await writeFile(finish,'1');
+    await waitFor(()=>runtime.isProviderQuiescent?.()===true);
+    const after=idleChecks;signalWake('scout');await waitFor(()=>idleChecks>after);
+    assert.deepEqual(fake.posts.map(p=>p.content),[{type:'response',body:'Native task finished'}]);
+  } finally {await runner.stop();}
+}));
