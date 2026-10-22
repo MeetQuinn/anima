@@ -1498,8 +1498,11 @@ test('runtime host boot retries a background-interrupted notice after one failed
         await host.reconcileOnce();
         assert.equal(state.attempts, 1);
         assert.deepEqual(await backgroundNotices('wirth'), []);
-        // The evidence is gone: only the recorded intent can still deliver the notice.
-        assert.equal((await healthStore.get('wirth'))?.runtime?.processId, process.pid);
+        // Failed startup has replaced the old process snapshot; recovery must use
+        // the durable notice and wait for it before allowing an idle worker to run.
+        assert.equal((await healthStore.get('wirth'))?.runtime, undefined);
+        assert.deepEqual(host.runningAgentIds(), []);
+        assert.equal((await new BackgroundInterruptedNoticeStore({ animaHome: stateDir }).list()).length, 1);
 
         await host.reconcileOnce();
         await host.reconcileOnce();
@@ -1550,6 +1553,7 @@ test('runtime host operator restart retries a background-interrupted notice afte
         await host.reconcileOnce();
         assert.equal(state.attempts, 1);
         assert.deepEqual(stopped, ['alpha']);
+        assert.deepEqual(host.runningAgentIds(), []);
         assert.equal(await restartCommands.get('alpha'), undefined);
         assert.deepEqual(await backgroundNotices('alpha'), []);
 

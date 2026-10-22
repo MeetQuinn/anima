@@ -1,4 +1,10 @@
 import test from 'node:test';
+import { createServer } from 'node:net';
+import { RuntimeHost } from '../runtime/host.js';
+import { AgentHealthStore } from '../runtime/agent-health.store.js';
+import { AgentHealthService } from '../runtime/agent-health.service.js';
+import { WakeQueueStore } from '../storage/schema/wake-queue.store.js';
+import { ServerConfigStore } from '../storage/schema/server.store.js';
 import assert from 'node:assert/strict';
 import { chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -283,4 +289,104 @@ test('Claude native background rewake keeps Linear reply ownership across the em
     const after=idleChecks;signalWake('scout');await waitFor(()=>idleChecks>after);
     assert.deepEqual(fake.posts.map(p=>p.content),[{type:'response',body:'Native task finished'}]);
   } finally {await runner.stop();}
+}));
+
+
+for (const failedPublish of [false, true]) for (const stop of [false, true]) test(`Linear background ownership survives a host restart: queue failure=${failedPublish}, Stop=${stop}`, async (t) => withTempAnimaHome(async (home) => {
+  const { service, fake, agentStore, store } = await seedLinear(home);
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  t.mock.method(console, 'log', () => {});
+  const queue = new WakeQueueService('scout');
+  await service.receive(created(), install);
+  const original = (await queue.list())[0]!;
+  await service.markStarted(original, original.id);
+  await service.respond(sessionId, 'thought', 'Started before restart', original.id);
+  await queue.complete(original.id); await service.markSettled(original);
+  const healthStore = new AgentHealthStore({ animaHome: home });
+  await new AgentHealthService(healthStore).writeHealth({ agentId: 'scout', state: 'healthy', updatedAt: new Date().toISOString(),
+    runtime: { processId: process.pid + 100_000, providerChildExpected: true, providerWork: { state: 'background', backgroundTaskCount: 1 } } });
+  let attempts = 0, runs = 0, refused = false;
+  const insert = WakeQueueStore.prototype.insertIfAbsent;
+  t.mock.method(WakeQueueStore.prototype, 'insertIfAbsent', function (this: WakeQueueStore, item: Parameters<typeof insert>[0]) {
+    if (item.kind === 'background_interrupted' && ++attempts === 1 && failedPublish) throw new Error('Synthetic recovery queue unavailable');
+    return insert.call(this, item);
+  });
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => { finish = resolve; });
+  const runtime = { kind: 'synthetic',
+    async run(input: AgentRuntimeInput) {
+      runs++;
+      assert.match(input.prompt, /background.*interrupt/i);
+      await gate;
+      if (stop) {
+        await assert.rejects(service.respond(sessionId, 'response', 'Late after Stop', input.itemId), /No accepted input/);
+        refused = true;
+      } else {
+        await service.attach(sessionId, 'https://github.com/example/repo/pull/1', input.itemId);
+        await service.respond(sessionId, 'response', 'Recovered and finished', input.itemId);
+        await service.respond(sessionId, 'response', 'Recovered and finished', input.itemId);
+      }
+      return { text: 'Synthetic recovery complete' };
+    },
+    async appendToActiveRun() { return { accepted: false }; }, async close() { finish(); },
+  };
+  const host = new RuntimeHost({}, { animaHome: home, healthStore, logger: { log() {}, error() {} },
+    loadAgents: async () => [await agentStore.read()], validateAgent: async () => {},
+    memoryCoherenceScheduler: { async reconcile() {} },
+    startAgent: async (agent, animaHome, options) => startRunningAgent({ agentId: agent.id, animaHome,
+      agentRuntime: runtime, homePath: agent.homePath!, stateDir: home, runtimeEnv: {}, runLimiter: options.runLimiter }),
+  });
+  try {
+    await host.reconcileOnce();
+    if (failedPublish) {
+      assert.deepEqual(host.runningAgentIds(), [], 'Do not start an idle worker before its durable recovery wake is queued');
+      assert.equal(runs, 0); assert.equal(fake.posts.length, 1);
+      await host.reconcileOnce();
+    }
+    await waitFor(() => runs === 1);
+    assert.notEqual((await store.read()).receipts[original.id]!.answered, true);
+    assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0);
+    if (stop) await service.receive(prompted(sessionId, true), install);
+    finish();
+    await waitFor(async () => (await queue.list()).length === 0);
+    await host.reconcileOnce();
+    assert.equal(runs, 1);
+    assert.equal(fake.posts.filter((p) => p.content.type === 'response').length, stop ? 0 : 1);
+    assert.equal(fake.links.length, stop ? 0 : 1); assert.equal(refused, stop);
+    assert.equal(fake.posts.filter((p) => /ended without a confirmed/.test(p.content.body)).length, 0);
+  } finally { finish(); await host.stop(); await (host as unknown as { linear: { observationWrite?: Promise<void> } }).linear.observationWrite; }
+}));
+
+test('runtime host supplies active, queued and native background work to the Linear status timer', async (t) => withTempAnimaHome(async (home) => {
+  const { service, fake, agentStore, store } = await seedLinear(home);
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  const queue = new WakeQueueService('scout');
+  await service.receive(created(), install); const item = (await queue.list())[0]!;
+  await service.markStarted(item, item.id); await queue.complete(item.id); await service.markSettled(item);
+  const socket = createServer(); await new Promise<void>((resolve) => socket.listen(0, '127.0.0.1', resolve));
+  const port = (socket.address() as { port: number }).port;
+  await new Promise<void>((resolve) => socket.close(() => resolve()));
+  await new ServerConfigStore().update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
+  let state: 'background' | 'active' | 'queued' | 'idle' = 'background';
+  const host = new RuntimeHost({}, { animaHome: home, logger: { log() {}, error() {} },
+    loadAgents: async () => [await agentStore.read()], validateAgent: async () => {},
+    memoryCoherenceScheduler: { async reconcile() {} },
+    startAgent: async () => ({ hasPendingItems: async () => state === 'queued', isActive: () => state === 'active',
+      isProviderQuiescent: () => state !== 'background', async stop() {} }),
+  });
+  try {
+    await host.reconcileOnce();
+    for (const next of ['background', 'active', 'queued'] as const) {
+      state = next; const count = fake.posts.length;
+      const old = new Date(Date.now() - 11 * 60_000).toISOString();
+      await store.update((f) => ({ ...f, receipts: { ...f.receipts, [item.id]: { ...f.receipts[item.id]!, acknowledgement: 'accepted', lastActivityAt: old, lastStatusAttemptAt: old } } }));
+      await waitFor(() => fake.posts.length > count, { timeoutMs: 3000 });
+      assert.equal(fake.posts.length, count + 1);
+      assert.match(fake.posts.at(-1)!.content.body, /agent still has ongoing work/);
+    }
+    state = 'idle'; await service.respond(sessionId, 'response', 'Done', 'later-turn');
+    const count = fake.posts.length;
+    await host.reconcileOnce(); await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.equal(fake.posts.length, count);
+  } finally { await host.stop(); await (host as unknown as { linear: { observationWrite?: Promise<void> } }).linear.observationWrite; }
 }));

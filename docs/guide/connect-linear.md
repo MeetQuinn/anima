@@ -97,11 +97,16 @@ runtime reports a missing response as an error. Providers without background-wor
 reporting use the active run and queue state.
 
 After 10 minutes without a successful activity, the runtime can post a fixed queued/executing
-status for owned pending work. This is not a percentage or promise of progress. It stops on
-response, question, failure, cancellation or queue settlement. The fixed queued/executing
-status describes inbox work; it does not report background-task progress. Background work
-and queued wakes are checked for the whole agent, so unrelated work can delay a missing-response notice.
-Without another activity, Linear can display the session as stale after 30 minutes; a later
+status for owned inbox work. After the inbox run finishes, it can instead report that the agent
+still has ongoing work and the request is waiting for a final response. This checks the whole
+agent's active run, background work and queue; it does not claim progress on a particular request.
+Unrelated work can also delay a missing-response notice. Status updates stop on response, question,
+failure or cancellation. Failed status sends are attempted at most once per 10-minute interval.
+
+After a runtime restart, interrupted background work gets a recovery wake before the agent starts.
+If that wake cannot be saved, startup waits for a later retry. The agent checks earlier effects
+before continuing; native background tasks are not automatically resumed or rerun. During downtime
+or failed status sends, Linear can still display the session as stale after 30 minutes; a later
 activity recovers it. See [Linear’s interaction guidance](https://linear.app/developers/agent-best-practices).
 
 Linear's stop signal cancels pending work or requests interruption of its associated run.

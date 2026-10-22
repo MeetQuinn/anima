@@ -334,3 +334,46 @@ test('idle closure rechecks work after locking and preserves legacy terminal ope
   await service.respond(sessionId, 'response', 'Legacy accepted', first.id);
   assert.equal(fake.posts.length, 1); assert.equal((await store.read()).receipts[first.id]!.answered, true);
 }));
+
+
+test('settled requests get bounded, truthful background heartbeats across service restarts', async (t) => withTempAnimaHome(async (home) => {
+  const { service, identity, store, fake } = await seedLinear(home);
+  const first = await settledRequest(service);
+  const old = new Date(Date.now() - 11 * 60_000).toISOString();
+  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: old } } }));
+  let workChecks = 0;
+  const work = async () => { workChecks++; return true; };
+  await service.tick(work);
+  assert.equal(fake.posts.length, 1);
+  assert.equal(fake.posts[0]!.ephemeral, true);
+  assert.equal(fake.posts[0]!.content.body, 'The agent still has ongoing work. This request is waiting for a final response.');
+  assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
+  const recovered = new LinearSessionService(identity);
+  const lock = t.mock.method(recovered as unknown as { sessionLock(id: string, op: () => Promise<unknown>): Promise<unknown> }, 'sessionLock');
+  await recovered.tick(work);
+  assert.equal(fake.posts.length, 1); assert.equal(workChecks, 1); assert.equal(lock.mock.callCount(), 0);
+  // A failed activity is attempted once per interval, including after restart.
+  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: old, lastStatusAttemptAt: old } } }));
+  fake.failMutation = true;
+  await assert.rejects(recovered.tick(work));
+  const calls = fake.calls.length;
+  await assert.doesNotReject(new LinearSessionService(identity).tick(work));
+  assert.equal(fake.calls.length, calls); assert.equal(workChecks, 2);
+  // Fresh progress wins over an older attempted heartbeat.
+  fake.failMutation = false;
+  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: new Date().toISOString(), lastStatusAttemptAt: old } } }));
+  await recovered.tick(work); assert.equal(workChecks, 2);
+}));
+
+for (const ending of ['idle', 'stopped', 'answered', 'revoked'] as const) test(`a background heartbeat does not survive ${ending}`, async () => withTempAnimaHome(async (home) => {
+  const { service, store, fake } = await seedLinear(home);
+  const first = await settledRequest(service);
+  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: new Date(Date.now() - 11 * 60_000).toISOString() } } }));
+  await service.tick(async () => {
+    if (ending !== 'idle') await store.update((f) => ending === 'revoked'
+      ? { ...f, installation: { ...f.installation!, revoked: true } }
+      : { ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, [ending]: true } } });
+    return ending !== 'idle';
+  });
+  assert.equal(fake.posts.length, 0);
+}));

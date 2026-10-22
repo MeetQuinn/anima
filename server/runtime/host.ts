@@ -187,7 +187,13 @@ export class RuntimeHost {
     deps: RuntimeHostDependencies = {},
   ) {
     this.animaHome = deps.animaHome ?? resolveAnimaHome();
-    this.linear = new LinearMessageTransport(this.animaHome, deps.logger ?? console);
+    this.linear = new LinearMessageTransport(this.animaHome, deps.logger ?? console, async (agentId) => {
+      const handle = this.agents.get(agentId)?.running?.handle;
+      if (!handle) return false;
+      const pending = await handle.hasPendingItems();
+      return this.agents.get(agentId)?.running?.handle === handle
+        && (pending || isConfigReloadBlocked(handle));
+    });
     this.loadAgents = deps.loadAgents ?? loadRuntimeAgents;
     const settings = new ServerSettingsService(new ServerConfigStore(this.animaHome));
     this.loadMaxConcurrentAgentRuns = deps.loadMaxConcurrentAgentRuns
@@ -627,6 +633,10 @@ export class RuntimeHost {
     providerArgs: readonly string[],
     restartCommand?: AgentRestartCommand,
   ): Promise<void> {
+    // An idle worker can close unanswered work before the recovery wake arrives.
+    if (!this.backgroundInterruptedNoticesLoaded || [...this.pendingBackgroundInterrupted.values()].some((notice) => notice.agentId === agent.id)) {
+      throw new Error('Background recovery has not been queued; agent start will retry.');
+    }
     const record = this.managedAgent(agent, providerCommand, providerArgs);
     this.clearConfigReloadWait(record);
     await this.health.writeHealth({

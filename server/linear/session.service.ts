@@ -387,7 +387,7 @@ export class LinearSessionService {
     });
   }
 
-  async tick(): Promise<void> {
+  async tick(hasOngoingWork?: () => Promise<boolean>): Promise<void> {
     const file = await this.identity.store.read();
     if (!file.installation || file.installation.revoked) return;
     const installId = file.installation.id;
@@ -402,26 +402,33 @@ export class LinearSessionService {
     // Lock only sessions that still have work. Locking every session each second cost a
     // file lock per session ever seen; the lock re-checks the receipts it reads.
     const current = await this.identity.store.read();
-    const busy = Object.values(current.receipts).filter((r) => r.itemId && !r.stopped && !r.answered && !r.settled);
+    const eligible = (r: LinearReceipt) => r.itemId && !r.stopped && !r.answered && !r.idleCompletionFailed
+      && (!r.settled || (hasOngoingWork && r.runItemId));
+    const due = (r: LinearReceipt) => Date.now() - Math.max(...[r.lastActivityAt ?? r.receivedAt, r.lastStatusAttemptAt]
+      .map((at) => at ? Date.parse(at) : 0)) >= 10 * 60_000;
+    const busy = Object.values(current.receipts).filter((r) => eligible(r) && (!r.settled || due(r)));
     for (const sessionId of new Set(busy.map((r) => r.sessionId))) {
       await this.sessionLock(sessionId, async () => {
         const snapshot = await this.identity.store.read();
         if (snapshot.installation?.id !== installId || snapshot.installation.revoked) return;
-        const receipts = Object.values(snapshot.receipts).filter((r) => r.sessionId === sessionId && !r.stopped && !r.answered && !r.settled && r.itemId);
-        if (!receipts.length) return;
-        const last = receipts.map((r) => r.lastStatusAttemptAt ?? r.lastActivityAt ?? r.receivedAt).sort().at(-1)!;
-        if (Date.now() - Date.parse(last) < 10 * 60_000) return;
+        const receipts = Object.values(snapshot.receipts).filter((r) => r.sessionId === sessionId && eligible(r));
+        if (!receipts.length || !receipts.every(due)) return;
         const queue = wakeQueueServiceForAgent(this.agentId);
-        const items = await Promise.all(receipts.map(async (r) => {
+        const items = await Promise.all(receipts.filter((r) => !r.settled).map(async (r) => {
           const owner = await this.ownerFor(r);
           return queue.find(owner ?? r.itemId!);
         }));
         const active = items.filter((item) => item && !item.handling.settledAt && ['queued', 'running'].includes(item.handling.status));
-        if (!active.length) return;
+        const ongoing = !active.length && receipts.some((r) => r.settled) && await hasOngoingWork?.();
+        if (!active.length && !ongoing) return;
         await this.updateSessionTimes(installId, sessionId, 'lastStatusAttemptAt');
         const latest = await this.identity.store.read();
-        if (!receipts.some((r) => r.itemId && Object.values(latest.receipts).some((next) => next.itemId === r.itemId && !next.stopped && !next.answered && !next.settled))) return;
-        const body = active.some((item) => item?.handling.status === 'running') ? 'Executing this request.' : 'This request is queued.';
+        if (latest.installation?.id !== installId || latest.installation.revoked) return;
+        if (!receipts.some((r) => Object.values(latest.receipts).some((next) => next.itemId === r.itemId && eligible(next) && (ongoing || !next.settled)))) return;
+        // Provider work belongs to the shared primary session. Do not claim that
+        // an unrelated background task is making progress on this request.
+        const body = ongoing ? 'The agent still has ongoing work. This request is waiting for a final response.'
+          : active.some((item) => item?.handling.status === 'running') ? 'Executing this request.' : 'This request is queued.';
         await this.createActivity(installId, sessionId, randomUUID(), 'thought', body, true);
         await this.updateSessionTimes(installId, sessionId, 'lastActivityAt');
       });

@@ -23,7 +23,8 @@ export class LinearMessageTransport {
   private observation?: LinearListenerObservation;
   private pendingObservation?: LinearListenerObservation;
   private observationWrite?: Promise<void>;
-  constructor(private readonly animaHome: string, private readonly logger: Pick<Console, 'error'> = console) {}
+  constructor(private readonly animaHome: string, private readonly logger: Pick<Console, 'error'> = console,
+    private readonly hasOngoingWork?: (agentId: string) => Promise<boolean>) {}
 
   async reconcile(agents: AgentConfig[]): Promise<void> {
     const services = new Map<string, LinearSessionService>();
@@ -177,7 +178,7 @@ export class LinearMessageTransport {
     if (this.tickInFlight) return;
     const services = [...this.services.values()];
     this.tickInFlight = Promise.all(services.map(async (service) => {
-      try { await withAnimaHome(this.animaHome, () => service.tick()); }
+      try { await withAnimaHome(this.animaHome, () => service.tick(this.hasOngoingWork ? () => this.hasOngoingWork!(service.agentId) : undefined)); }
       catch { this.logger.error('Linear receipt/status maintenance failed; inspect the Linear connection.'); }
     })).then(() => this.flushDiagnostics()).finally(() => { this.tickInFlight = undefined; });
   }
