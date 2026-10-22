@@ -6,6 +6,10 @@ import { errorMessage } from '../ids.js';
 
 const RECONNECT_DELAY_MS = 5_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
+// A previously working app token can be rejected temporarily. Keep checking at
+// a slower pace; a genuinely revoked token stays visible in the retry warnings.
+const AUTH_RECONNECT_DELAY_MS = 60_000;
+const MAX_AUTH_RECONNECT_DELAY_MS = 300_000;
 // The SDK pings Slack every third of this timeout and drops the socket once the
 // last pong is older than the timeout. With its 5 s default, a stall of about 5 s,
 // in a proxy or in the event loop of the process that holds every agent's socket,
@@ -121,14 +125,16 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
         return { kind: 'stopped' };
       } catch (error) {
         if (this.stopping) return { kind: 'stopped' };
-        if (fatalSocketStartError(error)) {
+        const fatalError = fatalSocketStartError(error);
+        const retryAuth = this.started && fatalError === UnrecoverableSocketModeStartError.InvalidAuth;
+        if (fatalError && !retryAuth) {
           this.runtimeLogger.error(`Slack Socket Mode connection failed permanently: ${errorMessage(error)}`);
           throw error;
         }
         failures += 1;
         const delayMs = reconnectDelayWithJitter(
-          this.reconnectDelayMs,
-          this.reconnectMaxDelayMs,
+          retryAuth ? AUTH_RECONNECT_DELAY_MS : this.reconnectDelayMs,
+          retryAuth ? MAX_AUTH_RECONNECT_DELAY_MS : this.reconnectMaxDelayMs,
           failures,
           this.random,
         );
@@ -176,18 +182,20 @@ function connectFailureMessage(error: unknown, socketError: unknown): string {
   return socketError === undefined ? closed : `${closed}: ${errorMessage(socketError)}`;
 }
 
-function fatalSocketStartError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  if (!('code' in error) || error.code !== WebApiErrorCode.PlatformError) return false;
+function fatalSocketStartError(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  if (!('code' in error) || error.code !== WebApiErrorCode.PlatformError) return undefined;
   if (
     !('data' in error)
     || !error.data
     || typeof error.data !== 'object'
     || !('error' in error.data)
-  ) return false;
+  ) return undefined;
   const providerError = error.data.error;
   return typeof providerError === 'string'
-    && Object.values<string>(UnrecoverableSocketModeStartError).includes(providerError);
+    && Object.values<string>(UnrecoverableSocketModeStartError).includes(providerError)
+    ? providerError
+    : undefined;
 }
 
 function reconnectDelayWithJitter(
