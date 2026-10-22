@@ -36,6 +36,34 @@ test('line buffer matches a whole-text split however the stream is chunked', () 
   }
 });
 
+test('line buffer drops a line over the limit and keeps the lines around it', () => {
+  // Lines of exactly the limit stay, with or without a CR before the break.
+  const text = `ok\r\n${'x'.repeat(12)}\r\nexact678\r\n${'y'.repeat(9)}\nnext678\n`;
+  for (let first = 0; first <= text.length; first += 1) {
+    for (let second = first; second <= text.length; second += 1) {
+      const dropped: number[] = [];
+      const buffer = new LineBuffer({ maxLineLength: 8, onLineDropped: (length) => dropped.push(length) });
+      const lines = [
+        ...buffer.accept(text.slice(0, first)),
+        ...buffer.accept(text.slice(first, second)),
+        ...buffer.accept(text.slice(second)),
+      ];
+      assert.deepEqual(lines, ['ok', 'exact678', 'next678'], `chunks at ${first},${second}`);
+      assert.equal(dropped.length, 2, `chunks at ${first},${second}`);
+    }
+  }
+});
+
+test('line buffer skips a runaway line that arrives in many chunks', () => {
+  const dropped: number[] = [];
+  const buffer = new LineBuffer({ maxLineLength: 1024, onLineDropped: (length) => dropped.push(length) });
+  for (let index = 0; index < 100; index += 1) {
+    assert.deepEqual(buffer.accept('z'.repeat(1000)), []);
+  }
+  assert.deepEqual(buffer.accept('z\nafter\n'), ['after']);
+  assert.deepEqual(dropped, [100_001]);
+});
+
 test('line buffer takes linear time for a long line that arrives in many chunks', () => {
   // A provider CLI writes one event line of 32 Mi characters, which arrives in
   // 2048 chunks of 16 Ki characters. Re-splitting the pending text on every
