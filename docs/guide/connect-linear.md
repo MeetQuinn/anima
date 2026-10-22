@@ -30,8 +30,8 @@ public domain. Forward only the public webhook URL to the configured local liste
    Use HTTPS or a loopback HTTP address. An HTTP hostname such as `anima-host` is not a callback.
 4. Select the listener address and port. New installations default to `127.0.0.1:14185`,
    separate from the dashboard and the development docs preview on port `14175`.
-   A saved listener keeps its existing address and port; all installed agents share it.
-   Choose another free port if needed. If you expose it through a
+   Choose another free port if needed for a new listener. A saved listener keeps its
+   existing address and port; all installed agents share it. If you expose it through a
    reverse proxy, keep the raw request body and `Linear-Signature` header unchanged.
 5. Register your public webhook URL in Linear. Select **Prepare authorization**, then
    **Authorize in Linear** and approve the app. Refresh Profile after the callback completes.

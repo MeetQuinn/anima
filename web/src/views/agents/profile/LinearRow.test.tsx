@@ -46,14 +46,15 @@ it('preserves a custom listener port when preparing a new installation', async (
 });
 
 it('keeps the saved shared listener when installing another agent', async () => {
-  api.status.mockResolvedValue({ ...base, listener: { host: '127.0.0.1', port: 14175 } });
+  api.status.mockResolvedValue({ ...base, listener: { host: '::1', port: 14175 } });
   api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
   mount(); await screen.findByText('Not connected'); await openSettings();
   const port = screen.getByLabelText('Port') as HTMLInputElement;
+  expect((screen.getByLabelText('Bind address') as HTMLInputElement).value).toBe('::1');
   expect(port.value).toBe('14175'); expect(port.disabled).toBe(true);
   fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
   await screen.findByRole('link', { name: 'Authorize in Linear' });
-  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '127.0.0.1', port: 14175 } }));
+  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '::1', port: 14175 } }));
 });
 
 it('shows factual timestamp and signature errors without claiming availability', async () => {
