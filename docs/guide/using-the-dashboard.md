@@ -29,7 +29,7 @@ Tailscale IPv4 addresses:
     {
       "host": "100.101.102.103",
       "allowedPeers": ["100.104.105.106"],
-      "allowedHosts": ["mini", "100.101.102.103"]
+      "allowedHosts": ["anima-host", "100.101.102.103"]
     }
   ]
 }
@@ -46,7 +46,7 @@ single-host behavior is unchanged.
 The first listener keeps localhost and existing loopback reverse-proxy targets
 working. The second binds only the specified local IPv4 address, accepts only
 the listed socket peer IPs, and requires one of the exact Host names plus the
-port. `mini` must already resolve to the host's private address on the laptop;
+port. `anima-host` must already resolve to the host's private address on the laptop;
 this file does not configure DNS. Direct private-network access uses HTTP inside
 the encrypted private network. Forwarded-IP and forwarded-Host headers cannot
 grant access. Cross-origin browser requests are refused on restricted listeners.

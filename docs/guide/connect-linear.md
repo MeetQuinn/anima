@@ -26,7 +26,7 @@ public domain. Forward only the public webhook URL to the configured local liste
 2. Enter the app's client ID and webhook signing secret. Do not paste the secret into chat.
 3. Register the displayed **OAuth callback URL** in the Linear app. The callback uses the
    existing dashboard, not the webhook port; it must be reachable from your browser.
-   Use HTTPS or a loopback HTTP address. An HTTP hostname such as `mini` is not a callback.
+   Use HTTPS or a loopback HTTP address. An HTTP hostname such as `anima-host` is not a callback.
 4. Select the listener address and port. Loopback is the default; all installed agents
    share one listener, on a port separate from the dashboard. If you expose it through a
    reverse proxy, keep the raw request body and `Linear-Signature` header unchanged.

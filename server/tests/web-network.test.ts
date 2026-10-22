@@ -16,7 +16,7 @@ import { startWebListeners } from '../web/host.js';
 import { registerWebListenerAccess } from '../web/listener-access.js';
 import { waitFor, withTempAnimaHome } from './helpers/harness.js';
 
-const remote = { host: '100.70.30.79', allowedPeers: ['100.126.177.41'], allowedHosts: ['mini', '100.70.30.79'] };
+const remote = { host: '100.101.102.103', allowedPeers: ['100.104.105.106'], allowedHosts: ['anima-host', '100.101.102.103'] };
 const access = { ...remote, port: 4174 };
 const config = { listeners: [{ host: '127.0.0.1' }, remote] };
 
@@ -48,8 +48,8 @@ for (const [name, bad] of Object.entries({
   emptyPeers: { listeners: [{ ...remote, allowedPeers: [] }] },
   namedPeer: { listeners: [{ ...remote, allowedPeers: ['macbook'] }] },
   wildcardHost: { listeners: [{ ...remote, allowedHosts: ['*.example.com'] }] },
-  hostURL: { listeners: [{ ...remote, allowedHosts: ['http://mini'] }] },
-  hostPort: { listeners: [{ ...remote, allowedHosts: ['mini:4174'] }] },
+  hostURL: { listeners: [{ ...remote, allowedHosts: ['http://anima-host'] }] },
+  hostPort: { listeners: [{ ...remote, allowedHosts: ['anima-host:4174'] }] },
   duplicate: { listeners: [{ host: '127.0.0.1' }, { host: '127.0.0.1' }] },
   misspelledRestriction: { listeners: [{ ...remote, allowPeers: remote.allowedPeers }] },
 })) {
@@ -74,25 +74,25 @@ test('restricted socket gate runs before parsing or handlers and ignores forward
   let calls = 0;
   app.route({ method: ['GET', 'POST'], url: '/fixture', handler: async () => { calls++; return { ok: true }; } });
   try {
-    const allowed = { url: '/fixture', remoteAddress: remote.allowedPeers[0], headers: { host: 'mini:4174' } };
+    const allowed = { url: '/fixture', remoteAddress: remote.allowedPeers[0], headers: { host: 'anima-host:4174' } };
     assert.equal((await app.inject(allowed)).statusCode, 200);
-    assert.equal((await app.inject({ ...allowed, method: 'POST', payload: {}, headers: { ...allowed.headers, origin: 'http://mini:4174', 'sec-fetch-site': 'same-origin' } })).statusCode, 200);
+    assert.equal((await app.inject({ ...allowed, method: 'POST', payload: {}, headers: { ...allowed.headers, origin: 'http://anima-host:4174', 'sec-fetch-site': 'same-origin' } })).statusCode, 200);
     assert.equal(calls, 2);
     for (const options of [
-      { remoteAddress: '100.126.177.42' },
-      { remoteAddress: '127.0.0.1', headers: { host: 'mini:4174', 'x-forwarded-for': remote.allowedPeers[0]!, forwarded: `for=${remote.allowedPeers[0]}` } },
-      { headers: { host: 'evil.invalid:4174', 'x-forwarded-host': 'mini:4174' } },
-      { headers: { host: 'mini:4175' } },
-      { headers: { host: 'mini:4174', origin: 'https://evil.invalid' } },
-      { headers: { host: 'mini:4174', origin: 'http://100.70.30.79:4174' } },
-      { headers: { host: 'mini:4174', 'sec-fetch-site': 'cross-site' } },
+      { remoteAddress: '100.104.105.107' },
+      { remoteAddress: '127.0.0.1', headers: { host: 'anima-host:4174', 'x-forwarded-for': remote.allowedPeers[0]!, forwarded: `for=${remote.allowedPeers[0]}` } },
+      { headers: { host: 'evil.invalid:4174', 'x-forwarded-host': 'anima-host:4174' } },
+      { headers: { host: 'anima-host:4175' } },
+      { headers: { host: 'anima-host:4174', origin: 'https://evil.invalid' } },
+      { headers: { host: 'anima-host:4174', origin: 'http://100.101.102.103:4174' } },
+      { headers: { host: 'anima-host:4174', 'sec-fetch-site': 'cross-site' } },
     ]) {
       const response = await app.inject({ ...allowed, ...options });
       assert.equal(response.statusCode, 403);
       assert.deepEqual(response.json(), { error: 'network_access_denied' });
       assert.equal(response.headers['cache-control'], 'no-store');
     }
-    const invalidBody = await app.inject({ url: '/fixture', method: 'POST', remoteAddress: '100.126.177.42', headers: { host: 'mini:4174', 'content-type': 'application/json' }, payload: '{' });
+    const invalidBody = await app.inject({ url: '/fixture', method: 'POST', remoteAddress: '100.104.105.107', headers: { host: 'anima-host:4174', 'content-type': 'application/json' }, payload: '{' });
     assert.equal(invalidBody.statusCode, 403);
     assert.equal(calls, 2, 'no refused request reached the handler');
   } finally { await app.close(); }
@@ -104,10 +104,10 @@ test('actual web app gates health and assets, while loopback retains the existin
     const local = buildWebApp();
     try {
       for (const url of ['/', '/api/health', '/api/server-info']) {
-        const denied = await restricted.inject({ url, remoteAddress: '100.126.177.42', headers: { host: 'mini:4174' } });
+        const denied = await restricted.inject({ url, remoteAddress: '100.104.105.107', headers: { host: 'anima-host:4174' } });
         assert.equal(denied.statusCode, 403);
       }
-      const good = await restricted.inject({ url: '/api/health', remoteAddress: '100.126.177.41', headers: { host: 'mini:4174' } });
+      const good = await restricted.inject({ url: '/api/health', remoteAddress: '100.104.105.106', headers: { host: 'anima-host:4174' } });
       assert.equal(good.statusCode, 200);
       const proxy = await local.inject({ url: '/api/health', remoteAddress: '127.0.0.1', headers: { host: 'home.example.com', origin: 'https://home.example.com', 'x-forwarded-for': '203.0.113.1' } });
       assert.equal(proxy.statusCode, 200);
@@ -171,7 +171,7 @@ test('two web listener instances have independent access rules and close togethe
       assert.equal(servers.length, 2);
       const local = await fetch(`http://127.0.0.1:${portOf(servers[0]!)}/api/health`);
       assert.equal(local.status, 200);
-      const denied = await fetch(`http://127.0.0.1:${portOf(servers[1]!)}/api/health`, { headers: { host: 'mini:0', 'x-forwarded-for': '100.126.177.41' } });
+      const denied = await fetch(`http://127.0.0.1:${portOf(servers[1]!)}/api/health`, { headers: { host: 'anima-host:0', 'x-forwarded-for': '100.104.105.106' } });
       assert.equal(denied.status, 403);
     } finally { await close(servers); }
     assert.ok(servers.every((server) => !server.listening));
