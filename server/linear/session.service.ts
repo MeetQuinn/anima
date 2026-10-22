@@ -179,19 +179,39 @@ export class LinearSessionService {
   }
 
   async completeIdleRuns(isIdle: () => Promise<boolean>): Promise<void> {
-    if (!await isIdle()) return;
     const file = await this.identity.store.read();
-    const pending = Object.values(file.receipts).filter((r) => r.settled && r.runItemId && !r.answered && !r.stopped);
+    if (!file.installation || file.installation.revoked) return;
+    const installId = file.installation.id;
+    const pending = Object.values(file.receipts).filter((r) => r.settled && r.runItemId && !r.answered && !r.stopped && !r.idleCompletionFailed);
+    if (!pending.length || !await isIdle()) return;
     for (const sessionId of new Set(pending.map((r) => r.sessionId))) {
       await this.sessionLock(sessionId, async () => {
         const latest = await this.identity.store.read();
+        if (latest.installation?.id !== installId || latest.installation.revoked) return;
         const owners = new Set(Object.values(latest.receipts)
-          .filter((r) => r.sessionId === sessionId && r.settled && !r.answered && !r.stopped)
+          .filter((r) => r.sessionId === sessionId && r.settled && !r.answered && !r.stopped && !r.idleCompletionFailed)
           .flatMap((r) => r.runItemId ? [r.runItemId] : []));
         for (const owner of owners) {
-          await this.respondLocked(sessionId, 'error',
-            'The model run ended without a confirmed Linear response. Check progress before sending a new prompt.',
-            owner, 'failed', isIdle);
+          try {
+            const result = await this.respondLocked(sessionId, 'error',
+              'The model run ended without a confirmed Linear response. Check progress before sending a new prompt.',
+              owner, 'failed', isIdle);
+            if (result?.bookkeeping !== 'degraded') continue;
+          } catch { /* Record a bounded failure below; other owners/sessions still finish. */ }
+          // Do not turn an uncertain send into a query every 15 seconds. Persist the
+          // failure for this owner, including across restarts. Explicit responses
+          // still reconcile the operation before sending anything else.
+          await this.identity.store.update((current) => {
+            if (current.installation?.id !== installId || current.installation.revoked) return current;
+            const receipts = { ...current.receipts };
+            let failed = false;
+            for (const [key, r] of Object.entries(receipts)) {
+              if (r.sessionId !== sessionId || r.runItemId !== owner || r.answered || r.stopped) continue;
+              receipts[key] = { ...r, idleCompletionFailed: true }; failed = true;
+            }
+            return failed ? { ...current, receipts,
+              lastError: 'A final Linear notice could not be confirmed. Automatic retry stopped; inspect the session before responding.' } : current;
+          });
         }
       });
     }
@@ -265,8 +285,11 @@ export class LinearSessionService {
       const install = await this.knownSession(sessionId);
       const receipts = Object.values((await this.identity.store.read()).receipts);
       let authorized = false;
-      for (const receipt of receipts) if (receipt.sessionId === sessionId && receipt.itemId && !receipt.stopped
-        && (!runItemId || await this.ownerFor(receipt) === runItemId)) authorized = true;
+      for (const receipt of receipts) {
+        if (receipt.sessionId !== sessionId || !receipt.itemId || receipt.stopped) continue;
+        const owner = await this.ownerFor(receipt);
+        if (!runItemId || owner === runItemId || (receipt.settled && !receipt.answered && owner)) authorized = true;
+      }
       if (!authorized) throw new Error('No authorized input for this link.');
       const key = contentHash('link', JSON.stringify([sessionId, url]));
       const previous = (await this.identity.store.read()).operations[key];

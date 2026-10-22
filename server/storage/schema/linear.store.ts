@@ -23,6 +23,8 @@ const Receipt = z.object({
   itemId: z.string().optional(), stopped: z.boolean().optional(), stopSignal: z.boolean().optional(),
   runItemId: z.string().optional(), settled: z.boolean().optional(),
   answered: z.boolean().optional(),
+  // A failed automatic final notice needs inspection, not another idle-poll retry.
+  idleCompletionFailed: z.boolean().optional(),
   acknowledgement: z.enum(['pending', 'sending', 'accepted', 'unknown']),
   acknowledgementId: z.string(),
   lastActivityAt: z.string().optional(),

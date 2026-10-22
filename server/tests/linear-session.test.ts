@@ -14,6 +14,15 @@ import { linearQueryErrors } from './helpers/linear-schema.js';
 
 async function firstItem() { return (await new WakeQueueService('scout').list())[0]! as LinearInboxItem; }
 
+async function settledRequest(service: LinearSessionService, session = sessionId) {
+  await service.receive(created(session), install);
+  const queue = new WakeQueueService('scout');
+  const item = (await queue.list()).find((i) => i.kind === 'linear' && i.sessionId === session)!;
+  await service.markStarted(item, item.id);
+  await queue.complete(item.id); await service.markSettled(item);
+  return item;
+}
+
 test('history reads select typed activity content; the API double rejects invalid GraphQL', async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
   await service.receive(created(), install);
@@ -223,6 +232,8 @@ test('progress reconciliation keeps requests open; later turns can answer only d
   const { service, fake, store, identity } = await seedLinear(home);
   await service.receive(created(), install); const first = await firstItem();
   await assert.rejects(service.respond(sessionId, 'response', 'Not yet', 'later-run'), /No accepted input/);
+  const url = 'https://github.com/example/repo/pull/1';
+  await assert.rejects(service.attach(sessionId, url, 'later-run'), /No authorized input/);
   await service.markStarted(first, first.id);
   fake.loseResponse = true; await assert.rejects(service.respond(sessionId, 'thought', 'Started', first.id));
   fake.loseResponse = false;
@@ -230,17 +241,81 @@ test('progress reconciliation keeps requests open; later turns can answer only d
   await recovered.respond(sessionId, 'thought', 'Started', first.id);
   assert.equal(fake.posts.length, 1); assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
   await assert.rejects(recovered.respond(sessionId, 'response', 'Not this running turn', 'later-run'), /No accepted input/);
+  await assert.rejects(recovered.attach(sessionId, url, 'later-run'), /No authorized input/);
   await new WakeQueueService('scout').complete(first.id); await recovered.markSettled(first);
   // A delivered but unanswered background request must survive receipt pruning.
   await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!,
     receivedAt: new Date(Date.now() - 40 * 86400_000).toISOString(), lastActivityAt: undefined } } }));
   await recovered.receive(created(randomUUID()), install);
   assert.ok((await store.read()).receipts[first.id]);
+  await recovered.attach(sessionId, url, 'later-run'); await recovered.attach(sessionId, url, 'later-run');
+  assert.deepEqual(fake.links, [url]);
   await recovered.respond(sessionId, 'response', 'Finished', 'later-run');
   await recovered.respond(sessionId, 'response', 'Finished', 'later-run');
   await assert.rejects(recovered.respond(sessionId, 'response', 'Extra result', 'later-run'), /No accepted input/);
+  await assert.rejects(recovered.attach(sessionId, url, 'later-run'), /No authorized input/);
   assert.deepEqual(fake.posts.map((p) => p.content.type), ['thought', 'response']);
   assert.equal((await store.read()).receipts[first.id]!.answered, true);
+}));
+
+test('idle closure skips missing or revoked installations before checking work and rechecks identity under the lock', async () => withTempAnimaHome(async (home) => {
+  const { service, store, identity, fake } = await seedLinear(home);
+  const neverCheck = async () => { assert.fail('No eligible Linear receipt needs a queue read'); };
+  await service.completeIdleRuns(neverCheck);
+  await settledRequest(service);
+  await store.update((f) => ({ ...f, installation: undefined }));
+  await service.completeIdleRuns(neverCheck);
+  await store.update((f) => ({ ...f, installation: { ...install } }));
+  await identity.revoke(install.id);
+  for (let i = 0; i < 3; i++) await service.completeIdleRuns(neverCheck);
+  await store.update((f) => ({ ...f, installation: { ...install } }));
+  let checks = 0;
+  await service.completeIdleRuns(async () => { checks++; await identity.revoke(install.id); return true; });
+  assert.equal(checks, 1); assert.equal(fake.calls.length, 0);
+}));
+
+for (const failure of ['not-created', 'lost-response', 'bookkeeping'] as const) test(`idle closure records ${failure} once, continues other sessions and preserves explicit recovery`, async (t) => withTempAnimaHome(async (home) => {
+  const { service, store, identity, fake } = await seedLinear(home);
+  const first = await settledRequest(service);
+  const otherSession = randomUUID(); const other = await settledRequest(service, otherSession);
+  const graphql = identity.graphql.bind(identity);
+  t.mock.method(identity, 'graphql', async (...args: Parameters<typeof identity.graphql>) => {
+    const input = args[2].input as { agentSessionId?: string } | undefined;
+    fake.failMutation = failure === 'not-created' && input?.agentSessionId === sessionId;
+    fake.loseResponse = failure === 'lost-response' && input?.agentSessionId === sessionId;
+    return graphql(...args);
+  });
+  const update = store.update.bind(store);
+  let bookkeepingFailed = false;
+  t.mock.method(store, 'update', (op: Parameters<LinearStore['update']>[0]) => update(async (f) => {
+    const next = await op(f);
+    if (failure === 'bookkeeping' && !bookkeepingFailed && next.receipts[first.id]?.answered) {
+      bookkeepingFailed = true; throw new Error('synthetic-bookkeeping-secret');
+    }
+    return next;
+  }));
+  await service.completeIdleRuns(async () => true);
+  const file = await store.read();
+  assert.equal(file.receipts[first.id]!.idleCompletionFailed, true);
+  assert.notEqual(file.receipts[first.id]!.answered, true);
+  assert.equal(file.receipts[other.id]!.answered, true, 'One failure does not block another session');
+  assert.match(file.lastError!, /Automatic retry stopped/);
+  assert.doesNotMatch(file.lastError!, /secret/);
+  const recovered = new LinearSessionService(identity); const before = fake.calls.length;
+  for (let i = 0; i < 3; i++) await recovered.completeIdleRuns(async () => { assert.fail('Failed owners need no further idle checks'); });
+  assert.equal(fake.calls.length, before, 'No repeated confirmation queries, including after service recreation');
+  const body = 'The model run ended without a confirmed Linear response. Check progress before sending a new prompt.';
+  if (failure === 'not-created') {
+    await assert.rejects(recovered.respond(sessionId, 'response', 'Changed result', 'later-run'), /unknown/);
+    assert.equal(fake.posts.filter((p) => p.agentSessionId === sessionId).length, 0);
+  } else {
+    await recovered.respond(sessionId, 'error', body, first.id);
+    assert.equal(fake.posts.filter((p) => p.agentSessionId === sessionId).length, 1);
+    assert.equal((await store.read()).receipts[first.id]!.answered, true);
+  }
+  const freshSession = randomUUID(); const fresh = await settledRequest(recovered, freshSession);
+  await recovered.completeIdleRuns(async () => true);
+  assert.equal((await store.read()).receipts[fresh.id]!.answered, true, 'Failure suppression is scoped to its receipts');
 }));
 
 test('idle closure rechecks work after locking and preserves legacy terminal operation semantics', async () => withTempAnimaHome(async (home) => {

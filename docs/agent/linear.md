@@ -31,7 +31,7 @@ anima linear attach-pr --session <uuid> --url https://github.com/example/repo/pu
 
 The runtime sends receipt and truthful queued/executing status separately. A receipt is not
 a finished task. A response, question or error ends status updates for the inputs it owns.
-A later turn can answer a delivered request that is still unanswered, including after
+A later turn can attach a PR and answer a delivered request that is still unanswered, including after
 background work finishes. The runtime waits for provider background work and queued wakes
 to finish before reporting a missing response.
 Follow-up envelopes carry the new prompt only; read session history when you need earlier details.
@@ -42,6 +42,9 @@ Linear replies but cannot cancel provider-native background tasks; check those s
 Removal/revocation blocks writes. If a send result is
 unknown, inspect the session; do not change the wording to bypass the recorded retry boundary.
 An accepted activity with degraded local bookkeeping does not need another send.
+If the automatic missing-response notice fails, its request stays open and Anima records
+the failure without retrying it on each idle poll. Inspect the session before responding;
+an explicit response still checks any uncertain earlier send.
 
 Installation and ingress belong to the operator. See [Connect Linear](/guide/connect-linear)
 for downtime and retry limits. Linear is not Anima's reminder or task store.

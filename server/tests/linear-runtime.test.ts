@@ -172,7 +172,14 @@ for (const finish of ['late-reply', 'idle', 'stop'] as const) test(`Linear progr
     async run(input: AgentRuntimeInput) {
       runs++; inputs.push(input.itemId);
       if (runs === 1) await reply('thought');
-      else { body = 'Finished'; await reply('response'); await reply('response'); }
+      else {
+        for (let i = 0; i < 2; i++) {
+          const cli = new Command(); registerLinearCommands(cli);
+          await cli.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'attach-pr', '--session', sessionId,
+            '--url', 'https://github.com/example/repo/pull/1']);
+        }
+        body = 'Finished'; await reply('response'); await reply('response');
+      }
       return { text: 'Synthetic completion' };
     },
     async appendToActiveRun() { return { accepted: false }; },
@@ -211,6 +218,7 @@ for (const finish of ['late-reply', 'idle', 'stop'] as const) test(`Linear progr
         await waitFor(() => fake.posts.some((p) => p.content.type === 'response'));
         await waitFor(() => idleChecks >= 4);
         assert.notEqual(inputs[0], inputs[1], 'The final reply comes from a later inbox item');
+        assert.deepEqual(fake.links, ['https://github.com/example/repo/pull/1']);
         assert.deepEqual(fake.posts.map((p) => p.content), [{ type: 'thought', body: 'Started' }, { type: 'response', body: 'Finished' }]);
       } else {
         await queue.fail(wake.id); await checkIdle();
