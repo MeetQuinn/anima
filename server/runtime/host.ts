@@ -104,6 +104,7 @@ interface ManagedAgent {
 
 export interface StartAgentOptions {
   forceStopAfterMs: number;
+  hasPendingBackgroundRecovery: () => boolean;
   providerArgs: readonly string[];
   providerCommand: string;
   runLimiter: TeamRunLimiter;
@@ -187,7 +188,13 @@ export class RuntimeHost {
     deps: RuntimeHostDependencies = {},
   ) {
     this.animaHome = deps.animaHome ?? resolveAnimaHome();
-    this.linear = new LinearMessageTransport(this.animaHome, deps.logger ?? console);
+    this.linear = new LinearMessageTransport(this.animaHome, deps.logger ?? console, async (agentId) => {
+      const handle = this.agents.get(agentId)?.running?.handle;
+      if (!handle) return false;
+      const pending = await handle.hasPendingItems();
+      return this.agents.get(agentId)?.running?.handle === handle
+        && (pending || isConfigReloadBlocked(handle));
+    });
     this.loadAgents = deps.loadAgents ?? loadRuntimeAgents;
     const settings = new ServerSettingsService(new ServerConfigStore(this.animaHome));
     this.loadMaxConcurrentAgentRuns = deps.loadMaxConcurrentAgentRuns
@@ -673,6 +680,8 @@ export class RuntimeHost {
       const startAgent = await this.agentAfterSlackDisplayInfoSync(agent);
       const handle = await this.startAgent(startAgent, this.animaHome, {
         forceStopAfterMs: this.forceRestartTimeoutMs,
+        hasPendingBackgroundRecovery: () => !this.backgroundInterruptedNoticesLoaded
+          || [...this.pendingBackgroundInterrupted.values()].some((notice) => notice.agentId === agent.id),
         providerArgs,
         providerCommand,
         runLimiter: this.runLimiter,
@@ -1112,6 +1121,7 @@ async function startAgentFromConfig(
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
     runLimiter: options.runLimiter,
+    hasPendingBackgroundRecovery: options.hasPendingBackgroundRecovery,
     runtimeEnv,
     startAbortForceAfterMs: options.forceStopAfterMs,
     startTimeoutMs: options.startTimeoutMs,

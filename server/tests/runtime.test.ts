@@ -1480,6 +1480,42 @@ async function backgroundNotices(agentId: string): Promise<InboxItem[]> {
   return (await new WakeQueueService(agentId).list()).filter((item) => item.kind === 'background_interrupted');
 }
 
+for (const damaged of ['{', '{"notices":{"old":{"agentId":"alpha"}}}']) test(`unreadable recovery notices do not prevent fleet startup: ${damaged}`, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-host-bad-recovery-'));
+  try {
+    await withAnimaHome(home, async () => {
+      await mkdir(join(home, 'run'), { recursive: true });
+      const path = join(home, 'run', 'background-interrupted-notices.json');
+      await writeFile(path, damaged);
+      const checks: Array<() => boolean> = [], errors: string[] = [];
+      const host = new RuntimeHost({}, {
+        animaHome: home,
+        loadAgents: async () => ['alpha', 'beta'].map((id) => runtimeHostAgent(id, { connected: true })),
+        logger: { log() {}, error(message: string) { errors.push(message); } },
+        memoryCoherenceScheduler: { async reconcile() {} },
+        validateAgent: async () => {},
+        startAgent: async (agent, _home, options) => {
+          checks.push(options.hasPendingBackgroundRecovery);
+          return stopHandle(agent.id, []);
+        },
+      });
+      try {
+        for (let pass = 0; pass < 3; pass++) {
+          await host.reconcileOnce();
+          assert.deepEqual(host.runningAgentIds().sort(), ['alpha', 'beta']);
+          assert.equal(checks.length, 2);
+          assert.ok(checks.every((pending) => pending()));
+        }
+        assert.ok(errors.filter((line) => /background.*notice/i.test(line)).length >= 3);
+        await writeFile(path, '{"notices":{}}');
+        await host.reconcileOnce();
+        assert.ok(checks.every((pending) => !pending()));
+        assert.equal(checks.length, 2, 'Repair should not require restarting either agent');
+      } finally { await host.stop(); }
+    });
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
 test('runtime host boot retries a background-interrupted notice after one failed queue write', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-host-bg-interrupted-boot-retry-'));
   try {
@@ -1498,8 +1534,10 @@ test('runtime host boot retries a background-interrupted notice after one failed
         await host.reconcileOnce();
         assert.equal(state.attempts, 1);
         assert.deepEqual(await backgroundNotices('wirth'), []);
-        // The evidence is gone: only the recorded intent can still deliver the notice.
+        // The old process snapshot is gone; the durable notice retains recovery.
         assert.equal((await healthStore.get('wirth'))?.runtime?.processId, process.pid);
+        assert.deepEqual(host.runningAgentIds(), ['wirth']);
+        assert.equal((await new BackgroundInterruptedNoticeStore({ animaHome: stateDir }).list()).length, 1);
 
         await host.reconcileOnce();
         await host.reconcileOnce();
@@ -1550,6 +1588,7 @@ test('runtime host operator restart retries a background-interrupted notice afte
         await host.reconcileOnce();
         assert.equal(state.attempts, 1);
         assert.deepEqual(stopped, ['alpha']);
+        assert.deepEqual(host.runningAgentIds(), ['alpha']);
         assert.equal(await restartCommands.get('alpha'), undefined);
         assert.deepEqual(await backgroundNotices('alpha'), []);
 

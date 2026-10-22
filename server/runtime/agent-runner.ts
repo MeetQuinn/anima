@@ -33,6 +33,7 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
   botToken?: string;
   feishu?: FeishuConfig;
   idleTimeoutMs?: number;
+  hasPendingBackgroundRecovery?: () => boolean;
   runLimiter: TeamRunLimiter;
   runtimeEnv: Record<string, string>;
   startAbortForceAfterMs?: number;
@@ -66,8 +67,9 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
   const isIdle = async (): Promise<boolean> => {
     const pending = await queue.list();
     // Recheck synchronous provider work after the queue read: native re-wakes
-    // can begin without creating an Anima inbox item.
-    return !stopping && !worker.isActive() && options.agentRuntime.isProviderQuiescent?.() !== false
+    // can begin without creating an Anima inbox item. Recovery uncertainty defers
+    // only this automatic closure; it must not prevent ordinary work from starting.
+    return !stopping && !options.hasPendingBackgroundRecovery?.() && !worker.isActive() && options.agentRuntime.isProviderQuiescent?.() !== false
       && !pending.some((item) => !item.handling.settledAt && ['queued', 'running'].includes(item.handling.status));
   };
   const worker = new AgentRuntimeWorker(

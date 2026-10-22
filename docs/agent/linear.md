@@ -149,7 +149,10 @@ The runtime sends receipt and truthful queued/executing status separately. A rec
 a finished task. A response, question or error ends status updates for the inputs it owns.
 A later turn can attach a PR and answer a delivered request that is still unanswered, including after
 background work finishes. The runtime waits for provider background work and queued wakes
-to finish before reporting a missing response.
+to finish before reporting a missing response. While waiting, it can post a status activity every
+10 minutes saying that the agent still has ongoing work. This describes the shared agent, not
+progress on one issue. After a runtime restart, follow the background-interrupted recovery wake:
+check prior effects and pending work before continuing, and do not repeat completed actions.
 Follow-up envelopes carry the new prompt only; read session history when you need earlier details.
 
 Stop means stop the associated work. The shared run can include other accepted inputs;
