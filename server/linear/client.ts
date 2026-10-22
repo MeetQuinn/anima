@@ -29,7 +29,7 @@ export class LinearClient {
         body: JSON.stringify({ query, variables, ...(operationName ? { operationName } : {}) }), signal: AbortSignal.timeout(10_000), redirect: 'error',
       });
     } catch { throw new LinearApiError('Linear request failed. If this request included a write, inspect its result before retrying; it may have succeeded.'); }
-    if (response.status === 401) throw new LinearApiError('Linear authorization was revoked.', true);
+    if (response.status === 401) throw new LinearApiError('Linear request was unauthorized.', true);
     if (!response.ok) throw new LinearApiError('Linear request failed.');
     try {
       const body = z.object({ data: z.unknown(), errors: z.array(z.unknown()).optional() }).parse(await response.json());
