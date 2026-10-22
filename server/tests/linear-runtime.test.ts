@@ -6,7 +6,7 @@ import { AgentHealthService } from '../runtime/agent-health.service.js';
 import { WakeQueueStore } from '../storage/schema/wake-queue.store.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
 import assert from 'node:assert/strict';
-import { chmod, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createAgentRuntime } from '../providers/factory.js';
 import { runtimeTestEnv } from './helpers/agent-runtime.js';
@@ -334,12 +334,14 @@ for (const failedPublish of [false, true]) for (const stop of [false, true]) tes
     loadAgents: async () => [await agentStore.read()], validateAgent: async () => {},
     memoryCoherenceScheduler: { async reconcile() {} },
     startAgent: async (agent, animaHome, options) => startRunningAgent({ agentId: agent.id, animaHome,
-      agentRuntime: runtime, homePath: agent.homePath!, stateDir: home, runtimeEnv: {}, runLimiter: options.runLimiter }),
+      agentRuntime: runtime, homePath: agent.homePath!, stateDir: home, runtimeEnv: {}, runLimiter: options.runLimiter, hasPendingBackgroundRecovery: options.hasPendingBackgroundRecovery }),
   });
   try {
     await host.reconcileOnce();
     if (failedPublish) {
-      assert.deepEqual(host.runningAgentIds(), [], 'Do not start an idle worker before its durable recovery wake is queued');
+      assert.deepEqual(host.runningAgentIds(), ['scout'], 'Failed recovery publication must not prevent agent startup');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.notEqual((await store.read()).receipts[original.id]!.answered, true, 'An idle worker must await its durable recovery wake before closing Linear');
       assert.equal(runs, 0); assert.equal(fake.posts.length, 1);
       await host.reconcileOnce();
     }
@@ -388,5 +390,50 @@ test('runtime host supplies active, queued and native background work to the Lin
     const count = fake.posts.length;
     await host.reconcileOnce(); await new Promise((resolve) => setTimeout(resolve, 1100));
     assert.equal(fake.posts.length, count);
+  } finally { await host.stop(); await (host as unknown as { linear: { observationWrite?: Promise<void> } }).linear.observationWrite; }
+}));
+
+
+test('unreadable recovery notices postpone only Linear idle completion while ordinary work runs', async (t) => withTempAnimaHome(async (home) => {
+  const { service, fake, agentStore, store } = await seedLinear(home);
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  const queue = new WakeQueueService('scout');
+  await service.receive(created(), install);
+  const original = (await queue.list())[0]!;
+  await service.markStarted(original, original.id);
+  await queue.complete(original.id); await service.markSettled(original);
+  await mkdir(join(home, 'run'), { recursive: true });
+  const path = join(home, 'run', 'background-interrupted-notices.json');
+  await writeFile(path, '{');
+  let idleChecks = 0, runs = 0;
+  const complete = LinearSessionService.prototype.completeIdleRuns;
+  t.mock.method(LinearSessionService.prototype, 'completeIdleRuns', async function (this: LinearSessionService, isIdle: () => Promise<boolean>) {
+    await complete.call(this, isIdle); idleChecks++;
+  });
+  const host = new RuntimeHost({}, { animaHome: home, logger: { log() {}, error() {} },
+    loadAgents: async () => [await agentStore.read()], validateAgent: async () => {},
+    memoryCoherenceScheduler: { async reconcile() {} },
+    startAgent: async (agent, animaHome, options) => startRunningAgent({ agentId: agent.id, animaHome,
+      agentRuntime: { kind: 'synthetic', async run() { runs++; return { text: 'Ordinary work complete' }; },
+        async appendToActiveRun() { return { accepted: false }; }, async close() {} },
+      homePath: agent.homePath!, stateDir: home, runtimeEnv: {}, runLimiter: options.runLimiter,
+      hasPendingBackgroundRecovery: options.hasPendingBackgroundRecovery }),
+  });
+  try {
+    await host.reconcileOnce();
+    await waitFor(() => idleChecks > 0);
+    assert.deepEqual(host.runningAgentIds(), ['scout']);
+    assert.notEqual((await store.read()).receipts[original.id]!.answered, true);
+    const before = idleChecks;
+    await queue.enqueue(makeSlackEvent({ eventId: 'ordinary-during-recovery', channelId: 'D-control', userId: 'U-control',
+      ts: '1770000010.000001', text: 'Ordinary work', teamId: 'T-synthetic' }));
+    await waitFor(() => runs === 1 && idleChecks > before);
+    assert.notEqual((await store.read()).receipts[original.id]!.answered, true);
+    assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0);
+    await writeFile(path, '{"notices":{}}'); await host.reconcileOnce(); signalWake('scout');
+    await waitFor(() => fake.posts.some((p) => p.content.type === 'error'));
+    assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 1);
+    assert.equal((await store.read()).receipts[original.id]!.answered, true);
+    assert.equal(runs, 1);
   } finally { await host.stop(); await (host as unknown as { linear: { observationWrite?: Promise<void> } }).linear.observationWrite; }
 }));

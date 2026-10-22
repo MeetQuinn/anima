@@ -351,18 +351,18 @@ test('settled requests get bounded, truthful background heartbeats across servic
   const recovered = new LinearSessionService(identity);
   const lock = t.mock.method(recovered as unknown as { sessionLock(id: string, op: () => Promise<unknown>): Promise<unknown> }, 'sessionLock');
   await recovered.tick(work);
-  assert.equal(fake.posts.length, 1); assert.equal(workChecks, 1); assert.equal(lock.mock.callCount(), 0);
+  assert.equal(fake.posts.length, 1); assert.equal(workChecks, 2); assert.equal(lock.mock.callCount(), 0);
   // A failed activity is attempted once per interval, including after restart.
   await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: old, lastStatusAttemptAt: old } } }));
   fake.failMutation = true;
   await assert.rejects(recovered.tick(work));
   const calls = fake.calls.length;
   await assert.doesNotReject(new LinearSessionService(identity).tick(work));
-  assert.equal(fake.calls.length, calls); assert.equal(workChecks, 2);
+  assert.equal(fake.calls.length, calls); assert.equal(workChecks, 4);
   // Fresh progress wins over an older attempted heartbeat.
   fake.failMutation = false;
   await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: new Date().toISOString(), lastStatusAttemptAt: old } } }));
-  await recovered.tick(work); assert.equal(workChecks, 2);
+  await recovered.tick(work); assert.equal(workChecks, 4);
 }));
 
 for (const ending of ['idle', 'stopped', 'answered', 'revoked'] as const) test(`a background heartbeat does not survive ${ending}`, async () => withTempAnimaHome(async (home) => {
@@ -376,4 +376,18 @@ for (const ending of ['idle', 'stopped', 'answered', 'revoked'] as const) test(`
     return ending !== 'idle';
   });
   assert.equal(fake.posts.length, 0);
+}));
+
+
+test('idle background status checks share one work read and take no session locks', async (t) => withTempAnimaHome(async (home) => {
+  const { service, store, fake } = await seedLinear(home);
+  const first = await settledRequest(service);
+  const old = new Date(Date.now() - 11 * 60_000).toISOString();
+  await store.update((f) => ({ ...f, receipts: Object.fromEntries(Array.from({ length: 100 }, (_, i) => [
+    `settled-${i}`, { ...f.receipts[first.id]!, sessionId: randomUUID(), acknowledgement: 'accepted', lastActivityAt: old },
+  ])) }));
+  const lock = t.mock.method(service as unknown as { sessionLock(id: string, op: () => Promise<unknown>): Promise<unknown> }, 'sessionLock');
+  let checks = 0;
+  for (let tick = 0; tick < 3; tick++) await service.tick(async () => { checks++; return false; });
+  assert.equal(checks, 3); assert.equal(lock.mock.callCount(), 0); assert.equal(fake.posts.length, 0);
 }));

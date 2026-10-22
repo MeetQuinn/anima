@@ -103,8 +103,9 @@ agent's active run, background work and queue; it does not claim progress on a p
 Unrelated work can also delay a missing-response notice. Status updates stop on response, question,
 failure or cancellation. Failed status sends are attempted at most once per 10-minute interval.
 
-After a runtime restart, interrupted background work gets a recovery wake before the agent starts.
-If that wake cannot be saved, startup waits for a later retry. The agent checks earlier effects
+After a runtime restart, interrupted background work gets a durable recovery wake.
+If its records cannot be read or the wake cannot be saved, ordinary work still starts, but
+automatic Linear idle completion waits for a later retry. The agent checks earlier effects
 before continuing; native background tasks are not automatically resumed or rerun. During downtime
 or failed status sends, Linear can still display the session as stale after 30 minutes; a later
 activity recovers it. See [Linear’s interaction guidance](https://linear.app/developers/agent-best-practices).

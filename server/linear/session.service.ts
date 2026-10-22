@@ -406,7 +406,11 @@ export class LinearSessionService {
       && (!r.settled || (hasOngoingWork && r.runItemId));
     const due = (r: LinearReceipt) => Date.now() - Math.max(...[r.lastActivityAt ?? r.receivedAt, r.lastStatusAttemptAt]
       .map((at) => at ? Date.parse(at) : 0)) >= 10 * 60_000;
-    const busy = Object.values(current.receipts).filter((r) => eligible(r) && (!r.settled || due(r)));
+    const candidates = Object.values(current.receipts).filter((r) => eligible(r) && (!r.settled || due(r)));
+    // An idle/offline agent may have many unanswered sessions. Check shared work
+    // once before taking their locks, then recheck before any actual status send.
+    const sharedWork = candidates.some((r) => r.settled) && await hasOngoingWork?.();
+    const busy = candidates.filter((r) => !r.settled || sharedWork);
     for (const sessionId of new Set(busy.map((r) => r.sessionId))) {
       await this.sessionLock(sessionId, async () => {
         const snapshot = await this.identity.store.read();

@@ -104,6 +104,7 @@ interface ManagedAgent {
 
 export interface StartAgentOptions {
   forceStopAfterMs: number;
+  hasPendingBackgroundRecovery: () => boolean;
   providerArgs: readonly string[];
   providerCommand: string;
   runLimiter: TeamRunLimiter;
@@ -633,10 +634,6 @@ export class RuntimeHost {
     providerArgs: readonly string[],
     restartCommand?: AgentRestartCommand,
   ): Promise<void> {
-    // An idle worker can close unanswered work before the recovery wake arrives.
-    if (!this.backgroundInterruptedNoticesLoaded || [...this.pendingBackgroundInterrupted.values()].some((notice) => notice.agentId === agent.id)) {
-      throw new Error('Background recovery has not been queued; agent start will retry.');
-    }
     const record = this.managedAgent(agent, providerCommand, providerArgs);
     this.clearConfigReloadWait(record);
     await this.health.writeHealth({
@@ -683,6 +680,8 @@ export class RuntimeHost {
       const startAgent = await this.agentAfterSlackDisplayInfoSync(agent);
       const handle = await this.startAgent(startAgent, this.animaHome, {
         forceStopAfterMs: this.forceRestartTimeoutMs,
+        hasPendingBackgroundRecovery: () => !this.backgroundInterruptedNoticesLoaded
+          || [...this.pendingBackgroundInterrupted.values()].some((notice) => notice.agentId === agent.id),
         providerArgs,
         providerCommand,
         runLimiter: this.runLimiter,
@@ -1122,6 +1121,7 @@ async function startAgentFromConfig(
     feishu: server.feishu,
     ...(server.runtime.idleTimeoutMs !== undefined ? { idleTimeoutMs: server.runtime.idleTimeoutMs } : {}),
     runLimiter: options.runLimiter,
+    hasPendingBackgroundRecovery: options.hasPendingBackgroundRecovery,
     runtimeEnv,
     startAbortForceAfterMs: options.forceStopAfterMs,
     startTimeoutMs: options.startTimeoutMs,
