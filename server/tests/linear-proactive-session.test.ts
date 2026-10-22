@@ -56,11 +56,12 @@ class Sessions extends FakeLinear {
   }
 }
 
-test('proactive starts are idempotent, normalize reply targets and do not enqueue their created webhook', async () => withTempAnimaHome(async (home) => {
+for (const omitCreator of [false, true]) test(`proactive starts are idempotent, normalize reply targets and do not enqueue their created webhook: missing creator=${omitCreator}`, async () => withTempAnimaHome(async (home) => {
   const fake = new Sessions(), f = await seedLinear(home, fake), queue = new WakeQueueService('scout');
   const deliveries: Promise<void>[] = [];
   fake.beforeCreateReturn = async (session) => {
     const event = created(session.id); event.agentSession.creatorId = null;
+    if (omitCreator) delete event.agentSession.creatorId;
     event.agentSession.issueId = issueId; event.agentSession.commentId = rootId;
     deliveries.push(f.service.receive(event, install));
   };

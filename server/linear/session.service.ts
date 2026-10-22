@@ -109,7 +109,7 @@ export class LinearSessionService {
     const session = event.agentSession;
     // Null creators also describe automation and other agents. Only an exact
     // result from our own create operation identifies an already-running caller.
-    if (event.action === 'created' && session.creatorId === null) {
+    if (event.action === 'created' && !session.creatorId) {
       const home = this.identity.store.animaHome;
       const starts = (await this.identity.store.read()).sessionStarts;
       for (const [requestId, intent] of Object.entries(starts)) {
