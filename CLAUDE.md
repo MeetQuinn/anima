@@ -46,7 +46,7 @@ node dist/server/cli/animactl.js web                    # local Anima web app (f
 node dist/server/cli/animactl.js services <op>          # supervisor: daemon server + web for one env (install|uninstall|start|stop|restart|status|dashboard)
 ```
 
-Global flag on `animactl`: `--agent <id>` goes **before** the subcommand. The Anima home is resolved via `ANIMA_HOME` env var, then `./.anima` if present, then `~/.anima`. The Anima home holds config and state together (`config.json`, `agents/<id>/config.json`, `agents/<id>/inbox.json`, sessions, activities, reminders, subscriptions).
+Global flag on `animactl`: `--agent <id>` goes **before** the subcommand. The Anima home is resolved via `ANIMA_HOME` env var, then `./.anima` if present, then `~/.anima`. Without an explicit env or async scope, the local-vs-user-home choice is fixed on first use per working directory for the process. The Anima home holds config and state together (`config.json`, `agents/<id>/config.json`, `agents/<id>/inbox.json`, sessions, activities, reminders, subscriptions).
 
 ## Architecture
 

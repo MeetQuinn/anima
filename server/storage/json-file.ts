@@ -45,9 +45,9 @@ export function cacheDelete(path: string): void {
 export class JsonFile<T> {
   /**
    * The write root as it stood when this store was created. Captured once, on
-   * purpose: the root must not be re-derived at write time, because
-   * `resolveAnimaHome()` picks a different directory once the current one is
-   * deleted. See storage/write-root.ts.
+   * purpose: an explicit env or async scope may change after construction,
+   * but this file must keep protecting the root its path belongs to.
+   * See storage/write-root.ts.
    */
   private readonly writeRoot: string;
 
