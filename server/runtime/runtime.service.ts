@@ -61,16 +61,22 @@ export class RuntimeService {
     return { requestId: command.requestId };
   }
 
-  private async statusForAgent(agent: AgentConfig): Promise<AgentStatusSummary> {
+  private async statusForAgent(agent: AgentConfig, confirmStale = true): Promise<AgentStatusSummary> {
     const queue = wakeQueueServiceForAgent(agent.id);
     const items = await queue.list();
     const running = latestPrimaryRunningItem(items);
-    const active = running ? await findActiveRuntimeItem(agent.id, queue) : undefined;
+    const active = running ? await findActiveRuntimeItem(agent.id, { list: async () => items }) : undefined;
     const currentItemStartedAt = active?.startedAt ?? running?.handling.startedAt;
     const health = await this.healthForAgent(agent, {
       ...(active ? { active } : {}),
       ...(running ? { runningItemId: running.id } : {}),
     });
+    // Queue and health are separate files. A completion between their reads
+    // can pair an old running item with a new idle handle. Confirm once from
+    // fresh samples; a persistent mismatch must still surface as unhealthy.
+    if (confirmStale && health?.reason === 'stale_running_item') {
+      return this.statusForAgent(agent, false);
+    }
     const deferredWakes = deferredWakeSummaries(items);
     return {
       agentId: agent.id,
