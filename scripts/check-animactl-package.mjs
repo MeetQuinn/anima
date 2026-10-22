@@ -150,25 +150,30 @@ async function runPackSmoke() {
     );
     await assertSingleNodeProcess(animaBin, ["--help"], workDir, installDir);
 
-    const envStorePath = join(
+    const serverDir = join(
       installDir,
       "node_modules",
       "@meetquinn",
       "animactl",
       "dist",
       "server",
-      "env",
-      "agent-env-store.js",
     );
-    await run(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        `await import(${JSON.stringify(pathToFileURL(envStorePath).href)});`,
-      ],
-      { cwd: installDir },
-    );
+    // The token usage store loads node:sqlite, which needs no flag only from
+    // Node 22.13. CI runs this smoke on that version too.
+    for (const modulePath of [
+      join(serverDir, "env", "agent-env-store.js"),
+      join(serverDir, "storage", "schema", "agent-token-usage.store.js"),
+    ]) {
+      await run(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `await import(${JSON.stringify(pathToFileURL(modulePath).href)});`,
+        ],
+        { cwd: installDir },
+      );
+    }
 
     console.log("animactl package smoke OK");
   } finally {

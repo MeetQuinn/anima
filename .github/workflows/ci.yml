@@ -27,6 +27,25 @@ jobs:
       - run: pnpm test:fast:dist
       - run: pnpm --dir web test
 
+  # The published package supports Node 22.13+, but the repository's build and
+  # tests need Node 24. Build on 24, then install and load the packed package on
+  # the oldest supported Node.
+  node-22-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+      - run: node --version
+      - run: node scripts/check-animactl-package.mjs --pack-smoke
+
   # The runtime tier is macOS-shaped on purpose: launchd plist tests pin
   # darwin service PATHs and production runs on a Mac host.
   runtime-tests:
