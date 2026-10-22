@@ -17,6 +17,13 @@ import {
 } from '../runtime/agent-health.service.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
+import { withAnimaHome } from '../anima-home.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { setActiveRuntimeItem } from '../runtime/active-item.js';
+import { RuntimeService } from '../runtime/runtime.service.js';
+import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
+import { ingestEvent } from './helpers/inbox.js';
+import { makeSlackEvent } from './helpers/slack.js';
 
 function runtimeSnapshot(overrides: Partial<AgentRuntimeHandleSnapshot> = {}): AgentRuntimeHandleSnapshot {
   return {
@@ -590,3 +597,58 @@ test('background list and terminal evidence survive the health store independent
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+for (const transition of ['complete', 'next-item', 'none', 'worker-mismatch'] as const) {
+  test(`runtime status confirms queue/health sampling across ${transition}`, async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-health-read-race-'));
+    t.after(() => rm(stateDir, { force: true, recursive: true }));
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('milo')]);
+    await withAnimaHome(stateDir, async () => {
+      const queue = new WakeQueueService('milo');
+      const health = new AgentHealthService(new AgentHealthStore({ animaHome: stateDir }));
+      const first = await ingestEvent(makeSlackEvent({
+        channelId: 'C-demo', teamId: 'T-demo', text: 'Synthetic first item',
+        ts: '1770000000.000012', userId: 'U1',
+      }), { agentId: 'milo', stateDir });
+      await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-live' });
+      await setActiveRuntimeItem({
+        agentId: 'milo', itemId: first.item.id, workerId: 'worker-live',
+        startedAt: '2026-01-01T00:00:00.000Z',
+      });
+      const publish = (activeItemId?: string) => health.writeHealth({
+        agentId: 'milo', state: 'healthy', updatedAt: new Date().toISOString(),
+        runtime: {
+          ...(activeItemId ? { activeItemId } : {}),
+          processId: process.pid, providerChildExpected: false,
+          workerId: transition === 'worker-mismatch' ? 'worker-other' : 'worker-live',
+        },
+      });
+      await publish(first.item.id);
+      const originalGet = health.get.bind(health);
+      let reads = 0;
+      let expectedItemId: string | undefined = first.item.id;
+      t.mock.method(health, 'get', async (agentId: string) => {
+        if (++reads === 1 && (transition === 'complete' || transition === 'next-item')) {
+          await queue.complete(first.item.id);
+          expectedItemId = undefined;
+          if (transition === 'next-item') {
+            const next = await ingestEvent(makeSlackEvent({
+              channelId: 'C-demo', teamId: 'T-demo', text: 'Synthetic next item',
+              ts: '1770000000.000013', userId: 'U1',
+            }), { agentId: 'milo', stateDir });
+            await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-live' });
+            expectedItemId = next.item.id;
+          }
+          await publish(expectedItemId);
+        }
+        return originalGet(agentId);
+      });
+      const status = await new RuntimeService(health).getStatus('milo');
+      assert.equal(status.currentItemId, expectedItemId);
+      assert.equal(status.itemCount, (await queue.list()).length);
+      assert.equal(status.health?.state, transition === 'worker-mismatch' ? 'unhealthy' : 'healthy');
+      assert.equal(status.health?.reason, transition === 'worker-mismatch' ? 'stale_running_item' : undefined);
+      assert.equal(reads, transition === 'none' ? 1 : 2);
+    });
+  });
+}
