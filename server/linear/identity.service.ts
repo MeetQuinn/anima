@@ -140,9 +140,10 @@ export class LinearIdentityService {
     });
   }
 
-  async revoke(id: string): Promise<void> {
+  async revoke(id: string, rejectedAccessToken?: string): Promise<void> {
     await this.store.update(async (file) => {
-      if (file.installation?.id !== id) return file;
+      if (file.installation?.id !== id
+        || (rejectedAccessToken !== undefined && file.installation.accessToken !== rejectedAccessToken)) return file;
       await new AgentStore(this.agentId).update((agent) => {
         if (!agent.linear) return agent;
         return { ...agent, linear: { ...agent.linear, connected: false } };
@@ -204,11 +205,13 @@ export class LinearIdentityService {
   }
 
   async graphql<T>(installationId: string, query: string, variables: Record<string, unknown>, schema: z.ZodType<T>, operationName?: string): Promise<T> {
+    const { accessToken } = await this.credentials(installationId);
     try {
-      const { accessToken } = await this.credentials(installationId);
       return await this.client.graphql(accessToken, query, variables, schema, operationName);
     } catch (error) {
-      if (error instanceof LinearApiError && error.revoked) await this.revoke(installationId);
+      // A request can finish after another process has refreshed the token. Only
+      // revoke the credential it actually used; never retry a possibly applied write.
+      if (error instanceof LinearApiError && error.revoked) await this.revoke(installationId, accessToken);
       throw error;
     }
   }

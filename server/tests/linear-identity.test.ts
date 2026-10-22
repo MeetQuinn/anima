@@ -1,4 +1,6 @@
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import assert from 'node:assert/strict';
 import { stat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -74,4 +76,88 @@ test('callback state expiry and dashboard/webhook port validation reject before 
   const pending = new URL((await identity.begin(request, 'binding')).authorizationUrl).searchParams.get('state')!;
   await new LinearStore('scout').update((f) => ({ ...f, pending: { ...f.pending!, expiresAt: 0 } }));
   await assert.rejects(identity.finish(pending, 'code', 'binding')); assert.equal(fake.tokenCalls, 0);
+}));
+
+
+for (const operation of ['query', 'mutation'] as const) for (const change of ['refresh', 'reinstall', 'none'] as const) {
+  test(`a delayed Linear 401 is scoped to its credential: ${operation}, ${change}`, async () => withTempAnimaHome(async (home) => {
+    const fake = new FakeLinear(), fetch = fake.fetch;
+    let release!: () => void, entered!: () => void;
+    const responseGate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let requests = 0;
+    fake.fetch = async (url, init) => {
+      if (String(url).endsWith('/graphql')) {
+        requests++;
+        assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${install.accessToken}`);
+        entered(); await responseGate;
+        return new Response('{}', { status: 401 });
+      }
+      return fetch(url, init);
+    };
+    const { identity, store, agentStore } = await seedLinear(home, fake);
+    const pending = identity.request(`${operation}{synthetic}`, {}, z.unknown());
+    const rejected = assert.rejects(pending, /Linear request was unauthorized/);
+    try {
+      await started;
+      if (change === 'refresh') {
+        await store.update((file) => ({ ...file, installation: { ...file.installation!, expiresAt: 0 } }));
+        // Separate service/store instance models another process sharing this home.
+        const fresh = new LinearIdentityService('scout', new LinearClient(fake.fetch));
+        const credentials = await fresh.credentials();
+        assert.equal(credentials.accessToken, 'new-access-sentinel');
+      } else if (change === 'reinstall') {
+        await identity.remove();
+        await store.update((file) => ({ ...file, installation: { ...install, id: randomUUID() } }));
+        await agentStore.update((agent) => ({ ...agent, linear: { connected: true, clientId: install.clientId,
+          organizationId: install.organizationId, appUserId: install.appUserId } }));
+      }
+      const before = (await store.read()).installation!;
+      release(); await rejected;
+      const after = (await store.read()).installation!;
+      assert.equal(requests, 1, 'A rejected request, including a mutation, must not be automatically replayed');
+      if (change === 'none') {
+        assert.equal(after.revoked, true); assert.equal(after.accessToken, '');
+        assert.equal(after.refreshToken, ''); assert.equal(after.signingSecret, '');
+        assert.equal((await agentStore.read()).linear!.connected, false);
+      } else {
+        assert.deepEqual(after, before);
+        assert.equal((await agentStore.read()).linear!.connected, true);
+        assert.equal((await identity.status()).state, 'connected');
+        // A real revocation notification still closes the current installation.
+        await identity.revoke(after.id);
+        assert.equal((await store.read()).installation!.revoked, true);
+        assert.equal((await agentStore.read()).linear!.connected, false);
+      }
+    } finally { release(); await rejected; }
+  }));
+}
+
+
+test('a refresh that wins the revocation lock keeps the Linear connection', async (t) => withTempAnimaHome(async (home) => {
+  const fake = new FakeLinear(), fetch = fake.fetch;
+  let block = false, release!: () => void, entered!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  fake.fetch = async (url, init) => {
+    if (String(url).endsWith('/graphql')) { block = true; return new Response('{}', { status: 401 }); }
+    return fetch(url, init);
+  };
+  const { identity, store, agentStore } = await seedLinear(home, fake);
+  const update = store.update.bind(store);
+  t.mock.method(store, 'update', async (change: Parameters<typeof update>[0]) => {
+    if (block) { entered(); await gate; }
+    return update(change);
+  });
+  const rejected = assert.rejects(identity.request('query{synthetic}', {}, z.unknown()), /Linear request was unauthorized/);
+  try {
+    await started;
+    const independent = new LinearIdentityService('scout', new LinearClient(fake.fetch));
+    await independent.store.update((file) => ({ ...file, installation: { ...file.installation!, expiresAt: 0 } }));
+    await independent.credentials();
+    release(); await rejected;
+    assert.equal((await store.read()).installation!.accessToken, 'new-access-sentinel');
+    assert.equal((await store.read()).installation!.revoked, false);
+    assert.equal((await agentStore.read()).linear!.connected, true);
+  } finally { release(); await rejected; }
 }));
