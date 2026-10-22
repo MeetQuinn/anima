@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 
-import { withAnimaHome } from '../anima-home.js';
+import { resolveAnimaHome, withAnimaHome } from '../anima-home.js';
 import { AgentHealthStore } from '../runtime/agent-health.store.js';
 import { AgentRestartCommandStore } from '../runtime/agent-restart-command.store.js';
 import { JsonFile } from '../storage/json-file.js';
@@ -149,8 +149,8 @@ test('a sibling path sharing the home prefix is not treated as inside the home',
 // --- Milo's code-gate findings on bbcea268. Each of these passes a resurrection
 // --- through the first version of the guard. All three fail against it.
 
-// BLOCKER 2. resolveAnimaHome() selects a cwd-local `.anima` only while that
-// directory exists, and falls back to ~/.anima once it does not. A guard that
+// Historical BLOCKER 2. resolveAnimaHome() selected a cwd-local `.anima` only
+// while it existed, and fell back to ~/.anima after deletion. A guard that
 // re-derives the root on every write therefore decides, *after* teardown, that
 // the doomed path was never inside the root - and recreates it recursively.
 // Root identity has to outlive the directory it names.
@@ -170,7 +170,7 @@ test('the write root is captured at construction, not re-derived after the root 
 
     await rm(home, { force: true, recursive: true });
 
-    // Re-deriving here yields ~/.anima, which does not contain `home`.
+    // The file must continue guarding the deleted root it was created for.
     await assert.rejects(
       () => file.write({ n: 2 }),
       /does not exist/,
@@ -486,5 +486,94 @@ test('a deep descendant chain is created segment by segment under a live root', 
   await withAnimaHome(home, async () => {
     await ensureParentDirectory(join(home, 'a', 'b', 'c', 'd.json'), home);
     assert.ok(await exists(join(home, 'a', 'b', 'c')), 'every intermediate segment is created');
+  });
+});
+
+async function withDefaultHomeCwd<T>(cwd: string, body: () => Promise<T>): Promise<T> {
+  const previousCwd = process.cwd();
+  const previousEnv = process.env.ANIMA_HOME;
+  delete process.env.ANIMA_HOME;
+  process.chdir(cwd);
+  try { return await body(); }
+  finally {
+    process.chdir(previousCwd);
+    if (previousEnv === undefined) delete process.env.ANIMA_HOME;
+    else process.env.ANIMA_HOME = previousEnv;
+  }
+}
+
+test('default home identity survives deletion before existing and new stores write', async () => {
+  const cwd = await tempHome();
+  const local = join(cwd, '.anima');
+  await mkdir(local);
+  await withDefaultHomeCwd(cwd, async () => {
+    assert.equal(resolveAnimaHome(), local);
+    const store = new ServerConfigStore();
+    await store.write({ dashboardPort: 14174 });
+    await rm(local, { force: true, recursive: true });
+    // Fail before any write if the resolver escapes to the real user home.
+    assert.equal(resolveAnimaHome(), local, 'deleted default must not redirect to the user home');
+    await assert.rejects(() => store.update(current => ({ ...current, dashboardPort: 14176 })), /does not exist/);
+    await assert.rejects(() => new ServerConfigStore().write({ dashboardPort: 14177 }), /does not exist/);
+    assert.equal(await exists(local), false);
+  });
+});
+
+test('default home identity is frozen separately for each working directory', async () => {
+  const first = await tempHome();
+  const second = await tempHome();
+  await mkdir(join(first, '.anima')); await mkdir(join(second, '.anima'));
+  await withDefaultHomeCwd(first, async () => {
+    assert.equal(resolveAnimaHome(), join(first, '.anima'));
+    process.chdir(second);
+    assert.equal(resolveAnimaHome(), join(second, '.anima'));
+    await rm(join(first, '.anima'), { force: true, recursive: true });
+    await rm(join(second, '.anima'), { force: true, recursive: true });
+    process.chdir(first);
+    assert.equal(resolveAnimaHome(), join(first, '.anima'));
+    process.chdir(second);
+    assert.equal(resolveAnimaHome(), join(second, '.anima'));
+  });
+});
+
+test('default home fallback stays selected when a local directory appears later', async () => {
+  const cwd = await tempHome();
+  await withDefaultHomeCwd(cwd, async () => {
+    // Resolve only: this test never reads or writes the real user home.
+    const fallback = join(homedir(), '.anima');
+    assert.equal(resolveAnimaHome(), fallback);
+    await mkdir(join(cwd, '.anima'));
+    assert.equal(resolveAnimaHome(), fallback);
+    process.env.ANIMA_HOME = '.anima';
+    assert.equal(resolveAnimaHome(), join(cwd, '.anima'), 'explicit selection still overrides the frozen default');
+    delete process.env.ANIMA_HOME;
+    assert.equal(resolveAnimaHome(), fallback);
+  });
+});
+
+test('explicit env and concurrent scopes override but do not initialize the default choice', async () => {
+  const cwd = await tempHome();
+  const envHome = join(cwd, 'env-home');
+  const first = join(cwd, 'scope-a');
+  const second = join(cwd, 'scope-b');
+  await withDefaultHomeCwd(cwd, async () => {
+    process.env.ANIMA_HOME = 'env-home';
+    assert.equal(resolveAnimaHome(), envHome);
+    await Promise.all([first, second].map(scope => withAnimaHome(scope, async () => {
+      await Promise.resolve();
+      assert.equal(resolveAnimaHome(), scope);
+      await withAnimaHome(join(scope, 'nested'), async () => {
+        assert.equal(resolveAnimaHome(), join(scope, 'nested'));
+      });
+      assert.equal(resolveAnimaHome(), scope);
+    })));
+    assert.equal(resolveAnimaHome(), envHome);
+    delete process.env.ANIMA_HOME;
+    await mkdir(join(cwd, '.anima'));
+    assert.equal(resolveAnimaHome(), join(cwd, '.anima'), 'overrides did not freeze the earlier fallback');
+    process.env.ANIMA_HOME = 'other-env-home';
+    assert.equal(resolveAnimaHome(), join(cwd, 'other-env-home'));
+    delete process.env.ANIMA_HOME;
+    assert.equal(resolveAnimaHome(), join(cwd, '.anima'));
   });
 });

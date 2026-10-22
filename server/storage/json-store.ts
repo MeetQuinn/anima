@@ -33,8 +33,8 @@ export class JsonStore<T> {
   // Not a performance memo. A JsonFile captures its write root when it is
   // constructed, so constructing a fresh one per operation - which this class
   // used to do - re-derived the root on every read/write/update and threw the
-  // capture away. `resolveAnimaHome()` names a different directory once the
-  // current one is deleted, so the second write after a teardown protected the
+  // capture away. `resolveAnimaHome()` used to name a different directory once
+  // the current one was deleted, so the second write after a teardown protected the
   // wrong root and recursively rebuilt the home. Capturing here, at the
   // long-lived store, is what makes the root outlive the directory it names.
   //

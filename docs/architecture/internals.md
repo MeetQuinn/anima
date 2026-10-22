@@ -144,7 +144,7 @@ Runtime events, provider output/tool rows, platform tool rows, reminders, subscr
 
 ## State And Storage
 
-The selected Anima home comes from `server/anima-home.ts`: `ANIMA_HOME`, then a local `./.anima` directory if present, then `~/.anima`.
+The selected Anima home comes from `server/anima-home.ts`: `ANIMA_HOME`, then a local `./.anima` directory if present, then `~/.anima`. An explicit async home scope takes priority over the environment. The default local-vs-user-home choice is made once per working directory in each process; creating or deleting a local directory does not retarget an existing process. Explicit environment and scope selections remain dynamic.
 
 The home contains runtime config and state together:
 

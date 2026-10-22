@@ -78,7 +78,7 @@ test('agent creation accepts unicode-only display names with URL-safe generated 
   );
 });
 
-test('anima home resolution prefers ANIMA_HOME env, then local .anima, then ~/.anima', async () => {
+test('anima home resolution prefers explicit overrides and fixes each cwd default on first use', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'anima-home-resolve-test-'));
   const explicitDir = join(rootDir, 'explicit');
   const previousCwd = process.cwd();
@@ -88,14 +88,23 @@ test('anima home resolution prefers ANIMA_HOME env, then local .anima, then ~/.a
     process.chdir(rootDir);
 
     // No env var, no local .anima → default to ~/.anima
-    assert.match(resolveAnimaHome(), /\.anima$/);
+    assert.equal(resolveAnimaHome(), join(homedir(), '.anima'));
 
-    // Local .anima directory present → that wins; config.json itself is optional.
+    // A new local directory does not redirect a default already in use.
     await mkdir(join(rootDir, '.anima'));
+    assert.equal(resolveAnimaHome(), join(homedir(), '.anima'));
+
+    // Local .anima present before first use wins; config.json itself is optional.
+    const localCwd = join(rootDir, 'local');
+    await mkdir(join(localCwd, '.anima'), { recursive: true });
+    process.chdir(localCwd);
     assert.equal(resolveAnimaHome(), resolve('.anima'));
 
-    // ANIMA_HOME wins over local .anima
+    // Explicit env and async scopes still win over the fixed default.
     await writeConfig(explicitDir, [{ id: 'explicit' }]);
+    process.env.ANIMA_HOME = explicitDir;
+    assert.equal(resolveAnimaHome(), resolve(explicitDir));
+    delete process.env.ANIMA_HOME;
     await withAnimaHome(explicitDir, async () => {
       assert.equal(resolveAnimaHome(), resolve(explicitDir));
     });

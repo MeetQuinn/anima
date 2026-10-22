@@ -222,6 +222,10 @@ after changing one.
 | `ANIMA_READ_ONLY`            | off        | The web service answers `403` to routes that change state outside the Anima home: provider runtime commands, context limits and sign-in, provider CLI installs, runtime updates, service restarts, folder creation, and agent creation. |
 | `ANIMA_ALLOW_MACHINE_WRITES` | off        | Explicitly allows those routes. `ANIMA_READ_ONLY` wins when both are set. With neither set, the routes are allowed, and the web service logs a warning once per route that this default is planned to become a refusal.                 |
 
+Without an explicit `ANIMA_HOME`, the runtime chooses between the local and user home
+once per working directory in each process. Creating or deleting `.anima` later does not
+change that choice. Set `ANIMA_HOME` or start a new process to select another home.
+
 - `ANIMA_READ_ONLY` and `ANIMA_ALLOW_MACHINE_WRITES` accept `1`, `true`, `yes`, or `on` (any case).
   Any other value is off.
 - Responses from those routes carry an `x-anima-machine-writes` header (`refused`, `explicit`, or

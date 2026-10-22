@@ -61,12 +61,9 @@ export function isUnderRoot(root: string, path: string): boolean {
  * The write root currently in effect. Capture this once, when a storage object
  * is constructed, and hold it for that object's lifetime.
  *
- * `resolveAnimaHome()` picks a cwd-local `.anima` *only while that directory
- * exists*, and otherwise falls back to `~/.anima`. So the root is not a stable
- * fact about the process: delete the local home and the "root" silently becomes
- * a different directory. A guard that re-derives the root on every write will,
- * after teardown, decide the doomed path was never inside the root at all - and
- * happily recreate it. Root identity must outlive the directory it names.
+ * Default selection is stable per working directory, but explicit env/scoped
+ * homes can still change. A file must always guard the root its path belongs
+ * to, even after that root is deleted or the caller selects another home.
  */
 export function currentWriteRoot(): string {
   return resolve(resolveAnimaHome());
