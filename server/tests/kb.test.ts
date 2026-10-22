@@ -1,7 +1,7 @@
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -366,6 +366,53 @@ test('kb directory mkdir creates a subfolder and enforces the root boundary', as
     await rm(outsideDir, { force: true, recursive: true });
   }
 });
+
+for (const operation of ['browse', 'mkdir'] as const) {
+  test(`kb directory ${operation} does not disclose dangling symlink targets`, async () => {
+    const { homeDir, repoDir } = await setupKb('anima-kb-link-boundary');
+    const fixture = await realpath(await mkdtemp(join(tmpdir(), 'anima-kb-links-')));
+    const root = join(fixture, 'root');
+    const outside = join(fixture, 'outside');
+    try {
+      await mkdir(root); await mkdir(outside); await mkdir(join(root, 'inside'));
+      const target = join(outside, 'target');
+      await symlink(target, join(root, 'absolute'));
+      await symlink(relative(root, target), join(root, 'relative'));
+      await symlink('relative', join(root, 'chain'));
+      await symlink('missing', join(root, 'inside-missing'));
+      await symlink('cycle', join(root, 'cycle'));
+      await symlink('inside', join(root, 'inside-link'));
+      await withBrowseRoot(root, () => withServer(homeDir, async (base) => {
+        const request = (path: string) => operation === 'browse'
+          ? fetch(`${base}/api/filesystem/browse?path=${encodeURIComponent(path)}`)
+          : fetch(`${base}/api/filesystem/mkdir`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ parent: path, name: 'new-child' }) });
+        for (const exists of [false, true, false]) {
+          if (exists) await mkdir(target);
+          else await rm(target, { recursive: true, force: true });
+          for (const name of ['absolute', 'relative', 'chain']) {
+            for (const path of [join(root, name), join(root, name, 'missing-child')]) {
+              const response = await request(path);
+              assert.equal(response.status, 400, `${name}: outside target exists=${exists}`);
+              assert.deepEqual(await response.json(), { error: 'path outside browse root' });
+            }
+          }
+          if (exists) assert.deepEqual(await readdir(target), [], 'rejected mkdir must not write outside');
+        }
+        for (const name of ['inside-missing', 'cycle']) {
+          assert.equal((await request(join(root, name))).status, 400, 'unresolvable links use the same boundary response');
+        }
+        assert.equal((await request(join(root, 'missing'))).status, 404, 'ordinary in-root misses stay 404');
+        assert.equal((await request(join(root, 'inside-link', 'missing'))).status, 404, 'resolved in-root symlink ancestors keep ordinary misses');
+        assert.equal((await request(join(root, 'inside-link'))).status, 200, 'resolvable in-root links still work');
+        assert.deepEqual(await readdir(outside), [], 'outside tree stays unchanged');
+      }));
+    } finally {
+      await rm(homeDir, { force: true, recursive: true });
+      await rm(repoDir, { force: true, recursive: true });
+      await rm(fixture, { force: true, recursive: true });
+    }
+  });
+}
 
 test('kb directory entries expose every file, gitignored or not', async () => {
   const { homeDir, repoDir } = await setupKb('anima-kb-entries');

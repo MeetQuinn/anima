@@ -47,12 +47,16 @@ function kbBrowseRoot(): string {
 // in-root while a symlinked ancestor points outside it (root/escape ->
 // /outside, request root/escape/missing): classifying lexically would answer
 // 404 for a missing outside target but 400 for an existing one — exactly the
-// outside-root existence probe the boundary rule exists to close.
+// outside-root existence probe the boundary rule exists to close. Unresolvable
+// symlinks are rejected before climbing past them: skipping a dangling leaf
+// would classify its missing outside target as an ordinary in-root miss.
 async function nearestExistingAncestorRealpath(pathAbs: string): Promise<string | undefined> {
   let current = pathAbs;
   for (;;) {
     const currentRealpath = await realpath(current).catch(() => undefined);
     if (currentRealpath) return currentRealpath;
+    const entry = await lstat(current).catch(() => undefined);
+    if (entry?.isSymbolicLink()) return undefined;
     const parent = dirname(current);
     if (parent === current) return undefined; // even the filesystem root failed to resolve
     current = parent;
@@ -61,11 +65,12 @@ async function nearestExistingAncestorRealpath(pathAbs: string): Promise<string 
 
 // Shared missing-path classifier for browse and mkdir: 400 when the nearest
 // existing ancestor canonicalizes outside the root (boundary before
-// existence), 404 only when the miss is genuinely inside the root. Returns
+// existence), including unresolved links whose target cannot be classified.
+// Ordinary misses inside the root stay 404. Returns
 // the error (rather than throwing) so call sites keep TS narrowing via
 // `throw await ...`.
 async function missingPathError(requestedResolved: string, root: string): Promise<KbError> {
-  const ancestor = await nearestExistingAncestorRealpath(dirname(requestedResolved));
+  const ancestor = await nearestExistingAncestorRealpath(requestedResolved);
   if (!ancestor || (ancestor !== root && !ancestor.startsWith(root + sep))) {
     return new KbError(400, 'path outside browse root');
   }
@@ -99,13 +104,8 @@ export class KbRegistryService {
     const requested = rawPath?.trim() ? expandHome(rawPath.trim()) : root;
     const requestedResolved = resolve(requested);
     const requestedRealpath = await realpath(requestedResolved).catch(() => undefined);
-    // Boundary before existence for the direct and symlinked-ANCESTOR cases:
-    // a missing path whose nearest existing ancestor canonicalizes outside the
-    // root answers 400 whether or not the target exists (previously
-    // nonexistent-outside answered 404), so neither a lexical outside path nor
-    // root/escape -> /outside turns 400-vs-404 into an existence probe. Known
-    // residual (issue #675, pre-existing): a dangling LEAF symlink inside the
-    // root still answers 404 while an outside-resolving one answers 400.
+    // Classify unresolved links and canonical ancestors before reporting a
+    // missing path, so outside target existence cannot change the response.
     if (!requestedRealpath) throw await missingPathError(requestedResolved, root);
     if (requestedRealpath !== root && !requestedRealpath.startsWith(root + sep)) {
       throw new KbError(400, 'path outside browse root');
