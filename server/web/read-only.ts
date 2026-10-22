@@ -79,6 +79,14 @@ export interface GovernedRoute {
  * directory. It validates; it does not create. Over-blocking is also a failure —
  * a guard that refuses more than it can justify teaches people to route around it.
  *
+ * `POST /api/agents/:agentId/linear/install` and `DELETE /api/agents/:agentId/linear`
+ * were CONSIDERED AND EXCLUDED as well. Starting an install writes the pending OAuth
+ * record to the agent's linear.json and the listener address to ANIMA_HOME/config.json;
+ * removal clears linear.json and the agent's Linear fields. Both stay inside
+ * ANIMA_HOME. The app the OAuth authorizes is workspace state at Linear, not state of
+ * this machine, and the listener port is bound by this home's own runtime, as its
+ * dashboard port is.
+ *
  * Still the *proven* set, not the *complete* one, and the difference is the whole
  * point of the mode.
  */
