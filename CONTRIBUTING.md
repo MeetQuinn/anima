@@ -37,7 +37,7 @@ Core build and test commands:
 ```bash
 pnpm build           # full server + web production build
 pnpm build:server    # server + shared TypeScript build; skips Vite
-pnpm typecheck       # server TypeScript only
+pnpm typecheck       # alias of type-check: server + web TypeScript
 pnpm type-check      # server + web TypeScript
 pnpm lint            # web ESLint
 pnpm test            # fast default gate: server build + unit/api tests
