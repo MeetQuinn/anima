@@ -75,10 +75,13 @@ function slackMentionHeadings(input: string): string {
         first.position!.start.offset!,
         last.position!.end.offset!,
       );
+      // A literal trailing backslash must not escape the new closing delimiter.
+      const trailingSlashes = /\\+$/.exec(body)?.[0].length ?? 0;
+      const boldBody = trailingSlashes % 2 === 0 ? body : `${body}\\`;
       edits.push({
         start: node.position!.start.offset!,
         end: node.position!.end.offset!,
-        text: `**${body}**`,
+        text: `**${boldBody}**`,
       });
       return;
     }

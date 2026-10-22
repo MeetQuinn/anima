@@ -748,3 +748,18 @@ test("Slack mention heading transform leaves code and literal tokens untouched",
     assert.equal(slackMessageContentForText(input).blocks[0]?.text, input, input);
   }
 });
+
+test("Slack mention headings preserve trailing backslashes without escaping bold", () => {
+  for (let count = 1; count <= 4; count++) {
+    const body = `Review <@U123> ${"\\".repeat(count)}`;
+    const escapedBody = `Review <@U123> ${"\\".repeat(count + count % 2)}`;
+    for (const input of [`## ${body}`, `${body}\n===`, `> ## ${body}`]) {
+      const prefix = input.startsWith(">") ? "> " : "";
+      assert.equal(
+        slackMessageContentForText(input).blocks[0]?.text,
+        `${prefix}**${escapedBody}**`,
+        input,
+      );
+    }
+  }
+});
