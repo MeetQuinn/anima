@@ -431,7 +431,8 @@ test('unreadable recovery notices postpone only Linear idle completion while ord
     assert.notEqual((await store.read()).receipts[original.id]!.answered, true);
     assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0);
     await writeFile(path, '{"notices":{}}'); await host.reconcileOnce(); signalWake('scout');
-    await waitFor(() => fake.posts.some((p) => p.content.type === 'error'));
+    // The fake records the HTTP request before response handling and receipt persistence.
+    await waitFor(async () => (await store.read()).receipts[original.id]!.answered === true);
     assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 1);
     assert.equal((await store.read()).receipts[original.id]!.answered, true);
     assert.equal(runs, 1);
