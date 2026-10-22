@@ -28,7 +28,7 @@ export function LinearRow({ agentId }: { agentId: string }) {
   const [secret, setSecret] = useState('');
   const [callback, setCallback] = useState(`${window.location.origin}/api/linear/oauth/callback`);
   const [host, setHost] = useState('127.0.0.1');
-  const [port, setPort] = useState('14175');
+  const [port, setPort] = useState('14185');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [authorizationUrl, setAuthorizationUrl] = useState('');

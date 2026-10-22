@@ -28,8 +28,10 @@ public domain. Forward only the public webhook URL to the configured local liste
 3. Register the displayed **OAuth callback URL** in the Linear app. The callback uses the
    existing dashboard, not the webhook port; it must be reachable from your browser.
    Use HTTPS or a loopback HTTP address. An HTTP hostname such as `anima-host` is not a callback.
-4. Select the listener address and port. Loopback is the default; all installed agents
-   share one listener, on a port separate from the dashboard. If you expose it through a
+4. Select the listener address and port. New installations default to `127.0.0.1:14185`,
+   separate from the dashboard and the development docs preview on port `14175`.
+   Choose another free port if needed for a new listener. A saved listener keeps its
+   existing address and port; all installed agents share it. If you expose it through a
    reverse proxy, keep the raw request body and `Linear-Signature` header unchanged.
 5. Register your public webhook URL in Linear. Select **Prepare authorization**, then
    **Authorize in Linear** and approve the app. Refresh Profile after the callback completes.

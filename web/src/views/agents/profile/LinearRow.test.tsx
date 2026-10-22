@@ -24,15 +24,37 @@ beforeEach(() => { vi.clearAllMocks(); api.status.mockResolvedValue(base); api.r
 it('enters credentials once, clears secret and opens the returned app authorization link without browser storage', async () => {
   api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
   mount(); await screen.findByText('Not connected'); await openSettings();
+  expect((screen.getByLabelText('Port') as HTMLInputElement).value).toBe('14185');
   fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'client-id' } });
   const secret = screen.getByLabelText('Webhook signing secret') as HTMLInputElement;
   fireEvent.change(secret, { target: { value: 'synthetic-signing-sentinel' } });
   fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
   const link = await screen.findByRole('link', { name: 'Authorize in Linear' });
   expect(link.getAttribute('href')).toBe('https://linear.app/oauth/authorize?state=synthetic-state');
-  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ clientId: 'client-id', signingSecret: 'synthetic-signing-sentinel' }));
+  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ clientId: 'client-id', signingSecret: 'synthetic-signing-sentinel', listener: { host: '127.0.0.1', port: 14185 } }));
   await waitFor(() => expect(document.activeElement).toBe(link));
   expect(secret.value).toBe(''); expect(JSON.stringify(localStorage)).not.toContain('synthetic-signing-sentinel');
+});
+
+it('preserves a custom listener port when preparing a new installation', async () => {
+  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
+  mount(); await screen.findByText('Not connected'); await openSettings();
+  fireEvent.change(screen.getByLabelText('Port'), { target: { value: '15123' } });
+  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
+  await screen.findByRole('link', { name: 'Authorize in Linear' });
+  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '127.0.0.1', port: 15123 } }));
+});
+
+it('keeps the saved shared listener when installing another agent', async () => {
+  api.status.mockResolvedValue({ ...base, listener: { host: '::1', port: 14175 } });
+  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
+  mount(); await screen.findByText('Not connected'); await openSettings();
+  const port = screen.getByLabelText('Port') as HTMLInputElement;
+  expect((screen.getByLabelText('Bind address') as HTMLInputElement).value).toBe('::1');
+  expect(port.value).toBe('14175'); expect(port.disabled).toBe(true);
+  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
+  await screen.findByRole('link', { name: 'Authorize in Linear' });
+  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '::1', port: 14175 } }));
 });
 
 it('shows factual timestamp and signature errors without claiming availability', async () => {
