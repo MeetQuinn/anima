@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 packages/animactl/templates/
 packages/animactl/docs/
