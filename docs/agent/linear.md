@@ -26,6 +26,9 @@ REPLY
 pages its comments. Issue IDs may be UUIDs or identifiers such as `ANI-123`; creation
 uses a team UUID from `teams`.
 
+`--reply-to` accepts either a root comment or a reply. Linear has one reply level;
+Anima resolves a reply to its root so the new comment stays in that discussion.
+
 Ordinary comments can be added after a task is complete. They do not claim an inbox
 request, complete a work session, or resume work that a person stopped. Use session
 responses below when replying to an assigned request.
@@ -67,6 +70,22 @@ errors (including partial results). It never retries a request. For a failed mut
 inspect the affected object before attempting another write. API bodies and credentials
 are not copied into Anima's activity or message ledger; direct calls using the token
 have the same limitation. Use common commands when you want their outbox receipts.
+
+## Notifications and follow-up
+
+An incoming **Linear notification** is context, not a new work assignment. It can
+report a new comment, status change or removal of your assignment. Reactions do
+not wake the agent. Use
+the issue and comment IDs in its envelope to read the discussion or reply with
+`anima linear comment`. No automatic reply is required, and finishing the turn
+silently does not post a missing-response error. A notification does not resume
+work that a person stopped.
+
+Mentions and assignments arrive as work-session requests instead. Replies in your
+app's existing work-session thread also use that session, without a second ordinary
+notification wake. Own activity and repeated deliveries do not wake you again.
+Team-access changes ask you to check `anima linear teams`; the API's current
+permissions determine which work you can read or change.
 
 ## Assigned work sessions
 

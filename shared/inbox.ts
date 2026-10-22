@@ -263,9 +263,25 @@ export const LinearInboxItem = InboxItemBase.extend({
 });
 export type LinearInboxItem = z.infer<typeof LinearInboxItem>;
 
+// Ordinary app notifications carry context without creating a session reply obligation.
+export const LinearNotificationInboxItem = InboxItemBase.extend({
+  kind: z.literal('linear_notification'),
+  installationId: z.string(),
+  organizationId: z.string(),
+  notificationType: z.string(),
+  issueId: z.string().optional(),
+  issueUrl: z.string().optional(),
+  commentId: z.string().optional(),
+  parentCommentId: z.string().optional(),
+  actorName: z.string().optional(),
+  text: z.string(),
+});
+export type LinearNotificationInboxItem = z.infer<typeof LinearNotificationInboxItem>;
+
 export const InboxItemSchema = z.discriminatedUnion('kind', [
   SlackInboxItem,
   LinearInboxItem,
+  LinearNotificationInboxItem,
   FeishuInboxItem,
   FeishuOnboardingInboxItem,
   ReminderInboxItem,

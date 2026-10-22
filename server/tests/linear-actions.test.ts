@@ -25,6 +25,7 @@ class Workspace extends FakeLinear {
   auth: string[] = [];
   loseWrite = false;
   partialWrite = false;
+  replyRoot: string | null = null;
   fetch: typeof fetch = async (url, init) => {
     if (String(url).endsWith('/oauth/token')) {
       this.tokenCalls++;
@@ -43,7 +44,7 @@ class Workspace extends FakeLinear {
     let data: unknown;
     if (query.includes('issueCreate')) data = { issueCreate: { success: true, issue: { ...issue, id: variables.input.id, title: variables.input.title } } };
     else if (query.includes('commentCreate')) data = { commentCreate: { success: true, comment: { id: variables.input.id, body: variables.input.body, url: 'https://linear.app/synthetic/comment' } } };
-    else if (query.includes('comment(id:')) data = { comment: { issue: { id: issue.id, identifier: issue.identifier } } };
+    else if (query.includes('comment(id:')) data = { comment: { issue: { id: issue.id, identifier: issue.identifier }, parent: this.replyRoot ? { id: this.replyRoot } : null } };
     else if (query.includes('searchIssues')) data = { searchIssues: { nodes: [issue], pageInfo } };
     else if (query.includes('teams(')) data = { teams: { nodes: [team], pageInfo } };
     else if (query.includes('issue(id:')) data = { issue: { ...issue, description: 'Previous work', state: { name: 'Done', type: 'completed' }, team,
@@ -79,6 +80,9 @@ test('ordinary Linear actions work without receipts, preserve pagination and rep
   assert.equal(fake.requests.length, before);
   await assert.rejects(service.comment({ id: randomUUID(), issueId: 'SYN-OTHER', parentId, body: 'Wrong issue' }), /does not belong/);
   assert.equal(fake.requests.filter((r) => r.query.includes('commentCreate')).length, 1);
+  fake.replyRoot = randomUUID();
+  await service.comment({ id: randomUUID(), issueId: issue.id, parentId, body: 'Continue a reply thread' });
+  assert.equal(fake.requests.at(-1)!.variables.input.parentId, fake.replyRoot);
 }));
 
 test('a lost or partial Linear write is never retried and keeps the caller-supplied id', async () => withTempAnimaHome(async (home) => {
@@ -153,6 +157,13 @@ test('registered Linear CLI creates and comments proactively, records outbox, an
   const messages = await messageServiceForAgent('scout').list();
   assert.ok(messages.entries.some((m) => m.direction === 'out' && m.platform === 'linear' && m.text === 'An ordinary reply' && m.threadTs === parentId));
   assert.ok(messages.entries.some((m) => m.channelId === created.id && m.text === 'From Slack\n\nProactive description' && m.permalink === created.url));
+  fake.replyRoot = randomUUID();
+  stdin = 'Continue the same thread'; const reply = await run('comment', '--issue', issue.id, '--reply-to', parentId);
+  assert.equal(reply.parentId, fake.replyRoot);
+  stdin = 'Start a new discussion'; const root = await run('comment', '--issue', issue.id);
+  const threaded = (await messageServiceForAgent('scout').list()).entries;
+  assert.equal(threaded.find((m) => m.text === 'Continue the same thread')?.threadTs, fake.replyRoot);
+  assert.equal(threaded.find((m) => m.text === 'Start a new discussion')?.threadTs, root.id);
   const auditBefore = await activityServiceForAgent('scout').readAll();
   const token = await run('token'); assert.equal(token.accessToken, install.accessToken); assert.equal(token.refreshToken, undefined);
   stdin = JSON.stringify({ query: 'query First { viewer { id } } query Second { viewer { id } }', variables: {}, operationName: 'Second' });

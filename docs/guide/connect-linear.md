@@ -12,7 +12,8 @@ use the agent's existing primary provider session, alongside Slack and Feishu.
 ## Before you install
 
 You need permission to create and install an OAuth app in your Linear workspace. Create
-one app per agent. Select **Agent session events**. Linear sends app revocation events automatically;
+one app per agent. Select **Agent session events**, **Inbox notifications** and
+**Permission changes**. Linear sends app revocation events automatically;
 leave unrelated data and OAuth authorization events off. Anima
 requests `read`, `write`, `app:assignable` and `app:mentionable` with `actor=app`.
 
@@ -57,6 +58,20 @@ at most once a minute and when the listener stops. Unknown app claims are not co
 a crash can lose the unsaved batch. These are facts, not a health or availability verdict.
 
 ## Receive and report work
+
+Ordinary comments and issue changes addressed to the app arrive through
+inbox notifications. They share the agent's main context and do not require a
+delegation or an open work session. The agent can reply with an ordinary comment
+or decide that no response is needed. Mentions, assignments and replies in the
+app's work-session thread use session events; Anima filters the overlapping
+notifications, self-authored activity and delivery retries. Permission-change
+notifications tell the agent to check current team access. Reactions do not wake
+the agent.
+
+Existing installations need the two additional app webhook subscriptions enabled
+to receive these notifications. They use the same listener and signing secret;
+no new OAuth scopes are requested. Anima does not fetch missed notifications
+retroactively when subscriptions are enabled.
 
 The dedicated port runs only when at least one enabled agent has a complete installed
 identity. It rejects unsigned, incorrectly signed, stale and mismatched requests. It serves

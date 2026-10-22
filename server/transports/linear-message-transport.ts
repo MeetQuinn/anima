@@ -4,6 +4,7 @@ import type { AgentConfig } from '../../shared/agent-config.js';
 import type { LinearListenerConfig, LinearListenerFailure } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSessionService } from '../linear/session.service.js';
+import { LinearNotificationService } from '../inbox/linear-notification.service.js';
 import { signatureMatches, verifyLinearWebhook } from '../linear/webhook.js';
 import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
 import { LinearStore } from '../storage/schema/linear.store.js';
@@ -90,7 +91,9 @@ export class LinearMessageTransport {
         let deadline: NodeJS.Timeout | undefined;
         try {
           await Promise.race([
-            service.receive(event, install),
+            event.type === 'AppUserNotification' || event.type === 'PermissionChange'
+              ? new LinearNotificationService(service.identity).receive(event, install)
+              : service.receive(event, install),
             new Promise<never>((_resolve, reject) => { deadline = setTimeout(() => reject(new Error('Persistence deadline')), 4000); }),
           ]);
         } catch { return reply.code(503).send({ error: 'Linear intake could not persist the request; retry delivery' }); }

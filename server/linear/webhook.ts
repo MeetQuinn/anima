@@ -14,11 +14,22 @@ const Prompt = z.object({
   id: Id, agentSessionId: Id, signal: z.string().nullish(), body: z.string().max(100_000).optional(),
   content: z.object({ type: z.literal('prompt'), body: z.string().max(100_000) }).optional(),
 });
+const Notification = z.object({
+  id: Id, type: z.string().min(1), userId: Id, createdAt: z.string(), updatedAt: z.string(),
+  actorId: Id.nullish(), actor: z.object({ id: Id, name: z.string() }).nullish(), archivedAt: z.string().nullish(),
+  issueId: Id.nullish(), issue: z.object({ id: Id, identifier: z.string(), title: z.string(), url: z.string().url() }).nullish(),
+  commentId: Id.nullish(), comment: z.object({ id: Id, body: z.string().max(100_000), userId: Id.nullish(), issueId: Id.nullish() }).nullish(),
+  parentCommentId: Id.nullish(),
+});
 export const LinearWebhook = z.discriminatedUnion('type', [
   Common.extend({ type: z.literal('AgentSessionEvent'), action: z.enum(['created', 'prompted']),
     appUserId: Id, agentSession: Session, promptContext: z.string().max(200_000).nullish(), agentActivity: Prompt.optional(), guidance: z.array(z.object({ body: z.string().max(50_000) })).max(100).nullish(),
   }),
   Common.extend({ type: z.literal('OAuthApp'), action: z.literal('revoked') }),
+  Common.extend({ type: z.literal('AppUserNotification'), action: z.string().min(1), appUserId: Id, notification: Notification }),
+  Common.extend({ type: z.literal('PermissionChange'), action: z.literal('teamAccessChanged'), appUserId: Id,
+    createdAt: z.string().datetime(), canAccessAllPublicTeams: z.boolean(), addedTeamIds: z.array(Id).max(10_000), removedTeamIds: z.array(Id).max(10_000),
+  }),
 ]);
 export type LinearWebhook = z.infer<typeof LinearWebhook>;
 
@@ -42,6 +53,21 @@ export function verifyLinearWebhook(raw: Buffer, signature: string | undefined, 
     if (event.action === 'prompted') {
       if (!event.agentActivity || event.agentActivity.agentSessionId !== event.agentSession.id) throw new Error('Missing Linear prompt');
       if (event.agentActivity.signal !== 'stop' && !(event.agentActivity.body ?? event.agentActivity.content?.body)?.trim()) throw new Error('Empty Linear prompt');
+    }
+  }
+  if (event.type === 'AppUserNotification' || event.type === 'PermissionChange') {
+    if (event.appUserId !== installation.appUserId) throw new Error('Linear notification identity mismatch');
+  }
+  if (event.type === 'AppUserNotification') {
+    const n = event.notification;
+    if (n.userId !== installation.appUserId || n.type !== event.action
+      || (n.actor && n.actorId !== n.actor.id)
+      || (n.issue && n.issueId !== n.issue.id)
+      || (n.comment && (n.commentId !== n.comment.id || (n.comment.issueId && n.issueId !== n.comment.issueId)))) {
+      throw new Error('Linear notification resource mismatch');
+    }
+    if (['issueNewComment', 'issueCommentMention', 'issueCommentReaction'].includes(event.action) && (!n.comment || !n.issue)) {
+      throw new Error('Missing Linear comment notification context');
     }
   }
   return event;

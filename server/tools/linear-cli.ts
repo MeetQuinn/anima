@@ -85,7 +85,7 @@ export function registerLinearCommands(program: Command): void {
         onCompletedAuditError: () => console.error('Linear accepted the comment; local audit is degraded. Do not resend.'),
         op: async () => {
           const comment = await new LinearIssueService(identity).comment(input);
-          return { result: comment, completedPayload: { messageId: comment.id, permalink: comment.url } };
+          return { result: comment, completedPayload: { messageId: comment.id, permalink: comment.url, threadTs: comment.parentId ?? comment.id } };
         },
       });
       console.log(JSON.stringify(result, null, 2));

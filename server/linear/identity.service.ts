@@ -186,7 +186,7 @@ export class LinearIdentityService {
     };
   }
 
-  private async authorizedInstallation(installationId?: string): Promise<LinearInstallation> {
+  async authorizedInstallation(installationId?: string): Promise<LinearInstallation> {
     const agent = await new AgentStore(this.agentId).read();
     if (!agent.enabled || !agent.linear?.connected) throw new Error('Linear agent is disabled or disconnected.');
     const { installation } = await this.store.read();

@@ -20,6 +20,7 @@ export async function runtimeContextForItemId(
 ): Promise<RuntimeItemContext> {
   const item = await queue.find(itemId);
   if (!item) throw new Error(`Wake queue item ${itemId} was not found.`);
+  if (item.kind === 'linear_notification') await new LinearIdentityService(config.agentId).authorizedInstallation(item.installationId);
   if (item.kind === 'linear') await new LinearSessionService(new LinearIdentityService(config.agentId)).assertRunnable(item);
   return {
     agentId: config.agentId,
