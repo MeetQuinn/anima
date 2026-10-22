@@ -343,6 +343,11 @@ test('#524 the governed table matches on method and the matched route pattern', 
   // is a failure too — a guard that refuses more than it can justify gets routed around.
   assert.equal(governedRouteFor('POST', '/api/agents/:agentId/home'), undefined);
   assert.equal(governedRouteFor('GET', '/api/agents'), undefined);
+
+  // CONSIDERED AND EXCLUDED: starting and removing a Linear install write only the
+  // agent's linear.json, its agent config and ANIMA_HOME/config.json.
+  assert.equal(governedRouteFor('POST', '/api/agents/:agentId/linear/install'), undefined);
+  assert.equal(governedRouteFor('DELETE', '/api/agents/:agentId/linear'), undefined);
 });
 
 test('#524 read-only ON: encoded and query-string forms of a governed path are refused too', async () => {
