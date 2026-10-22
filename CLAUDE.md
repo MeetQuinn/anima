@@ -11,12 +11,16 @@ Anima is a local runtime that turns a code-agent runtime (Codex, Claude Code, Ki
 ```bash
 pnpm build           # clear dist/server + dist/shared, tsc, build UI and the animactl package
 pnpm build:server    # rebuild dist/server (including tests) and dist/shared; skips Vite
-pnpm typecheck       # tsc --noEmit, no UI
+pnpm typecheck       # alias of type-check: server + web TypeScript
 pnpm test            # default fast gate: server/web build + unit/api tests
 pnpm test:fast:dist  # run the fast gate against an already-built dist
 pnpm test:runtime    # heavier CLI/provider/service subprocess integration tests
 pnpm test:all        # full build + every compiled test file
 ```
+
+Both type-check spellings run web `tsc -b --force`, which writes build metadata under
+`web/node_modules/.tmp`. Use checkout-local dependencies, not a `node_modules` symlink
+to another checkout. For server-only checking, use `pnpm --dir server type-check`.
 
 Run a single test (after `pnpm build:server`):
 
