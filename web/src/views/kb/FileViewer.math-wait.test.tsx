@@ -57,8 +57,10 @@ it('seeds the contents rail highlight once a math body appears', async () => {
   expect(container.querySelector('nav a.text-accent')).toBeNull();
 
   await waitFor(() => expect(container.querySelector('.katex')).not.toBeNull());
-  act(() => {
+  // KaTeX's commit can show up before React runs the effect that schedules the
+  // seed frame (CI under load), so keep advancing frames until the seed lands.
+  await waitFor(() => {
     vi.advanceTimersToNextFrame();
+    expect(container.querySelector('nav a.text-accent')).not.toBeNull();
   });
-  expect(container.querySelector('nav a.text-accent')).not.toBeNull();
 });
