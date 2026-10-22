@@ -46,7 +46,7 @@ const LinearFile = z.object({
   operations: z.record(z.string(), Operation).default({}),
   // Linear assigns session IDs. An intent without a result must not be resent.
   sessionStarts: z.record(z.string(), z.object({
-    target: z.enum(['issue', 'comment']), targetId: z.string(), createdAt: z.string(),
+    target: z.enum(['issue', 'comment']), targetId: z.string(), rootId: z.string().uuid(), createdAt: z.string(),
     sessionId: z.string().optional(),
   })).default({}),
   lastSignedWebhookAt: z.string().optional(),

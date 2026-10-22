@@ -5,7 +5,7 @@ import type { LinearInstallation } from '../storage/schema/linear.store.js';
 const Id = z.string().uuid();
 const Common = z.object({ organizationId: Id, oauthClientId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/), webhookTimestamp: z.number().finite() });
 const Session = z.object({
-  id: Id, appUserId: Id, organizationId: Id, issueId: Id.nullish(), url: z.string().url().nullish(),
+  id: Id, appUserId: Id, organizationId: Id, issueId: Id.nullish(), commentId: Id.nullish(), url: z.string().url().nullish(),
   issue: z.object({ id: Id, title: z.string(), description: z.string().nullish(), url: z.string().url().nullish() }).nullish(),
   comment: z.object({ body: z.string().max(100_000) }).nullish(),
   creatorId: Id.nullish(), creator: z.object({ name: z.string() }).nullish(),

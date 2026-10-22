@@ -78,7 +78,7 @@ export class LinearSessionService {
       }
       await this.identity.store.update((file) => {
         if (file.installation?.id !== install.id || file.installation.revoked) throw new Error('Linear identity changed.');
-        return { ...file, sessionStarts: { ...file.sessionStarts, [requestId]: { target, targetId, createdAt: nowIso() } } };
+        return { ...file, sessionStarts: { ...file.sessionStarts, [requestId]: { target, targetId, rootId, createdAt: nowIso() } } };
       });
       const field = target === 'issue' ? 'agentSessionCreateOnIssue' : 'agentSessionCreateOnComment';
       const inputType = target === 'issue' ? 'AgentSessionCreateOnIssue' : 'AgentSessionCreateOnComment';
@@ -90,11 +90,11 @@ export class LinearSessionService {
       if (session.appUser.id !== install.appUserId || session.creator) throw new Error('Linear returned an unexpected session owner. Inspect Linear before retrying.');
       if ((target === 'issue' ? session.issue?.id : session.comment?.id) !== rootId) throw new Error('Linear returned a different session target. Inspect Linear before retrying.');
       await this.sessionLock(session.id, async () => {
-        await this.registerProactive(install.id, session, runItemId);
         await this.identity.store.update((file) => {
           if (file.installation?.id !== install.id || file.installation.revoked) throw new Error('Linear identity changed after session creation.');
           return { ...file, sessionStarts: { ...file.sessionStarts, [requestId]: { ...file.sessionStarts[requestId]!, sessionId: session.id } } };
         });
+        await this.registerProactive(install.id, session, runItemId);
       });
       return session;
     });
@@ -107,14 +107,27 @@ export class LinearSessionService {
     }
     const receivedAt = nowIso();
     const session = event.agentSession;
-    // API-created sessions have no human creator, but emit the same created
-    // webhook. Their caller is already working; do not enqueue that work again.
+    // Null creators also describe automation and other agents. Only an exact
+    // result from our own create operation identifies an already-running caller.
     if (event.action === 'created' && session.creatorId === null) {
-      await this.identity.store.update((file) => {
-        if (file.installation?.id !== install.id || file.installation.revoked) throw new Error('Linear identity changed.');
-        return { ...file, lastSignedWebhookAt: receivedAt };
-      });
-      return;
+      const home = this.identity.store.animaHome;
+      const starts = (await this.identity.store.read()).sessionStarts;
+      for (const [requestId, intent] of Object.entries(starts)) {
+        const targetId = intent.target === 'comment' ? session.commentId : session.issueId;
+        if (intent.sessionId || intent.rootId !== targetId) continue;
+        // The webhook can beat the mutation response. Wait for that writer and
+        // then compare IDs, rather than swallowing unrelated work on this target.
+        await withFileLock(join(home, 'agents', this.agentId, `linear-start-${requestId}`), home, async () => {});
+      }
+      const file = await this.identity.store.read();
+      if (file.installation?.id !== install.id || file.installation.revoked) throw new Error('Linear identity changed.');
+      if (Object.values(file.sessionStarts).some((intent) => intent.sessionId === session.id)) {
+        await this.identity.store.update((current) => {
+          if (current.installation?.id !== install.id || current.installation.revoked) throw new Error('Linear identity changed.');
+          return { ...current, lastSignedWebhookAt: receivedAt };
+        });
+        return;
+      }
     }
     const eventId = event.action === 'created' ? session.id : event.agentActivity!.id;
     const key = `linear:${install.id}:${event.action}:${eventId}`;
@@ -513,9 +526,10 @@ export class LinearSessionService {
     await this.identity.store.update((file) => {
       if (file.installation?.id !== installId || file.installation.revoked) throw new Error('Linear identity changed.');
       // A Stop or prompt can race the creation response. Never replace it.
+      if (Object.values(file.receipts).some((r) => r.sessionId === session.id && r.stopSignal)) throw new Error('This Linear session was stopped.');
       if (Object.values(file.receipts).some((r) => r.sessionId === session.id)) return file;
       const owner = runItemId ?? key;
-      const receipt: LinearReceipt = { sessionId: session.id, receivedAt: nowIso(), itemId: owner, runItemId: owner,
+      const receipt: LinearReceipt = { sessionId: session.id, receivedAt: nowIso(), itemId: key, runItemId: owner,
         settled: true, acknowledgement: 'accepted', acknowledgementId: randomUUID() };
       if (session.issue) receipt.issueId = session.issue.id;
       return { ...file, receipts: { ...file.receipts, [key]: receipt } };

@@ -88,7 +88,8 @@ A question ends the current status updates until a new prompt arrives.
 An agent can also start work without a mention or delegation: `anima linear start --issue <id>`
 opens a session and posts its initial progress from stdin. It can target an existing comment
 with `--comment <uuid>`. The session belongs to the app and shares the agent's current
-working context; its creation does not wake the agent again. Human replies do.
+working context; a creation webhook matching the recorded session does not wake the agent again.
+If creation was uncertain and no session ID was recorded, the webhook follows normal intake. Human replies do.
 For longer work, the agent can send progress with `anima linear respond --kind thought`
 and send its final response in a later turn. An unanswered request stays open while the
 provider has background work or the agent has queued wakes. Once both are empty, the

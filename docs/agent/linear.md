@@ -101,10 +101,11 @@ Use `--comment <comment-uuid>` instead of `--issue` to work in that discussion. 
 resolves to its root comment. The command prints a request UUID before sending, then
 the session UUID assigned by Linear. It posts the stdin body as progress and returns
 the session, URL and activity receipt. This stays in your current provider context;
-the session's own creation webhook does not enqueue another run. Human replies do.
+a creation webhook matching the recorded session does not enqueue another run. Human replies do.
 
 If creation is uncertain, reuse `--request-id <uuid>` to check the recorded result.
-Anima never repeats an uncertain creation. Inspect Linear for the session; if it exists,
+Anima never repeats an uncertain creation. If no session ID was recorded, a created webhook
+follows normal intake so automation is not lost. Inspect Linear for the session; if it exists,
 `read`, `respond` and `attach-pr` can recover an open session created by your own app.
 They cannot adopt an unreceived human request, another app's session, or terminal work.
 Known Stop and completed-request records continue to block new replies. Session reads
