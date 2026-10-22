@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export class LinearApiError extends Error {
-  constructor(message: string, readonly revoked = false) { super(message); }
+  constructor(message: string, readonly revoked = false, readonly status?: number) { super(message); }
 }
 const Tokens = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() });
 type LinearTokens = z.infer<typeof Tokens>;
@@ -29,7 +29,7 @@ export class LinearClient {
         body: JSON.stringify({ query, variables, ...(operationName ? { operationName } : {}) }), signal: AbortSignal.timeout(10_000), redirect: 'error',
       });
     } catch { throw new LinearApiError('Linear request failed. If this request included a write, inspect its result before retrying; it may have succeeded.'); }
-    if (response.status === 401) throw new LinearApiError('Linear request was unauthorized.', true);
+    if (response.status === 401) throw new LinearApiError('Linear request was unauthorized.', true, 401);
     if (!response.ok) throw new LinearApiError('Linear request failed.');
     try {
       const body = z.object({ data: z.unknown(), errors: z.array(z.unknown()).optional() }).parse(await response.json());

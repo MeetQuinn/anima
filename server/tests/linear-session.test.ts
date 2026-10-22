@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { withTempAnimaHome } from './helpers/harness.js';
-import { created, install, seedLinear, sessionId, prompted } from './helpers/linear.js';
+import { created, install, seedLinear, sessionId, prompted, FakeLinear } from './helpers/linear.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { runtimeContextForItemId } from '../runtime/context.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { LinearSessionService } from '../linear/session.service.js';
+import { LinearIdentityService } from '../linear/identity.service.js';
+import { LinearClient } from '../linear/client.js';
 import type { LinearStore } from '../storage/schema/linear.store.js';
 import type { LinearInboxItem } from '../../shared/inbox.js';
 import { linearQueryErrors } from './helpers/linear-schema.js';
@@ -22,6 +24,122 @@ async function settledRequest(service: LinearSessionService, session = sessionId
   await queue.complete(item.id); await service.markSettled(item);
   return item;
 }
+
+for (const kind of ['response', 'link'] as const) for (const failure of ['401', '500', 'network', 'invalid-json', 'partial'] as const) {
+  test(`Linear ${kind} preserves explicit retry only after a confirmed rejection: ${failure}`, async () => withTempAnimaHome(async (home) => {
+    const fake = new FakeLinear(), fetch = fake.fetch;
+    let attempts = 0;
+    const setup = await seedLinear(home, fake);
+    // The client captured fake.fetch during construction; replace that instance
+    // before constructing the service that sends the tested request.
+    const { store } = setup;
+    fake.fetch = async (url, init) => {
+      const query = String(url).endsWith('/graphql') ? JSON.parse(String(init?.body)).query as string : '';
+      if (query.includes(kind === 'response' ? 'agentActivityCreate' : 'agentSessionUpdate')) {
+        attempts++;
+        if (attempts === 1) {
+          // A separate process has refreshed while the old request is in flight.
+          assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${install.accessToken}`);
+          await store.update((file) => ({ ...file, installation: { ...file.installation!, expiresAt: 0 } }));
+          await setup.identity.credentials();
+          if (failure === '401' || failure === '500') return new Response('{}', { status: Number(failure) });
+          if (failure === 'network') throw new Error('synthetic response lost');
+          if (failure === 'invalid-json') return new Response('{');
+          const accepted = await fetch(url, init);
+          return new Response(JSON.stringify({ ...await accepted.json(), errors: [{ message: 'synthetic partial result' }] }));
+        }
+        assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer new-access-sentinel');
+      }
+      return fetch(url, init);
+    };
+    const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch), store);
+    const service = new LinearSessionService(identity);
+    const item = await settledRequest(service);
+    const send = (target: LinearSessionService) => kind === 'response'
+      ? target.respond(sessionId, 'response', 'Done after refresh', item.id)
+      : target.attach(sessionId, 'https://github.com/example/repo/pull/1', item.id);
+    await assert.rejects(send(service));
+    assert.equal(attempts, 1, 'The failing call must never retry the write automatically');
+    assert.equal((await store.read()).installation!.revoked, false);
+    const recovered = new LinearSessionService(identity);
+    if (failure === '401') {
+      assert.deepEqual((await store.read()).operations, {});
+      await send(recovered);
+      await send(recovered);
+      assert.equal(attempts, 2, 'One explicit retry succeeds; an accepted duplicate is not resent');
+    } else {
+      assert.equal(Object.values((await store.read()).operations)[0]?.state, 'unknown');
+      if (failure === 'partial') await send(recovered);
+      else await assert.rejects(send(recovered), /unknown/);
+      assert.equal(attempts, 1, 'An ambiguous write must be reconciled, never blindly retried');
+    }
+    const accepted = failure === '401' || failure === 'partial';
+    assert.equal(kind === 'response' ? fake.posts.length : fake.links.length, accepted ? 1 : 0);
+    if (kind === 'response') assert.equal(Boolean((await store.read()).receipts[item.id]!.answered), accepted);
+  }));
+}
+
+for (const replacement of [false, true]) {
+  test(`a rejected Linear write preserves identity isolation: replacement=${replacement}`, async () => withTempAnimaHome(async (home) => {
+    const fake = new FakeLinear(), fetch = fake.fetch;
+    const { store, agentStore } = await seedLinear(home, fake);
+    let before: Awaited<ReturnType<typeof store.read>> | undefined;
+    let writes = 0;
+    fake.fetch = async (url, init) => {
+      if (String(url).endsWith('/graphql') && String(init?.body).includes('agentActivityCreate')) {
+        writes++;
+        if (replacement) {
+          await store.update((file) => ({ ...file, installation: { ...file.installation!, id: randomUUID() },
+            operations: Object.fromEntries(Object.entries(file.operations).map(([key, op]) => [key, { ...op, id: randomUUID() }])) }));
+          before = await store.read();
+        }
+        return new Response('{}', { status: 401 });
+      }
+      return fetch(url, init);
+    };
+    const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch), store);
+    const service = new LinearSessionService(identity);
+    const item = await settledRequest(service);
+    await assert.rejects(service.respond(sessionId, 'response', 'Done', item.id), /request was unauthorized/);
+    assert.equal(writes, 1);
+    if (replacement) assert.deepEqual(await store.read(), before, 'A late failure cannot erase the new installation or its intent');
+    else {
+      assert.equal((await store.read()).installation!.revoked, true);
+      assert.equal((await agentStore.read()).linear!.connected, false);
+      assert.deepEqual((await store.read()).operations, {});
+      await assert.rejects(service.respond(sessionId, 'response', 'Done', item.id), /disabled or disconnected/);
+      assert.equal(writes, 1);
+    }
+  }));
+}
+
+test('a failed rejection cleanup leaves the Linear send intent blocking unsafe replay', async (t) => withTempAnimaHome(async (home) => {
+  const fake = new FakeLinear(), fetch = fake.fetch;
+  const { store } = await seedLinear(home, fake);
+  let writes = 0;
+  fake.fetch = async (url, init) => {
+    if (String(url).endsWith('/graphql') && String(init?.body).includes('agentActivityCreate')) {
+      writes++;
+      await store.update((file) => ({ ...file, installation: { ...file.installation!, accessToken: 'rotated-sentinel' } }));
+      return new Response('{}', { status: 401 });
+    }
+    return fetch(url, init);
+  };
+  const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch), store);
+  const service = new LinearSessionService(identity);
+  const item = await settledRequest(service);
+  const update = store.update.bind(store);
+  const mock = t.mock.method(store, 'update', (change: Parameters<typeof update>[0]) => update(async (file) => {
+    const next = await change(file);
+    if (Object.keys(file.operations).length && !Object.keys(next.operations).length) throw new Error('synthetic disk failed');
+    return next;
+  }));
+  await assert.rejects(service.respond(sessionId, 'response', 'Done', item.id), /synthetic disk failed/);
+  mock.mock.restore();
+  assert.equal(Object.values((await store.read()).operations)[0]!.state, 'sending');
+  await assert.rejects(new LinearSessionService(identity).respond(sessionId, 'response', 'Done', item.id), /unknown/);
+  assert.equal(writes, 1);
+}));
 
 test('history reads select typed activity content; the API double rejects invalid GraphQL', async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);

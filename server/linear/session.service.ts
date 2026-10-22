@@ -8,6 +8,7 @@ import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { withFileLock } from '../storage/lock.js';
 import type { LinearInstallation, LinearOperation, LinearReceipt } from '../storage/schema/linear.store.js';
 import { LinearIdentityService } from './identity.service.js';
+import { LinearApiError } from './client.js';
 import type { LinearWebhook } from './webhook.js';
 
 const Created = z.object({ agentActivityCreate: z.object({ success: z.literal(true), agentActivity: z.object({ id: z.string() }) }) });
@@ -349,7 +350,7 @@ export class LinearSessionService {
     if (runItemId) operation.ownerRunId = runItemId;
     await this.saveOperation(install.id, key, operation);
     try { await this.createActivity(install.id, sessionId, operation.id, kind, body, false); }
-    catch (error) { await this.saveOperation(install.id, key, { ...operation, state: 'unknown' }); throw error; }
+    catch (error) { await this.recordWriteFailure(install.id, key, operation, error); throw error; }
     try { await this.acceptOperation(install.id, key, operation); return { activityId: operation.id, bookkeeping: 'recorded' }; }
     catch { return { activityId: operation.id, bookkeeping: 'degraded' }; }
   }
@@ -381,7 +382,7 @@ export class LinearSessionService {
       try {
         await this.identity.graphql(install.id, 'mutation($id:String!,$input:AgentSessionUpdateInput!){agentSessionUpdate(id:$id,input:$input){success}}',
           { id: sessionId, input: { addedExternalUrls: [{ url, label: 'Pull request' }] } }, Updated);
-      } catch (error) { await this.saveOperation(install.id, key, { ...operation, state: 'unknown' }); throw error; }
+      } catch (error) { await this.recordWriteFailure(install.id, key, operation, error); throw error; }
       try { await this.saveOperation(install.id, key, { ...operation, state: 'accepted' }); return { bookkeeping: 'recorded' }; }
       catch { return { bookkeeping: 'degraded' }; }
     });
@@ -494,6 +495,22 @@ export class LinearSessionService {
     await this.identity.store.update((file) => {
       if (file.installation?.id !== installId || file.installation.revoked) throw new Error('Linear identity changed.');
       return { ...file, operations: { ...file.operations, [key]: operation } };
+    });
+  }
+
+  private async recordWriteFailure(installId: string, key: string, operation: LinearOperation, error: unknown): Promise<void> {
+    if (!(error instanceof LinearApiError) || error.status !== 401) {
+      await this.saveOperation(installId, key, { ...operation, state: 'unknown' });
+      return;
+    }
+    // HTTP 401 confirms this write was not applied. Release its intent for a
+    // later explicit retry; network/5xx/partial GraphQL results remain unknown.
+    await this.identity.store.update((file) => {
+      if (file.installation?.id !== installId || file.operations[key]?.id !== operation.id
+        || file.operations[key]?.state === 'accepted') return file;
+      const operations = { ...file.operations };
+      delete operations[key];
+      return { ...file, operations };
     });
   }
 
