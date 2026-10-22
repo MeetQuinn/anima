@@ -1,9 +1,23 @@
+import type * as MarkdownParser from "mdast-util-from-markdown";
+
+import { lazyRequire } from "../lazy-require.js";
+
+const markdownParser = lazyRequire<typeof MarkdownParser>(
+  "mdast-util-from-markdown",
+);
+type MarkdownNode =
+  | ReturnType<typeof MarkdownParser.fromMarkdown>
+  | ReturnType<typeof MarkdownParser.fromMarkdown>["children"][number];
+
 // Agents paste URLs in nearly every message, and Slack's default is to unfurl
 // each one into a preview card — a multi-link message becomes a wall of
 // previews (totoday 08-30). Post with unfurls off; links stay clickable and a
 // reader who wants the preview clicks through. Spread this into every
 // chat.postMessage / chat.update payload the runtime sends.
-export const SLACK_NO_UNFURL = { unfurl_links: false, unfurl_media: false } as const;
+export const SLACK_NO_UNFURL = {
+  unfurl_links: false,
+  unfurl_media: false,
+} as const;
 
 const MARKDOWN_TEXT_LIMIT = 12_000;
 const FALLBACK_TEXT_BYTE_LIMIT = 3500;
@@ -23,10 +37,65 @@ export interface SlackMessageContent {
 }
 
 // The full transform applied to any text destined for a Slack `markdown`
-// block: bare-URL autolinking, lazy-continuation blank lines, CJK emphasis
+// block: bare-URL autolinking, mention headings, lazy-continuation blank lines, CJK emphasis
 // flanking. Messages and ask questions share it so they render identically.
 export function slackMarkdownBlockText(input: string): string {
-  return slackEmphasisFlanking(slackMarkdownBlockBreaks(slackBareUrlAutolink(input)));
+  return slackEmphasisFlanking(
+    slackMarkdownBlockBreaks(slackMentionHeadings(slackBareUrlAutolink(input))),
+  );
+}
+
+// Slack turns Markdown headings into plain_text header blocks, where a user
+// token cannot address anyone. Keep such headings as bold paragraphs instead.
+// Parse block structure so code, setext headings and nested containers retain
+// their meaning; edit source ranges rather than reserializing the whole body.
+function slackMentionHeadings(input: string): string {
+  if (!/<@[UW][A-Z0-9]+(?:\|[^>\n]*)?>/i.test(input)) return input;
+  const tree = markdownParser().fromMarkdown(input);
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  const containsMention = (node: MarkdownNode): boolean => {
+    if (node.type === "text") {
+      const raw = input.slice(
+        node.position!.start.offset!,
+        node.position!.end.offset!,
+      );
+      for (const match of raw.matchAll(/<@[UW][A-Z0-9]+(?:\|[^>\n]*)?>/gi)) {
+        let slashes = 0;
+        for (let i = match.index - 1; i >= 0 && raw[i] === "\\"; i--) slashes++;
+        if (slashes % 2 === 0) return true;
+      }
+    }
+    return "children" in node && node.children.some(containsMention);
+  };
+  const visit = (node: MarkdownNode): void => {
+    if (node.type === "heading" && containsMention(node)) {
+      const first = node.children[0]!;
+      const last = node.children.at(-1)!;
+      const body = input.slice(
+        first.position!.start.offset!,
+        last.position!.end.offset!,
+      );
+      // A literal trailing backslash must not escape the new closing delimiter.
+      const trailingSlashes = /\\+$/.exec(body)?.[0].length ?? 0;
+      const boldBody = trailingSlashes % 2 === 0 ? body : `${body}\\`;
+      edits.push({
+        start: node.position!.start.offset!,
+        end: node.position!.end.offset!,
+        text: `**${boldBody}**`,
+      });
+      return;
+    }
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(tree);
+  const output: string[] = [];
+  let cursor = 0;
+  for (const edit of edits) {
+    output.push(input.slice(cursor, edit.start), edit.text);
+    cursor = edit.end;
+  }
+  output.push(input.slice(cursor));
+  return output.join("");
 }
 
 export function slackMessageContentForText(input: string): SlackMessageContent {
@@ -118,7 +187,12 @@ function autolinkPlainSegment(segment: string): string {
   return segment.replace(BARE_URL, (match, offset: number) => {
     const before = segment.slice(0, offset);
     // Already an autolink/entity, a markdown link destination, or mid-word.
-    if (before.endsWith("<") || before.endsWith("](") || /[A-Za-z0-9]$/.test(before)) return match;
+    if (
+      before.endsWith("<") ||
+      before.endsWith("](") ||
+      /[A-Za-z0-9]$/.test(before)
+    )
+      return match;
     const url = trimUrlEnd(match);
     if (url.length <= "https://".length) return match;
     return `<${url}>${match.slice(url.length)}`;

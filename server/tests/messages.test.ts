@@ -707,3 +707,59 @@ test("URL autolinking leaves existing links and code untouched", () => {
     { type: "markdown", text: "看：<https://example.com/a>，好" },
   ]);
 });
+
+test("Slack user mentions in ATX and setext headings remain in bold message paragraphs", () => {
+  for (let level = 1; level <= 6; level++) {
+    const content = slackMessageContentForText(`${"#".repeat(level)} Review <@U123> and <@W456|Pat> ###`);
+    assert.equal(content.blocks[0]?.text, "**Review <@U123> and <@W456|Pat>**");
+    assert.equal(content.text, content.blocks[0]?.text);
+    assert.equal(slackEventMentionsUserId(content, "U123"), true);
+    assert.equal(slackEventMentionsUserId(content, "W456"), true);
+  }
+  for (const [input, expected] of [
+    ["Review <@U123>\n===", "**Review <@U123>**"],
+    ["Review <@U123>\nmore context\n---", "**Review <@U123>\nmore context**"],
+    ["> ## Review <@U123>", "> **Review <@U123>**"],
+    ["> Review <@U123>\n> more context\n> ---", "> **Review <@U123>\n> more context**"],
+    ["- ## Review <@U123>", "- **Review <@U123>**"],
+    ["## `literal <@U456>` and <@U123>", "**`literal <@U456>` and <@U123>**"],
+    ["## **Review** <@U123>\n\n# Ordinary", "****Review** <@U123>**\n\n# Ordinary"],
+    ["Before\n\n## <@U123>\n\nAfter", "Before\n\n**<@U123>**\n\nAfter"],
+  ]) {
+    assert.equal(slackMessageContentForText(input!).blocks[0]?.text, expected, input);
+  }
+});
+
+test("Slack mention heading transform leaves code and literal tokens untouched", () => {
+  for (const input of [
+    "# Ordinary heading",
+    "# @unresolved-name",
+    "## `<@U123>` example",
+    "## \\<@U123> example",
+    "## &lt;@U123&gt; example",
+    "    ## <@U123>",
+    "```\n# <@U123>\n```",
+    "~~~~\n# <@U123>\n~~~~",
+    "````\n```\n# <@U123>\n````",
+    "\\# <@U123>",
+    "## ![<@U123>](image.png)",
+    "A paragraph <@U123>\n\n---",
+  ]) {
+    assert.equal(slackMessageContentForText(input).blocks[0]?.text, input, input);
+  }
+});
+
+test("Slack mention headings preserve trailing backslashes without escaping bold", () => {
+  for (let count = 1; count <= 4; count++) {
+    const body = `Review <@U123> ${"\\".repeat(count)}`;
+    const escapedBody = `Review <@U123> ${"\\".repeat(count + count % 2)}`;
+    for (const input of [`## ${body}`, `${body}\n===`, `> ## ${body}`]) {
+      const prefix = input.startsWith(">") ? "> " : "";
+      assert.equal(
+        slackMessageContentForText(input).blocks[0]?.text,
+        `${prefix}**${escapedBody}**`,
+        input,
+      );
+    }
+  }
+});
