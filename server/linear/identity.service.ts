@@ -129,14 +129,14 @@ export class LinearIdentityService {
       await new AgentStore(this.agentId).update((agent) => ({ ...agent, linear: {
         connected: true, clientId: installation.clientId, organizationId: installation.organizationId, appUserId: installation.appUserId,
       } }));
-      return { ...current, installation, pending: undefined, receipts: {}, operations: {}, lastError: undefined, lastSignedWebhookAt: undefined };
+      return { ...current, installation, pending: undefined, receipts: {}, operations: {}, sessionStarts: {}, lastError: undefined, lastSignedWebhookAt: undefined };
     });
   }
 
   async remove(): Promise<void> {
     await this.store.update(async () => {
       await new AgentStore(this.agentId).update((agent) => ({ ...agent, linear: undefined }));
-      return { receipts: {}, operations: {} };
+      return { receipts: {}, operations: {}, sessionStarts: {} };
     });
   }
 

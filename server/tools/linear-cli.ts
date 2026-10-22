@@ -90,6 +90,34 @@ export function registerLinearCommands(program: Command): void {
       });
       console.log(JSON.stringify(result, null, 2));
     });
+  linear.command('start').description('Start work proactively; initial progress on stdin. No assignment is required.')
+    .option('--issue <id>', 'issue UUID or identifier').option('--comment <uuid>', 'comment UUID (a reply resolves to its root)')
+    .option('--request-id <uuid>', 'reuse this id to inspect a previous start, never to blindly resend it')
+    .action(async (_options, command: Command) => {
+      const opts = command.optsWithGlobals();
+      if (Boolean(opts.issue) === Boolean(opts.comment)) throw new Error('Specify exactly one of --issue or --comment.');
+      const target = opts.comment ? 'comment' : 'issue';
+      const targetId = target === 'comment' ? z.string().uuid().parse(opts.comment) : z.string().trim().min(1).parse(opts.issue);
+      const requestId = z.string().uuid().parse(opts.requestId ?? randomUUID());
+      const body = z.string().trim().min(1).max(100_000).parse(await readStdin());
+      const service = serviceFor(opts.agent);
+      const runItemId = await resolveToolItemId({ agent: service.agentId });
+      console.error(`Linear start request id: ${requestId}. If the result is unknown, inspect Linear before creating another session.`);
+      const result = await withToolActivity({
+        audit: { agentId: service.agentId }, effectType: 'linear.session.start',
+        basePayload: { tool: 'anima.linear.start', platform: 'linear', channelKind: 'linear_session', text: body, requestId },
+        onCompletedAuditError: () => console.error('Linear accepted the session progress; local audit is degraded. Do not resend.'),
+        op: async () => {
+          const session = await service.start(target, targetId, requestId, runItemId);
+          console.error(`Linear session id: ${session.id}`);
+          const progress = await service.respond(session.id, 'thought', body, runItemId);
+          return { result: { requestId, session, progress }, completedPayload: {
+            channel: session.id, threadTs: session.id, permalink: session.url, messageId: progress.activityId, bookkeeping: progress.bookkeeping,
+          } };
+        },
+      });
+      console.log(JSON.stringify(result, null, 2));
+    });
   linear.command('read').requiredOption('--session <id>', 'Linear session UUID').action(async (_options, command: Command) => {
     const opts = command.optsWithGlobals();
     console.log(JSON.stringify(await serviceFor(opts.agent).read(z.string().uuid().parse(opts.session)), null, 2));

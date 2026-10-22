@@ -21,6 +21,8 @@ const schema = buildSchema(`
     issueUpdate(id: String!, input: IssueUpdateInput!): Success!
     agentActivityCreate(input: AgentActivityCreateInput!): ActivityPayload!
     agentSessionUpdate(id: String!, input: AgentSessionUpdateInput!): Success!
+    agentSessionCreateOnIssue(input: AgentSessionCreateOnIssue!): SessionPayload!
+    agentSessionCreateOnComment(input: AgentSessionCreateOnComment!): SessionPayload!
   }
   type User { id: ID!, app: Boolean!, name: String! }
   type Organization { id: ID!, name: String! }
@@ -42,7 +44,10 @@ const schema = buildSchema(`
   type Team { id: ID!, key: String!, name: String!, states: StateConnection! }
   type StateConnection { nodes: [State!]! }
   input IssueUpdateInput { stateId: String }
-  type AgentSession { id: ID!, appUser: User!, activities(first: Int): ActivityConnection!, externalLinks: [ExternalLink!]! }
+  type AgentSession { id: ID!, appUser: User!, creator: User, issue: Issue, comment: Comment, status: String!, url: String, activities(first: Int): ActivityConnection!, externalLinks: [ExternalLink!]! }
+  type SessionPayload { success: Boolean!, agentSession: AgentSession! }
+  input AgentSessionCreateOnIssue { issueId: String! }
+  input AgentSessionCreateOnComment { commentId: String! }
   type ExternalLink { url: String! }
   type ActivityConnection { nodes: [AgentActivity!]! }
   type AgentActivity { id: ID!, agentSession: AgentSession!, content: AgentActivityContent!, createdAt: String! }

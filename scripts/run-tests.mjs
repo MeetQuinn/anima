@@ -62,6 +62,7 @@ const groups = {
     'linear-notifications.test.js',
     'linear-listener-status.test.js',
     'linear-session.test.js',
+    'linear-proactive-session.test.js',
     'linear-runtime.test.js',
     'log-tail.test.js',
     'input-trace.test.js',
