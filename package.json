@@ -74,7 +74,7 @@
     "test:runtime": "pnpm --dir server test:runtime",
     "test:runtime:dist": "pnpm --dir server test:runtime:dist",
     "test:all": "pnpm build && node scripts/run-tests.mjs all",
-    "typecheck": "pnpm --dir server type-check"
+    "typecheck": "pnpm type-check"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
