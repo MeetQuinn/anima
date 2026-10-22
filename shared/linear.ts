@@ -49,5 +49,5 @@ export interface LinearStatus {
   listenerStatus?: LinearListenerStatus;
 }
 
-export const LinearActivityKind = z.enum(['response', 'elicitation', 'error']);
+export const LinearActivityKind = z.enum(['thought', 'response', 'elicitation', 'error']);
 export type LinearActivityKind = z.infer<typeof LinearActivityKind>;

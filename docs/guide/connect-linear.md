@@ -70,17 +70,25 @@ At work start, eligible human-delegated issues move to the team's first started 
 Mentions without delegation, already started/completed/canceled issues and the human assignee
 are preserved. The agent reports a response, question or error, and can attach a PR link.
 A question ends the current status updates until a new prompt arrives.
-If a model run ends without a confirmed Linear response, the runtime reports that gap
-as an error instead of leaving the conversation marked as working.
+For longer work, the agent can send progress with `anima linear respond --kind thought`
+and send its final response in a later turn. An unanswered request stays open while the
+provider has background work or the agent has queued wakes. Once both are empty, the
+runtime reports a missing response as an error. Providers without background-work
+reporting use the active run and queue state.
 
 After 10 minutes without a successful activity, the runtime can post a fixed queued/executing
 status for owned pending work. This is not a percentage or promise of progress. It stops on
-response, question, failure, cancellation or settlement. Background or unrelated results do
-not keep a Linear conversation active.
+response, question, failure, cancellation or queue settlement. The fixed queued/executing
+status describes inbox work; it does not report background-task progress. Background work
+and queued wakes are checked for the whole agent, so unrelated work can delay a missing-response notice.
+Without another activity, Linear can display the session as stale after 30 minutes; a later
+activity recovers it. See [Linear’s interaction guidance](https://linear.app/developers/agent-best-practices).
 
 Linear's stop signal cancels pending work or requests interruption of its associated run.
 A primary run can contain other accepted messages; interrupting it may affect them too.
-The runtime reports that boundary rather than replaying accepted input automatically.
+When the inbox run has already ended, Stop closes the request to later replies; it does
+not cancel provider-native background tasks. The notice makes that limit explicit.
+The runtime does not replay accepted input automatically.
 Inspect any effects that already ran before asking the agent to continue.
 
 ## Downtime and delivery gaps

@@ -12,7 +12,8 @@ Here is the result and its evidence.
 REPLY
 ```
 
-Use `--kind elicitation` to ask the person for missing information, or `--kind error` to
+Use `--kind thought` for progress such as “Started”; it keeps the request open for a later
+reply. Use `--kind elicitation` to ask the person for missing information, or `--kind error` to
 report a blocker or failed outcome. The default is `response`. Body text goes through stdin.
 Only report what happened; do not expose raw tools, private reasoning or credentials.
 
@@ -30,10 +31,15 @@ anima linear attach-pr --session <uuid> --url https://github.com/example/repo/pu
 
 The runtime sends receipt and truthful queued/executing status separately. A receipt is not
 a finished task. A response, question or error ends status updates for the inputs it owns.
+A later turn can answer a delivered request that is still unanswered, including after
+background work finishes. The runtime waits for provider background work and queued wakes
+to finish before reporting a missing response.
 Follow-up envelopes carry the new prompt only; read session history when you need earlier details.
 
 Stop means stop the associated work. The shared run can include other accepted inputs;
-check prior effects before resuming. Removal/revocation blocks writes. If a send result is
+check prior effects before resuming. If its inbox run already ended, Stop blocks later
+Linear replies but cannot cancel provider-native background tasks; check those separately.
+Removal/revocation blocks writes. If a send result is
 unknown, inspect the session; do not change the wording to bypass the recorded retry boundary.
 An accepted activity with degraded local bookkeeping does not need another send.
 

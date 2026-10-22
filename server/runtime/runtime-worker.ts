@@ -72,6 +72,7 @@ interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   onItemFollowupAppended?: (activeContext: RuntimeItemContext, context: RuntimeItemContext) => Promise<void>;
   onItemAborted?: (context: RuntimeItemContext, reason: ItemStopReason) => Promise<void>;
   onItemSettled?: (context: RuntimeItemContext) => Promise<void>;
+  onIdle?: () => Promise<void>;
   pollIntervalMs?: number;
   providerRetry?: ProviderRetryOptions;
   queue: WakeQueueService;
@@ -146,6 +147,7 @@ export class AgentRuntimeWorker {
     await this.ensureJournalBackfill();
     let processed = 0;
     while (!this.closing && await this.runOne()) processed += 1;
+    if (!this.closing) await this.options.onIdle?.();
     return processed;
   }
 

@@ -218,3 +218,44 @@ test('a webhook drops receipts finished over 30 days ago and the operations of t
   assert.equal(Object.keys(file.receipts).filter((key) => key.startsWith('linear:')).length, 1);
   assert.deepEqual(Object.keys(file.operations), ['recent']);
 }));
+
+test('progress reconciliation keeps requests open; later turns can answer only delivered inputs', async () => withTempAnimaHome(async (home) => {
+  const { service, fake, store, identity } = await seedLinear(home);
+  await service.receive(created(), install); const first = await firstItem();
+  await assert.rejects(service.respond(sessionId, 'response', 'Not yet', 'later-run'), /No accepted input/);
+  await service.markStarted(first, first.id);
+  fake.loseResponse = true; await assert.rejects(service.respond(sessionId, 'thought', 'Started', first.id));
+  fake.loseResponse = false;
+  const recovered = new LinearSessionService(identity);
+  await recovered.respond(sessionId, 'thought', 'Started', first.id);
+  assert.equal(fake.posts.length, 1); assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
+  await assert.rejects(recovered.respond(sessionId, 'response', 'Not this running turn', 'later-run'), /No accepted input/);
+  await new WakeQueueService('scout').complete(first.id); await recovered.markSettled(first);
+  // A delivered but unanswered background request must survive receipt pruning.
+  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!,
+    receivedAt: new Date(Date.now() - 40 * 86400_000).toISOString(), lastActivityAt: undefined } } }));
+  await recovered.receive(created(randomUUID()), install);
+  assert.ok((await store.read()).receipts[first.id]);
+  await recovered.respond(sessionId, 'response', 'Finished', 'later-run');
+  await recovered.respond(sessionId, 'response', 'Finished', 'later-run');
+  await assert.rejects(recovered.respond(sessionId, 'response', 'Extra result', 'later-run'), /No accepted input/);
+  assert.deepEqual(fake.posts.map((p) => p.content.type), ['thought', 'response']);
+  assert.equal((await store.read()).receipts[first.id]!.answered, true);
+}));
+
+test('idle closure rechecks work after locking and preserves legacy terminal operation semantics', async () => withTempAnimaHome(async (home) => {
+  const { service, fake, store } = await seedLinear(home);
+  await service.receive(created(), install); const first = await firstItem(); await service.markStarted(first, first.id);
+  await new WakeQueueService('scout').complete(first.id); await service.markSettled(first);
+  let checks = 0;
+  await service.completeIdleRuns(async () => ++checks === 1);
+  assert.equal(checks, 2); assert.equal(fake.posts.length, 0);
+  fake.loseResponse = true;
+  await assert.rejects(service.respond(sessionId, 'response', 'Legacy accepted', first.id));
+  fake.loseResponse = false;
+  await store.update((f) => ({ ...f, operations: Object.fromEntries(Object.entries(f.operations).map(([key, op]) => {
+    const legacy = { ...op }; delete legacy.activityKind; return [key, legacy];
+  })) }));
+  await service.respond(sessionId, 'response', 'Legacy accepted', first.id);
+  assert.equal(fake.posts.length, 1); assert.equal((await store.read()).receipts[first.id]!.answered, true);
+}));

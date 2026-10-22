@@ -1,4 +1,5 @@
 import { LinearInboxItem } from '../../../shared/inbox.js';
+import { LinearActivityKind } from '../../../shared/linear.js';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { resolveAnimaHome } from '../../anima-home.js';
@@ -32,6 +33,8 @@ const Operation = z.object({
   id: z.string(), sessionId: z.string(), kind: z.enum(['activity', 'link']),
   state: z.enum(['sending', 'accepted', 'unknown']), itemIds: z.array(z.string()),
   contentHash: z.string(), ownerRunId: z.string().optional(), url: z.string().optional(),
+  // Older activity operations were all terminal responses.
+  activityKind: LinearActivityKind.optional(),
 });
 export type LinearOperation = z.infer<typeof Operation>;
 const LinearFile = z.object({
