@@ -1,3 +1,4 @@
+import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearMessageTransport } from '../transports/linear-message-transport.js';
 import { existsSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ import {
   validateRunnableAgentConfig,
 } from '../agents/agent-config-ops.js';
 import { ensureDefaultSkills } from '../agents/default-skills.js';
-import { resolveAnimaHome } from '../anima-home.js';
+import { resolveAnimaHome, withAnimaHome } from '../anima-home.js';
 import { SealedSecretHandoffPendingStore } from '../env/sealed-secret-handoff-store.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { WakeQueueService, wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
@@ -1303,6 +1304,17 @@ export async function managedProviderEnvForAgent(
   if (botToken) {
     env.ANIMA_SLACK_BOT_TOKEN = botToken;
     env.SLACK_BOT_TOKEN = botToken;
+  }
+  if (agent.linear?.connected) {
+    try {
+      const token = await withAnimaHome(animaHome, () => new LinearIdentityService(agent.id).credentials());
+      env.LINEAR_ACCESS_TOKEN = token.accessToken;
+      env.LINEAR_ACCESS_TOKEN_EXPIRES_AT = token.expiresAt;
+    } catch {
+      // Linear is optional. A failed refresh must not prevent Slack work, and
+      // error bodies from credentials must not enter the agent log.
+      console.warn(`Agent ${agent.id}: Linear credentials unavailable; use anima linear token to retry.`);
+    }
   }
   if (!agent.feishu.connected) return env;
 

@@ -173,23 +173,51 @@ export class LinearIdentityService {
     return token;
   }
 
-  async graphql<T>(installationId: string, query: string, variables: Record<string, unknown>, schema: z.ZodType<T>): Promise<T> {
+  // This is a credential snapshot for the agent, never the refresh token. Both
+  // checks matter: an operator can disable or replace the identity during refresh.
+  async credentials(installationId?: string): Promise<LinearCredentials> {
+    const current = await this.authorizedInstallation(installationId);
+    await this.accessToken(current.id);
+    const latest = await this.authorizedInstallation(current.id);
+    return {
+      installationId: latest.id, accessToken: latest.accessToken,
+      expiresAt: new Date(latest.expiresAt).toISOString(),
+      organizationId: latest.organizationId, appUserId: latest.appUserId,
+    };
+  }
+
+  private async authorizedInstallation(installationId?: string): Promise<LinearInstallation> {
+    const agent = await new AgentStore(this.agentId).read();
+    if (!agent.enabled || !agent.linear?.connected) throw new Error('Linear agent is disabled or disconnected.');
+    const { installation } = await this.store.read();
+    if (!installation || (installationId !== undefined && installation.id !== installationId) || installation.revoked
+      || installation.clientId !== agent.linear.clientId || installation.organizationId !== agent.linear.organizationId
+      || installation.appUserId !== agent.linear.appUserId) throw new Error('Linear identity is not authorized.');
+    return installation;
+  }
+
+  // Ordinary issue/API operations use the installed app identity. They do not
+  // require an incoming AgentSession or an unanswered task receipt.
+  async request<T>(query: string, variables: Record<string, unknown>, schema: z.ZodType<T>, operationName?: string): Promise<T> {
+    const installation = await this.authorizedInstallation();
+    return this.graphql(installation.id, query, variables, schema, operationName);
+  }
+
+  async graphql<T>(installationId: string, query: string, variables: Record<string, unknown>, schema: z.ZodType<T>, operationName?: string): Promise<T> {
     try {
-      const agent = await new AgentStore(this.agentId).read();
-      if (!agent.enabled || !agent.linear?.connected) throw new Error('Linear agent is disabled or disconnected.');
-      const current = await this.store.read();
-      if (!current.installation || current.installation.id !== installationId || current.installation.revoked
-        || current.installation.clientId !== agent.linear.clientId || current.installation.organizationId !== agent.linear.organizationId
-        || current.installation.appUserId !== agent.linear.appUserId) throw new Error('Linear identity is not authorized.');
-      const token = await this.accessToken(installationId);
-      const latest = await new AgentStore(this.agentId).read();
-      const latestFile = await this.store.read();
-      if (!latest.enabled || !latest.linear?.connected || latestFile.installation?.id !== installationId || latestFile.installation.revoked) throw new Error('Linear identity changed before the request.');
-      return await this.client.graphql(token, query, variables, schema);
-    }
-    catch (error) {
+      const { accessToken } = await this.credentials(installationId);
+      return await this.client.graphql(accessToken, query, variables, schema, operationName);
+    } catch (error) {
       if (error instanceof LinearApiError && error.revoked) await this.revoke(installationId);
       throw error;
     }
   }
+}
+
+export interface LinearCredentials {
+  installationId: string;
+  accessToken: string;
+  expiresAt: string;
+  organizationId: string;
+  appUserId: string;
 }

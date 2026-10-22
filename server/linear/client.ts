@@ -21,15 +21,14 @@ export class LinearClient {
     catch { throw new LinearApiError('Linear returned an invalid token response.'); }
   }
 
-  async graphql<T>(token: string, query: string, variables: Record<string, unknown>, schema: z.ZodType<T>): Promise<T> {
-    const mutation = query.trimStart().startsWith('mutation');
+  async graphql<T>(token: string, query: string, variables: Record<string, unknown>, schema: z.ZodType<T>, operationName?: string): Promise<T> {
     let response: Response;
     try {
       response = await this.fetcher('https://api.linear.app/graphql', {
         method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ query, variables }), signal: AbortSignal.timeout(10_000), redirect: 'error',
+        body: JSON.stringify({ query, variables, ...(operationName ? { operationName } : {}) }), signal: AbortSignal.timeout(10_000), redirect: 'error',
       });
-    } catch { throw new LinearApiError(mutation ? 'Linear result is unknown; inspect the session before retrying.' : 'Linear read failed.'); }
+    } catch { throw new LinearApiError('Linear request failed. If this request included a write, inspect its result before retrying; it may have succeeded.'); }
     if (response.status === 401) throw new LinearApiError('Linear authorization was revoked.', true);
     if (!response.ok) throw new LinearApiError('Linear request failed.');
     try {
