@@ -22,6 +22,11 @@ const Issue = z.object({ issue: z.object({ id: z.string(), delegate: z.object({ 
 }) });
 const IssueUpdated = z.object({ issueUpdate: z.object({ success: z.literal(true) }) });
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
+const sessionFields = 'id appUser{id} creator{id} issue{id} comment{id} status url';
+const SessionDetails = z.object({ id: z.string().uuid(), appUser: z.object({ id: z.string() }),
+  creator: z.object({ id: z.string() }).nullable(), issue: z.object({ id: z.string() }).nullable(),
+  comment: z.object({ id: z.string() }).nullable(), status: z.string(), url: z.string().url().nullable(),
+});
 
 // Linear retries a delivery for at most a few hours, so a finished receipt has done its
 // deduplication long before 30 days. Without a limit, linear.json kept every receipt
@@ -48,6 +53,53 @@ export class LinearSessionService {
   constructor(readonly identity: LinearIdentityService) {}
   get agentId(): string { return this.identity.agentId; }
 
+  async start(target: 'issue' | 'comment', targetId: string, requestId: string, runItemId?: string): Promise<z.infer<typeof SessionDetails>> {
+    z.string().uuid().parse(requestId);
+    const install = await this.identity.authorizedInstallation();
+    const home = this.identity.store.animaHome;
+    return withFileLock(join(home, 'agents', this.agentId, `linear-start-${requestId}`), home, async () => {
+      const previous = (await this.identity.store.read()).sessionStarts[requestId];
+      if (previous) {
+        if (previous.target !== target || previous.targetId !== targetId) throw new Error('This request id belongs to a different Linear target.');
+        if (!previous.sessionId) throw new Error(`Previous session creation is unknown (started ${previous.createdAt}). Inspect Linear; do not create another session blindly.`);
+        return this.sessionDetails(install, previous.sessionId);
+      }
+      // Resolve identifiers and comment replies before recording the send intent.
+      // Linear only accepts a root comment as a proactive session target.
+      let rootId: string;
+      if (target === 'comment') {
+        const result = await this.identity.graphql(install.id, 'query($id:String!){comment(id:$id){id parent{id}}}', { id: targetId },
+          z.object({ comment: z.object({ id: z.string(), parent: z.object({ id: z.string() }).nullable() }) }));
+        rootId = result.comment.parent?.id ?? result.comment.id;
+      } else {
+        const result = await this.identity.graphql(install.id, 'query($id:String!){issue(id:$id){id}}', { id: targetId },
+          z.object({ issue: z.object({ id: z.string().uuid() }) }));
+        rootId = result.issue.id;
+      }
+      await this.identity.store.update((file) => {
+        if (file.installation?.id !== install.id || file.installation.revoked) throw new Error('Linear identity changed.');
+        return { ...file, sessionStarts: { ...file.sessionStarts, [requestId]: { target, targetId, createdAt: nowIso() } } };
+      });
+      const field = target === 'issue' ? 'agentSessionCreateOnIssue' : 'agentSessionCreateOnComment';
+      const inputType = target === 'issue' ? 'AgentSessionCreateOnIssue' : 'AgentSessionCreateOnComment';
+      const input = target === 'issue' ? { issueId: rootId } : { commentId: rootId };
+      const result = await this.identity.graphql(install.id,
+        `mutation($input:${inputType}!){${field}(input:$input){success agentSession{${sessionFields}}}}`, { input },
+        z.record(z.string(), z.object({ success: z.literal(true), agentSession: SessionDetails })));
+      const session = result[field]!.agentSession;
+      if (session.appUser.id !== install.appUserId || session.creator) throw new Error('Linear returned an unexpected session owner. Inspect Linear before retrying.');
+      if ((target === 'issue' ? session.issue?.id : session.comment?.id) !== rootId) throw new Error('Linear returned a different session target. Inspect Linear before retrying.');
+      await this.sessionLock(session.id, async () => {
+        await this.registerProactive(install.id, session, runItemId);
+        await this.identity.store.update((file) => {
+          if (file.installation?.id !== install.id || file.installation.revoked) throw new Error('Linear identity changed after session creation.');
+          return { ...file, sessionStarts: { ...file.sessionStarts, [requestId]: { ...file.sessionStarts[requestId]!, sessionId: session.id } } };
+        });
+      });
+      return session;
+    });
+  }
+
   async receive(event: Extract<LinearWebhook, { type: 'OAuthApp' | 'AgentSessionEvent' }>, install: LinearInstallation): Promise<void> {
     if (event.type === 'OAuthApp') {
       await this.identity.store.update((file) => file.installation?.id === install.id ? { ...file, lastSignedWebhookAt: nowIso() } : file);
@@ -55,6 +107,15 @@ export class LinearSessionService {
     }
     const receivedAt = nowIso();
     const session = event.agentSession;
+    // API-created sessions have no human creator, but emit the same created
+    // webhook. Their caller is already working; do not enqueue that work again.
+    if (event.action === 'created' && session.creatorId === null) {
+      await this.identity.store.update((file) => {
+        if (file.installation?.id !== install.id || file.installation.revoked) throw new Error('Linear identity changed.');
+        return { ...file, lastSignedWebhookAt: receivedAt };
+      });
+      return;
+    }
     const eventId = event.action === 'created' ? session.id : event.agentActivity!.id;
     const key = `linear:${install.id}:${event.action}:${eventId}`;
     const stopped = event.agentActivity?.signal === 'stop';
@@ -218,7 +279,7 @@ export class LinearSessionService {
   }
 
   async read(sessionId: string) {
-    const install = await this.knownSession(sessionId);
+    const install = await this.identity.authorizedInstallation();
     const result = await this.identity.graphql(install.id,
       `query($id:String!){agentSession(id:$id){id appUser{id} activities(first:50){nodes{id createdAt content {
         ... on AgentActivityThoughtContent { type body }
@@ -228,7 +289,7 @@ export class LinearSessionService {
         ... on AgentActivityElicitationContent { type body }
         ... on AgentActivityActionContent { type action parameter result }
       }}}}}`, { id: sessionId }, SessionHistory);
-    if (result.agentSession.appUser.id !== install.appUserId) throw new Error('Linear session does not belong to this app.');
+    if (result.agentSession.id !== sessionId || result.agentSession.appUser.id !== install.appUserId) throw new Error('Linear session does not belong to this app.');
     return result.agentSession;
   }
 
@@ -239,7 +300,7 @@ export class LinearSessionService {
   private async respondLocked(sessionId: string, kind: LinearActivityKind, body: string, runItemId?: string,
     terminal?: 'stopped' | 'failed', isIdle?: () => Promise<boolean>,
   ): Promise<{ activityId: string; bookkeeping: 'recorded' | 'degraded' } | undefined> {
-    const install = await this.knownSession(sessionId);
+    const install = await this.knownSession(sessionId, runItemId, !terminal);
     let file = await this.identity.store.read();
     // Resolve earlier unknown effects before a newer input can change the retry key.
     for (const [key, operation] of Object.entries(file.operations)) {
@@ -282,7 +343,7 @@ export class LinearSessionService {
 
   async attach(sessionId: string, url: string, runItemId?: string): Promise<{ bookkeeping: 'recorded' | 'degraded' }> {
     return this.sessionLock(sessionId, async () => {
-      const install = await this.knownSession(sessionId);
+      const install = await this.knownSession(sessionId, runItemId, true);
       const receipts = Object.values((await this.identity.store.read()).receipts);
       let authorized = false;
       for (const receipt of receipts) {
@@ -439,10 +500,35 @@ export class LinearSessionService {
     if (created.agentActivityCreate.agentActivity.id !== id) throw new Error('Linear returned a different activity id; inspect the session.');
   }
 
-  private async knownSession(sessionId: string): Promise<LinearInstallation> {
+  private async sessionDetails(install: LinearInstallation, sessionId: string): Promise<z.infer<typeof SessionDetails>> {
+    const { agentSession } = await this.identity.graphql(install.id,
+      `query($id:String!){agentSession(id:$id){${sessionFields}}}`, { id: sessionId }, z.object({ agentSession: SessionDetails }));
+    if (agentSession.id !== sessionId || agentSession.appUser.id !== install.appUserId) throw new Error('Linear session does not belong to this app.');
+    return agentSession;
+  }
+
+  private async registerProactive(installId: string, session: z.infer<typeof SessionDetails>, runItemId?: string): Promise<void> {
+    if (session.creator || !['active', 'pending', 'stale'].includes(session.status)) throw new Error('This session is not open proactive work. Use an ordinary comment for further discussion.');
+    const key = `linear:${installId}:created:${session.id}`;
+    await this.identity.store.update((file) => {
+      if (file.installation?.id !== installId || file.installation.revoked) throw new Error('Linear identity changed.');
+      // A Stop or prompt can race the creation response. Never replace it.
+      if (Object.values(file.receipts).some((r) => r.sessionId === session.id)) return file;
+      const owner = runItemId ?? key;
+      const receipt: LinearReceipt = { sessionId: session.id, receivedAt: nowIso(), itemId: owner, runItemId: owner,
+        settled: true, acknowledgement: 'accepted', acknowledgementId: randomUUID() };
+      if (session.issue) receipt.issueId = session.issue.id;
+      return { ...file, receipts: { ...file.receipts, [key]: receipt } };
+    });
+  }
+
+  private async knownSession(sessionId: string, runItemId?: string, adoptProactive = false): Promise<LinearInstallation> {
+    const install = await this.identity.authorizedInstallation();
     const file = await this.identity.store.read();
-    if (!file.installation || file.installation.revoked || !Object.values(file.receipts).some((r) => r.sessionId === sessionId)) throw new Error('Linear session is not authorized for this agent.');
-    return file.installation;
+    if (Object.values(file.receipts).some((r) => r.sessionId === sessionId)) return install;
+    if (!adoptProactive) throw new Error('Linear session is not authorized for this agent.');
+    await this.registerProactive(install.id, await this.sessionDetails(install, sessionId), runItemId);
+    return install;
   }
   private sessionLock<T>(sessionId: string, op: () => Promise<T>): Promise<T> {
     if (!z.string().uuid().safeParse(sessionId).success) throw new Error('Invalid Linear session id.');

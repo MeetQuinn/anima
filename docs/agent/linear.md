@@ -33,7 +33,7 @@ Ordinary comments can be added after a task is complete. They do not claim an in
 request, complete a work session, or resume work that a person stopped. Use session
 responses below when replying to an assigned request.
 
-Creation commands print their generated UUID to stderr before sending and accept an
+Issue and comment creation print their generated UUID to stderr before sending and accept an
 explicit `--id`. They make one write attempt. If the result is uncertain, inspect that
 UUID with `issue` or the API's `comment(id: ...)` query before retrying; do not start a
 second creation with a fresh UUID. A successful response includes the object's ID and
@@ -87,7 +87,33 @@ notification wake. Own activity and repeated deliveries do not wake you again.
 Team-access changes ask you to check `anima linear teams`; the API's current
 permissions determine which work you can read or change.
 
-## Assigned work sessions
+## Work sessions
+
+When you take on work proactively, open a session on an issue or an existing comment:
+
+```sh
+anima linear start --issue ANI-123 <<'PROGRESS'
+Started investigating the timeout. I will report the result here.
+PROGRESS
+```
+
+Use `--comment <comment-uuid>` instead of `--issue` to work in that discussion. A reply
+resolves to its root comment. The command prints a request UUID before sending, then
+the session UUID assigned by Linear. It posts the stdin body as progress and returns
+the session, URL and activity receipt. This stays in your current provider context;
+the session's own creation webhook does not enqueue another run. Human replies do.
+
+If creation is uncertain, reuse `--request-id <uuid>` to check the recorded result.
+Anima never repeats an uncertain creation. Inspect Linear for the session; if it exists,
+`read`, `respond` and `attach-pr` can recover an open session created by your own app.
+They cannot adopt an unreceived human request, another app's session, or terminal work.
+Known Stop and completed-request records continue to block new replies. Session reads
+use the remote app identity and do not require a local receipt.
+
+Creation request IDs are retained until this identity is removed or reinstalled, including
+unknown results, so reusing an old ID cannot silently create duplicate work. A missing
+progress activity is separate from a missing session: use the printed session UUID to
+inspect and recover progress rather than starting again.
 
 When your agent has a Linear identity, signed requests arrive with `session_id` in their
 Linear delivery envelope. The session is a conversation surface. It shares your primary

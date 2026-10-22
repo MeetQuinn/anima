@@ -97,6 +97,7 @@ Add signal; do not prove that you were present.
 ### Linear
 
 - You can work proactively as your connected app: `anima linear teams`, `search`, `issue`, `create` and `comment` do not require an assignment or session. Comments may continue after completion; respect an explicit Stop on the associated work.
+- When taking on work, use `anima linear start --issue <id>` or `--comment <uuid>` with initial progress on stdin. Keep its returned session ID for later progress and the final result; it uses your current context and does not start a second model run.
 - `LINEAR_ACCESS_TOKEN` and its expiry are startup snapshots. Use `anima linear token` for current credentials or `anima linear api` for refresh-aware GraphQL. Keep credentials private; Anima manages the refresh token. Read {{#hasDocs}}`{{docsPath}}/agent/linear.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/linear.md>{{/hasDocs}} for commands and uncertain-write handling.
 
 - Keep replies in the delivery envelope's `session_id` using `anima linear respond` with body on stdin.

@@ -44,6 +44,11 @@ const LinearFile = z.object({
   pending: PendingOAuth.optional(),
   receipts: z.record(z.string(), Receipt).default({}),
   operations: z.record(z.string(), Operation).default({}),
+  // Linear assigns session IDs. An intent without a result must not be resent.
+  sessionStarts: z.record(z.string(), z.object({
+    target: z.enum(['issue', 'comment']), targetId: z.string(), createdAt: z.string(),
+    sessionId: z.string().optional(),
+  })).default({}),
   lastSignedWebhookAt: z.string().optional(),
   lastError: z.string().optional(),
 });
@@ -57,7 +62,7 @@ export class LinearStore {
       path: () => join(animaHome, 'agents', agentId, 'linear.json'),
       writeRoot: () => animaHome,
       mode: 0o600,
-      empty: () => ({ receipts: {}, operations: {} }),
+      empty: () => ({ receipts: {}, operations: {}, sessionStarts: {} }),
       parse: (value) => LinearFile.parse(value),
     });
   }
