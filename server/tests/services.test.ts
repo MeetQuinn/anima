@@ -57,6 +57,8 @@ test('cleanServiceEnv strips runtime item context before spawning services', () 
     ANIMA_SLACK_BOT_TOKEN: 'xoxb-secret',
     FEISHU_APP_SECRET: 'feishu-secret',
     FEISHU_TENANT_ACCESS_TOKEN: 't-tenant',
+    LINEAR_ACCESS_TOKEN: 'linear-agent-token',
+    LINEAR_ACCESS_TOKEN_EXPIRES_AT: '2026-10-23T00:00:00Z',
     PATH: '/usr/bin',
     SAFE_VALUE: 'kept',
     SLACK_BOT_TOKEN: 'xoxb-secret',
@@ -71,6 +73,8 @@ test('cleanServiceEnv strips runtime item context before spawning services', () 
   assert.equal(env.ANIMA_SLACK_BOT_TOKEN, undefined);
   assert.equal(env.FEISHU_APP_SECRET, undefined);
   assert.equal(env.FEISHU_TENANT_ACCESS_TOKEN, undefined);
+  assert.equal(env.LINEAR_ACCESS_TOKEN, undefined);
+  assert.equal(env.LINEAR_ACCESS_TOKEN_EXPIRES_AT, undefined);
   assert.equal(env.SLACK_BOT_TOKEN, undefined);
 });
 

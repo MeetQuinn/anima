@@ -58,7 +58,7 @@ test('env CLI stores plain and encrypted secret values and injects selected keys
       '--',
       process.execPath,
       '-e',
-      'console.log(JSON.stringify({ animaSlack: process.env.ANIMA_SLACK_BOT_TOKEN || "", dotenvKey: process.env.DOTENV_PRIVATE_KEY_SECRET || "", feishuSecret: process.env.FEISHU_APP_SECRET || "", feishuTenant: process.env.FEISHU_TENANT_ACCESS_TOKEN || "", plain: process.env.PLAIN_VALUE, slack: process.env.SLACK_BOT_TOKEN || "", token: process.env.SERVICE_TOKEN }))',
+      'console.log(JSON.stringify({ animaSlack: process.env.ANIMA_SLACK_BOT_TOKEN || "", dotenvKey: process.env.DOTENV_PRIVATE_KEY_SECRET || "", feishuSecret: process.env.FEISHU_APP_SECRET || "", feishuTenant: process.env.FEISHU_TENANT_ACCESS_TOKEN || "", linear: process.env.LINEAR_ACCESS_TOKEN || "", linearExpiry: process.env.LINEAR_ACCESS_TOKEN_EXPIRES_AT || "", plain: process.env.PLAIN_VALUE, slack: process.env.SLACK_BOT_TOKEN || "", token: process.env.SERVICE_TOKEN }))',
     ], {
       env: {
         ...env,
@@ -66,6 +66,8 @@ test('env CLI stores plain and encrypted secret values and injects selected keys
         DOTENV_PRIVATE_KEY_SECRET: 'should-not-leak',
         FEISHU_APP_SECRET: 'feishu-secret',
         FEISHU_TENANT_ACCESS_TOKEN: 'tenant-token',
+        LINEAR_ACCESS_TOKEN: 'linear-agent-token',
+        LINEAR_ACCESS_TOKEN_EXPIRES_AT: '2026-10-23T00:00:00Z',
         SLACK_BOT_TOKEN: 'xoxb-managed',
       },
     });
@@ -75,6 +77,8 @@ test('env CLI stores plain and encrypted secret values and injects selected keys
       dotenvKey: '',
       feishuSecret: '',
       feishuTenant: '',
+      linear: '',
+      linearExpiry: '',
       plain: 'visible',
       slack: '',
       token: 'super-secret',

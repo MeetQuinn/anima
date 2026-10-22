@@ -28,7 +28,7 @@ export class LinearClient {
         method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ query, variables, ...(operationName ? { operationName } : {}) }), signal: AbortSignal.timeout(10_000), redirect: 'error',
       });
-    } catch { throw new LinearApiError('Linear request failed; a write may have succeeded. Inspect its result before retrying.'); }
+    } catch { throw new LinearApiError('Linear request failed. If this request included a write, inspect its result before retrying; it may have succeeded.'); }
     if (response.status === 401) throw new LinearApiError('Linear authorization was revoked.', true);
     if (!response.ok) throw new LinearApiError('Linear request failed.');
     try {
