@@ -157,6 +157,13 @@ test('registered Linear CLI creates and comments proactively, records outbox, an
   const messages = await messageServiceForAgent('scout').list();
   assert.ok(messages.entries.some((m) => m.direction === 'out' && m.platform === 'linear' && m.text === 'An ordinary reply' && m.threadTs === parentId));
   assert.ok(messages.entries.some((m) => m.channelId === created.id && m.text === 'From Slack\n\nProactive description' && m.permalink === created.url));
+  fake.replyRoot = randomUUID();
+  stdin = 'Continue the same thread'; const reply = await run('comment', '--issue', issue.id, '--reply-to', parentId);
+  assert.equal(reply.parentId, fake.replyRoot);
+  stdin = 'Start a new discussion'; const root = await run('comment', '--issue', issue.id);
+  const threaded = (await messageServiceForAgent('scout').list()).entries;
+  assert.equal(threaded.find((m) => m.text === 'Continue the same thread')?.threadTs, fake.replyRoot);
+  assert.equal(threaded.find((m) => m.text === 'Start a new discussion')?.threadTs, root.id);
   const auditBefore = await activityServiceForAgent('scout').readAll();
   const token = await run('token'); assert.equal(token.accessToken, install.accessToken); assert.equal(token.refreshToken, undefined);
   stdin = JSON.stringify({ query: 'query First { viewer { id } } query Second { viewer { id } }', variables: {}, operationName: 'Second' });

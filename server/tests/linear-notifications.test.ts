@@ -64,6 +64,7 @@ test('app notifications authenticate resources and enqueue once across retries, 
   const transport = new LinearMessageTransport(home, { error() {} });
   const app = transport.buildApp();
   const event = notification();
+  event.notification.parentCommentId = randomUUID();
   const send = (value: unknown, signed = true) => {
     const payload = JSON.stringify(value);
     return app.inject({ method: 'POST', url: '/webhook', payload, headers: { 'content-type': 'application/json',
@@ -94,35 +95,36 @@ test('app notifications authenticate resources and enqueue once across retries, 
     assert.deepEqual((await f.store.read()).receipts, {}); assert.equal(f.fake.posts.length, 0);
     const ledger = await messageServiceForAgent('scout').list();
     assert.equal(ledger.entries.length, 1); assert.equal(ledger.entries[0]?.channelId, issueId);
-    assert.equal(ledger.entries[0]?.threadTs, event.notification.commentId);
+    assert.equal(ledger.entries[0]?.threadTs, event.notification.parentCommentId);
     assert.equal(ledger.entries[0]?.platform, 'linear');
   } finally { await app.close(); await transport.stop(); await (transport as unknown as { observationWrite?: Promise<void> }).observationWrite; }
 }));
 
 test('self, duplicate session and unsupported notifications do not wake; ordinary other-app threads remain visible', async () => withTempAnimaHome(async (home) => {
   const f = await fixture(home), queue = new WakeQueueService('scout');
-  for (const type of ['issueMention', 'issueCommentMention', 'issueAssignedToYou', 'futureUnknownType']) await f.notifications.receive(verified(notification(type)), install);
+  for (const type of ['issueMention', 'issueCommentMention', 'issueAssignedToYou', 'issueEmojiReaction', 'issueCommentReaction', 'futureUnknownType']) await f.notifications.receive(verified(notification(type)), install);
   const self = notification(); self.notification.actorId = install.appUserId; self.notification.actor = { id: install.appUserId, name: 'Me' };
   await f.notifications.receive(verified(self), install);
   const archived = notification(); archived.notification.archivedAt = new Date().toISOString(); await f.notifications.receive(verified(archived), install);
   assert.equal((await queue.list()).length, 0); assert.equal(f.calls.length, 0);
   f.setSession(install.appUserId); await f.notifications.receive(verified(notification()), install);
   assert.equal((await queue.list()).length, 0);
-  f.setSession(randomUUID()); await f.notifications.receive(verified(notification()), install);
+  const root = notification();
+  f.setSession(randomUUID()); await f.notifications.receive(verified(root), install);
   assert.equal((await queue.list()).length, 1);
-  for (const type of ['issueUnassignedFromYou', 'issueStatusChanged', 'issueEmojiReaction', 'issueCommentReaction']) {
-    const event = notification(type); event.notification.reactionEmoji = 'thumbsup';
-    // A person's reaction to our own comment must still be delivered.
+  assert.equal((await messageServiceForAgent('scout').list()).entries[0]?.threadTs, root.notification.commentId);
+  for (const type of ['issueUnassignedFromYou', 'issueStatusChanged']) {
+    const event = notification(type);
     event.notification.comment!.userId = install.appUserId;
     await f.notifications.receive(verified(event), install);
   }
-  assert.equal((await queue.list()).length, 5);
+  assert.equal((await queue.list()).length, 3);
   const retry = notification(); f.setFailure(true);
-  await assert.rejects(f.notifications.receive(verified(retry), install)); assert.equal((await queue.list()).length, 5);
+  await assert.rejects(f.notifications.receive(verified(retry), install)); assert.equal((await queue.list()).length, 3);
   f.setFailure(false); f.setSession(null); await f.notifications.receive(verified(retry), install);
-  assert.equal((await queue.list()).length, 6);
+  assert.equal((await queue.list()).length, 4);
   await f.agentStore.update((a) => ({ ...a, enabled: false }));
-  await assert.rejects(f.notifications.receive(verified(notification()), install)); assert.equal((await queue.list()).length, 6);
+  await assert.rejects(f.notifications.receive(verified(notification()), install)); assert.equal((await queue.list()).length, 4);
 }));
 
 test('permission changes deliver bounded context without session obligations and ignore retry timestamps', async () => withTempAnimaHome(async (home) => {

@@ -272,6 +272,7 @@ export const LinearNotificationInboxItem = InboxItemBase.extend({
   issueId: z.string().optional(),
   issueUrl: z.string().optional(),
   commentId: z.string().optional(),
+  parentCommentId: z.string().optional(),
   actorName: z.string().optional(),
   text: z.string(),
 });

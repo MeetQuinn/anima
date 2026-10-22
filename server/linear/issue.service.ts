@@ -86,6 +86,8 @@ export class LinearIssueService {
       { input: parsed }, z.object({ commentCreate: z.object({ success: z.literal(true), comment: Comment }) }),
     );
     if (result.commentCreate.comment.id !== parsed.id) throw new Error('Linear returned a different comment id; inspect the comment before retrying.');
-    return result.commentCreate.comment;
+    const comment: z.infer<typeof Comment> & { parentId?: string } = result.commentCreate.comment;
+    if (parsed.parentId) comment.parentId = parsed.parentId;
+    return comment;
   }
 }

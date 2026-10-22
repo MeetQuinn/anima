@@ -74,7 +74,8 @@ have the same limitation. Use common commands when you want their outbox receipt
 ## Notifications and follow-up
 
 An incoming **Linear notification** is context, not a new work assignment. It can
-report a new comment, reaction, status change or removal of your assignment. Use
+report a new comment, status change or removal of your assignment. Reactions do
+not wake the agent. Use
 the issue and comment IDs in its envelope to read the discussion or reply with
 `anima linear comment`. No automatic reply is required, and finishing the turn
 silently does not post a missing-response error. A notification does not resume

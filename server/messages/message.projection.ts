@@ -19,7 +19,7 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
     actor: item.actorName ?? 'Linear', direction: 'in', kind: 'message',
     messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.issueId ?? item.organizationId,
     channelKind: item.issueId ? 'linear_issue' : 'linear_workspace', source: { id: item.id, kind: 'inbox' },
-    threadTs: item.commentId, permalink: item.issueUrl, text: item.text, timestamp: item.receivedAt,
+    threadTs: item.parentCommentId ?? item.commentId, permalink: item.issueUrl, text: item.text, timestamp: item.receivedAt,
   };
   if (item.kind === 'linear') return {
     actor: item.actorName ?? 'Linear user', direction: 'in', kind: 'message',

@@ -570,3 +570,30 @@ it('Linear input and reply remain Linear session surfaces without Slack links', 
   expect(result.every((row) => (row.kind === 'message-in' || row.kind === 'message-out') && row.surface?.label === 'Linear session')).toBe(true);
   expect(JSON.stringify(result)).not.toContain('slack.com');
 });
+
+it('labels ordinary Linear issue and workspace activity separately from work sessions', () => {
+  for (const [channelKind, threadTs, label, kind] of [
+    ['linear_issue', 'root-comment', 'Linear issue', 'thread'],
+    ['linear_issue', '', 'Linear issue', 'channel'],
+    ['linear_workspace', '', 'Linear workspace', 'channel'],
+    ['linear_session', 'session-id', 'Linear session', 'thread'],
+  ] as const) {
+    const entries: AgentMessageRecord[] = ['in', 'out'].map((direction) => ({
+      direction: direction as 'in' | 'out', kind: 'message', messageId: `${channelKind}-${direction}`,
+      platform: 'linear', channelKind, channelId: 'linear-resource', threadTs,
+      source: { id: `${channelKind}-${direction}`, kind: direction === 'in' ? 'inbox' : 'activity' },
+      text: 'Synthetic discussion', timestamp: '2026-10-23T00:00:00Z',
+    }));
+    const messages = buildMessageFeed({ entries, nextCursor: null });
+    expect(messages).toHaveLength(2);
+    for (const row of messages) {
+      if (row.kind !== 'message-in' && row.kind !== 'message-out') throw new Error('expected message');
+      expect(row.surface).toEqual({ kind, label });
+    }
+    const [outbound] = buildActivityFeed({ nextCursor: null, events: [activityEvent('linear-comment', 'external.effect.completed', {
+      platform: 'linear', channelKind, channel: 'linear-resource', threadTs, text: 'Synthetic discussion', effect: 'linear.comment.create',
+    })] });
+    if (outbound?.kind !== 'message-out') throw new Error('expected outgoing activity');
+    expect(outbound.surface).toEqual({ kind, label });
+  }
+});

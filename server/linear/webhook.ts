@@ -19,7 +19,7 @@ const Notification = z.object({
   actorId: Id.nullish(), actor: z.object({ id: Id, name: z.string() }).nullish(), archivedAt: z.string().nullish(),
   issueId: Id.nullish(), issue: z.object({ id: Id, identifier: z.string(), title: z.string(), url: z.string().url() }).nullish(),
   commentId: Id.nullish(), comment: z.object({ id: Id, body: z.string().max(100_000), userId: Id.nullish(), issueId: Id.nullish() }).nullish(),
-  parentCommentId: Id.nullish(), reactionEmoji: z.string().max(256).nullish(),
+  parentCommentId: Id.nullish(),
 });
 export const LinearWebhook = z.discriminatedUnion('type', [
   Common.extend({ type: z.literal('AgentSessionEvent'), action: z.enum(['created', 'prompted']),

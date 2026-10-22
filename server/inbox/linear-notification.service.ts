@@ -11,7 +11,7 @@ const Session = z.object({ appUser: z.object({ id: z.string() }) }).nullable();
 const CommentThread = z.object({ comment: z.object({ id: z.string(), issueId: z.string().nullable(),
   agentSession: Session, parent: z.object({ agentSession: Session }).nullable(),
 }) });
-const WAKE_TYPES = new Set(['issueNewComment', 'issueEmojiReaction', 'issueCommentReaction', 'issueUnassignedFromYou', 'issueStatusChanged']);
+const WAKE_TYPES = new Set(['issueNewComment', 'issueUnassignedFromYou', 'issueStatusChanged']);
 
 export class LinearNotificationService {
   constructor(private readonly identity: LinearIdentityService) {}
@@ -59,9 +59,9 @@ export class LinearNotificationService {
       item.issueId = n.issue.id;
       item.issueUrl = n.issue.url;
       if (n.commentId) item.commentId = n.commentId;
+      if (n.parentCommentId) item.parentCommentId = n.parentCommentId;
       if (n.actor?.name) item.actorName = n.actor.name;
-      text = [`${n.issue.identifier}: ${n.issue.title}`, `Event: ${n.type}.`, n.comment?.body,
-        n.reactionEmoji ? `Reaction: ${n.reactionEmoji}` : ''].filter(Boolean).join('\n\n');
+      text = [`${n.issue.identifier}: ${n.issue.title}`, `Event: ${n.type}.`, n.comment?.body].filter(Boolean).join('\n\n');
     }
     item.id = key;
     item.text = text;
