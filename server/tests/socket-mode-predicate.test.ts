@@ -293,6 +293,11 @@ test('Slack Socket Mode retries invalid_auth after hello with bounded slow backo
     receiver.client.emit('disconnected');
     await nextImmediate();
     assert.equal(attempts, 2);
+    const authHealth = receiver.connectionHealth();
+    assert.equal(authHealth.state, 'reconnecting');
+    assert.equal(authHealth.reason, 'invalid_auth');
+    assert.ok(authHealth.disconnectedAt && authHealth.retryAt);
+    assert.ok(Date.parse(authHealth.retryAt) > Date.now());
     for (const [index, delay] of [60_000, 120_000, 240_000, 300_000, 300_000].entries()) {
       assert.match(warnings[index] ?? '', new RegExp(`retrying in ${delay}ms: invalid_auth`));
       t.mock.timers.tick(delay - 1);
@@ -304,6 +309,8 @@ test('Slack Socket Mode retries invalid_auth after hello with bounded slow backo
     }
     assert.deepEqual(errors, []);
     assert.deepEqual(logs, ['Slack Socket Mode reconnected.']);
+    assert.equal(receiver.connectionHealth().state, 'connected');
+    assert.equal(receiver.connectionHealth().reason, undefined);
   } finally {
     await receiver.stop();
   }
@@ -418,3 +425,71 @@ function socketAuthError(code: string): Error {
     data: { error: code, ok: false },
   });
 }
+
+
+test('connection health tracks retry, recovery and stop without persisting raw errors', async (t) => {
+  let fail = false;
+  let release: (() => void) | undefined;
+  const receiver = new ResilientSocketModeReceiver({
+    appToken: 'xapp-synthetic', reconnectDelayMs: 50, reconnectMaxDelayMs: 50,
+    random: () => 1, runtimeLogger: { log() {}, warn() {}, error() {} },
+  });
+  t.after(() => receiver.stop());
+  receiver.client.disconnect = async () => {};
+  receiver.client.start = async () => {
+    if (fail) throw coded(WebApiErrorCode.RequestError, 'secret-body-token')();
+    if (release === undefined) return undefined as never;
+    await new Promise<void>((resolve) => { release = resolve; });
+    return undefined as never;
+  };
+  await receiver.start();
+  const initial = receiver.connectionHealth();
+  assert.equal(initial.state, 'connected');
+  assert.equal(initial.connectedAt, initial.since);
+  fail = true;
+  receiver.client.emit('disconnected');
+  await nextImmediate();
+  const retry = receiver.connectionHealth();
+  assert.equal(retry.state, 'reconnecting');
+  assert.equal(retry.reason, 'network_error');
+  assert.equal(retry.attempts, 1);
+  assert.ok(retry.disconnectedAt && retry.retryAt);
+  assert.equal(retry.connectedAt, initial.connectedAt);
+  assert.doesNotMatch(JSON.stringify(retry), /secret-body-token|xapp-synthetic/);
+  fail = false;
+  for (let i = 0; i < 100 && receiver.connectionHealth().state !== 'connected'; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(receiver.connectionHealth().state, 'connected');
+  assert.equal(receiver.connectionHealth().reason, undefined);
+  assert.equal(receiver.connectionHealth().disconnectedAt, undefined);
+  assert.equal(receiver.connectionHealth().retryAt, undefined);
+  release = () => {};
+  receiver.client.emit('disconnected');
+  await nextImmediate();
+  const stopping = receiver.stop();
+  release();
+  await stopping;
+  assert.equal(receiver.connectionHealth().state, 'stopped', 'late hello never restores connected state');
+});
+
+test('connection health exposes safe terminal auth status and omits unknown provider errors', async (t) => {
+  for (const [error, reason, state] of [
+    [coded(WebApiErrorCode.PlatformError, 'invalid_auth')(), 'invalid_auth', 'failed'],
+    [coded(WebApiErrorCode.PlatformError, 'private-secret-code')(), 'connection_failed', 'connecting'],
+  ] as const) {
+    const receiver = new ResilientSocketModeReceiver({ appToken: 'xapp-test', reconnectDelayMs: 60_000,
+      runtimeLogger: { log() {}, warn() {}, error() {} } });
+    t.after(() => receiver.stop());
+    receiver.client.start = async () => { throw error; };
+    receiver.client.disconnect = async () => {};
+    const starting = receiver.start().catch(() => undefined);
+    await nextImmediate();
+    const health = receiver.connectionHealth();
+    assert.equal(health.state, state);
+    assert.equal(health.reason, reason);
+    assert.doesNotMatch(JSON.stringify(health), /private-secret-code|simulated/);
+    await receiver.stop();
+    await starting;
+  }
+});

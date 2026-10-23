@@ -85,6 +85,26 @@ export interface ProviderWorkSnapshot {
   state: 'background' | 'working';
 }
 
+export const SLACK_CONNECTION_REASONS = [
+  'invalid_auth', 'not_authed', 'account_inactive', 'token_revoked', 'missing_scope',
+  'not_allowed_token_type', 'network_error', 'rate_limited', 'http_error', 'socket_closed', 'connection_failed',
+] as const;
+
+export interface SlackConnectionSnapshot {
+  state: 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'stopped';
+  observedAt: string;
+  since: string;
+  attempts: number;
+  connectedAt?: string;
+  disconnectedAt?: string;
+  retryAt?: string;
+  reason?: typeof SLACK_CONNECTION_REASONS[number];
+}
+
+export interface TransportHealthSnapshot {
+  slack?: SlackConnectionSnapshot;
+}
+
 export interface AgentRuntimeHandleSnapshot {
   activeItemId?: string;
   activeItemStartedAt?: string;
@@ -92,6 +112,7 @@ export interface AgentRuntimeHandleSnapshot {
   providerChild?: ProviderChildHealthSnapshot;
   providerChildExpected: boolean;
   providerWork?: ProviderWorkSnapshot;
+  transports?: TransportHealthSnapshot;
   workerId?: string;
 }
 

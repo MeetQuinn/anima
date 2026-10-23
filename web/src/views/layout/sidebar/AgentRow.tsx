@@ -1,3 +1,4 @@
+import { slackConnectionDisplay } from '@/lib/slack-connection';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
@@ -9,8 +10,8 @@ import { agentWorkState, type AgentDisplayState } from '@/lib/agent-work-state';
 // Agent row — name + status only; actions live on the Profile detail pane.
 // ---------------------------------------------------------------------------
 
-// Maps health state → a single sidebar dot color. The dot is the only health
-// signal in the sidebar; full labels and reason text live in the activity strip.
+// Maps runtime health and model work to the sidebar dot. It remains the
+// signal for model work; Slack connectivity has its own label and badge.
 // Exported so the collapsed avatar rail in Sidebar.tsx can use the same mapping.
 export function sidebarDotColor(health: AgentRuntimeHealthSummary | undefined, workState: AgentDisplayState): string {
   if (!health || health.state === 'unknown' || health.state === 'starting' || health.state === 'degraded') {
@@ -66,6 +67,7 @@ export function AgentRow({
   optionId,
   focused = false,
   touch = false,
+  nowMs,
 }: {
   agent: AgentConfig;
   index: number;
@@ -81,7 +83,9 @@ export function AgentRow({
   // left padding that clears the always-visible drag grip. Colors are shared:
   // both surfaces sit on the dark spine.
   touch?: boolean;
+  nowMs?: number;
 }) {
+  const connection = enabled ? slackConnectionDisplay(status?.health, nowMs) : undefined;
   const color = agentColor(index);
   const displayName = agentDisplayName(agent);
   const avatarUrl = agentAvatarUrl(agent);
@@ -217,6 +221,13 @@ export function AgentRow({
           {notConnected && (
             <div className="font-sans mt-0.5 text-[10px] leading-tight text-health-warn/80">
               Not connected
+            </div>
+          )}
+          {connection && connection.severity !== 'normal' && (
+            <div className="mt-1 truncate font-sans text-[10px] leading-tight"
+              style={{ color: connection.severity === 'error' ? 'var(--color-health-error-on-spine)' : 'var(--color-health-warn-on-spine)' }}
+              title={connection.detail}>
+              {connection.label}
             </div>
           )}
         </div>

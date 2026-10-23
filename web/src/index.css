@@ -69,8 +69,11 @@
   --color-health-ok-soft: #dfe5cf;
   --color-health-warn: #c08a2b; /* warm gold — working, in progress */
   --color-health-warn-soft: #f3e6c1;
+  --color-health-warn-ink: #7f5a14; /* readable warning text on paper */
+  --color-health-warn-on-spine: var(--color-health-warn);
   --color-health-error: #9a2a14; /* deep ink red — distinct from accent */
   --color-health-error-soft: #f1d4ca;
+  --color-health-error-on-spine: #e07a5f;
   --color-health-idle: #8a8273;
 
   --color-activity-inbound: #2d6b6f; /* muted teal — message received */
@@ -204,6 +207,8 @@ h2 {
   --color-text-on-spine-muted: #6b6353; /* between text-muted and text-subtle */
   --color-text-on-spine-subtle: #98907e;
   --color-avatar-ring-spine: rgb(0 0 0 / 0.1);
+  --color-health-error-on-spine: var(--color-health-error);
+  --color-health-warn-on-spine: var(--color-health-warn-ink);
 }
 
 /* Caps register — day dividers, section eyebrows. Fraunces wonk small-caps. */

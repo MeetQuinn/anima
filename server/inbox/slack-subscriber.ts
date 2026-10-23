@@ -46,6 +46,7 @@ export interface SlackInboxSubscriberOptions {
 
 export class SlackInboxSubscriber {
   private readonly app: App;
+  private receiver!: ResilientSocketModeReceiver;
   private readonly shortcutService: SlackShortcutService;
   private readonly slackProfiles = new SlackProfileResolver();
   // Guards the fire-and-forget bot display-info refresh so overlapping inbound
@@ -58,6 +59,8 @@ export class SlackInboxSubscriber {
     });
     this.app = this.createApp();
   }
+
+  connectionHealth() { return this.receiver.connectionHealth(); }
 
   async start(): Promise<void> {
     await this.app.start();
@@ -77,6 +80,7 @@ export class SlackInboxSubscriber {
       installerOptions: { clientOptions: slackWebClientOptions() },
       logLevel: LogLevel.INFO,
     });
+    this.receiver = receiver;
     const { botId, botUserId } = this.options;
     const app = new App({
       // With both ids, Bolt skips its own auth.test; runtime start already ran one.

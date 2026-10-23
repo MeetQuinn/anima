@@ -1,9 +1,12 @@
+import type { TransportHealthSnapshot } from '../../shared/snapshot.js';
+
 export type MessageTransportKind = 'slack' | 'feishu' | 'lark' | 'dingtalk';
 
 export interface MessageTransport {
   kind: MessageTransportKind;
   // start() should clean up its own partial setup if it throws. stop() should
   // be idempotent because runners may call it after partial-start failures.
+  health?(): TransportHealthSnapshot;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -12,6 +15,10 @@ export class MessageTransportRunner {
   private started: MessageTransport[] = [];
 
   constructor(private readonly transports: readonly MessageTransport[]) {}
+
+  health(): TransportHealthSnapshot {
+    return Object.assign({}, ...this.transports.map((transport) => transport.health?.()));
+  }
 
   async start(): Promise<void> {
     const started: MessageTransport[] = [];

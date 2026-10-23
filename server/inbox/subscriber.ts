@@ -50,6 +50,8 @@ export class InboxSubscriber {
     );
   }
 
+  health() { return this.transports.health(); }
+
   async start(): Promise<void> {
     this.reminders.start();
     try {

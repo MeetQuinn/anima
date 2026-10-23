@@ -202,8 +202,8 @@ action menu controls the local runtime:
 - **Restart agent** force-stops a hung agent. Current work is dropped and is not retried; queued work,
   memory, notes, and config remain. Do not use Restart to solve provider authentication or quota
   failures.
-- **Copy diagnostics** copies a support-oriented snapshot of the agent state. It includes up to
-  20 confirmed stalled-work observations, retained after recovery. These record queue and worker
+- **Copy diagnostics** copies a support-oriented snapshot of the agent state, including Slack
+  connection status. It includes up to 20 confirmed stalled-work observations, retained after recovery. These record queue and worker
   IDs, process checks, and the startup grace decision, without message bodies or credentials.
   Identical observations are not repeated until recovery or a change in the observed state.
   Capture happens when status is read; it is not a continuous fault recorder. If the history
@@ -260,3 +260,17 @@ deleted. Read [Use a knowledge base](./knowledge-base.md) for the full workflow.
 - [Run an agent team](./how-your-agents-work-as-a-team.md)
 - [Security and data](/security-and-data)
 - [Update Anima](./updating-anima.md)
+
+### Slack connection status
+
+Slack connectivity is shown separately from model work. An agent can still be working while
+its Slack listener is disconnected. The agent list shows **Slack reconnecting** during retries;
+a disconnect lasting five minutes changes to **Slack disconnected** and an attention color.
+This does not stop retries. A collapsed sidebar shows a separate warning badge.
+
+The activity header shows the disconnected duration, a safe error code such as `invalid_auth`,
+and the next retry. A terminal failure says automatic retries stopped. A successful connection
+clears the warning. If the connection snapshot has not been refreshed for more than 30 seconds,
+the dashboard shows **Slack status unavailable** instead of relying on an old connected state.
+Older runtimes without connection snapshots do not show this row. These indicators report the
+Socket Mode connection; they cannot recover messages missed while disconnected.
