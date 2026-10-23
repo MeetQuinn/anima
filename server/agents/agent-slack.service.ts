@@ -130,7 +130,8 @@ export class AgentSlackService {
   }
 
   async syncDisplayInfo(): Promise<AgentConfig> {
-    return this.persistDisplayInfo(await getSlackDisplayInfo(await this.getWebClient()), nowIso());
+    const { agent, client } = await this.getAgentWebClient();
+    return (await this.persistDisplayInfo(agent.slack, await getSlackDisplayInfo(client), nowIso())).agent;
   }
 
   /**
@@ -150,26 +151,30 @@ export class AgentSlackService {
    * once per `ttlMs`, stamping `slack.botProfileSyncedAt`. When the last sync is
    * still fresh this is a cheap no-op — it reads the local config only and makes
    * NO Slack API calls. Best-effort: callers run it fire-and-forget off the
-   * message path and swallow errors. Pass an existing `client` to reuse the
-   * inbound request's WebClient instead of building a new one.
+   * message path and swallow errors. Build the client from this config snapshot:
+   * an inbound subscriber can still hold credentials from an older connection.
    */
-  async syncDisplayInfoIfStale(options: { client?: WebClient; ttlMs: number }): Promise<{ synced: boolean }> {
+  async syncDisplayInfoIfStale(options: { ttlMs: number }): Promise<{ synced: boolean }> {
     const agent = await this.agentService.getConfig();
     if (!agent.slack.botToken) return { synced: false };
     if (isWithinTtl(agent.slack.botProfileSyncedAt, options.ttlMs)) return { synced: false };
-    const client = options.client ?? this.webClientForAgent(agent);
-    await this.persistDisplayInfo(await getSlackDisplayInfo(client), nowIso());
-    return { synced: true };
+    const client = this.webClientForAgent(agent);
+    const { synced } = await this.persistDisplayInfo(agent.slack, await getSlackDisplayInfo(client), nowIso());
+    return { synced };
   }
 
   private async persistDisplayInfo(
+    source: AgentConfig['slack'],
     info: Awaited<ReturnType<typeof getSlackDisplayInfo>>,
     botProfileSyncedAt?: string,
-  ): Promise<AgentConfig> {
+  ): Promise<{ agent: AgentConfig; synced: boolean }> {
     // The Slack calls are done; merge only the display fields into the config
     // as it is now. The on-message refresh runs fire-and-forget, so a dashboard
     // edit can land while a sync is in flight, and updateConfig keeps it.
-    return this.agentService.updateConfig((latest) => {
+    let synced = false;
+    const agent = await this.agentService.updateConfig((latest) => {
+      if (latest.slack.botToken !== source.botToken || latest.slack.appToken !== source.appToken) return latest;
+      synced = true;
       const appId = info.appId ?? appIdFromAppToken(latest.slack.appToken);
       return {
         ...latest,
@@ -181,6 +186,7 @@ export class AgentSlackService {
         },
       };
     });
+    return { agent, synced };
   }
 
   async getWebClient(): Promise<WebClient> {

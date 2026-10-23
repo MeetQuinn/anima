@@ -303,15 +303,18 @@ export class AgentFeishuService {
   private async syncDisplayInfoForAgent(agent: AgentConfig): Promise<AgentConfig> {
     if (!agent.feishu.connected) return agent;
     const info = await this.fetchDisplayInfo(agent.feishu);
-    return defaultAgentRegistryService.serviceFor(this.agentId).updateConfig((latest) => ({
-      ...latest,
-      feishu: {
-        ...latest.feishu,
-        avatarUrl: info.avatarUrl || undefined,
-        botProfileSyncedAt: nowIso(),
-        ...(info.openId ? { botOpenId: info.openId } : {}),
-      },
-    }));
+    return defaultAgentRegistryService.serviceFor(this.agentId).updateConfig((latest) => {
+      if (latest.feishu.appId !== agent.feishu.appId || latest.feishu.appSecret !== agent.feishu.appSecret) return latest;
+      return {
+        ...latest,
+        feishu: {
+          ...latest.feishu,
+          avatarUrl: info.avatarUrl || undefined,
+          botProfileSyncedAt: nowIso(),
+          ...(info.openId ? { botOpenId: info.openId } : {}),
+        },
+      };
+    });
   }
 
   private fetchDisplayInfo(config: AgentConfig['feishu']): Promise<FeishuBotInfo> {
