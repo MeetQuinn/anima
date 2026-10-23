@@ -1,28 +1,26 @@
-import { resolveAnimaHome } from "../anima-home.js";
-import { AgentHealthEvidenceStore } from "./agent-health-evidence.store.js";
-import { defaultAgentRegistryService } from "../agents/agent.service.js";
-import { isAgentRunnable } from "../agents/agent-config-ops.js";
-import { wakeQueueServiceForAgent } from "../inbox/wake-queue.service.js";
-import type { AgentConfig } from "../../shared/agent-config.js";
-import {
-  isDeferredQueuedInboxItem,
-  type InboxItem,
-} from "../../shared/inbox.js";
+import { resolveAnimaHome } from '../anima-home.js';
+
+import { AgentHealthEvidenceStore } from './agent-health-evidence.store.js';import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { isAgentRunnable } from '../agents/agent-config-ops.js';
+import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import type {
-  AgentStatusSummary,
-  DeferredWakeSummary,
-} from "../../shared/snapshot.js";
-import { agentHasConnectedTransport } from "../../shared/agent-transports.js";
-import { nowIso } from "../ids.js";
+  AgentConfig,
+} from '../../shared/agent-config.js';
+import { isDeferredQueuedInboxItem, type InboxItem } from '../../shared/inbox.js';
+
+import type { AgentStatusSummary, DeferredWakeSummary } from '../../shared/snapshot.js';
+import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
+import { nowIso } from '../ids.js';
+
 import {
   AgentHealthService,
   defaultAgentHealthService,
   sampleApiHealth,
   restartStatus,
-} from "./agent-health.service.js";
-import { defaultAgentRestartCommandStore } from "./agent-restart-command.store.js";
-import { findActiveRuntimeItem } from "./active-item.js";
-import { latestPrimaryRunningItem } from "./item-state.js";
+} from './agent-health.service.js';
+import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
+import { findActiveRuntimeItem } from './active-item.js';
+import { latestPrimaryRunningItem } from './item-state.js';
 
 export class RuntimeServiceError extends Error {
   readonly statusCode: number;
@@ -35,9 +33,7 @@ export class RuntimeServiceError extends Error {
 
 export class RuntimeService {
   private readonly evidenceErrors = new Map<string, number>();
-  constructor(
-    private readonly health: AgentHealthService = defaultAgentHealthService,
-  ) {}
+  constructor(private readonly health: AgentHealthService = defaultAgentHealthService) {}
 
   async listStatuses(): Promise<AgentStatusSummary[]> {
     const agents = await defaultAgentRegistryService.listAgentConfigs();
@@ -45,20 +41,14 @@ export class RuntimeService {
   }
 
   async getStatus(agentId: string): Promise<AgentStatusSummary> {
-    const agent = await defaultAgentRegistryService
-      .serviceFor(agentId)
-      .getConfig();
+    const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig();
     return this.statusForAgent(agent);
   }
 
   async stopCurrentItem(agentId: string): Promise<void> {
     const queue = wakeQueueServiceForAgent(agentId);
     const running = latestPrimaryRunningItem(await queue.list());
-    if (!running)
-      throw new RuntimeServiceError(
-        409,
-        `No running item for agent ${agentId}`,
-      );
+    if (!running) throw new RuntimeServiceError(409, `No running item for agent ${agentId}`);
     await queue.requestStop(running.id);
   }
 
@@ -67,18 +57,14 @@ export class RuntimeService {
       .serviceFor(agentId)
       .getConfig()
       .catch(() => undefined);
-    if (!agent) throw new RuntimeServiceError(404, "Agent not found");
-    if (!agent.enabled)
-      throw new RuntimeServiceError(
-        409,
-        "Agent is disabled. Enable it to run.",
-      );
+    if (!agent) throw new RuntimeServiceError(404, 'Agent not found');
+    if (!agent.enabled) throw new RuntimeServiceError(409, 'Agent is disabled. Enable it to run.');
     const command = await defaultAgentRestartCommandStore.request(agentId);
     await this.health.writeHealth({
       agentId,
-      reason: "restart_pending",
-      restart: restartStatus(command, "pending", nowIso()),
-      state: "starting",
+      reason: 'restart_pending',
+      restart: restartStatus(command, 'pending', nowIso()),
+      state: 'starting',
       updatedAt: nowIso(),
     });
     return { requestId: command.requestId };
@@ -94,8 +80,7 @@ export class RuntimeService {
     const active = running
       ? await findActiveRuntimeItem(agent.id, { list: async () => items })
       : undefined;
-    const currentItemStartedAt =
-      active?.startedAt ?? running?.handling.startedAt;
+    const currentItemStartedAt = active?.startedAt ?? running?.handling.startedAt;
     const sample = await this.healthForAgent(agent, {
       ...(active ? { active } : {}),
       ...(running ? { runningItemId: running.id } : {}),
@@ -104,7 +89,7 @@ export class RuntimeService {
     // Queue and health are separate files. A completion between their reads
     // can pair an old running item with a new idle handle. Confirm once from
     // fresh samples; a persistent mismatch must still surface as unhealthy.
-    if (confirmStale && health?.reason === "stale_running_item") {
+    if (confirmStale && health?.reason === 'stale_running_item') {
       return this.statusForAgent(agent, false);
     }
     if (sample) {
@@ -118,9 +103,7 @@ export class RuntimeService {
         const last = this.evidenceErrors.get(key);
         if (last === undefined || Date.now() - last >= 60_000) {
           this.evidenceErrors.set(key, Date.now());
-          console.warn(
-            `Agent ${agent.id}: health evidence could not be saved.`,
-          );
+          console.warn(`Agent ${agent.id}: health evidence could not be saved.`);
         }
       }
     }
@@ -131,8 +114,7 @@ export class RuntimeService {
       ...(currentItemStartedAt ? { currentItemStartedAt } : {}),
       ...(deferredWakes.length > 0 ? { deferredWakes } : {}),
       ...(health ? { health } : {}),
-      queueDepth: items.filter((item) => item.handling.status === "queued")
-        .length,
+      queueDepth: items.filter((item) => item.handling.status === 'queued').length,
       itemCount: items.length,
     };
   }
@@ -166,9 +148,7 @@ function deferredWakeSummaries(items: InboxItem[]): DeferredWakeSummary[] {
       id: item.id,
       kind: item.kind,
       notBefore: item.handling.notBefore!,
-      retryable: item.kind === "slack",
-      ...(item.handling.deferrals !== undefined
-        ? { deferrals: item.handling.deferrals }
-        : {}),
+      retryable: item.kind === 'slack',
+      ...(item.handling.deferrals !== undefined ? { deferrals: item.handling.deferrals } : {}),
     }));
 }

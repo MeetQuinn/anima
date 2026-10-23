@@ -1,8 +1,5 @@
-import type {
-  AgentPlatformLabel,
-  AgentTransportKind,
-} from "./agent-transports.js";
-import type { AgentSessionSummary, AgentStatusSummary } from "./snapshot.js";
+import type { AgentPlatformLabel, AgentTransportKind } from './agent-transports.js';
+import type { AgentSessionSummary, AgentStatusSummary } from './snapshot.js';
 
 export interface AgentDiagnosticsBundle {
   agent: AgentDiagnosticsAgent;
@@ -16,7 +13,7 @@ export interface AgentDiagnosticsBundle {
   redaction: {
     excluded: string[];
     logPolicy: string;
-    mode: "allowlist";
+    mode: 'allowlist';
   };
   server: AgentDiagnosticsServer;
   session?: AgentDiagnosticsSession;
@@ -88,13 +85,13 @@ export interface AgentDiagnosticsRecoveryAction {
   available: boolean;
   blockedReason?: string;
   id:
-    | "check_provider_settings"
-    | "copy_diagnostics"
-    | "disable"
-    | "enable"
-    | "restart_agent"
-    | "retry_deferred"
-    | "stop";
+    | 'check_provider_settings'
+    | 'copy_diagnostics'
+    | 'disable'
+    | 'enable'
+    | 'restart_agent'
+    | 'retry_deferred'
+    | 'stop';
   label: string;
 }
 
@@ -123,20 +120,16 @@ export interface AgentDiagnosticsLogs {
 
 export interface AgentDiagnosticsLogLine {
   message: string;
-  source:
-    | "agent.log"
-    | "runtime-upgrade.log"
-    | "services-restart.log"
-    | "web.log";
+  source: 'agent.log' | 'runtime-upgrade.log' | 'services-restart.log' | 'web.log';
   timestamp: string;
 }
 
 export interface AgentDiagnosticsSession {
   archivedCount: number;
   createdAt?: string;
-  current?: AgentSessionSummary["current"];
+  current?: AgentSessionSummary['current'];
   currentStartedAt?: string;
-  latestProviderStats?: AgentSessionSummary["latestProviderStats"];
+  latestProviderStats?: AgentSessionSummary['latestProviderStats'];
   lifetimeTokens?: number;
   updatedAt?: string;
 }
@@ -147,13 +140,13 @@ export interface StaleRunningEvidence {
   observedAt: string;
   snapshotUpdatedAt?: string;
   mismatch:
-    | "active_missing"
-    | "snapshot_missing"
-    | "worker_mismatch"
-    | "item_mismatch"
-    | "worker_dead"
-    | "provider_child_missing"
-    | "provider_child_exited";
+    | 'active_missing'
+    | 'snapshot_missing'
+    | 'worker_mismatch'
+    | 'item_mismatch'
+    | 'worker_dead'
+    | 'provider_child_missing'
+    | 'provider_child_exited';
   queue: {
     runningItemId: string;
     activePresent: boolean;
