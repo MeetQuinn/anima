@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import type { WebClient } from '@slack/web-api';
 
-import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
+import { InteractiveAskService, interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { withAnimaHome } from '../anima-home.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -17,6 +17,11 @@ import { SubscriptionStore } from '../storage/schema/subscription.store.js';
 import { slackBlocks, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 import type { InteractiveAskRecord } from '../storage/schema/interactive-ask.store.js';
 import { runNode } from './helpers/run-node.js';
+
+import { withTempAnimaHome, writeAgentConfigs, defaultAgentConfig, waitFor } from './helpers/harness.js';
+import { startRunningAgent } from '../runtime/agent-runner.js';
+import { TeamRunLimiter } from '../runtime/team-run-limiter.js';
+import type { AgentRuntimeInput } from '../providers/contract.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
@@ -248,6 +253,140 @@ test('interactive ask rejects non-addressee clicks without waking the agent', as
   });
 });
 
+test('concurrent ask clicks keep the first committed choice in both record and queue', async () => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  const service = interactiveAskServiceForAgent('scout');
+  const ask = await service.saveAsk(askRecord());
+  const started = [deferred(), deferred()];
+  const releases = [deferred(), deferred()];
+  const client = {
+    users: { info: async ({ user }: { user: string }) => {
+      const index = user === 'U-first' ? 0 : 1;
+      started[index]!.resolve();
+      await releases[index]!.promise;
+      return { ok: true, user: { id: user, name: user } };
+    } },
+  } as unknown as WebClient;
+  const first = service.answerAsk({ askId: ask.askId, client, optionId: 'option_1', userId: 'U-first' });
+  const second = interactiveAskServiceForAgent('scout').answerAsk({ askId: ask.askId, client, optionId: 'option_2', userId: 'U-second' });
+  await Promise.all(started.map((entry) => entry.promise));
+  releases[0]!.resolve();
+  assert.equal((await first).outcome, 'answered');
+  releases[1]!.resolve();
+  const rejected = await second;
+  assert.equal(rejected.outcome, 'already_answered');
+  assert.equal(rejected.ask?.chosenOptionId, 'option_1');
+  const stored = await service.getAsk(ask.askId);
+  const items = await new WakeQueueService('scout').list();
+  assert.equal(stored?.chosenOptionId, 'option_1');
+  assert.equal(stored?.answeredBy?.slackUserId, 'U-first');
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.kind === 'choice_response' && items[0].optionId, 'option_1');
+}));
+
+for (const outcome of ['forbidden', 'invalid_option'] as const) test(`late ${outcome} click cannot revert a committed answer`, async () => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  const store = new InteractiveAskStore('scout');
+  const ask = await store.create(askRecord({ allowedUserIds: ['U-operator'] }));
+  const started = deferred();
+  const release = deferred();
+  store.find = async () => { started.resolve(); await release.promise; return ask; };
+  const late = new InteractiveAskService('scout', store).answerAsk({
+    askId: ask.askId, client: fakeSlackClient(),
+    optionId: outcome === 'invalid_option' ? 'missing' : 'option_2',
+    userId: outcome === 'forbidden' ? 'U-other' : 'U-operator',
+  });
+  await started.promise;
+  await interactiveAskServiceForAgent('scout').answerAsk({ askId: ask.askId, client: fakeSlackClient(), optionId: 'option_1', userId: 'U-operator' });
+  release.resolve();
+  assert.equal((await late).outcome, outcome);
+  const saved = await new InteractiveAskStore('scout').find(ask.askId);
+  assert.equal(saved?.status, 'answered');
+  assert.equal(saved?.chosenOptionId, 'option_1');
+  assert.equal(saved?.deliveryPending, undefined);
+}));
+
+for (const recovery of ['click', 'poll'] as const) test(`ask delivery retries after enqueue failure via ${recovery}`, async () => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  const store = new InteractiveAskStore('scout');
+  const queue = new WakeQueueService('scout');
+  const enqueue = queue.enqueue.bind(queue);
+  queue.enqueue = async () => { throw new Error('synthetic write failure'); };
+  const service = new InteractiveAskService('scout', store, queue);
+  const ask = await service.saveAsk(askRecord());
+  const input = { askId: ask.askId, client: fakeSlackClient(), optionId: 'option_1', userId: 'U-operator' };
+  await assert.rejects(service.answerAsk(input), /synthetic write failure/);
+  assert.equal((await store.find(ask.askId))?.deliveryPending, true);
+  assert.deepEqual(await new WakeQueueService('scout').list(), []);
+  queue.enqueue = enqueue;
+  const restarted = interactiveAskServiceForAgent('scout');
+  if (recovery === 'click') {
+    const result = await restarted.answerAsk({ ...input, optionId: 'option_2' });
+    assert.equal(result.outcome, 'already_answered');
+    assert.equal(result.queued, true);
+  } else await restarted.retryPendingAnswers();
+  const items = await new WakeQueueService('scout').list();
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.kind === 'choice_response' && items[0].optionId, 'option_1');
+  assert.equal((await store.find(ask.askId))?.deliveryPending, undefined);
+  await restarted.retryPendingAnswers();
+  assert.equal((await new WakeQueueService('scout').list()).length, 1);
+}));
+
+test('ask recovery after enqueue succeeded but receipt update failed does not re-run a settled choice', async () => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  const store = new InteractiveAskStore('scout');
+  const update = store.update.bind(store);
+  let updates = 0;
+  store.update = async (...args: Parameters<InteractiveAskStore['update']>) => {
+    if (++updates === 2) throw new Error('synthetic receipt failure');
+    return update(...args);
+  };
+  const service = new InteractiveAskService('scout', store);
+  const ask = await service.saveAsk(askRecord());
+  await assert.rejects(service.answerAsk({ askId: ask.askId, client: fakeSlackClient(), optionId: 'option_1', userId: 'U-operator' }), /synthetic receipt failure/);
+  const queue = new WakeQueueService('scout');
+  assert.equal((await queue.list()).length, 1);
+  await queue.complete(`choice:scout:${ask.askId}`);
+  await interactiveAskServiceForAgent('scout').retryPendingAnswers();
+  assert.deepEqual(await queue.list(), []);
+  assert.equal((await new InteractiveAskStore('scout').find(ask.askId))?.deliveryPending, undefined);
+}));
+
+test('ask retention keeps pending delivery and recovery does not replay legacy answers', async () => withTempAnimaHome(async () => {
+  const store = new InteractiveAskStore('scout');
+  const old = askRecord({ status: 'answered', answeredAt: '2000-01-01T00:00:00.000Z', answeredBy: { slackUserId: 'U-operator' }, chosenOptionId: 'option_1' });
+  await store.create({ ...old, askId: 'old-pending-delivery', deliveryPending: true });
+  await store.create({ ...old, askId: 'old-delivered' });
+  await store.pruneAnsweredBefore(new Date().toISOString());
+  assert.deepEqual((await store.list()).map((ask) => ask.askId), ['old-pending-delivery']);
+  await store.create({ ...old, askId: 'legacy-answer' });
+  await interactiveAskServiceForAgent('scout').retryPendingAnswers();
+  const items = await new WakeQueueService('scout').list();
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.id, 'choice:scout:old-pending-delivery');
+}));
+
+test('running agent recovers a durable ask answer on startup without a new click', async (t) => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [{ ...defaultAgentConfig('scout'), slack: { appToken: '', botToken: '' } }]);
+  t.mock.method(console, 'log', () => {});
+  const store = new InteractiveAskStore('scout');
+  await store.create(askRecord({ askId: 'restart-answer', status: 'answered', answeredAt: new Date().toISOString(), answeredBy: { slackUserId: 'U-operator' }, chosenOptionId: 'option_2', deliveryPending: true }));
+  const calls: AgentRuntimeInput[] = [];
+  const runtime = {
+    kind: 'synthetic',
+    async run(input: AgentRuntimeInput) { calls.push(input); return { text: 'done' }; },
+    async appendToActiveRun() { return { accepted: false }; },
+    async close() {},
+  };
+  const runner = await startRunningAgent({ agentId: 'scout', agentRuntime: runtime, animaHome: home, stateDir: home, homePath: join(home, 'agent-homes', 'scout'), runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
+  try {
+    await waitFor(async () => calls.length === 1 && (await new WakeQueueService('scout').list()).length === 0);
+    assert.match(calls[0]!.prompt, /selected: Hold/);
+    assert.equal((await store.find('restart-answer'))?.deliveryPending, undefined);
+  } finally { await runner.stop(); }
+}));
+
 test('interactive ask retention prunes old answered asks but keeps pending asks', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-interactive-ask-retention-'));
   t.after(() => rm(stateDir, { force: true, recursive: true }));
@@ -407,6 +546,12 @@ async function savePendingAsk(overrides: Partial<InteractiveAskRecord> = {}): Pr
   const ask = askRecord(overrides);
   await interactiveAskServiceForAgent('scout').saveAsk(ask);
   return ask;
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
 }
 
 function askRecord(overrides: Partial<InteractiveAskRecord> = {}): InteractiveAskRecord {

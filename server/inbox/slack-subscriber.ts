@@ -155,7 +155,7 @@ export class SlackInboxSubscriber {
       optionId: value.optionId,
       userId,
     });
-    if (result.outcome === 'answered' && result.ask) {
+    if ((result.outcome === 'answered' || result.outcome === 'already_answered') && result.ask) {
       await askService.replaceAnsweredMessage({
         ask: result.ask,
         client: webClient,

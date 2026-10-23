@@ -57,46 +57,70 @@ export class InteractiveAskService {
       ? await this.answeringUser(input, existingAsk)
       : undefined;
 
-    if (existingAsk) {
-      const touchedAsk = { ...existingAsk, lastInteractionAt: now };
-      const option = existingAsk.options.find((candidate) => candidate.optionId === input.optionId);
+    await this.store.update(input.askId, (current) => {
+      const touchedAsk = { ...current, lastInteractionAt: now };
+      const option = current.options.find((candidate) => candidate.optionId === input.optionId);
       if (!option) {
-        result = { ask: await this.store.update(touchedAsk), outcome: 'invalid_option' };
-      } else if (!this.canUserAnswer(existingAsk, input.userId)) {
-        result = { ask: await this.store.update(touchedAsk), outcome: 'forbidden' };
-      } else if (existingAsk.status === 'answered') {
-        result = { ask: await this.store.update(touchedAsk), outcome: 'already_answered' };
+        result = { ask: touchedAsk, outcome: 'invalid_option' };
+      } else if (!this.canUserAnswer(current, input.userId)) {
+        result = { ask: touchedAsk, outcome: 'forbidden' };
+      } else if (current.status === 'answered') {
+        result = { ask: touchedAsk, outcome: 'already_answered' };
       } else {
-        const answeredAsk: InteractiveAskRecord = {
-          ...touchedAsk,
-          answeredAt: now,
-          answeredBy: answeredBy ?? { slackUserId: input.userId },
-          chosenOptionId: option.optionId,
-          status: 'answered',
+        result = {
+          ask: {
+            ...touchedAsk,
+            answeredAt: now,
+            answeredBy: answeredBy ?? { slackUserId: input.userId },
+            chosenOptionId: option.optionId,
+            deliveryPending: true,
+            status: 'answered',
+          },
+          outcome: 'answered',
         };
-        result = { ask: await this.store.update(answeredAsk), outcome: 'answered' };
+      }
+      return result.ask!;
+    });
+
+    if (result.ask && (result.outcome === 'answered' || result.outcome === 'already_answered')) {
+      result.queued = await this.deliverAnswer(result.ask);
+    }
+    const extra: Record<string, unknown> = {};
+    if (result.queued !== undefined) extra.queued = result.queued;
+    if (result.outcome === 'answered') {
+      extra.optionLabel = result.ask?.options.find((option) => option.optionId === result.ask?.chosenOptionId)?.label;
+    }
+    await this.recordAnswerActivity(input.askId, input.optionId, input.userId, result.outcome, extra);
+    await this.pruneOldAnswered();
+    return result;
+  }
+
+  async retryPendingAnswers(): Promise<void> {
+    for (const ask of await this.store.list()) {
+      if (!ask.deliveryPending) continue;
+      try {
+        await this.deliverAnswer(ask);
+      } catch (error) {
+        console.warn(`Interactive ask delivery failed for ${ask.askId}: ${errorMessage(error)}`);
       }
     }
+  }
 
-    if (result.outcome !== 'answered' || !result.ask) {
-      await this.recordAnswerActivity(input.askId, input.optionId, input.userId, result.outcome);
-      await this.pruneOldAnswered();
-      return result;
+  private async deliverAnswer(ask: InteractiveAskRecord): Promise<boolean> {
+    if (!ask.deliveryPending) return false;
+    const selected = ask.options.find((option) => option.optionId === ask.chosenOptionId);
+    if (ask.status !== 'answered' || !selected || !ask.answeredBy) {
+      throw new Error(`Interactive ask ${ask.askId} has an invalid pending answer`);
     }
-
-    const selected = result.ask.options.find((option) => option.optionId === result.ask?.chosenOptionId);
-    if (!selected || !result.ask.answeredBy) {
-      await this.recordAnswerActivity(input.askId, input.optionId, input.userId, 'invalid_option');
-      await this.pruneOldAnswered();
-      return { ask: result.ask, outcome: 'invalid_option' };
-    }
-    const queued = !(await this.queue.enqueue(choiceResponseInboxItem(result.ask, selected, result.ask.answeredBy))).duplicate;
-    await this.recordAnswerActivity(input.askId, input.optionId, input.userId, 'answered', {
-      queued,
-      optionLabel: selected.label,
+    // The chosen answer is immutable. A crash after enqueue but before clearing
+    // the intent retries the same choice id through the queue's durable dedupe.
+    const queued = !(await this.queue.enqueue(choiceResponseInboxItem(ask, selected, ask.answeredBy))).duplicate;
+    await this.store.update(ask.askId, (current) => {
+      if (!current.deliveryPending) return current;
+      const { deliveryPending: _pending, ...delivered } = current;
+      return delivered;
     });
-    await this.pruneOldAnswered();
-    return { ...result, queued };
+    return queued;
   }
 
   async replaceAnsweredMessage(input: {

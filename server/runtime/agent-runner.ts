@@ -1,3 +1,4 @@
+import { interactiveAskServiceForAgent } from '../asks/interactive-ask.service.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
@@ -105,7 +106,12 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
         });
         await reactions.settle(context);
       },
-      onIdle: () => linear.completeIdleRuns(isIdle),
+      onIdle: async () => {
+        await interactiveAskServiceForAgent(options.agentId).retryPendingAnswers().catch((error: unknown) => {
+          console.warn(`Interactive ask recovery failed: ${errorMessage(error)}`);
+        });
+        await linear.completeIdleRuns(isIdle);
+      },
       onItemFollowupAppended: async (activeContext, context) => {
         await linear.markStarted(context.item, activeContext.item.id);
         await addProcessingReaction({ context, logger: console, reactionClient });
