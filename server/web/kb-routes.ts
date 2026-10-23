@@ -1,5 +1,4 @@
-import type { ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { FastifyInstance } from 'fastify';
 
@@ -8,6 +7,7 @@ import { KbError } from '../kb/kb.helper.js';
 import { defaultKbRegistryService, type KbRegistryService, type KbService } from '../kb/kb.service.js';
 import { HttpError, queryParam, routePath, sendJsonRaw, untrustedFileHeaders } from './http.js';
 import { KbCreateRequest, KbMkdirRequest, KbRenameRequest } from '../../shared/kb.js';
+import { serveRawFile } from './raw-file.js';
 
 const KB_RAW_PREFIX = '/kb/raw/';
 const KB_CSP =
@@ -53,6 +53,7 @@ export function registerKbRoutes(
     reply.hijack();
     try {
       await serveKbRaw(
+        request.raw,
         reply.raw,
         kbRegistryService.serviceFor(request.params.id),
         filePath,
@@ -89,7 +90,7 @@ export function registerKbRoutes(
     try {
       const rawPath = routePath(request.url);
       const { kbService, filePath } = kbRawTarget(kbRegistryService, rawPath.slice(KB_RAW_PREFIX.length));
-      await serveKbRaw(reply.raw, kbService, filePath);
+      await serveKbRaw(request.raw, reply.raw, kbService, filePath);
     } catch (error) {
       if (!reply.raw.headersSent) {
         const statusCode = error instanceof KbError ? error.statusCode : 500;
@@ -100,21 +101,19 @@ export function registerKbRoutes(
 }
 
 async function serveKbRaw(
+  request: IncomingMessage,
   response: ServerResponse,
   kbService: KbService,
   filePath: string,
   options: { attachment?: boolean } = {},
 ): Promise<void> {
   const { absPath, contentType } = await kbService.resolveRawFile(filePath);
-  const body = await readFile(absPath);
-  response.writeHead(200, {
+  await serveRawFile(request, response, absPath, {
     'cache-control': 'no-store',
-    'content-length': String(body.length),
     'content-type': contentType,
     ...(options.attachment ? { 'content-disposition': contentDisposition(filePath) } : {}),
     ...untrustedFileHeaders(contentType, KB_CSP),
   });
-  response.end(body);
 }
 
 function kbRawTarget(

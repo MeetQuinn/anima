@@ -16,7 +16,9 @@ import {
   kbFileKind,
 } from '../../shared/kb-file-types.js';
 import type { KbFile } from '../../shared/kb.js';
-import { routePath, untrustedFileHeaders } from './http.js';
+import { HttpError, routePath, sendJsonRaw, untrustedFileHeaders } from './http.js';
+import { serveRawFile } from './raw-file.js';
+import { errorMessage } from '../ids.js';
 
 type HomeEntry = {
   path: string;
@@ -92,17 +94,20 @@ export function registerAgentHomeFileRoutes(fastify: FastifyInstance): void {
       if (!fileStat.isFile())
         return reply.status(400).send({ error: 'not_a_file' });
 
-      const body = await readFile(resolved.absPath);
-      reply.header('cache-control', 'private, max-age=60');
-      reply.header(
-        'content-disposition',
-        `inline; filename="${encodeURIComponent(posix.basename(resolved.relPath))}"`,
-      );
-      reply.header('content-length', String(body.length));
       const contentType = contentTypeFor(resolved.relPath);
-      reply.header('content-type', contentType);
-      reply.headers(untrustedFileHeaders(contentType));
-      return reply.send(body);
+      reply.hijack();
+      try {
+        await serveRawFile(request.raw, reply.raw, resolved.absPath, {
+          'cache-control': 'private, max-age=60',
+          'content-disposition': `inline; filename="${encodeURIComponent(posix.basename(resolved.relPath))}"`,
+          'content-type': contentType,
+          ...untrustedFileHeaders(contentType),
+        });
+      } catch (error) {
+        if (!reply.raw.headersSent) {
+          sendJsonRaw(reply.raw, error instanceof HttpError ? error.statusCode : 500, { error: errorMessage(error) });
+        }
+      }
     },
   );
 }
