@@ -3,6 +3,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { errorMessage } from '../ids.js';
 import type { ProviderChildHealthSnapshot } from '../../shared/snapshot.js';
 
+const STREAM_EFFECT_HIGH_WATER_BYTES = 1024 * 1024;
+const STREAM_EFFECT_LOW_WATER_BYTES = STREAM_EFFECT_HIGH_WATER_BYTES / 2;
+
 /**
  * A child that exits, or closes its input, while a write is in flight fails
  * that write with EPIPE as a stream 'error' event. Unhandled, that event
@@ -72,23 +75,39 @@ export function startChildProcess(input: {
   const bufferOutput = input.bufferOutput ?? true;
   let streamEffects = Promise.resolve();
   let streamEffectError: unknown;
-  function enqueueStreamEffect(callback: (() => Promise<void>) | undefined): void {
+  let pendingStreamBytes = 0;
+  function enqueueStreamEffect(chunk: string, callback: ((chunk: string) => Promise<void>) | undefined): void {
     if (!callback) return;
+    const bytes = Buffer.byteLength(chunk);
+    pendingStreamBytes += bytes;
+    // Both pipes feed one ordered effects queue. Pausing only the busy pipe
+    // would let the other one keep retaining output behind a slow consumer.
+    if (pendingStreamBytes >= STREAM_EFFECT_HIGH_WATER_BYTES) {
+      child.stdout?.pause();
+      child.stderr?.pause();
+    }
     streamEffects = streamEffects
-      .then(callback)
+      .then(() => callback(chunk))
       .catch((error: unknown) => {
         streamEffectError = error;
+      })
+      .finally(() => {
+        pendingStreamBytes -= bytes;
+        if (pendingStreamBytes <= STREAM_EFFECT_LOW_WATER_BYTES) {
+          child.stdout?.resume();
+          child.stderr?.resume();
+        }
       });
   }
   child.stdout?.on('data', (chunk: string) => {
     lastStdoutAt = new Date().toISOString();
     if (bufferOutput) stdoutChunks.push(chunk);
-    enqueueStreamEffect(input.onStdoutChunk ? () => input.onStdoutChunk?.(chunk) ?? Promise.resolve() : undefined);
+    enqueueStreamEffect(chunk, input.onStdoutChunk);
   });
   child.stderr?.on('data', (chunk: string) => {
     lastStderrAt = new Date().toISOString();
     if (bufferOutput) stderrChunks.push(chunk);
-    enqueueStreamEffect(input.onStderrChunk ? () => input.onStderrChunk?.(chunk) ?? Promise.resolve() : undefined);
+    enqueueStreamEffect(chunk, input.onStderrChunk);
   });
 
   const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {

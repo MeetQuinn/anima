@@ -148,6 +148,7 @@ const groups = {
     'web-api-snapshot.test.js',
   ],
   runtime: [
+    'provider-child-process.test.js',
     'agent-runtime-codex.test.js',
     'agent-runtime-claude.test.js',
     'agent-runtime-grok.test.js',
