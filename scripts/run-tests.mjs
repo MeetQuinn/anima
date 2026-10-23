@@ -135,6 +135,7 @@ const groups = {
     'write-root.test.js',
   ],
   api: [
+    'raw-file-routes.test.js',
     'web-network.test.js',
     'client-error-routes.test.js',
     'kb.test.js',
