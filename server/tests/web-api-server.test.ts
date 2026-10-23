@@ -2,16 +2,17 @@ import { once } from 'node:events';
 import Fastify from 'fastify';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
-import { withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
+import { withTempAnimaHome, writeAgentConfigs, waitFor } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildWebApp, createWebServer } from '../web/app.js';
 import { registerErrorHandler } from '../web/http.js';
+import { registerDashboardAuthRoutes } from '../web/dashboard-auth.js';
 import { ProviderCliConflictError, ProviderCliUnavailableError } from '../provider-cli/provider-cli.service.js';
 import { RuntimeUpgradeConflictError, RuntimeUpgradeUnavailableError } from '../runtime-management/runtime-upgrade.js';
-import { defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
+import { DashboardAuthService, defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
 import { defaultKbRegistryService } from '../kb/kb.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { postJson, assertStatus } from './helpers/web-api.js';
@@ -761,4 +762,72 @@ test('failed-login limit keys on the connecting address, or the last address a l
   } finally {
     await app.close();
   }
+}));
+
+
+test('login limit reserves concurrent checks and keeps other reservations after success or expiry', { timeout: 5_000 }, async (t) => {
+  const app = Fastify();
+  const auth = new DashboardAuthService();
+  const pending: Array<{ resolve: (ok: boolean) => void; reject: (error: Error) => void }> = [];
+  t.mock.method(auth, 'login', () => new Promise((resolve, reject) => {
+    pending.push({
+      resolve: (ok) => resolve({ cookie: 'synthetic=1', ok, status: { authenticated: ok, enabled: true } }),
+      reject,
+    });
+  }));
+  registerDashboardAuthRoutes(app, auth);
+  await app.ready();
+  t.after(() => {
+    pending.forEach((attempt) => attempt.resolve(false));
+    return app.close();
+  });
+  const login = (remoteAddress = '192.0.2.40') => app.inject({ method: 'POST', url: '/api/auth/login', payload: { password: 'synthetic' }, remoteAddress }).then((response) => response.statusCode);
+  const responses = Array.from({ length: 24 }, () => login());
+  await waitFor(() => pending.length === 10);
+  assert.equal(await login(), 429);
+  // A success may reset prior failures, but nine concurrent guesses remain reserved.
+  pending[0]!.resolve(true);
+  assert.equal(await responses[0], 200);
+  const next = login();
+  await waitFor(() => pending.length === 11);
+  assert.equal(await login(), 429);
+  // Even a long-running verification continues to occupy its slot across a window.
+  const now = Date.now();
+  let clock = now + 5 * 60 * 1000 + 1;
+  t.mock.method(Date, 'now', () => clock);
+  assert.equal(await login(), 429);
+  // A different client has an independent budget.
+  const other = login('192.0.2.41');
+  await waitFor(() => pending.length === 12);
+  pending[11]!.resolve(false);
+  assert.equal(await other, 401);
+  pending.slice(1, 11).forEach((attempt) => attempt.resolve(false));
+  const statuses = await Promise.all(responses);
+  assert.equal(statuses.filter((status) => status === 429).length, 14);
+  assert.equal(statuses.filter((status) => status === 401).length, 9);
+  assert.equal(await next, 401);
+  assert.equal(await login(), 429);
+  // Failed attempts expire; verification exceptions release their reserved slots.
+  clock = now + 10 * 60 * 1000 + 2;
+  const afterWindow = login();
+  await waitFor(() => pending.length === 13);
+  pending[12]!.reject(new Error('synthetic verification failure'));
+  assert.equal(await afterWindow, 500);
+  const batch = Array.from({ length: 10 }, () => login());
+  await waitFor(() => pending.length === 23);
+  assert.equal(await login(), 429);
+  pending.slice(13).forEach((attempt) => attempt.resolve(true));
+  assert.deepEqual(await Promise.all(batch), Array(10).fill(200));
+});
+
+test('a concurrent wrong-password burst uses the real verifier only within the login budget', async () => withTempAnimaHome(async () => {
+  await defaultDashboardAuthService.setPassword('synthetic-dashboard-password');
+  const app = buildWebApp();
+  try {
+    const responses = await Promise.all(Array.from({ length: 24 }, () => app.inject({
+      method: 'POST', url: '/api/auth/login', payload: { password: 'wrong-password' }, remoteAddress: '192.0.2.42',
+    })));
+    assert.equal(responses.filter((response) => response.statusCode === 401).length, 10);
+    assert.equal(responses.filter((response) => response.statusCode === 429).length, 14);
+  } finally { await app.close(); }
 }));

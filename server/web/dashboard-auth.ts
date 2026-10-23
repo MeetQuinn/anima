@@ -37,7 +37,8 @@ const PUBLIC_STATIC_EXTENSIONS = new Set([
   '.woff2',
 ]);
 
-const failedLogins = new Map<string, { count: number; resetAt: number }>();
+interface LoginAttempts { count: number; inFlight: number; resetAt: number }
+const failedLogins = new Map<string, LoginAttempts>();
 const FAILED_LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const FAILED_LOGIN_LIMIT = 10;
 
@@ -52,16 +53,23 @@ export function registerDashboardAuthRoutes(
     if (!parsed.success) return reply.status(400).send({ error: 'password is required' });
 
     const key = failedLoginKey(request);
-    if (isRateLimited(key)) return reply.status(429).send({ error: 'Too many login attempts. Try again later.' });
+    const attempt = reserveLoginAttempt(key);
+    if (!attempt) return reply.status(429).send({ error: 'Too many login attempts. Try again later.' });
 
-    const result = await authService.login(parsed.data.password, { secureCookie: requestIsSecure(request) });
-    reply.header('set-cookie', result.cookie);
-    if (!result.ok) {
-      recordFailedLogin(key);
-      return reply.status(401).send({ error: 'Invalid password' });
+    try {
+      const result = await authService.login(parsed.data.password, { secureCookie: requestIsSecure(request) });
+      reply.header('set-cookie', result.cookie);
+      if (!result.ok) {
+        recordFailedLogin(attempt);
+        return reply.status(401).send({ error: 'Invalid password' });
+      }
+      // A success clears failures, but cannot release other requests' reservations.
+      attempt.count = 0;
+      return { authenticated: result.status.authenticated, enabled: result.status.enabled };
+    } finally {
+      attempt.inFlight -= 1;
+      if (!attempt.inFlight && !attempt.count) failedLogins.delete(key);
     }
-    clearFailedLogin(key);
-    return { authenticated: result.status.authenticated, enabled: result.status.enabled };
   });
 
   fastify.post('/api/auth/logout', async (_request, reply) => {
@@ -167,26 +175,27 @@ function isLoopbackAddress(address: string): boolean {
   return address === '::1' || address.startsWith('127.') || address.startsWith('::ffff:127.');
 }
 
-function isRateLimited(key: string): boolean {
-  const entry = failedLogins.get(key);
-  if (!entry) return false;
-  if (entry.resetAt <= Date.now()) {
-    failedLogins.delete(key);
-    return false;
+function reserveLoginAttempt(key: string): LoginAttempts | undefined {
+  const now = Date.now();
+  let entry = failedLogins.get(key);
+  if (!entry) {
+    entry = { count: 0, inFlight: 0, resetAt: now + FAILED_LOGIN_WINDOW_MS };
+    failedLogins.set(key, entry);
+  } else if (entry.resetAt <= now) {
+    // Window expiry forgets failures, never verifications that are still running.
+    entry.count = 0;
+    entry.resetAt = now + FAILED_LOGIN_WINDOW_MS;
   }
-  return entry.count >= FAILED_LOGIN_LIMIT;
+  if (entry.count + entry.inFlight >= FAILED_LOGIN_LIMIT) return undefined;
+  entry.inFlight += 1;
+  return entry;
 }
 
-function recordFailedLogin(key: string): void {
+function recordFailedLogin(entry: LoginAttempts): void {
   const now = Date.now();
-  const entry = failedLogins.get(key);
-  if (!entry || entry.resetAt <= now) {
-    failedLogins.set(key, { count: 1, resetAt: now + FAILED_LOGIN_WINDOW_MS });
-    return;
+  if (entry.resetAt <= now) {
+    entry.count = 0;
+    entry.resetAt = now + FAILED_LOGIN_WINDOW_MS;
   }
   entry.count += 1;
-}
-
-function clearFailedLogin(key: string): void {
-  failedLogins.delete(key);
 }
