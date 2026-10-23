@@ -1,3 +1,5 @@
+import { resolveAnimaHome } from '../anima-home.js';
+import { AgentHealthEvidenceStore } from './agent-health-evidence.store.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { isAgentRunnable } from '../agents/agent-config-ops.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
@@ -6,13 +8,12 @@ import type {
 } from '../../shared/agent-config.js';
 import { isDeferredQueuedInboxItem, type InboxItem } from '../../shared/inbox.js';
 import type {
-  AgentRuntimeHealthSummary,
   AgentStatusSummary,
   DeferredWakeSummary,
 } from '../../shared/snapshot.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import { nowIso } from '../ids.js';
-import { AgentHealthService, defaultAgentHealthService, deriveApiHealth, restartStatus } from './agent-health.service.js';
+import { AgentHealthService, defaultAgentHealthService, sampleApiHealth, restartStatus } from './agent-health.service.js';
 import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
 import { latestPrimaryRunningItem } from './item-state.js';
@@ -27,6 +28,7 @@ export class RuntimeServiceError extends Error {
 }
 
 export class RuntimeService {
+  private readonly evidenceErrors = new Map<string, number>();
   constructor(private readonly health: AgentHealthService = defaultAgentHealthService) {}
 
   async listStatuses(): Promise<AgentStatusSummary[]> {
@@ -67,15 +69,31 @@ export class RuntimeService {
     const running = latestPrimaryRunningItem(items);
     const active = running ? await findActiveRuntimeItem(agent.id, { list: async () => items }) : undefined;
     const currentItemStartedAt = active?.startedAt ?? running?.handling.startedAt;
-    const health = await this.healthForAgent(agent, {
+    const sample = await this.healthForAgent(agent, {
       ...(active ? { active } : {}),
       ...(running ? { runningItemId: running.id } : {}),
     });
+    const health = sample?.health;
     // Queue and health are separate files. A completion between their reads
     // can pair an old running item with a new idle handle. Confirm once from
     // fresh samples; a persistent mismatch must still surface as unhealthy.
     if (confirmStale && health?.reason === 'stale_running_item') {
       return this.statusForAgent(agent, false);
+    }
+    if (sample) {
+      try {
+        await new AgentHealthEvidenceStore(agent.id).observe(sample.evidence);
+        this.evidenceErrors.delete(`${resolveAnimaHome()}:${agent.id}`);
+      } catch {
+        // Diagnostic storage must not hide the actual health result. Do not log
+        // raw storage errors: schema errors can contain untrusted file contents.
+        const key = `${resolveAnimaHome()}:${agent.id}`;
+        const last = this.evidenceErrors.get(key);
+        if (last === undefined || Date.now() - last >= 60_000) {
+          this.evidenceErrors.set(key, Date.now());
+          console.warn(`Agent ${agent.id}: health evidence could not be saved.`);
+        }
+      }
     }
     const deferredWakes = deferredWakeSummaries(items);
     return {
@@ -95,9 +113,9 @@ export class RuntimeService {
       active?: { startedAt?: string; workerId: string };
       runningItemId?: string;
     },
-  ): Promise<AgentRuntimeHealthSummary | undefined> {
+  ): Promise<ReturnType<typeof sampleApiHealth> | undefined> {
     if (!expectsRuntimeHealth(agent)) return undefined;
-    return deriveApiHealth(await this.health.get(agent.id), queue, nowIso());
+    return sampleApiHealth(await this.health.get(agent.id), queue, nowIso());
   }
 }
 

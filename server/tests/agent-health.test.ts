@@ -1,4 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { AgentHealthEvidenceStore, HEALTH_EVIDENCE_CAP } from '../runtime/agent-health-evidence.store.js';
+import { buildAgentDiagnostics } from '../diagnostics/agent-diagnostics.service.js';
+import { JsonFile } from '../storage/json-file.js';
+import type { StaleRunningEvidence } from '../../shared/diagnostics.js';
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +14,7 @@ import {
   applyHealthWrite,
   applyProviderErrorClear,
   applyProviderFailure,
-  deriveApiHealth,
+  sampleApiHealth,
   isStaleRunningItem,
   runtimeHandleHealth,
   startingTimeoutHealth,
@@ -383,36 +387,36 @@ test('stale running item predicate covers worker and item ownership mismatches',
 test('api health derives synthetics for missing or stale snapshots', () => {
   const nowIso = '2026-06-05T10:00:00.000Z';
 
-  const staleMissing = deriveApiHealth(undefined, { runningItemId: 'item-1' }, nowIso);
-  assert.equal(staleMissing.state, 'unhealthy');
-  assert.equal(staleMissing.reason, 'stale_running_item');
+  const staleMissing = sampleApiHealth(undefined, { runningItemId: 'item-1' }, nowIso);
+  assert.equal(staleMissing.health.state, 'unhealthy');
+  assert.equal(staleMissing.health.reason, 'stale_running_item');
 
-  const idleMissing = deriveApiHealth(undefined, {}, nowIso);
-  assert.equal(idleMissing.state, 'unknown');
-  assert.equal(idleMissing.reason, undefined);
+  const idleMissing = sampleApiHealth(undefined, {}, nowIso);
+  assert.equal(idleMissing.health.state, 'unknown');
+  assert.equal(idleMissing.health.reason, undefined);
 
   const healthySnapshot = {
     runtime: runtimeSnapshot({ activeItemId: 'item-1', processId: process.pid }),
     state: 'healthy' as const,
     updatedAt: '2026-06-05T09:59:59.000Z',
   };
-  const passthrough = deriveApiHealth(
+  const passthrough = sampleApiHealth(
     healthySnapshot,
     { active: { startedAt: '2026-06-05T09:59:00.000Z', workerId: 'worker-1' }, runningItemId: 'item-1' },
     nowIso,
   );
-  assert.deepEqual(passthrough, healthySnapshot);
+  assert.deepEqual(passthrough.health, healthySnapshot);
 
-  const staleWorker = deriveApiHealth(
+  const staleWorker = sampleApiHealth(
     healthySnapshot,
     { active: { startedAt: '2026-06-05T09:59:00.000Z', workerId: 'worker-other' }, runningItemId: 'item-1' },
     nowIso,
   );
-  assert.equal(staleWorker.state, 'unhealthy');
-  assert.equal(staleWorker.reason, 'stale_running_item');
-  assert.equal(staleWorker.runtime?.workerId, 'worker-1');
+  assert.equal(staleWorker.health.state, 'unhealthy');
+  assert.equal(staleWorker.health.reason, 'stale_running_item');
+  assert.equal(staleWorker.health.runtime?.workerId, 'worker-1');
 
-  const deadWorker = deriveApiHealth(
+  const deadWorker = sampleApiHealth(
     {
       runtime: runtimeSnapshot({ processId: deadPid() }),
       state: 'healthy',
@@ -421,8 +425,8 @@ test('api health derives synthetics for missing or stale snapshots', () => {
     {},
     nowIso,
   );
-  assert.equal(deadWorker.state, 'unhealthy');
-  assert.equal(deadWorker.reason, 'start_failed');
+  assert.equal(deadWorker.health.state, 'unhealthy');
+  assert.equal(deadWorker.health.reason, 'start_failed');
 });
 
 test('agent health service applies carry rules through the persisted store', async () => {
@@ -649,6 +653,241 @@ for (const transition of ['complete', 'next-item', 'none', 'worker-mismatch'] as
       assert.equal(status.health?.state, transition === 'worker-mismatch' ? 'unhealthy' : 'healthy');
       assert.equal(status.health?.reason, transition === 'worker-mismatch' ? 'stale_running_item' : undefined);
       assert.equal(reads, transition === 'none' ? 1 : 2);
+      const history = await new AgentHealthEvidenceStore('milo').list();
+      assert.equal(history.length, transition === 'worker-mismatch' ? 1 : 0);
+      if (history[0]) {
+        assert.equal(history[0].queue.runningItemId, first.item.id);
+        assert.equal(history[0].mismatch, 'worker_mismatch');
+        assert.equal(history[0].runtime.processAlive, true);
+      }
     });
   });
 }
+
+test('confirmed stale evidence survives recovery, omits payloads, and is included in Copy diagnostics', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-health-evidence-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  await withAnimaHome(home, async () => {
+    const queue = new WakeQueueService('scout');
+    const health = new AgentHealthService(new AgentHealthStore({ animaHome: home }));
+    const runtime = new RuntimeService(health);
+    const item = (
+      await ingestEvent(
+        makeSlackEvent({
+          channelId: 'D-demo',
+          teamId: 'T-demo',
+          userId: 'U1',
+          text: 'PRIVATE_QUEUE_SENTINEL',
+          ts: '1770000000.000020',
+        }),
+        { agentId: 'scout', stateDir: home },
+      )
+    ).item;
+    await queue.takeNextRunnable({
+      isWorkerAlive: () => true,
+      workerId: 'worker-queue',
+    });
+    await health.writeHealth({
+      agentId: 'scout',
+      state: 'healthy',
+      updatedAt: new Date().toISOString(),
+      runtime: {
+        workerId: 'worker-snapshot',
+        activeItemId: 'another-item',
+        processId: process.pid,
+        providerChildExpected: true,
+        providerChild: {
+          command: 'PRIVATE_COMMAND_SENTINEL',
+          label: 'PRIVATE_LABEL_SENTINEL',
+          alive: true,
+          exited: false,
+          pid: process.pid,
+          stdinWritable: true,
+          startedAt: new Date().toISOString(),
+        },
+      },
+    });
+    assert.equal((await runtime.getStatus('scout')).health?.reason, 'stale_running_item');
+    const path = join(home, 'agents/scout/health-evidence.json');
+    const before = await stat(path);
+    const first = (await new AgentHealthEvidenceStore('scout').list())[0]!;
+    assert.equal(first.queue.runningItemId, item.id);
+    assert.equal(first.queue.workerId, 'worker-queue');
+    assert.equal(first.runtime.workerId, 'worker-snapshot');
+    assert.equal(first.runtime.processAlive, true);
+    assert.equal(first.runtime.providerChild.processAlive, true);
+    assert.equal(first.grace.milliseconds, 10_000);
+    assert.equal(first.grace.active, true);
+    assert.equal(before.mode & 0o777, 0o600);
+    const locks: string[] = [];
+    const update = JsonFile.prototype.update;
+    t.mock.method(
+      JsonFile.prototype,
+      'update',
+      function (this: JsonFile<unknown>, ...args: Parameters<typeof update>) {
+        if (this.path === path) locks.push(this.path);
+        return update.apply(this, args);
+      },
+    );
+    await Promise.all(
+      Array.from({ length: 8 }, () => new RuntimeService(health).getStatus('scout')),
+    );
+    assert.equal(locks.length, 0, 'duplicate observations must not acquire the evidence file lock');
+    assert.equal((await stat(path)).mtimeMs, before.mtimeMs);
+    await queue.complete(item.id);
+    await health.writeHealth({
+      agentId: 'scout',
+      state: 'healthy',
+      updatedAt: new Date().toISOString(),
+      runtime: {
+        workerId: 'worker-snapshot',
+        processId: process.pid,
+        providerChildExpected: false,
+      },
+    });
+    assert.equal((await runtime.getStatus('scout')).health?.state, 'healthy');
+    const bundle = await buildAgentDiagnostics('scout');
+    assert.equal(bundle.healthEvidence?.available, true);
+    assert.deepEqual(bundle.healthEvidence?.events, [first]);
+    assert.equal(bundle.healthEvidence?.cappedAt, 20);
+    assert.doesNotMatch(await readFile(path, 'utf8'), /PRIVATE_|runtime-secret-value|xoxb-/);
+    assert.doesNotMatch(JSON.stringify(bundle.healthEvidence), /PRIVATE_/);
+  });
+});
+
+function syntheticEvidence(item = 'item-1'): StaleRunningEvidence {
+  return {
+    observedAt: '2026-10-23T00:00:00.000Z',
+    mismatch: 'snapshot_missing',
+    queue: { runningItemId: item, activePresent: true, workerId: 'worker-1' },
+    runtime: { present: false, providerChild: { present: false } },
+    grace: { active: false, milliseconds: 10_000 },
+  };
+}
+
+test('evidence store bounds history, deduplicates across writers, and retains a new occurrence after recovery', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-health-history-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const store = new AgentHealthEvidenceStore('scout', home);
+  await store.observe(undefined);
+  const path = join(home, 'agents/scout/health-evidence.json');
+  await assert.rejects(stat(path), { code: 'ENOENT' });
+  const input = {
+    ...syntheticEvidence(),
+    secret: 'PRIVATE_EXTRA_SENTINEL',
+    runtime: {
+      ...syntheticEvidence().runtime,
+      command: 'PRIVATE_COMMAND_SENTINEL',
+    },
+  };
+  await Promise.all(
+    Array.from({ length: 6 }, () => new AgentHealthEvidenceStore('scout', home).observe(input)),
+  );
+  assert.equal((await store.list()).length, 1);
+  assert.doesNotMatch(await readFile(path, 'utf8'), /PRIVATE_/);
+  await store.observe(undefined);
+  await store.observe({ ...input, observedAt: '2026-10-23T00:01:00.000Z' });
+  assert.equal((await store.list()).length, 2);
+  for (let i = 0; i < HEALTH_EVIDENCE_CAP + 5; i++)
+    await store.observe(syntheticEvidence(`next-${i}`));
+  const history = await new AgentHealthEvidenceStore('scout', home).list();
+  assert.equal(history.length, 20);
+  assert.equal(history[0]?.queue.runningItemId, 'next-5');
+  assert.equal(history.at(-1)?.queue.runningItemId, 'next-24');
+});
+
+test('unwritable evidence does not hide unhealthy status and diagnostics marks history unavailable', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-health-evidence-error-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  await withAnimaHome(home, async () => {
+    await ingestEvent(
+      makeSlackEvent({
+        channelId: 'D-demo',
+        teamId: 'T-demo',
+        userId: 'U1',
+        text: 'Synthetic work',
+        ts: '1770000000.000021',
+      }),
+      { agentId: 'scout', stateDir: home },
+    );
+    await new WakeQueueService('scout').takeNextRunnable({
+      isWorkerAlive: () => true,
+      workerId: 'worker-live',
+    });
+    await mkdir(join(home, 'agents/scout/health-evidence.json'));
+    const warnings: unknown[] = [];
+    t.mock.method(console, 'warn', (...args: unknown[]) => warnings.push(args));
+    const runtime = new RuntimeService();
+    for (let i = 0; i < 3; i++)
+      assert.equal((await runtime.getStatus('scout')).health?.reason, 'stale_running_item');
+    assert.equal(warnings.length, 1);
+    const bundle = await buildAgentDiagnostics('scout');
+    assert.equal(bundle.healthEvidence?.available, false);
+    assert.equal(bundle.status.health?.reason, 'stale_running_item');
+  });
+});
+
+test('health evidence captures the failed invariant and actual liveness at the grace boundary', () => {
+  const now = '2026-10-23T00:00:10.000Z';
+  const active = {
+    workerId: 'worker-1',
+    startedAt: '2026-10-23T00:00:00.000Z',
+  };
+  const snapshot = {
+    state: 'healthy' as const,
+    updatedAt: now,
+    runtime: runtimeSnapshot({
+      activeItemId: 'other',
+      processId: process.pid,
+    }),
+  };
+  assert.equal(
+    sampleApiHealth(snapshot, { runningItemId: 'item-1', active }, '2026-10-23T00:00:09.999Z')
+      .evidence,
+    undefined,
+  );
+  const boundary = sampleApiHealth(snapshot, { runningItemId: 'item-1', active }, now).evidence!;
+  assert.equal(boundary.mismatch, 'item_mismatch');
+  assert.equal(boundary.grace.active, false);
+  assert.equal(boundary.runtime.processAlive, true);
+  const dead = deadPid();
+  const failed = sampleApiHealth(
+    {
+      ...snapshot,
+      runtime: {
+        ...snapshot.runtime,
+        activeItemId: 'item-1',
+        processId: dead,
+        providerChild: {
+          pid: dead,
+          command: 'PRIVATE_COMMAND',
+          label: 'cli',
+          alive: true,
+          exited: false,
+          stdinWritable: true,
+          startedAt: now,
+        },
+      },
+    },
+    { runningItemId: 'item-1', active },
+    now,
+  ).evidence!;
+  assert.equal(failed.mismatch, 'worker_dead');
+  assert.equal(failed.runtime.processAlive, false);
+  assert.equal(
+    failed.runtime.providerChild.alive,
+    true,
+    'reported and observed liveness are separate',
+  );
+  assert.equal(failed.runtime.providerChild.processAlive, false);
+  assert.equal(
+    sampleApiHealth(undefined, { runningItemId: 'item-1', active }, now).evidence?.mismatch,
+    'snapshot_missing',
+  );
+  assert.equal(
+    sampleApiHealth(snapshot, { runningItemId: 'item-1' }, now).evidence?.mismatch,
+    'active_missing',
+  );
+});

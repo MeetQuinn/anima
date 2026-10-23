@@ -1,3 +1,4 @@
+import type { StaleRunningEvidence } from '../../shared/diagnostics.js';
 import { AgentHealthStore, defaultAgentHealthStore } from './agent-health.store.js';
 import { processAlive, providerChildIssueReason } from './item-state.js';
 import type { AgentRestartCommand } from './agent-restart-command.store.js';
@@ -192,58 +193,112 @@ export function startingTimeoutHealth(
 // allows FRESH_RUNNING_STALE_GRACE_MS for a just-claimed item (the stored
 // snapshot can be one publish tick behind the queue) and leaves child issues to
 // surface as provider_child_* instead of stale_running_item.
-export function isStaleRunningItem(input: {
+interface RunningItemHealthInput {
   active?: { startedAt?: string; workerId: string };
   activeItemMismatchGraceMs: number;
   includeProviderChildCheck: boolean;
   nowMs: number;
   runningItemId: string;
   runtime: AgentRuntimeHandleSnapshot | undefined;
-}): boolean {
+}
+
+export function isStaleRunningItem(input: RunningItemHealthInput): boolean {
+  return inspectRunningItem(input).mismatch !== undefined;
+}
+
+function inspectRunningItem(input: RunningItemHealthInput): Omit<
+  StaleRunningEvidence,
+  'observedAt' | 'snapshotUpdatedAt' | 'mismatch'
+> & {
+  mismatch?: StaleRunningEvidence['mismatch'];
+} {
   const { active, runtime } = input;
-  if (!active) return true;
-  if (!runtime) return true;
-  if (!runtime.workerId || runtime.workerId !== active.workerId) return true;
-  if (!runtime.activeItemId || runtime.activeItemId !== input.runningItemId) {
-    return !withinGrace(active.startedAt, input.activeItemMismatchGraceMs, input.nowMs);
+  const workerAlive = runtime?.processId ? processAlive(runtime.processId) : undefined;
+  const child = runtime?.providerChild;
+  const childAlive = child?.pid ? processAlive(child.pid) : undefined;
+  const grace = withinGrace(active?.startedAt, input.activeItemMismatchGraceMs, input.nowMs);
+  let mismatch: StaleRunningEvidence['mismatch'] | undefined;
+  if (!active) mismatch = 'active_missing';
+  else if (!runtime) mismatch = 'snapshot_missing';
+  else if (!runtime.workerId || runtime.workerId !== active.workerId) mismatch = 'worker_mismatch';
+  else if (!runtime.activeItemId || runtime.activeItemId !== input.runningItemId) {
+    if (!grace) mismatch = 'item_mismatch';
+  } else if (workerAlive === false) mismatch = 'worker_dead';
+  else if (input.includeProviderChildCheck && runtime.providerChildExpected) {
+    if (!child) mismatch = 'provider_child_missing';
+    else if (childAlive === false || child.exited || !child.alive || !child.stdinWritable)
+      mismatch = 'provider_child_exited';
   }
-  if (runtime.processId && !processAlive(runtime.processId)) return true;
-  if (input.includeProviderChildCheck && providerChildIssueReason(runtime, { checkPid: true })) return true;
-  return false;
+  const evidence: ReturnType<typeof inspectRunningItem> = {
+    queue: {
+      activePresent: Boolean(active),
+      runningItemId: input.runningItemId,
+    },
+    runtime: {
+      present: Boolean(runtime),
+      providerChild: { present: Boolean(child) },
+    },
+    grace: { active: grace, milliseconds: input.activeItemMismatchGraceMs },
+  };
+  if (mismatch) evidence.mismatch = mismatch;
+  if (active) {
+    evidence.queue.workerId = active.workerId;
+    if (active.startedAt) evidence.queue.startedAt = active.startedAt;
+  }
+  if (runtime) {
+    evidence.runtime.providerChildExpected = runtime.providerChildExpected;
+    if (runtime.activeItemId) evidence.runtime.activeItemId = runtime.activeItemId;
+    if (runtime.workerId) evidence.runtime.workerId = runtime.workerId;
+    if (runtime.processId) evidence.runtime.processId = runtime.processId;
+    if (workerAlive !== undefined) evidence.runtime.processAlive = workerAlive;
+  }
+  if (child) {
+    evidence.runtime.providerChild.alive = child.alive;
+    evidence.runtime.providerChild.exited = child.exited;
+    evidence.runtime.providerChild.stdinWritable = child.stdinWritable;
+    if (child.pid) evidence.runtime.providerChild.pid = child.pid;
+    if (childAlive !== undefined) evidence.runtime.providerChild.processAlive = childAlive;
+  }
+  return evidence;
 }
 
 // Read-time health for the status API: overrides the stored snapshot with
 // synthetics when the world has moved on since the last write (start attempt
 // timed out, running item lost its worker, worker process or provider child
 // died).
-export function deriveApiHealth(
+export function sampleApiHealth(
   snapshot: AgentRuntimeHealthSummary | undefined,
   queue: { active?: { startedAt?: string; workerId: string }; runningItemId?: string },
   nowIso: string,
-): AgentRuntimeHealthSummary {
-  if (!snapshot) {
-    return queue.runningItemId
-      ? syntheticHealth('unhealthy', 'stale_running_item', undefined, nowIso)
-      : syntheticHealth('unknown', undefined, undefined, nowIso);
+): { health: AgentRuntimeHealthSummary; evidence?: StaleRunningEvidence } {
+  const timedOut = snapshot && startingTimeoutHealth(snapshot, nowIso);
+  if (timedOut) return { health: timedOut };
+  if (queue.runningItemId) {
+    const inspection = inspectRunningItem({
+      active: queue.active,
+      activeItemMismatchGraceMs: FRESH_RUNNING_STALE_GRACE_MS,
+      includeProviderChildCheck: false,
+      nowMs: Date.parse(nowIso),
+      runningItemId: queue.runningItemId,
+      runtime: snapshot?.runtime,
+    });
+    if (inspection.mismatch) {
+      const evidence: StaleRunningEvidence = {
+        ...inspection,
+        mismatch: inspection.mismatch,
+        observedAt: nowIso,
+      };
+      if (snapshot) evidence.snapshotUpdatedAt = snapshot.updatedAt;
+      return {
+        health: syntheticHealth('unhealthy', 'stale_running_item', snapshot, nowIso),
+        evidence,
+      };
+    }
   }
-
-  const timedOut = startingTimeoutHealth(snapshot, nowIso);
-  if (timedOut) return timedOut;
-
-  const stale = queue.runningItemId !== undefined && isStaleRunningItem({
-    activeItemMismatchGraceMs: FRESH_RUNNING_STALE_GRACE_MS,
-    ...(queue.active ? { active: queue.active } : {}),
-    includeProviderChildCheck: false,
-    nowMs: Date.parse(nowIso),
-    runningItemId: queue.runningItemId,
-    runtime: snapshot.runtime,
-  });
-  if (stale) return syntheticHealth('unhealthy', 'stale_running_item', snapshot, nowIso);
-
+  if (!snapshot) return { health: syntheticHealth('unknown', undefined, undefined, nowIso) };
   const runtimeReason = runtimeProcessReason(snapshot.runtime);
-  if (runtimeReason) return syntheticHealth('unhealthy', runtimeReason, snapshot, nowIso);
-
-  return snapshot;
+  if (runtimeReason) return { health: syntheticHealth('unhealthy', runtimeReason, snapshot, nowIso) };
+  return { health: snapshot };
 }
 
 export function restartStatus(

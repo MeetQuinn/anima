@@ -1,3 +1,4 @@
+import { AgentHealthEvidenceStore, HEALTH_EVIDENCE_CAP } from '../runtime/agent-health-evidence.store.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,6 +37,10 @@ export async function buildAgentDiagnostics(agentId: string): Promise<AgentDiagn
   return {
     agent: safeAgent(agent),
     generatedAt: nowIso(),
+    healthEvidence: await new AgentHealthEvidenceStore(agentId).list().then(
+      (events) => ({ available: true, cappedAt: HEALTH_EVIDENCE_CAP, events }),
+      () => ({ available: false, cappedAt: HEALTH_EVIDENCE_CAP, events: [] }),
+    ),
     logs: {
       cappedAt: LOG_LINE_CAP,
       lines: logs,

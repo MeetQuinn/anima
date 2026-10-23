@@ -202,7 +202,12 @@ action menu controls the local runtime:
 - **Restart agent** force-stops a hung agent. Current work is dropped and is not retried; queued work,
   memory, notes, and config remain. Do not use Restart to solve provider authentication or quota
   failures.
-- **Copy diagnostics** copies a support-oriented snapshot of the agent state.
+- **Copy diagnostics** copies a support-oriented snapshot of the agent state. It includes up to
+  20 confirmed stalled-work observations, retained after recovery. These record queue and worker
+  IDs, process checks, and the startup grace decision, without message bodies or credentials.
+  Identical observations are not repeated until recovery or a change in the observed state.
+  Capture happens when status is read; it is not a continuous fault recorder. If the history
+  cannot be read, the copy marks it unavailable.
 - **Remove agent** stops the agent and removes its local Anima configuration. Its home files remain,
   and Anima does not delete the remote Slack or Feishu app.
 
