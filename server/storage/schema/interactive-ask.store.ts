@@ -19,6 +19,8 @@ export const InteractiveAskRecord = z.object({
   allowAnyone: z.boolean().optional(),
   allowedUserIds: z.array(z.string()).optional(),
   answeredAt: z.string().optional(),
+  // Absent on legacy answered records, which must not be replayed.
+  deliveryPending: z.literal(true).optional(),
   answeredBy: z.object({
     displayName: z.string().optional(),
     handle: z.string().optional(),
@@ -78,15 +80,18 @@ export class InteractiveAskStore {
     return ask;
   }
 
-  async update(ask: InteractiveAskRecord): Promise<InteractiveAskRecord> {
+  async update(
+    askId: string,
+    change: (current: InteractiveAskRecord) => InteractiveAskRecord,
+  ): Promise<InteractiveAskRecord | undefined> {
+    let next: InteractiveAskRecord | undefined;
     await this.file.update((stored) => {
-      if (!stored[ask.askId]) throw new Error(`Interactive ask not found: ${ask.askId}`);
-      return {
-        ...stored,
-        [ask.askId]: ask,
-      };
+      const current = stored[askId];
+      if (!current) return stored;
+      next = change(current);
+      return next === current ? stored : { ...stored, [askId]: next };
     });
-    return ask;
+    return next;
   }
 
   async pruneAnsweredBefore(cutoffIso: string): Promise<number> {
@@ -107,6 +112,6 @@ export class InteractiveAskStore {
 }
 
 function isAnsweredBefore(ask: InteractiveAskRecord, cutoffIso: string): boolean {
-  if (ask.status !== 'answered') return false;
+  if (ask.status !== 'answered' || ask.deliveryPending) return false;
   return (ask.answeredAt ?? ask.lastInteractionAt ?? ask.createdAt) < cutoffIso;
 }
