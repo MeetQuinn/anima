@@ -225,7 +225,7 @@ export function AgentRow({
           )}
           {connection && connection.severity !== 'normal' && (
             <div className="mt-1 truncate font-sans text-[10px] leading-tight"
-              style={{ color: connection.severity === 'error' ? 'var(--color-health-error)' : 'var(--color-health-warn)' }}
+              style={{ color: connection.severity === 'error' ? 'var(--color-health-error-on-spine)' : 'var(--color-health-warn-on-spine)' }}
               title={connection.detail}>
               {connection.label}
             </div>

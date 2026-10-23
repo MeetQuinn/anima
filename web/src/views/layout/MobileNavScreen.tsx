@@ -1,4 +1,4 @@
-import { useNow } from '@/hooks/useNow';
+import { useConnectionNow } from '@/hooks/useConnectionNow';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, GripVertical, Pencil, Plus, Settings } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -60,7 +60,7 @@ export default function MobileNavScreen({
   onSelectAgent: (id: string) => void;
   lastSelectedId?: string | null;
 }) {
-  const now = useNow(5_000);
+  const now = useConnectionNow();
   const teams = useTeams();
   const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
   const { orderedAgents, orderedKbs, agentIndexMap, sensors, reorderAgents, reorderKbs } =

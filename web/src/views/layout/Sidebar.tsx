@@ -1,4 +1,4 @@
-import { useNow } from '@/hooks/useNow';
+import { useConnectionNow } from '@/hooks/useConnectionNow';
 import { useState } from 'react';
 import { ChevronLeft, Plus, Settings } from 'lucide-react';
 import {
@@ -114,7 +114,7 @@ export default function Sidebar({
   const setAgentId = (id: string | null) => navigate(id ? `/agents/${id}` : '/');
   const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
 
-  const now = useNow(5_000);
+  const now = useConnectionNow();
   const teams = useTeams();
   const { currentTeamId, setCurrentTeamId } = useCurrentTeam(teams);
   const {
@@ -264,7 +264,7 @@ export default function Sidebar({
           {connectionWarning && (
             <span aria-hidden title={connectionWarning.detail}
               className="absolute right-0.5 top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-page font-sans text-[10px] font-bold text-page"
-              style={{ background: connectionWarning.severity === 'error' ? 'var(--color-health-error)' : 'var(--color-health-warn)' }}
+              style={{ background: connectionWarning.severity === 'error' ? 'var(--color-health-error-on-spine)' : 'var(--color-health-warn-on-spine)' }}
             >!</span>
           )}
           {/* Status dot — color encodes all health states, same mapping as the

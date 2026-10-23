@@ -56,7 +56,7 @@ export function slackConnectionDisplay(
       : connection.state === 'connecting'
         ? 'Slack connecting'
         : 'Slack reconnecting',
-    detail: `${duration}${reason}${connection.attempts} connection attempts. ${retry}`,
+    detail: `${duration}${reason}${connection.attempts} connection ${connection.attempts === 1 ? 'attempt' : 'attempts'}. ${retry}`,
     severity: attention ? ('error' as const) : ('warning' as const),
   };
 }

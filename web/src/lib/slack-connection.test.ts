@@ -39,6 +39,11 @@ describe('Slack connection display', () => {
       slackConnectionDisplay(health({ disconnectedAt: iso(now - 300_000) }), now)?.severity,
     ).toBe('error');
   });
+  it('uses the singular for the first connection attempt', () => {
+    expect(slackConnectionDisplay(health({ attempts: 1 }), now)?.detail).toContain(
+      '1 connection attempt.',
+    );
+  });
   it('distinguishes terminal failures and stopped listeners from automatic retries', () => {
     expect(slackConnectionDisplay(health({ state: 'failed' }), now)?.detail).toContain(
       'Automatic retries stopped',

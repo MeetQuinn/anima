@@ -35,7 +35,7 @@ import { activityRow, isNarrativeStep } from '@/lib/activities';
 import { clockHM, formatRelativeShort } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
-import { useNow } from '@/hooks/useNow';
+import { useConnectionNow } from '@/hooks/useConnectionNow';
 import {
   agentHealthDegradedText,
   agentHealthReasonText,
@@ -392,7 +392,7 @@ export function ActivityStatusSummary({
       </div>
       {connection && (
         <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-sans text-[11px]">
-          <span className="font-medium" style={{ color: connection.severity === 'error' ? 'var(--color-health-error)' : connection.severity === 'warning' ? 'var(--color-health-warn)' : 'var(--color-text-muted)' }}>
+          <span className="font-medium" style={{ color: connection.severity === 'error' ? 'var(--color-health-error)' : connection.severity === 'warning' ? 'var(--color-health-warn-ink)' : 'var(--color-text-muted)' }}>
             {connection.label}
           </span>
           {connection.severity !== 'normal' && <span className="text-text-muted">{connection.detail}</span>}
@@ -530,7 +530,7 @@ export default function Activity() {
   const previewFirstRunHero = import.meta.env.DEV
     ? ((searchParams.get('_previewFirstRunHero') as 'feishu' | 'slack' | null) ?? undefined)
     : undefined;
-  const now = useNow(5_000);
+  const now = useConnectionNow();
   // Per-turn step expand state. Keyed by groupKey(group); a key present = expanded.
   // Default-collapsed (empty set); a concluded turn gets a fresh key so it folds
   // shut on completion. Survives polling because group keys are stable.
