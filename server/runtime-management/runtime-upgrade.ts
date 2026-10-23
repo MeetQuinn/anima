@@ -663,30 +663,40 @@ async function verifyRuntimeBoot(input: {
   timeoutMs?: number;
 }): Promise<void> {
   const timeoutMs = input.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS;
-  const startedAt = Date.now();
+  const deadline = Date.now() + timeoutMs;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let lastError = 'not checked';
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const info = await fetchServerInfo(input.dashboardHost, input.dashboardPort);
-      if (info.version !== input.expectedVersion) throw new Error(`version ${info.version} != ${input.expectedVersion}`);
-      if (resolve(info.animaHome) !== resolve(input.expectedAnimaHome)) {
-        throw new Error(`animaHome ${info.animaHome} != ${input.expectedAnimaHome}`);
+  try {
+    while (Date.now() < deadline) {
+      try {
+        const info = await fetchServerInfo(input.dashboardHost, input.dashboardPort, controller.signal);
+        if (info.version !== input.expectedVersion) throw new Error(`version ${info.version} != ${input.expectedVersion}`);
+        if (resolve(info.animaHome) !== resolve(input.expectedAnimaHome)) {
+          throw new Error(`animaHome ${info.animaHome} != ${input.expectedAnimaHome}`);
+        }
+        if (input.previousStartedAt && info.startedAt === input.previousStartedAt) {
+          throw new Error(`startedAt did not change (${info.startedAt})`);
+        }
+        const pids = await readServicePids(input.expectedAnimaHome);
+        assertPidMoved('agent', input.previousPids.agent, pids.agent);
+        assertPidMoved('web', input.previousPids.web, pids.web);
+        const health = await fetch(healthUrl(input.dashboardHost, input.dashboardPort), { signal: controller.signal });
+        // Only the status is used; release the body even on error responses.
+        await health.body?.cancel();
+        if (!health.ok) throw new Error(`/api/health returned ${health.status}`);
+        if (Date.now() >= deadline) throw new Error('verification deadline exceeded');
+        return;
+      } catch (error) {
+        lastError = errorMessage(error);
+        const remaining = deadline - Date.now();
+        if (remaining > 0) await sleep(Math.min(VERIFY_POLL_MS, remaining));
       }
-      if (input.previousStartedAt && info.startedAt === input.previousStartedAt) {
-        throw new Error(`startedAt did not change (${info.startedAt})`);
-      }
-      const pids = await readServicePids(input.expectedAnimaHome);
-      assertPidMoved('agent', input.previousPids.agent, pids.agent);
-      assertPidMoved('web', input.previousPids.web, pids.web);
-      const health = await fetch(healthUrl(input.dashboardHost, input.dashboardPort));
-      if (!health.ok) throw new Error(`/api/health returned ${health.status}`);
-      return;
-    } catch (error) {
-      lastError = errorMessage(error);
-      await sleep(VERIFY_POLL_MS);
     }
+    throw new Error(`Runtime boot verification timed out: ${lastError}`);
+  } finally {
+    clearTimeout(timer);
   }
-  throw new Error(`Runtime boot verification timed out: ${lastError}`);
 }
 
 async function rollbackRuntime(input: {
@@ -702,7 +712,14 @@ async function rollbackRuntime(input: {
 }): Promise<{ currentVersion?: string; status: 'failed' | 'not_needed' | 'succeeded' }> {
   if (!input.previousVersion) return { status: 'not_needed' };
   try {
-    const running = await fetchServerInfo(input.dashboardHost, input.dashboardPort).catch(() => undefined);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS);
+    let running: ServerInfo | undefined;
+    try {
+      running = await fetchServerInfo(input.dashboardHost, input.dashboardPort, controller.signal).catch(() => undefined);
+    } finally {
+      clearTimeout(timer);
+    }
     const runtimeDir = join(resolveAnimaHome(), 'runtime', 'current');
     const result = await installManagedRuntime({
       npmCommand: input.npmCommand,
@@ -861,9 +878,12 @@ function assertPidMoved(name: keyof ServicePids, previous: number | undefined, n
   if (next === previous) throw new Error(`${name} pid did not change (${next})`);
 }
 
-async function fetchServerInfo(dashboardHost?: string, dashboardPort?: number): Promise<ServerInfo> {
-  const res = await fetch(serverInfoUrl(dashboardHost, dashboardPort));
-  if (!res.ok) throw new Error(`/api/server-info returned ${res.status}`);
+async function fetchServerInfo(dashboardHost: string | undefined, dashboardPort: number | undefined, signal: AbortSignal): Promise<ServerInfo> {
+  const res = await fetch(serverInfoUrl(dashboardHost, dashboardPort), { signal });
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw new Error(`/api/server-info returned ${res.status}`);
+  }
   return (await res.json()) as ServerInfo;
 }
 
