@@ -208,3 +208,26 @@ describe('ActivityStatusSummary', () => {
     ).toMatch(/^Retry Slack wake now \(deferred until \d{2}:\d{2}, 1 deferral\)$/);
   });
 });
+
+describe('ActivityStatusSummary Slack connection', () => {
+  it('shows disconnect details alongside ongoing model work and clears them on reconnect', () => {
+    const now = new Date('2026-10-23T08:00:00Z');
+    const status: AgentStatusSummary = { agentId: 'milo', itemCount: 1, queueDepth: 0, health: {
+      state: 'healthy', updatedAt: now.toISOString(), runtime: { providerChildExpected: false,
+        providerWork: { state: 'working' }, transports: { slack: { state: 'reconnecting',
+          observedAt: now.toISOString(), since: '2026-10-23T07:52:00Z', disconnectedAt: '2026-10-23T07:52:00Z',
+          attempts: 4, reason: 'invalid_auth', retryAt: '2026-10-23T08:02:00Z',
+        } },
+      },
+    } };
+    const view = render(<ActivityStatusSummary latestActivity={undefined} now={now} status={status} />);
+    expect(screen.getByText('Working')).toBeTruthy();
+    expect(screen.getByText('Slack disconnected')).toBeTruthy();
+    expect(screen.getByText(/Disconnected for 8m.*invalid_auth.*Next retry in 2m/)).toBeTruthy();
+    status.health!.runtime!.transports!.slack = { state: 'connected', observedAt: now.toISOString(), since: now.toISOString(), attempts: 0 };
+    view.rerender(<ActivityStatusSummary latestActivity={undefined} now={now} status={status} />);
+    expect(screen.getByText('Working')).toBeTruthy();
+    expect(screen.getByText('Slack connected')).toBeTruthy();
+    expect(screen.queryByText(/invalid_auth/)).toBeNull();
+  });
+});

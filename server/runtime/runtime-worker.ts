@@ -73,6 +73,7 @@ interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   onItemAborted?: (context: RuntimeItemContext, reason: ItemStopReason) => Promise<void>;
   onItemSettled?: (context: RuntimeItemContext) => Promise<void>;
   onIdle?: () => Promise<void>;
+  transportHealth?: () => AgentRuntimeHandleSnapshot['transports'];
   pollIntervalMs?: number;
   providerRetry?: ProviderRetryOptions;
   queue: WakeQueueService;
@@ -213,6 +214,7 @@ export class AgentRuntimeWorker {
   health(): AgentRuntimeHandleSnapshot {
     const active = this.activeItem;
     const provider = this.options.agentRuntime.health?.();
+    const transports = this.options.transportHealth?.();
     return {
       ...(active ? {
         activeItemId: active.itemId,
@@ -222,6 +224,7 @@ export class AgentRuntimeWorker {
       ...(provider?.child ? { providerChild: provider.child } : {}),
       providerChildExpected: provider?.childExpected ?? false,
       ...(provider?.providerWork ? { providerWork: provider.providerWork } : {}),
+      ...(transports ? { transports } : {}),
       workerId: this.workerId,
     };
   }

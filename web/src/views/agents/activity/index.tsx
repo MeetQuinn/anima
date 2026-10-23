@@ -1,3 +1,4 @@
+import { slackConnectionDisplay } from '@/lib/slack-connection';
 import { Fragment, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -279,6 +280,7 @@ export function ActivityStatusSummary({
   retryingDeferredId?: string | null;
 }) {
   if (!status) return null;
+  const connection = slackConnectionDisplay(status.health, now.getTime());
   const work = agentWorkState(status);
   const running = work.state === 'working';
   const background = work.state === 'background';
@@ -388,6 +390,14 @@ export function ActivityStatusSummary({
           </span>
         )}
       </div>
+      {connection && (
+        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-sans text-[11px]">
+          <span className="font-medium" style={{ color: connection.severity === 'error' ? 'var(--color-health-error)' : connection.severity === 'warning' ? 'var(--color-health-warn)' : 'var(--color-text-muted)' }}>
+            {connection.label}
+          </span>
+          {connection.severity !== 'normal' && <span className="text-text-muted">{connection.detail}</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -520,7 +530,7 @@ export default function Activity() {
   const previewFirstRunHero = import.meta.env.DEV
     ? ((searchParams.get('_previewFirstRunHero') as 'feishu' | 'slack' | null) ?? undefined)
     : undefined;
-  const now = useNow();
+  const now = useNow(5_000);
   // Per-turn step expand state. Keyed by groupKey(group); a key present = expanded.
   // Default-collapsed (empty set); a concluded turn gets a fresh key so it folds
   // shut on completion. Survives polling because group keys are stable.
@@ -563,6 +573,7 @@ export default function Activity() {
   const loadingActivities = messageQuery.isLoading;
 
   const currentStatus = agentStatuses.find((s) => s.agentId === agentId);
+  const slackConnection = slackConnectionDisplay(currentStatus?.health, now.getTime());
   const currentItemId = currentStatus?.currentItemId;
   const currentItemStartedAt = currentStatus?.currentItemStartedAt;
 
@@ -681,7 +692,8 @@ export default function Activity() {
     (!loadingActivities &&
       filteredItems.length === 0 &&
       stepItems.length === 0 &&
-      connectedPlatform !== undefined);
+      connectedPlatform !== undefined &&
+      (connectedPlatform !== 'slack' || !slackConnection || slackConnection.severity === 'normal'));
 
   const feishuConnKey = agent?.feishu?.connected
     ? agent.feishu.appId?.trim() || 'connected'

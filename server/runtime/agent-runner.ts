@@ -76,6 +76,7 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     {
       ...options,
       agentRuntime: options.agentRuntime,
+      transportHealth: () => subscriber.health(),
       ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
       onItemStarted: async (context) => {
         await linear.markStarted(context.item, context.item.id);

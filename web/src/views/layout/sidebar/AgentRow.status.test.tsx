@@ -132,3 +132,22 @@ describe('AgentRow provider work status', () => {
     }
   });
 });
+
+describe('AgentRow Slack connection', () => {
+  it('adds a connection warning without hiding model work, and removes it on recovery', () => {
+    const status = healthyStatus('working');
+    const at = new Date().toISOString();
+    status.health!.runtime!.transports = { slack: { state: 'reconnecting', since: at, observedAt: at, attempts: 1,
+      disconnectedAt: at, reason: 'network_error',
+    } };
+    const props = { active: false, agent, enabled: true, index: 0, onClick: () => {}, status };
+    const view = render(<AgentRow {...props} />);
+    expect(screen.getByText('Slack reconnecting')).toBeTruthy();
+    expect(view.container.querySelector('.anima-dot-halo')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Milo.*working.*Slack reconnecting/ })).toBeTruthy();
+    status.health!.runtime!.transports!.slack!.state = 'connected';
+    view.rerender(<AgentRow {...props} />);
+    expect(screen.queryByText('Slack reconnecting')).toBeNull();
+    expect(view.container.querySelector('.anima-dot-halo')).toBeTruthy();
+  });
+});

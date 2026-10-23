@@ -1,3 +1,4 @@
+import { SLACK_CONNECTION_REASONS } from '../../shared/snapshot.js';
 import { join } from 'node:path';
 
 import { z } from 'zod';
@@ -85,6 +86,14 @@ const AgentRuntimeHandleSnapshotSchema: z.ZodType<AgentRuntimeHandleSnapshot> = 
   providerChild: ProviderChildHealthSnapshotSchema.optional(),
   providerChildExpected: z.boolean(),
   providerWork: ProviderWorkSnapshotSchema.optional(),
+  transports: z.object({
+    slack: z.object({
+      state: z.enum(['connecting', 'connected', 'reconnecting', 'failed', 'stopped']),
+      observedAt: z.string().datetime(), since: z.string().datetime(), attempts: z.number().int().nonnegative(),
+      connectedAt: z.string().datetime().optional(), disconnectedAt: z.string().datetime().optional(),
+      retryAt: z.string().datetime().optional(), reason: z.enum(SLACK_CONNECTION_REASONS).optional(),
+    }).optional(),
+  }).optional(),
   workerId: z.string().min(1).optional(),
 });
 

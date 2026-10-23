@@ -9,6 +9,8 @@ export class SlackMessageTransport implements MessageTransport {
     this.subscriber = new SlackInboxSubscriber(options);
   }
 
+  health() { return { slack: this.subscriber.connectionHealth() }; }
+
   async start(): Promise<void> {
     await this.subscriber.start();
   }

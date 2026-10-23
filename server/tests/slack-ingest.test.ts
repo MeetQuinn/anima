@@ -703,3 +703,48 @@ test('an agent start that Slack rejects leaves queued work unclaimed', async (t)
     await new Promise((resolve) => server.close(resolve));
   }
 }));
+
+test('running agent exposes Slack connection state through persisted health and copied diagnostics', async (t) => withTempAnimaHome(async (home) => {
+  const { SocketModeClient } = await import('@slack/socket-mode');
+  const { AgentHealthStore } = await import('../runtime/agent-health.store.js');
+  const { buildAgentDiagnostics } = await import('../diagnostics/agent-diagnostics.service.js');
+  const { waitFor } = await import('./helpers/harness.js');
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  let client: InstanceType<typeof SocketModeClient> | undefined;
+  let fail = false;
+  t.mock.method(SocketModeClient.prototype, 'start', async function(this: InstanceType<typeof SocketModeClient>) {
+    client = this;
+    if (fail) throw Object.assign(new Error('synthetic-private-request-body'), {
+      code: 'slack_webapi_platform_error', data: { error: 'account_inactive' },
+    });
+    return undefined;
+  });
+  t.mock.method(SocketModeClient.prototype, 'disconnect', async () => {});
+  t.mock.method(console, 'error', () => {});
+  const handle = await startRunningAgent({
+    agentId: 'scout', agentRuntime: { kind: 'synthetic', async appendToActiveRun() { return { accepted: false }; }, async run() { return { text: 'done' }; } },
+    animaHome: home, appToken: 'xapp-synthetic', botToken: 'xoxb-synthetic', botId: 'B-scout', botUserId: 'U-scout',
+    homePath: join(home, 'agent-homes', 'scout'), runLimiter: new TeamRunLimiter(), runtimeEnv: {}, stateDir: home,
+  });
+  try {
+    assert.equal(handle.health!().transports?.slack?.state, 'connected');
+    fail = true;
+    assert.ok(client);
+    client.emit('disconnected');
+    await waitFor(() => handle.health!().transports?.slack?.state === 'failed');
+    const current = handle.health!();
+    assert.equal(current.transports?.slack?.reason, 'account_inactive');
+    assert.ok(current.transports?.slack?.disconnectedAt);
+    const healthStore = new AgentHealthStore({ animaHome: home });
+    await healthStore.update('scout', () => ({ state: 'healthy', updatedAt: new Date().toISOString(), runtime: current }));
+    assert.deepEqual((await new AgentHealthStore({ animaHome: home }).get('scout'))?.runtime?.transports, current.transports);
+    const diagnostics = await buildAgentDiagnostics('scout');
+    assert.deepEqual(diagnostics.status.health?.runtime?.transports, current.transports);
+    assert.equal(diagnostics.status.health?.state, 'healthy', 'Slack connectivity does not restart a healthy provider');
+    assert.doesNotMatch(JSON.stringify(diagnostics), /synthetic-private-request-body|xapp-synthetic|xoxb-synthetic/);
+    await handle.stop();
+    assert.equal(handle.health!().transports?.slack?.state, 'stopped');
+    await healthStore.update('scout', () => ({ state: 'healthy', updatedAt: new Date().toISOString(), runtime: { providerChildExpected: false } }));
+    assert.equal((await healthStore.get('scout'))?.runtime?.transports, undefined, 'older snapshots remain readable');
+  } finally { await handle.stop(); }
+}));

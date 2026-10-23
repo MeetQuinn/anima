@@ -1,3 +1,4 @@
+import { SLACK_CONNECTION_REASONS, type SlackConnectionSnapshot } from '../../shared/snapshot.js';
 import { SocketModeReceiver, type SocketModeReceiverOptions } from '@slack/bolt';
 import { UnrecoverableSocketModeStartError } from '@slack/socket-mode';
 import { ErrorCode as WebApiErrorCode, type AppsConnectionsOpenResponse } from '@slack/web-api';
@@ -40,6 +41,13 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
   private retryDelay?: { resolve(): void; timer: NodeJS.Timeout };
   private started = false;
   private stopping = false;
+  private connection: Omit<SlackConnectionSnapshot, 'observedAt'> = {
+    state: 'stopped', since: new Date().toISOString(), attempts: 0,
+  };
+
+  connectionHealth(): SlackConnectionSnapshot {
+    return { ...this.connection, observedAt: new Date().toISOString() };
+  }
 
   constructor(options: ResilientSocketModeReceiverOptions) {
     const {
@@ -63,6 +71,7 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
 
   override async start(): Promise<AppsConnectionsOpenResponse> {
     this.stopping = false;
+    this.connection = { state: 'connecting', since: new Date().toISOString(), attempts: 0 };
     let outcome: SocketConnectOutcome;
     try {
       outcome = await this.connectUntilStopped();
@@ -79,6 +88,7 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
   override async stop(): Promise<void> {
     this.started = false;
     this.stopping = true;
+    this.connection = { state: 'stopped', since: new Date().toISOString(), attempts: this.connection.attempts };
     this.releaseRetryDelay();
     await this.disconnectClient();
     await this.reconnectLoop;
@@ -86,6 +96,9 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
 
   private onDisconnected(): void {
     if (!this.started || this.stopping || this.reconnectLoop) return;
+    const at = new Date().toISOString();
+    this.connection = { state: 'reconnecting', since: at, disconnectedAt: at, attempts: 0,
+      connectedAt: this.connection.connectedAt };
     const loop = this.reconnectAfterDisconnect();
     this.reconnectLoop = loop;
     void this.finishReconnectLoop(loop).catch((error: unknown) => {
@@ -116,18 +129,27 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
     let failures = 0;
     while (!this.stopping) {
       this.lastSocketError = undefined;
+      this.connection.attempts += 1;
+      delete this.connection.retryAt;
       try {
         const response = await this.client.start();
         // The SDK resolves undefined after a real successful hello despite its
         // declared AppsConnectionsOpenResponse return type.
-        if (!this.stopping) return { kind: 'connected', response };
+        if (!this.stopping) {
+          const at = new Date().toISOString();
+          this.connection = { state: 'connected', since: at, connectedAt: at, attempts: 0 };
+          return { kind: 'connected', response };
+        }
         await this.disconnectClient();
         return { kind: 'stopped' };
       } catch (error) {
         if (this.stopping) return { kind: 'stopped' };
+        this.connection.reason = connectionReason(error, this.lastSocketError);
         const fatalError = fatalSocketStartError(error);
         const retryAuth = this.started && fatalError === UnrecoverableSocketModeStartError.InvalidAuth;
         if (fatalError && !retryAuth) {
+          this.connection.state = 'failed';
+          this.connection.since = new Date().toISOString();
           this.runtimeLogger.error(`Slack Socket Mode connection failed permanently: ${errorMessage(error)}`);
           throw error;
         }
@@ -138,6 +160,7 @@ export class ResilientSocketModeReceiver extends SocketModeReceiver {
           failures,
           this.random,
         );
+        this.connection.retryAt = new Date(Date.now() + delayMs).toISOString();
         this.runtimeLogger.warn(
           `Slack Socket Mode connection failed; retrying in ${delayMs}ms: ${connectFailureMessage(error, this.lastSocketError)}`,
         );
@@ -209,4 +232,21 @@ function reconnectDelayWithJitter(
   const floorMs = Math.floor(cappedMs / 2);
   const randomValue = Math.max(0, Math.min(random(), 1));
   return Math.floor(floorMs + (randomValue * (cappedMs - floorMs)));
+}
+
+// SDK errors can include request URLs or credentials. Persist only known codes.
+function connectionReason(error: unknown, socketError: unknown): SlackConnectionSnapshot['reason'] {
+  if (error === undefined && socketError === undefined) return 'socket_closed';
+  if (error && typeof error === 'object' && 'code' in error) {
+    if (error.code === WebApiErrorCode.RequestError) return 'network_error';
+    if (error.code === WebApiErrorCode.RateLimitedError) return 'rate_limited';
+    if (error.code === WebApiErrorCode.HTTPError) return 'http_error';
+    if (error.code === WebApiErrorCode.PlatformError && 'data' in error && error.data && typeof error.data === 'object' && 'error' in error.data) {
+      const code = error.data.error;
+      if (typeof code === 'string' && SLACK_CONNECTION_REASONS.some((known) => known === code)) {
+        return code as SlackConnectionSnapshot['reason'];
+      }
+    }
+  }
+  return 'connection_failed';
 }
