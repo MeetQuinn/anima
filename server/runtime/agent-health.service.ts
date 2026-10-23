@@ -1,6 +1,10 @@
-import { AgentHealthStore, defaultAgentHealthStore } from './agent-health.store.js';
-import { processAlive, providerChildIssueReason } from './item-state.js';
-import type { AgentRestartCommand } from './agent-restart-command.store.js';
+import type { StaleRunningEvidence } from "../../shared/diagnostics.js";
+import {
+  AgentHealthStore,
+  defaultAgentHealthStore,
+} from "./agent-health.store.js";
+import { processAlive, providerChildIssueReason } from "./item-state.js";
+import type { AgentRestartCommand } from "./agent-restart-command.store.js";
 import type {
   AgentHealthReason,
   AgentHealthState,
@@ -8,7 +12,7 @@ import type {
   AgentRestartStatusSummary,
   AgentRuntimeHandleSnapshot,
   AgentRuntimeHealthSummary,
-} from '../../shared/snapshot.js';
+} from "../../shared/snapshot.js";
 
 export const PROVIDER_RATE_LIMIT_GRACE_MS = 60_000;
 export const PROVIDER_RATE_LIMIT_RED_STALE_MS = 5 * 60_000;
@@ -38,7 +42,9 @@ export interface ProviderFailureInput {
 // process (host timer, worker, provider-runner) write concurrently, so the
 // read-modify-write must be atomic. Do not split it into get() + write().
 export class AgentHealthService {
-  constructor(private readonly store: AgentHealthStore = defaultAgentHealthStore) {}
+  constructor(
+    private readonly store: AgentHealthStore = defaultAgentHealthStore,
+  ) {}
 
   async ensureDirectory(): Promise<void> {
     await this.store.ensureDirectory();
@@ -53,7 +59,9 @@ export class AgentHealthService {
   }
 
   async writeHealth(input: HealthWriteInput): Promise<void> {
-    await this.store.update(input.agentId, (previous) => applyHealthWrite(previous, input));
+    await this.store.update(input.agentId, (previous) =>
+      applyHealthWrite(previous, input),
+    );
   }
 
   // One locked rewrite for many agents, with the same carry rules per agent.
@@ -67,14 +75,21 @@ export class AgentHealthService {
   }
 
   async writeProviderFailure(input: ProviderFailureInput): Promise<void> {
-    await this.store.update(input.agentId, (previous) => applyProviderFailure(previous, input));
+    await this.store.update(input.agentId, (previous) =>
+      applyProviderFailure(previous, input),
+    );
   }
 
   // Session rotation clears only a `provider_error` flag: it described the
   // session that was just archived. The reason check runs inside the lock, so
   // an auth, quota, or rate-limit failure written concurrently is kept.
-  async clearProviderError(input: { agentId: string; updatedAt: string }): Promise<void> {
-    await this.store.update(input.agentId, (previous) => applyProviderErrorClear(previous, input.updatedAt));
+  async clearProviderError(input: {
+    agentId: string;
+    updatedAt: string;
+  }): Promise<void> {
+    await this.store.update(input.agentId, (previous) =>
+      applyProviderErrorClear(previous, input.updatedAt),
+    );
   }
 }
 
@@ -82,11 +97,11 @@ export function applyProviderErrorClear(
   previous: AgentRuntimeHealthSummary | undefined,
   updatedAt: string,
 ): AgentRuntimeHealthSummary | undefined {
-  if (previous?.reason !== 'provider_error') return undefined;
+  if (previous?.reason !== "provider_error") return undefined;
   return applyHealthWrite(previous, {
     clearProviderFailure: true,
     ...(previous.runtime ? { runtime: previous.runtime } : {}),
-    state: previous.runtime ? 'healthy' : 'unknown',
+    state: previous.runtime ? "healthy" : "unknown",
     updatedAt,
   });
 }
@@ -95,7 +110,7 @@ export const defaultAgentHealthService = new AgentHealthService();
 
 export function applyHealthWrite(
   previous: AgentRuntimeHealthSummary | undefined,
-  input: Omit<HealthWriteInput, 'agentId'>,
+  input: Omit<HealthWriteInput, "agentId">,
 ): AgentRuntimeHealthSummary {
   const providerFailure = carriedProviderFailure(previous, input);
   if (providerFailure) return providerFailure;
@@ -111,18 +126,18 @@ export function applyHealthWrite(
 
 export function applyProviderFailure(
   previous: AgentRuntimeHealthSummary | undefined,
-  input: Omit<ProviderFailureInput, 'agentId'>,
+  input: Omit<ProviderFailureInput, "agentId">,
 ): AgentRuntimeHealthSummary {
-  if (input.reason !== 'provider_rate_limited') {
+  if (input.reason !== "provider_rate_limited") {
     return {
       reason: input.reason,
       ...(input.runtime ? { runtime: input.runtime } : {}),
-      state: 'unhealthy',
+      state: "unhealthy",
       updatedAt: input.updatedAt,
     };
   }
 
-  const sameRateLimit = previous?.reason === 'provider_rate_limited';
+  const sameRateLimit = previous?.reason === "provider_rate_limited";
   const firstObservedAt = sameRateLimit ? previous.updatedAt : input.updatedAt;
   const elapsedMs = Date.parse(input.updatedAt) - Date.parse(firstObservedAt);
   const shouldEscalate =
@@ -131,9 +146,13 @@ export function applyProviderFailure(
     elapsedMs >= PROVIDER_RATE_LIMIT_GRACE_MS;
 
   return {
-    reason: 'provider_rate_limited',
-    ...(input.runtime ? { runtime: input.runtime } : previous?.runtime ? { runtime: previous.runtime } : {}),
-    state: shouldEscalate ? 'unhealthy' : 'degraded',
+    reason: "provider_rate_limited",
+    ...(input.runtime
+      ? { runtime: input.runtime }
+      : previous?.runtime
+        ? { runtime: previous.runtime }
+        : {}),
+    state: shouldEscalate ? "unhealthy" : "degraded",
     updatedAt: shouldEscalate ? input.updatedAt : firstObservedAt,
   };
 }
@@ -145,21 +164,26 @@ export function runtimeHandleHealth(
   runtime: AgentRuntimeHandleSnapshot | undefined,
   previous: AgentRuntimeHealthSummary | undefined,
   nowIso: string,
-): { reason?: AgentHealthReason; state: 'degraded' | 'healthy' | 'unhealthy'; updatedAt: string } {
-  if (!runtime) return { reason: 'start_failed', state: 'unhealthy', updatedAt: nowIso };
+): {
+  reason?: AgentHealthReason;
+  state: "degraded" | "healthy" | "unhealthy";
+  updatedAt: string;
+} {
+  if (!runtime)
+    return { reason: "start_failed", state: "unhealthy", updatedAt: nowIso };
   const reason = providerChildIssueReason(runtime);
-  if (!reason) return { state: 'healthy', updatedAt: nowIso };
-  if (previous?.reason === reason && previous.state === 'unhealthy') {
-    return { reason, state: 'unhealthy', updatedAt: nowIso };
+  if (!reason) return { state: "healthy", updatedAt: nowIso };
+  if (previous?.reason === reason && previous.state === "unhealthy") {
+    return { reason, state: "unhealthy", updatedAt: nowIso };
   }
-  if (previous?.reason === reason && previous.state === 'degraded') {
+  if (previous?.reason === reason && previous.state === "degraded") {
     const ageMs = Date.parse(nowIso) - Date.parse(previous.updatedAt);
     if (Number.isFinite(ageMs) && ageMs < RUNTIME_CHILD_HEALTH_DEBOUNCE_MS) {
-      return { reason, state: 'degraded', updatedAt: previous.updatedAt };
+      return { reason, state: "degraded", updatedAt: previous.updatedAt };
     }
-    return { reason, state: 'unhealthy', updatedAt: nowIso };
+    return { reason, state: "unhealthy", updatedAt: nowIso };
   }
-  return { reason, state: 'degraded', updatedAt: nowIso };
+  return { reason, state: "degraded", updatedAt: nowIso };
 }
 
 // A 'starting' snapshot older than STARTING_TIMEOUT_MS means the start attempt
@@ -169,18 +193,29 @@ export function startingTimeoutHealth(
   snapshot: AgentRuntimeHealthSummary,
   nowIso: string,
 ): AgentRuntimeHealthSummary | undefined {
-  if (snapshot.state !== 'starting') return undefined;
+  if (snapshot.state !== "starting") return undefined;
   const updatedAt = Date.parse(snapshot.updatedAt);
-  if (!Number.isFinite(updatedAt) || Date.parse(nowIso) - updatedAt < STARTING_TIMEOUT_MS) return undefined;
-  const reason: AgentHealthReason = snapshot.restart?.outcome === 'pending' ? 'restart_failed' : 'start_failed';
-  const restart = snapshot.restart?.outcome === 'pending'
-    ? { ...snapshot.restart, completedAt: nowIso, outcome: 'failed' as const, reason }
-    : snapshot.restart;
+  if (
+    !Number.isFinite(updatedAt) ||
+    Date.parse(nowIso) - updatedAt < STARTING_TIMEOUT_MS
+  )
+    return undefined;
+  const reason: AgentHealthReason =
+    snapshot.restart?.outcome === "pending" ? "restart_failed" : "start_failed";
+  const restart =
+    snapshot.restart?.outcome === "pending"
+      ? {
+          ...snapshot.restart,
+          completedAt: nowIso,
+          outcome: "failed" as const,
+          reason,
+        }
+      : snapshot.restart;
   return {
     reason,
     ...(restart ? { restart } : {}),
     ...(snapshot.runtime ? { runtime: snapshot.runtime } : {}),
-    state: 'unhealthy',
+    state: "unhealthy",
     updatedAt: nowIso,
   };
 }
@@ -192,58 +227,141 @@ export function startingTimeoutHealth(
 // allows FRESH_RUNNING_STALE_GRACE_MS for a just-claimed item (the stored
 // snapshot can be one publish tick behind the queue) and leaves child issues to
 // surface as provider_child_* instead of stale_running_item.
-export function isStaleRunningItem(input: {
+interface RunningItemHealthInput {
   active?: { startedAt?: string; workerId: string };
   activeItemMismatchGraceMs: number;
   includeProviderChildCheck: boolean;
   nowMs: number;
   runningItemId: string;
   runtime: AgentRuntimeHandleSnapshot | undefined;
-}): boolean {
+}
+
+export function isStaleRunningItem(input: RunningItemHealthInput): boolean {
+  return inspectRunningItem(input).mismatch !== undefined;
+}
+
+function inspectRunningItem(input: RunningItemHealthInput): Omit<
+  StaleRunningEvidence,
+  "observedAt" | "snapshotUpdatedAt" | "mismatch"
+> & {
+  mismatch?: StaleRunningEvidence["mismatch"];
+} {
   const { active, runtime } = input;
-  if (!active) return true;
-  if (!runtime) return true;
-  if (!runtime.workerId || runtime.workerId !== active.workerId) return true;
-  if (!runtime.activeItemId || runtime.activeItemId !== input.runningItemId) {
-    return !withinGrace(active.startedAt, input.activeItemMismatchGraceMs, input.nowMs);
+  const workerAlive = runtime?.processId
+    ? processAlive(runtime.processId)
+    : undefined;
+  const child = runtime?.providerChild;
+  const childAlive = child?.pid ? processAlive(child.pid) : undefined;
+  const grace = withinGrace(
+    active?.startedAt,
+    input.activeItemMismatchGraceMs,
+    input.nowMs,
+  );
+  let mismatch: StaleRunningEvidence["mismatch"] | undefined;
+  if (!active) mismatch = "active_missing";
+  else if (!runtime) mismatch = "snapshot_missing";
+  else if (!runtime.workerId || runtime.workerId !== active.workerId)
+    mismatch = "worker_mismatch";
+  else if (
+    !runtime.activeItemId ||
+    runtime.activeItemId !== input.runningItemId
+  ) {
+    if (!grace) mismatch = "item_mismatch";
+  } else if (workerAlive === false) mismatch = "worker_dead";
+  else if (input.includeProviderChildCheck && runtime.providerChildExpected) {
+    if (!child) mismatch = "provider_child_missing";
+    else if (
+      childAlive === false ||
+      child.exited ||
+      !child.alive ||
+      !child.stdinWritable
+    )
+      mismatch = "provider_child_exited";
   }
-  if (runtime.processId && !processAlive(runtime.processId)) return true;
-  if (input.includeProviderChildCheck && providerChildIssueReason(runtime, { checkPid: true })) return true;
-  return false;
+  const evidence: ReturnType<typeof inspectRunningItem> = {
+    queue: {
+      activePresent: Boolean(active),
+      runningItemId: input.runningItemId,
+    },
+    runtime: {
+      present: Boolean(runtime),
+      providerChild: { present: Boolean(child) },
+    },
+    grace: { active: grace, milliseconds: input.activeItemMismatchGraceMs },
+  };
+  if (mismatch) evidence.mismatch = mismatch;
+  if (active) {
+    evidence.queue.workerId = active.workerId;
+    if (active.startedAt) evidence.queue.startedAt = active.startedAt;
+  }
+  if (runtime) {
+    evidence.runtime.providerChildExpected = runtime.providerChildExpected;
+    if (runtime.activeItemId)
+      evidence.runtime.activeItemId = runtime.activeItemId;
+    if (runtime.workerId) evidence.runtime.workerId = runtime.workerId;
+    if (runtime.processId) evidence.runtime.processId = runtime.processId;
+    if (workerAlive !== undefined) evidence.runtime.processAlive = workerAlive;
+  }
+  if (child) {
+    evidence.runtime.providerChild.alive = child.alive;
+    evidence.runtime.providerChild.exited = child.exited;
+    evidence.runtime.providerChild.stdinWritable = child.stdinWritable;
+    if (child.pid) evidence.runtime.providerChild.pid = child.pid;
+    if (childAlive !== undefined)
+      evidence.runtime.providerChild.processAlive = childAlive;
+  }
+  return evidence;
 }
 
 // Read-time health for the status API: overrides the stored snapshot with
 // synthetics when the world has moved on since the last write (start attempt
 // timed out, running item lost its worker, worker process or provider child
 // died).
-export function deriveApiHealth(
+export function sampleApiHealth(
   snapshot: AgentRuntimeHealthSummary | undefined,
-  queue: { active?: { startedAt?: string; workerId: string }; runningItemId?: string },
+  queue: {
+    active?: { startedAt?: string; workerId: string };
+    runningItemId?: string;
+  },
   nowIso: string,
-): AgentRuntimeHealthSummary {
-  if (!snapshot) {
-    return queue.runningItemId
-      ? syntheticHealth('unhealthy', 'stale_running_item', undefined, nowIso)
-      : syntheticHealth('unknown', undefined, undefined, nowIso);
+): { health: AgentRuntimeHealthSummary; evidence?: StaleRunningEvidence } {
+  const timedOut = snapshot && startingTimeoutHealth(snapshot, nowIso);
+  if (timedOut) return { health: timedOut };
+  if (queue.runningItemId) {
+    const inspection = inspectRunningItem({
+      active: queue.active,
+      activeItemMismatchGraceMs: FRESH_RUNNING_STALE_GRACE_MS,
+      includeProviderChildCheck: false,
+      nowMs: Date.parse(nowIso),
+      runningItemId: queue.runningItemId,
+      runtime: snapshot?.runtime,
+    });
+    if (inspection.mismatch) {
+      const evidence: StaleRunningEvidence = {
+        ...inspection,
+        mismatch: inspection.mismatch,
+        observedAt: nowIso,
+      };
+      if (snapshot) evidence.snapshotUpdatedAt = snapshot.updatedAt;
+      return {
+        health: syntheticHealth(
+          "unhealthy",
+          "stale_running_item",
+          snapshot,
+          nowIso,
+        ),
+        evidence,
+      };
+    }
   }
-
-  const timedOut = startingTimeoutHealth(snapshot, nowIso);
-  if (timedOut) return timedOut;
-
-  const stale = queue.runningItemId !== undefined && isStaleRunningItem({
-    activeItemMismatchGraceMs: FRESH_RUNNING_STALE_GRACE_MS,
-    ...(queue.active ? { active: queue.active } : {}),
-    includeProviderChildCheck: false,
-    nowMs: Date.parse(nowIso),
-    runningItemId: queue.runningItemId,
-    runtime: snapshot.runtime,
-  });
-  if (stale) return syntheticHealth('unhealthy', 'stale_running_item', snapshot, nowIso);
-
+  if (!snapshot)
+    return { health: syntheticHealth("unknown", undefined, undefined, nowIso) };
   const runtimeReason = runtimeProcessReason(snapshot.runtime);
-  if (runtimeReason) return syntheticHealth('unhealthy', runtimeReason, snapshot, nowIso);
-
-  return snapshot;
+  if (runtimeReason)
+    return {
+      health: syntheticHealth("unhealthy", runtimeReason, snapshot, nowIso),
+    };
+  return { health: snapshot };
 }
 
 export function restartStatus(
@@ -254,9 +372,11 @@ export function restartStatus(
   reason?: AgentHealthReason,
 ): AgentRestartStatusSummary {
   return {
-    ...(outcome !== 'pending' ? { completedAt: nowIso } : {}),
+    ...(outcome !== "pending" ? { completedAt: nowIso } : {}),
     outcome,
-    ...(runtime?.providerChild?.pid ? { providerChildPid: runtime.providerChild.pid } : {}),
+    ...(runtime?.providerChild?.pid
+      ? { providerChildPid: runtime.providerChild.pid }
+      : {}),
     ...(reason ? { reason } : {}),
     requestId: command.requestId,
     requestedAt: command.requestedAt,
@@ -264,27 +384,36 @@ export function restartStatus(
   };
 }
 
-export function isProviderFailureReason(reason: AgentHealthReason | undefined): boolean {
-  return reason === 'provider_auth_failed'
-    || reason === 'provider_quota_exhausted'
-    || reason === 'provider_error'
-    || reason === 'provider_rate_limited';
+export function isProviderFailureReason(
+  reason: AgentHealthReason | undefined,
+): boolean {
+  return (
+    reason === "provider_auth_failed" ||
+    reason === "provider_quota_exhausted" ||
+    reason === "provider_error" ||
+    reason === "provider_rate_limited"
+  );
 }
 
 function carriedProviderFailure(
   previous: AgentRuntimeHealthSummary | undefined,
-  input: Omit<HealthWriteInput, 'agentId'>,
+  input: Omit<HealthWriteInput, "agentId">,
 ): AgentRuntimeHealthSummary | undefined {
   if (input.clearProviderFailure) return undefined;
-  if (input.state !== 'healthy') return undefined;
-  if (!previous?.reason || !isProviderFailureReason(previous.reason)) return undefined;
-  if (previous.reason === 'provider_rate_limited') {
+  if (input.state !== "healthy") return undefined;
+  if (!previous?.reason || !isProviderFailureReason(previous.reason))
+    return undefined;
+  if (previous.reason === "provider_rate_limited") {
     return carriedRateLimit(previous, input);
   }
   return {
     reason: previous.reason,
-    ...(input.runtime ? { runtime: input.runtime } : previous.runtime ? { runtime: previous.runtime } : {}),
-    state: 'unhealthy',
+    ...(input.runtime
+      ? { runtime: input.runtime }
+      : previous.runtime
+        ? { runtime: previous.runtime }
+        : {}),
+    state: "unhealthy",
     updatedAt: input.updatedAt,
   };
 }
@@ -295,36 +424,40 @@ function carriedRateLimit(
 ): AgentRuntimeHealthSummary | undefined {
   const ageMs = Date.parse(input.updatedAt) - Date.parse(previous.updatedAt);
   const finiteAge = Number.isFinite(ageMs) ? ageMs : 0;
-  const runtime = input.runtime ? { runtime: input.runtime } : previous.runtime ? { runtime: previous.runtime } : {};
+  const runtime = input.runtime
+    ? { runtime: input.runtime }
+    : previous.runtime
+      ? { runtime: previous.runtime }
+      : {};
 
-  if (previous.state === 'degraded') {
+  if (previous.state === "degraded") {
     if (finiteAge < PROVIDER_RATE_LIMIT_GRACE_MS) {
       return {
-        reason: 'provider_rate_limited',
+        reason: "provider_rate_limited",
         ...runtime,
-        state: 'degraded',
+        state: "degraded",
         updatedAt: previous.updatedAt,
       };
     }
     return {
       ...runtime,
-      state: 'unknown',
+      state: "unknown",
       updatedAt: input.updatedAt,
     };
   }
 
-  if (previous.state === 'unhealthy') {
+  if (previous.state === "unhealthy") {
     if (finiteAge < PROVIDER_RATE_LIMIT_RED_STALE_MS) {
       return {
-        reason: 'provider_rate_limited',
+        reason: "provider_rate_limited",
         ...runtime,
-        state: 'unhealthy',
+        state: "unhealthy",
         updatedAt: previous.updatedAt,
       };
     }
     return {
       ...runtime,
-      state: 'unknown',
+      state: "unknown",
       updatedAt: input.updatedAt,
     };
   }
@@ -337,11 +470,16 @@ function carriedRestart(
   nextState: AgentHealthState,
 ): AgentRestartStatusSummary | undefined {
   if (!previous?.restart) return undefined;
-  if (nextState === 'healthy' && previous.restart.outcome === 'failed') return undefined;
+  if (nextState === "healthy" && previous.restart.outcome === "failed")
+    return undefined;
   return previous.restart;
 }
 
-function withinGrace(startedAt: string | undefined, graceMs: number, nowMs: number): boolean {
+function withinGrace(
+  startedAt: string | undefined,
+  graceMs: number,
+  nowMs: number,
+): boolean {
   if (!startedAt) return false;
   const startedAtMs = Date.parse(startedAt);
   return Number.isFinite(startedAtMs) && nowMs - startedAtMs < graceMs;
@@ -351,7 +489,8 @@ function runtimeProcessReason(
   runtime: AgentRuntimeHandleSnapshot | undefined,
 ): AgentHealthReason | undefined {
   if (!runtime) return undefined;
-  if (runtime.processId && !processAlive(runtime.processId)) return 'start_failed';
+  if (runtime.processId && !processAlive(runtime.processId))
+    return "start_failed";
   return providerChildIssueReason(runtime, { checkPid: true });
 }
 

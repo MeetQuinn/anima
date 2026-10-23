@@ -1,41 +1,66 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import {
+  AgentHealthEvidenceStore,
+  HEALTH_EVIDENCE_CAP,
+} from "../runtime/agent-health-evidence.store.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-import type { AgentConfig } from '../../shared/agent-config.js';
+import type { AgentConfig } from "../../shared/agent-config.js";
 import {
   agentConfiguredPlatformKind,
   agentTransportDisplayLabel,
-} from '../../shared/agent-transports.js';
-import type { AgentDiagnosticsActivity, AgentDiagnosticsBundle, AgentDiagnosticsLogLine } from '../../shared/diagnostics.js';
-import type { Activity } from '../../shared/activity.js';
-import type { AgentRuntimeHealthSummary, AgentSessionSummary, AgentStatusSummary } from '../../shared/snapshot.js';
-import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { activityServiceForAgent } from '../activities/activity.service.js';
-import { resolveAnimaHome } from '../anima-home.js';
-import { nowIso } from '../ids.js';
-import { defaultRuntimeService } from '../runtime/runtime.service.js';
-import { defaultSystemService } from '../services/system.service.js';
-import { readLastLogLines } from './log-tail.js';
+} from "../../shared/agent-transports.js";
+import type {
+  AgentDiagnosticsActivity,
+  AgentDiagnosticsBundle,
+  AgentDiagnosticsLogLine,
+} from "../../shared/diagnostics.js";
+import type { Activity } from "../../shared/activity.js";
+import type {
+  AgentRuntimeHealthSummary,
+  AgentSessionSummary,
+  AgentStatusSummary,
+} from "../../shared/snapshot.js";
+import { defaultAgentRegistryService } from "../agents/agent.service.js";
+import { activityServiceForAgent } from "../activities/activity.service.js";
+import { resolveAnimaHome } from "../anima-home.js";
+import { nowIso } from "../ids.js";
+import { defaultRuntimeService } from "../runtime/runtime.service.js";
+import { defaultSystemService } from "../services/system.service.js";
+import { readLastLogLines } from "./log-tail.js";
 
 const LOG_LINE_CAP = 80;
 const ACTIVITY_CAP = 12;
 const LOG_TAIL_READ_LIMIT = 240;
 
-export async function buildAgentDiagnostics(agentId: string): Promise<AgentDiagnosticsBundle> {
-  const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig();
-  const [serverInfo, statuses, session, recentActivity, logs] = await Promise.all([
-    defaultSystemService.serverInfo(),
-    defaultRuntimeService.listStatuses(),
-    defaultAgentRegistryService.serviceFor(agentId).getSession().catch(() => undefined),
-    safeRecentActivity(agentId),
-    safeLogTail(agentId),
-  ]);
-  const status = statuses.find((candidate) => candidate.agentId === agentId)
-    ?? await defaultRuntimeService.getStatus(agentId);
+export async function buildAgentDiagnostics(
+  agentId: string,
+): Promise<AgentDiagnosticsBundle> {
+  const agent = await defaultAgentRegistryService
+    .serviceFor(agentId)
+    .getConfig();
+  const [serverInfo, statuses, session, recentActivity, logs] =
+    await Promise.all([
+      defaultSystemService.serverInfo(),
+      defaultRuntimeService.listStatuses(),
+      defaultAgentRegistryService
+        .serviceFor(agentId)
+        .getSession()
+        .catch(() => undefined),
+      safeRecentActivity(agentId),
+      safeLogTail(agentId),
+    ]);
+  const status =
+    statuses.find((candidate) => candidate.agentId === agentId) ??
+    (await defaultRuntimeService.getStatus(agentId));
 
   return {
     agent: safeAgent(agent),
     generatedAt: nowIso(),
+    healthEvidence: await new AgentHealthEvidenceStore(agentId).list().then(
+      (events) => ({ available: true, cappedAt: HEALTH_EVIDENCE_CAP, events }),
+      () => ({ available: false, cappedAt: HEALTH_EVIDENCE_CAP, events: [] }),
+    ),
     logs: {
       cappedAt: LOG_LINE_CAP,
       lines: logs,
@@ -46,23 +71,29 @@ export async function buildAgentDiagnostics(agentId: string): Promise<AgentDiagn
     },
     redaction: {
       excluded: [
-        'environment variables',
-        'tokens and secrets',
-        'message bodies',
-        'raw queue text',
-        'raw tool payloads',
+        "environment variables",
+        "tokens and secrets",
+        "message bodies",
+        "raw queue text",
+        "raw tool payloads",
       ],
       logPolicy:
-        'Only lines that start with a timestamp and concern this agent or an error, restart, provider or health event. ' +
-        'Payload and message lines are omitted. Secrets are masked by shape (known token prefixes, URL credentials, ' +
-        'secret-named values, long token-like strings); other text is kept as logged.',
-      mode: 'allowlist',
+        "Only lines that start with a timestamp and concern this agent or an error, restart, provider or health event. " +
+        "Payload and message lines are omitted. Secrets are masked by shape (known token prefixes, URL credentials, " +
+        "secret-named values, long token-like strings); other text is kept as logged.",
+      mode: "allowlist",
     },
     server: {
       animaHome: redactUserHome(serverInfo.animaHome),
       ...(serverInfo.commit ? { commit: serverInfo.commit } : {}),
       dashboardPort: serverInfo.dashboardPort,
-      ...(serverInfo.lastRestart ? { lastServicesRestart: safeLastServicesRestart(serverInfo.lastRestart) } : {}),
+      ...(serverInfo.lastRestart
+        ? {
+            lastServicesRestart: safeLastServicesRestart(
+              serverInfo.lastRestart,
+            ),
+          }
+        : {}),
       startedAt: serverInfo.startedAt,
       track: serverInfo.track,
       uptimeSeconds: serverInfo.uptimeSeconds,
@@ -74,7 +105,7 @@ export async function buildAgentDiagnostics(agentId: string): Promise<AgentDiagn
   };
 }
 
-function safeAgent(agent: AgentConfig): AgentDiagnosticsBundle['agent'] {
+function safeAgent(agent: AgentConfig): AgentDiagnosticsBundle["agent"] {
   const platformKind = agentConfiguredPlatformKind(agent);
   return {
     displayName: agent.profile.displayName,
@@ -82,29 +113,38 @@ function safeAgent(agent: AgentConfig): AgentDiagnosticsBundle['agent'] {
     homePath: redactUserHome(agent.homePath),
     id: agent.id,
     ...(platformKind
-      ? { platform: { kind: platformKind, label: agentTransportDisplayLabel(platformKind) } }
+      ? {
+          platform: {
+            kind: platformKind,
+            label: agentTransportDisplayLabel(platformKind),
+          },
+        }
       : {}),
     provider: {
       idleTimeoutMs: agent.provider.idleTimeoutMs,
       kind: agent.provider.kind,
       ...(agent.provider.model ? { model: agent.provider.model } : {}),
       providerChildIdleTimeoutMs: agent.provider.providerChildIdleTimeoutMs,
-      ...('reasoningEffort' in agent.provider && agent.provider.reasoningEffort
+      ...("reasoningEffort" in agent.provider && agent.provider.reasoningEffort
         ? { reasoningEffort: agent.provider.reasoningEffort }
         : {}),
     },
     transports: {
       feishu: {
-        configured: Boolean(agent.feishu.appId || agent.feishu.avatarUrl || agent.feishu.botOpenId),
+        configured: Boolean(
+          agent.feishu.appId ||
+          agent.feishu.avatarUrl ||
+          agent.feishu.botOpenId,
+        ),
         connected: agent.feishu.connected === true,
       },
       slack: {
         configured: Boolean(
-          agent.slack.appId
-            || agent.slack.teamId
-            || agent.slack.workspaceName
-            || agent.slack.workspaceIconUrl
-            || agent.slack.avatarUrl
+          agent.slack.appId ||
+          agent.slack.teamId ||
+          agent.slack.workspaceName ||
+          agent.slack.workspaceIconUrl ||
+          agent.slack.avatarUrl,
         ),
         connected: agent.slack.connected === true,
       },
@@ -112,22 +152,32 @@ function safeAgent(agent: AgentConfig): AgentDiagnosticsBundle['agent'] {
   };
 }
 
-function safeSession(session: AgentSessionSummary): AgentDiagnosticsBundle['session'] {
+function safeSession(
+  session: AgentSessionSummary,
+): AgentDiagnosticsBundle["session"] {
   return {
     archivedCount: session.archived?.length ?? 0,
     createdAt: session.createdAt,
     ...(session.current ? { current: session.current } : {}),
-    ...(session.currentStartedAt ? { currentStartedAt: session.currentStartedAt } : {}),
-    ...(session.latestProviderStats ? { latestProviderStats: session.latestProviderStats } : {}),
-    ...(session.lifetimeTokens !== undefined ? { lifetimeTokens: session.lifetimeTokens } : {}),
+    ...(session.currentStartedAt
+      ? { currentStartedAt: session.currentStartedAt }
+      : {}),
+    ...(session.latestProviderStats
+      ? { latestProviderStats: session.latestProviderStats }
+      : {}),
+    ...(session.lifetimeTokens !== undefined
+      ? { lifetimeTokens: session.lifetimeTokens }
+      : {}),
     updatedAt: session.updatedAt,
   };
 }
 
 function safeLastServicesRestart(
-  lastRestart: NonNullable<Awaited<ReturnType<typeof defaultSystemService.serverInfo>>['lastRestart']>,
-): NonNullable<AgentDiagnosticsBundle['server']['lastServicesRestart']> {
-  if (lastRestart.status === 'blocked') {
+  lastRestart: NonNullable<
+    Awaited<ReturnType<typeof defaultSystemService.serverInfo>>["lastRestart"]
+  >,
+): NonNullable<AgentDiagnosticsBundle["server"]["lastServicesRestart"]> {
+  if (lastRestart.status === "blocked") {
     return {
       blockerCount: lastRestart.blockers.length,
       completedAt: lastRestart.completedAt,
@@ -145,7 +195,9 @@ function safeLastServicesRestart(
   };
 }
 
-function workspaceSummary(statuses: AgentStatusSummary[]): AgentDiagnosticsBundle['workspace'] {
+function workspaceSummary(
+  statuses: AgentStatusSummary[],
+): AgentDiagnosticsBundle["workspace"] {
   const health = {
     degraded: 0,
     healthy: 0,
@@ -174,14 +226,18 @@ function safeStatus(status: AgentStatusSummary): AgentStatusSummary {
   return {
     agentId: status.agentId,
     ...(status.currentItemId ? { currentItemId: status.currentItemId } : {}),
-    ...(status.currentItemStartedAt ? { currentItemStartedAt: status.currentItemStartedAt } : {}),
+    ...(status.currentItemStartedAt
+      ? { currentItemStartedAt: status.currentItemStartedAt }
+      : {}),
     ...(status.health ? { health: safeHealth(status.health) } : {}),
     itemCount: status.itemCount,
     queueDepth: status.queueDepth,
   };
 }
 
-function safeHealth(health: AgentRuntimeHealthSummary): AgentRuntimeHealthSummary {
+function safeHealth(
+  health: AgentRuntimeHealthSummary,
+): AgentRuntimeHealthSummary {
   const runtime = health.runtime;
   return {
     ...(health.reason ? { reason: health.reason } : {}),
@@ -189,8 +245,12 @@ function safeHealth(health: AgentRuntimeHealthSummary): AgentRuntimeHealthSummar
     ...(runtime
       ? {
           runtime: {
-            ...(runtime.activeItemId ? { activeItemId: runtime.activeItemId } : {}),
-            ...(runtime.activeItemStartedAt ? { activeItemStartedAt: runtime.activeItemStartedAt } : {}),
+            ...(runtime.activeItemId
+              ? { activeItemId: runtime.activeItemId }
+              : {}),
+            ...(runtime.activeItemStartedAt
+              ? { activeItemStartedAt: runtime.activeItemStartedAt }
+              : {}),
             ...(runtime.processId ? { processId: runtime.processId } : {}),
             ...(runtime.providerChild
               ? {
@@ -198,20 +258,34 @@ function safeHealth(health: AgentRuntimeHealthSummary): AgentRuntimeHealthSummar
                     alive: runtime.providerChild.alive,
                     command: runtime.providerChild.label,
                     exited: runtime.providerChild.exited,
-                    ...(runtime.providerChild.exitedAt ? { exitedAt: runtime.providerChild.exitedAt } : {}),
-                    ...(runtime.providerChild.exitCode !== undefined ? { exitCode: runtime.providerChild.exitCode } : {}),
+                    ...(runtime.providerChild.exitedAt
+                      ? { exitedAt: runtime.providerChild.exitedAt }
+                      : {}),
+                    ...(runtime.providerChild.exitCode !== undefined
+                      ? { exitCode: runtime.providerChild.exitCode }
+                      : {}),
                     label: runtime.providerChild.label,
-                    ...(runtime.providerChild.lastStderrAt ? { lastStderrAt: runtime.providerChild.lastStderrAt } : {}),
-                    ...(runtime.providerChild.lastStdoutAt ? { lastStdoutAt: runtime.providerChild.lastStdoutAt } : {}),
-                    ...(runtime.providerChild.pid ? { pid: runtime.providerChild.pid } : {}),
-                    ...(runtime.providerChild.signal !== undefined ? { signal: runtime.providerChild.signal } : {}),
+                    ...(runtime.providerChild.lastStderrAt
+                      ? { lastStderrAt: runtime.providerChild.lastStderrAt }
+                      : {}),
+                    ...(runtime.providerChild.lastStdoutAt
+                      ? { lastStdoutAt: runtime.providerChild.lastStdoutAt }
+                      : {}),
+                    ...(runtime.providerChild.pid
+                      ? { pid: runtime.providerChild.pid }
+                      : {}),
+                    ...(runtime.providerChild.signal !== undefined
+                      ? { signal: runtime.providerChild.signal }
+                      : {}),
                     startedAt: runtime.providerChild.startedAt,
                     stdinWritable: runtime.providerChild.stdinWritable,
                   },
                 }
               : {}),
             providerChildExpected: runtime.providerChildExpected,
-            ...(runtime.providerWork ? { providerWork: runtime.providerWork } : {}),
+            ...(runtime.providerWork
+              ? { providerWork: runtime.providerWork }
+              : {}),
             ...(runtime.workerId ? { workerId: runtime.workerId } : {}),
           },
         }
@@ -221,68 +295,84 @@ function safeHealth(health: AgentRuntimeHealthSummary): AgentRuntimeHealthSummar
   };
 }
 
-function recoveryActions(agent: AgentConfig, status: AgentStatusSummary): AgentDiagnosticsBundle['recovery']['actions'] {
+function recoveryActions(
+  agent: AgentConfig,
+  status: AgentStatusSummary,
+): AgentDiagnosticsBundle["recovery"]["actions"] {
   const enabled = agent.enabled !== false;
   const running = Boolean(status.currentItemId);
-  const retryableDeferredCount = (status.deferredWakes ?? []).filter((wake) => wake.retryable).length;
+  const retryableDeferredCount = (status.deferredWakes ?? []).filter(
+    (wake) => wake.retryable,
+  ).length;
   const providerReason = status.health?.reason;
-  const providerFailure = providerReason === 'provider_auth_failed'
-    || providerReason === 'provider_quota_exhausted'
-    || providerReason === 'provider_rate_limited';
+  const providerFailure =
+    providerReason === "provider_auth_failed" ||
+    providerReason === "provider_quota_exhausted" ||
+    providerReason === "provider_rate_limited";
   return [
     {
       available: running,
-      id: 'stop',
-      label: 'Stop',
+      id: "stop",
+      label: "Stop",
     },
     {
       available: retryableDeferredCount > 0,
       ...(retryableDeferredCount === 0
-        ? { blockedReason: 'No deferred rate-limit wakes to retry.' }
+        ? { blockedReason: "No deferred rate-limit wakes to retry." }
         : {}),
-      id: 'retry_deferred',
-      label: retryableDeferredCount > 1
-        ? `Retry deferred (${retryableDeferredCount})`
-        : 'Retry now',
+      id: "retry_deferred",
+      label:
+        retryableDeferredCount > 1
+          ? `Retry deferred (${retryableDeferredCount})`
+          : "Retry now",
     },
     enabled
       ? {
           available: !running,
-          ...(running ? { blockedReason: 'Agent is running. Stop the agent before disabling.' } : {}),
-          id: 'disable',
-          label: 'Disable',
+          ...(running
+            ? {
+                blockedReason:
+                  "Agent is running. Stop the agent before disabling.",
+              }
+            : {}),
+          id: "disable",
+          label: "Disable",
         }
       : {
           available: true,
-          id: 'enable',
-          label: 'Enable',
+          id: "enable",
+          label: "Enable",
         },
-    providerReason === 'provider_auth_failed'
+    providerReason === "provider_auth_failed"
       ? {
           available: true,
-          id: 'check_provider_settings',
-          label: 'Check provider settings',
+          id: "check_provider_settings",
+          label: "Check provider settings",
         }
       : {
           available: enabled && !providerFailure,
           ...(enabled
             ? providerFailure
-              ? { blockedReason: 'Provider action required.' }
+              ? { blockedReason: "Provider action required." }
               : {}
-            : { blockedReason: 'Agent is disabled. Enable it to run.' }),
-          id: 'restart_agent',
-          label: 'Restart agent',
+            : { blockedReason: "Agent is disabled. Enable it to run." }),
+          id: "restart_agent",
+          label: "Restart agent",
         },
     {
       available: true,
-      id: 'copy_diagnostics',
-      label: 'Copy diagnostics',
+      id: "copy_diagnostics",
+      label: "Copy diagnostics",
     },
   ];
 }
 
-async function safeRecentActivity(agentId: string): Promise<AgentDiagnosticsActivity[]> {
-  const activities = await activityServiceForAgent(agentId).readLastN(ACTIVITY_CAP).catch(() => []);
+async function safeRecentActivity(
+  agentId: string,
+): Promise<AgentDiagnosticsActivity[]> {
+  const activities = await activityServiceForAgent(agentId)
+    .readLastN(ACTIVITY_CAP)
+    .catch(() => []);
   return activities.map(safeActivity);
 }
 
@@ -291,34 +381,41 @@ function safeActivity(activity: Activity): AgentDiagnosticsActivity {
   return {
     activityId: activity.activityId,
     createdAt: activity.createdAt,
-    ...copyString(payload, 'activeItemId'),
-    ...copyNumber(payload, 'archivedCount'),
-    ...copyTokenString(payload, 'eventType'),
-    ...copyTokenString(payload, 'failureSource'),
-    ...copyNumber(payload, 'maxRetries'),
-    ...copyTokenString(payload, 'providerReason'),
-    ...copyTokenString(payload, 'reason'),
-    ...copyBoolean(payload, 'retryable'),
-    ...copyNumber(payload, 'retryAttempts'),
-    ...copyTokenString(payload, 'runtimeKind'),
-    ...copyTokenString(payload, 'status'),
-    ...copyNumber(payload, 'timeoutMs'),
+    ...copyString(payload, "activeItemId"),
+    ...copyNumber(payload, "archivedCount"),
+    ...copyTokenString(payload, "eventType"),
+    ...copyTokenString(payload, "failureSource"),
+    ...copyNumber(payload, "maxRetries"),
+    ...copyTokenString(payload, "providerReason"),
+    ...copyTokenString(payload, "reason"),
+    ...copyBoolean(payload, "retryable"),
+    ...copyNumber(payload, "retryAttempts"),
+    ...copyTokenString(payload, "runtimeKind"),
+    ...copyTokenString(payload, "status"),
+    ...copyNumber(payload, "timeoutMs"),
     type: activity.type,
   };
 }
 
-async function safeLogTail(agentId: string): Promise<AgentDiagnosticsLogLine[]> {
-  const logsDir = join(resolveAnimaHome(), 'logs');
+async function safeLogTail(
+  agentId: string,
+): Promise<AgentDiagnosticsLogLine[]> {
+  const logsDir = join(resolveAnimaHome(), "logs");
   const sourceFiles = [
-    'agent.log',
-    'web.log',
-    'services-restart.log',
-    'runtime-upgrade.log',
+    "agent.log",
+    "web.log",
+    "services-restart.log",
+    "runtime-upgrade.log",
   ] as const;
-  const linesBySource = await Promise.all(sourceFiles.map(async (source) => {
-    const lines = await readLastLogLines(join(logsDir, source), LOG_TAIL_READ_LIMIT);
-    return lines.flatMap((line) => safeLogLine(source, agentId, line));
-  }));
+  const linesBySource = await Promise.all(
+    sourceFiles.map(async (source) => {
+      const lines = await readLastLogLines(
+        join(logsDir, source),
+        LOG_TAIL_READ_LIMIT,
+      );
+      return lines.flatMap((line) => safeLogLine(source, agentId, line));
+    }),
+  );
   return linesBySource
     .flat()
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
@@ -326,7 +423,7 @@ async function safeLogTail(agentId: string): Promise<AgentDiagnosticsLogLine[]> 
 }
 
 function safeLogLine(
-  source: AgentDiagnosticsLogLine['source'],
+  source: AgentDiagnosticsLogLine["source"],
   agentId: string,
   line: string,
 ): AgentDiagnosticsLogLine[] {
@@ -336,32 +433,49 @@ function safeLogLine(
   if (!timestamp) return [];
   const scrubbed = scrubLogLine(line).trim();
   if (!scrubbed) return [];
-  return [{
-    message: truncate(scrubbed, 280),
-    source,
-    timestamp,
-  }];
+  return [
+    {
+      message: truncate(scrubbed, 280),
+      source,
+      timestamp,
+    },
+  ];
 }
 
 function logLineLooksRelevant(line: string, agentId: string): boolean {
   const escapedAgentId = escapeRegExp(agentId);
-  const agentPattern = new RegExp(`\\bAgent\\s+${escapedAgentId}\\b|\\b${escapedAgentId}\\b`, 'i');
-  return agentPattern.test(line)
-    || /\b(error|failed|failure|health|provider|quota|rate|restart|stale|unhealthy)\b/i.test(line);
+  const agentPattern = new RegExp(
+    `\\bAgent\\s+${escapedAgentId}\\b|\\b${escapedAgentId}\\b`,
+    "i",
+  );
+  return (
+    agentPattern.test(line) ||
+    /\b(error|failed|failure|health|provider|quota|rate|restart|stale|unhealthy)\b/i.test(
+      line,
+    )
+  );
 }
 
 function logLineLooksUnsafe(line: string): boolean {
-  return /\b(payload|blocks|attachments|body|raw queue|rawQueue|message body|prompt|content)\b\s*[:=]/i.test(line)
-    || /"text"\s*:/i.test(line)
-    || /\btext\s*[:=]/i.test(line)
-    || /\b(SLACK|FEISHU|ANTHROPIC|OPENAI|CODEX|KIMI)_[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)\b/i.test(line);
+  return (
+    /\b(payload|blocks|attachments|body|raw queue|rawQueue|message body|prompt|content)\b\s*[:=]/i.test(
+      line,
+    ) ||
+    /"text"\s*:/i.test(line) ||
+    /\btext\s*[:=]/i.test(line) ||
+    /\b(SLACK|FEISHU|ANTHROPIC|OPENAI|CODEX|KIMI)_[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)\b/i.test(
+      line,
+    )
+  );
 }
 
 // Only records Anima itself wrote with a leading timestamp. A timestamp further
 // into a line marks a fragment of something else (a JSON dump, a field inside
 // free text), not a log record.
 function logTimestamp(line: string): string | undefined {
-  const match = line.match(/^\[?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)\]?/);
+  const match = line.match(
+    /^\[?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)\]?/,
+  );
   return match?.[1];
 }
 
@@ -371,62 +485,85 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // tokens with no known prefix: any run of 32+ token characters that mixes
 // letters and digits, except a UUID (session and request ids).
 function scrubLogLine(line: string): string {
-  return line
-    .replace(/\b(?:xox[a-z]?|xapp)-[A-Za-z0-9-]+/g, '<redacted-token>')
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '<redacted-token>')
-    .replace(/\blin_(?:api|oauth)_[A-Za-z0-9]+/g, '<redacted-token>')
-    .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g, '<redacted-token>')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer <redacted-token>')
-    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1<redacted>@')
-    // A secret-named value: a whole quoted string (escapes included; an
-    // unclosed quote runs to the end of the line), an auth scheme with its
-    // credential, or one bare word. Only a count field (`input_tokens=300`)
-    // keeps a plain number.
-    .replace(
-      /([A-Za-z0-9_-]*(?:token|secret|password|passwd|key|authorization|cookie|credential)[A-Za-z0-9_-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|(?:(?:Bearer|Basic)\s+)?[^\s"',;}]+)/gi,
-      (match, name: string, separator: string, value: string) => {
-        if (/tokens$/i.test(name) && /^\d+$/.test(value)) return match;
-        const quote = value[0] === '"' || value[0] === "'" ? value[0] : '';
-        return `${name}${separator}${quote}<redacted>${quote}`;
-      },
-    )
-    .replace(/[A-Za-z0-9_-]{32,}/g, (run) =>
-      /\d/.test(run) && /[A-Za-z]/.test(run) && !UUID.test(run) ? '<redacted>' : run);
+  return (
+    line
+      .replace(/\b(?:xox[a-z]?|xapp)-[A-Za-z0-9-]+/g, "<redacted-token>")
+      .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, "<redacted-token>")
+      .replace(/\blin_(?:api|oauth)_[A-Za-z0-9]+/g, "<redacted-token>")
+      .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g, "<redacted-token>")
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer <redacted-token>")
+      .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1<redacted>@")
+      // A secret-named value: a whole quoted string (escapes included; an
+      // unclosed quote runs to the end of the line), an auth scheme with its
+      // credential, or one bare word. Only a count field (`input_tokens=300`)
+      // keeps a plain number.
+      .replace(
+        /([A-Za-z0-9_-]*(?:token|secret|password|passwd|key|authorization|cookie|credential)[A-Za-z0-9_-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|(?:(?:Bearer|Basic)\s+)?[^\s"',;}]+)/gi,
+        (match, name: string, separator: string, value: string) => {
+          if (/tokens$/i.test(name) && /^\d+$/.test(value)) return match;
+          const quote = value[0] === '"' || value[0] === "'" ? value[0] : "";
+          return `${name}${separator}${quote}<redacted>${quote}`;
+        },
+      )
+      .replace(/[A-Za-z0-9_-]{32,}/g, (run) =>
+        /\d/.test(run) && /[A-Za-z]/.test(run) && !UUID.test(run)
+          ? "<redacted>"
+          : run,
+      )
+  );
 }
 
 function truncate(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+  return value.length > maxLength
+    ? `${value.slice(0, maxLength - 3)}...`
+    : value;
 }
 
-function copyString(payload: Record<string, unknown>, key: string): Record<string, string> {
+function copyString(
+  payload: Record<string, unknown>,
+  key: string,
+): Record<string, string> {
   const value = payload[key];
-  return typeof value === 'string' && value.trim() ? { [key]: value } : {};
+  return typeof value === "string" && value.trim() ? { [key]: value } : {};
 }
 
-function copyTokenString(payload: Record<string, unknown>, key: string): Record<string, string> {
+function copyTokenString(
+  payload: Record<string, unknown>,
+  key: string,
+): Record<string, string> {
   const value = payload[key];
-  if (typeof value !== 'string') return {};
+  if (typeof value !== "string") return {};
   const trimmed = value.trim();
   return /^[A-Za-z0-9_.:-]{1,80}$/.test(trimmed) ? { [key]: trimmed } : {};
 }
 
-function copyNumber(payload: Record<string, unknown>, key: string): Record<string, number> {
+function copyNumber(
+  payload: Record<string, unknown>,
+  key: string,
+): Record<string, number> {
   const value = payload[key];
-  return typeof value === 'number' && Number.isFinite(value) ? { [key]: value } : {};
+  return typeof value === "number" && Number.isFinite(value)
+    ? { [key]: value }
+    : {};
 }
 
-function copyBoolean(payload: Record<string, unknown>, key: string): Record<string, boolean> {
+function copyBoolean(
+  payload: Record<string, unknown>,
+  key: string,
+): Record<string, boolean> {
   const value = payload[key];
-  return typeof value === 'boolean' ? { [key]: value } : {};
+  return typeof value === "boolean" ? { [key]: value } : {};
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function redactUserHome(path: string): string {
   const home = homedir();
   if (!home) return path;
-  if (path === home) return '~';
-  return path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path;
+  if (path === home) return "~";
+  return path.startsWith(`${home}/`)
+    ? `~/${path.slice(home.length + 1)}`
+    : path;
 }
