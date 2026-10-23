@@ -226,7 +226,7 @@ export class SlackInboxSubscriber {
         }),
       enrich: async () => {
         const webClient = client ?? createSlackWebClient(this.options.botToken);
-        this.maybeSyncBotDisplayInfo(webClient);
+        this.maybeSyncBotDisplayInfo();
         return buildSlackInboxItem({
           client: webClient,
           previewClient: (signal) => createSlackPreviewWebClient(this.options.botToken, signal),
@@ -259,11 +259,11 @@ export class SlackInboxSubscriber {
   // workspace icon) while we're already handling a message. Throttled to once
   // per TTL by the service, fire-and-forget so it never blocks or fails message
   // routing, and guarded against overlapping runs within this process.
-  private maybeSyncBotDisplayInfo(client: WebClient): void {
+  private maybeSyncBotDisplayInfo(): void {
     if (this.botDisplayInfoSyncInFlight) return;
     this.botDisplayInfoSyncInFlight = true;
     agentSlackServiceForAgent(this.options.queue.agentId)
-      .syncDisplayInfoIfStale({ client, ttlMs: SLACK_DISPLAY_INFO_SYNC_TTL_MS })
+      .syncDisplayInfoIfStale({ ttlMs: SLACK_DISPLAY_INFO_SYNC_TTL_MS })
       .catch((error: unknown) => {
         console.warn(`bot display-info sync failed: ${errorMessage(error)}`);
       })

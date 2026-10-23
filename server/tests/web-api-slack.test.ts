@@ -1,6 +1,7 @@
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
+import { defaultAgentConfig, writeAgentConfigs, withTempAnimaHome } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -787,3 +788,65 @@ test('web API exposes Slack manifest install links without secrets', async () =>
   });
   await rm(stateDir, { force: true, recursive: true });
 });
+
+
+for (const mode of ['manual', 'stale'] as const) {
+  for (const edit of ['bot-token', 'app-token', 'disconnect', 'profile'] as const) {
+    test(`Slack ${mode} profile refresh preserves a concurrent ${edit} change`, async () => withTempAnimaHome(async (home) => {
+      await writeAgentConfigs(home, [{ ...defaultAgentConfig('scout'), slack: {
+        botToken: 'xoxb-old-synthetic', appToken: 'xapp-1-AOLD-synthetic', teamId: 'T-before',
+      } }]);
+      let announce!: () => void;
+      let resume!: () => void;
+      const started = new Promise<void>((resolve) => { announce = resolve; });
+      const release = new Promise<void>((resolve) => { resume = resolve; });
+      const server = createServer(async (request, response) => {
+        let result: object;
+        if (request.url?.endsWith('/auth.test')) {
+          assert.equal(bearerToken(request), 'xoxb-old-synthetic');
+          announce();
+          await release;
+          result = { ok: true, user_id: 'U-old', team_id: 'T-old', app_id: 'AOLD' };
+        } else if (request.url?.endsWith('/users.info')) {
+          result = { ok: true, user: { id: 'U-old', profile: { image_72: 'https://example.test/old.png' } } };
+        } else result = { ok: true, team: { id: 'T-old', name: 'Old workspace' } };
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(result));
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const previous = process.env.ANIMA_SLACK_API_URL;
+      process.env.ANIMA_SLACK_API_URL = `http://127.0.0.1:${address.port}/api`;
+      try {
+        const service = agentSlackServiceForAgent('scout');
+        const sync = mode === 'manual' ? service.syncDisplayInfo() : service.syncDisplayInfoIfStale({ ttlMs: 0 });
+        await started;
+        const changed = await agentService('scout').updateConfig((current) => {
+          if (edit === 'profile') return { ...current, profile: { ...current.profile, displayName: 'Edited name' } };
+          return { ...current, slack: { ...current.slack,
+            botToken: edit === 'disconnect' ? '' : edit === 'bot-token' ? 'xoxb-new-synthetic' : current.slack.botToken,
+            appToken: edit === 'disconnect' ? '' : edit === 'app-token' ? 'xapp-1-ANEW-synthetic' : current.slack.appToken,
+            botUserId: 'U-new', teamId: 'T-new', appId: 'ANEW', avatarUrl: 'https://example.test/new.png',
+          } };
+        });
+        resume();
+        const result = await sync;
+        const stored = await agentService('scout').getConfig();
+        if (edit === 'profile') {
+          assert.equal(stored.profile.displayName, 'Edited name');
+          assert.equal(stored.slack.botUserId, 'U-old');
+          assert.equal(stored.slack.avatarUrl, 'https://example.test/old.png');
+        } else assert.deepEqual(stored.slack, changed.slack);
+        if ('synced' in result) assert.equal(result.synced, edit === 'profile');
+      } finally {
+        resume();
+        if (previous === undefined) delete process.env.ANIMA_SLACK_API_URL;
+        else process.env.ANIMA_SLACK_API_URL = previous;
+        server.close();
+        await once(server, 'close');
+      }
+    }));
+  }
+}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { sleep, writeFeishuAgentConfig } from './helpers/harness.js';
+import { sleep, writeFeishuAgentConfig, withTempAnimaHome } from './helpers/harness.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { normalizeFeishuMessage } from '../feishu/events.js';
@@ -442,3 +442,38 @@ test('Feishu onboarding prompt targets the owner open_id without requiring an ow
   assert.doesNotMatch(text, /Reply target:|Use `anima message send/);
   assert.doesNotMatch(text, /Slack|Lark|<@|ou_owner.*owner is/);
 });
+
+
+for (const edit of ['app-id', 'app-secret', 'disconnect', 'profile'] as const) {
+  test(`Feishu profile refresh preserves a concurrent ${edit} change`, async () => withTempAnimaHome(async (home) => {
+    await writeFeishuAgentConfig(home, { appId: 'cli_old', appSecret: 'old-synthetic', botOpenId: 'ou_old' });
+    let announce!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve) => { announce = resolve; });
+    const release = new Promise<void>((resolve) => { resume = resolve; });
+    const service = new AgentFeishuService('scout', { async getFeishuBotInfo(config) {
+      assert.equal(config.appId, 'cli_old');
+      announce();
+      await release;
+      return { openId: 'ou_old', avatarUrl: 'https://example.test/old.png' };
+    } });
+    const sync = service.syncDisplayInfo();
+    await started;
+    const agent = defaultAgentRegistryService.serviceFor('scout');
+    const changed = await agent.updateConfig((current) => {
+      if (edit === 'profile') return { ...current, profile: { ...current.profile, displayName: 'Edited name' } };
+      return { ...current, feishu: { ...current.feishu,
+        appId: edit === 'disconnect' ? '' : edit === 'app-id' ? 'cli_new' : current.feishu.appId,
+        appSecret: edit === 'disconnect' ? '' : edit === 'app-secret' ? 'new-synthetic' : current.feishu.appSecret,
+        botOpenId: 'ou_new', avatarUrl: 'https://example.test/new.png',
+      } };
+    });
+    resume();
+    await sync;
+    const stored = await agent.getConfig();
+    if (edit === 'profile') {
+      assert.equal(stored.profile.displayName, 'Edited name');
+      assert.equal(stored.feishu.avatarUrl, 'https://example.test/old.png');
+    } else assert.deepEqual(stored.feishu, changed.feishu);
+  }));
+}
