@@ -1,8 +1,8 @@
-import { SLACK_CONNECTION_REASONS } from '../../shared/snapshot.js';
 import { join } from 'node:path';
 
 import { z } from 'zod';
 
+import { SLACK_CONNECTION_REASONS } from '../../shared/snapshot.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { JsonStore } from '../storage/json-store.js';
 import { ensureDirectoryUnderRoot } from '../storage/write-root.js';

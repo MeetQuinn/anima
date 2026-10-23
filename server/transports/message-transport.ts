@@ -1,4 +1,5 @@
 import type { TransportHealthSnapshot } from '../../shared/snapshot.js';
+
 export type MessageTransportKind = 'slack' | 'feishu' | 'lark' | 'dingtalk';
 
 export interface MessageTransport {

@@ -1,4 +1,3 @@
-import { AgentHealthEvidenceStore, HEALTH_EVIDENCE_CAP } from '../runtime/agent-health-evidence.store.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +13,7 @@ import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { nowIso } from '../ids.js';
+import { AgentHealthEvidenceStore, HEALTH_EVIDENCE_CAP } from '../runtime/agent-health-evidence.store.js';
 import { defaultRuntimeService } from '../runtime/runtime.service.js';
 import { defaultSystemService } from '../services/system.service.js';
 import { readLastLogLines } from './log-tail.js';

@@ -1,8 +1,8 @@
-import { SLACK_CONNECTION_REASONS, type SlackConnectionSnapshot } from '../../shared/snapshot.js';
 import { SocketModeReceiver, type SocketModeReceiverOptions } from '@slack/bolt';
 import { UnrecoverableSocketModeStartError } from '@slack/socket-mode';
 import { ErrorCode as WebApiErrorCode, type AppsConnectionsOpenResponse } from '@slack/web-api';
 
+import { SLACK_CONNECTION_REASONS, type SlackConnectionSnapshot } from '../../shared/snapshot.js';
 import { errorMessage } from '../ids.js';
 
 const RECONNECT_DELAY_MS = 5_000;
