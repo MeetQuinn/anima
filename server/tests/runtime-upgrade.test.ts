@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { withAnimaHome } from './anima-home.js';
-import { sleep } from './helpers/harness.js';
+import { sleep, withTempAnimaHome } from './helpers/harness.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import {
   RuntimeUpgradeCheckStore,
@@ -532,4 +532,83 @@ async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
     await sleep(10);
   }
   assert.fail('condition did not become true before timeout');
+}
+
+
+for (const mode of ['healthy', 'info-headers', 'info-body', 'health-headers', 'rollback-inspection'] as const) {
+  test(`upgrade HTTP deadline covers ${mode}`, async () => withTempAnimaHome(async (home) => {
+    const npm = join(home, 'fake-npm.cjs');
+    await writeFile(npm, `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+const args = process.argv.slice(2), prefix = args[args.indexOf('--prefix') + 1];
+const spec = args.at(-1), version = spec.slice(spec.lastIndexOf('@') + 1);
+const pkg = join(prefix, 'node_modules', '@meetquinn', 'animactl');
+mkdirSync(join(pkg, 'dist/server/cli'), { recursive: true });
+mkdirSync(join(pkg, 'templates'), { recursive: true });
+writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@meetquinn/animactl', version }));
+writeFileSync(join(pkg, 'templates/runtime-standing-prompt.md'), 'synthetic');
+writeFileSync(join(pkg, 'dist/server/cli/animactl.js'), ${JSON.stringify(`
+const fs = require('node:fs'), path = require('node:path');
+const receipt = process.env.ANIMA_RESTART_RESULT_FILE;
+fs.mkdirSync(path.dirname(receipt), { recursive: true });
+fs.writeFileSync(receipt, JSON.stringify({ status: 'succeeded', mode: 'idle', fallbackToIdle: false,
+  interruptedCount: 0, requestedCount: 0, resumedCount: 0, completedAt: new Date().toISOString() }));
+`)});
+`, { mode: 0o755 });
+    let infoRequests = 0;
+    let stalledClosed = 0;
+    const server = createServer(async (request, response) => {
+      const info = request.url === '/api/server-info';
+      if (info) infoRequests += 1;
+      const stall = (mode === 'info-headers' || mode === 'info-body') && info
+        || mode === 'health-headers' && !info
+        || mode === 'rollback-inspection' && infoRequests === 2;
+      if (stall) {
+        response.on('close', () => { stalledClosed += 1; });
+        if (mode === 'info-body') {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.write('{');
+        }
+        return;
+      }
+      const installed = JSON.parse(await readFile(join(home, 'runtime/current/node_modules/@meetquinn/animactl/package.json'), 'utf8')) as { version: string };
+      const version = mode === 'rollback-inspection' && infoRequests === 1 ? '0.0.0' : installed.version;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(info ? JSON.stringify({ animaHome: home, version, startedAt: new Date().toISOString() }) : '{}');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    let deadlineTimer: NodeJS.Timeout | undefined;
+    const work = runRuntimeUpgradeWorker({
+      dashboardPort: address.port, npmCommand: npm, targetVersion: '0.1.2', releaseTrack: 'stable', verifyTimeoutMs: 500,
+      previousVersion: mode === 'rollback-inspection' ? '0.1.1' : undefined,
+    }).then(() => undefined, (error: unknown) => error);
+    try {
+      const result = await Promise.race([
+        work,
+        new Promise<never>((_, reject) => { deadlineTimer = setTimeout(() => reject(new Error('HTTP probe ignored its 500ms budget')), 5_000); }),
+      ]);
+      const operation = await new RuntimeUpgradeOperationStore().read();
+      if (mode === 'healthy') {
+        assert.equal(result, undefined);
+        assert.equal(operation.status, 'succeeded');
+      } else {
+        assert.match(String(result), /Runtime boot verification timed out/);
+        assert.equal(operation.status, 'failed');
+        await waitFor(async () => stalledClosed === 1);
+        assert.equal(operation.rollback, mode === 'rollback-inspection' ? 'succeeded' : 'not_needed');
+        if (mode === 'rollback-inspection') {
+          assert.equal(operation.currentVersion, '0.1.1');
+          assert.equal(infoRequests, 3);
+        }
+      }
+    } finally {
+      clearTimeout(deadlineTimer);
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await work;
+    }
+  }));
 }
