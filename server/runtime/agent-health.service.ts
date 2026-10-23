@@ -1,4 +1,5 @@
-import type { StaleRunningEvidence } from '../../shared/diagnostics.js';import { AgentHealthStore, defaultAgentHealthStore } from './agent-health.store.js';
+import type { StaleRunningEvidence } from '../../shared/diagnostics.js';
+import { AgentHealthStore, defaultAgentHealthStore } from './agent-health.store.js';
 import { processAlive, providerChildIssueReason } from './item-state.js';
 import type { AgentRestartCommand } from './agent-restart-command.store.js';
 import type {
@@ -145,11 +146,7 @@ export function runtimeHandleHealth(
   runtime: AgentRuntimeHandleSnapshot | undefined,
   previous: AgentRuntimeHealthSummary | undefined,
   nowIso: string,
-): {
-  reason?: AgentHealthReason;
-  state: 'degraded' | 'healthy' | 'unhealthy';
-  updatedAt: string;
-} {
+): { reason?: AgentHealthReason; state: 'degraded' | 'healthy' | 'unhealthy'; updatedAt: string } {
   if (!runtime) return { reason: 'start_failed', state: 'unhealthy', updatedAt: nowIso };
   const reason = providerChildIssueReason(runtime);
   if (!reason) return { state: 'healthy', updatedAt: nowIso };
@@ -175,19 +172,11 @@ export function startingTimeoutHealth(
 ): AgentRuntimeHealthSummary | undefined {
   if (snapshot.state !== 'starting') return undefined;
   const updatedAt = Date.parse(snapshot.updatedAt);
-  if (!Number.isFinite(updatedAt) || Date.parse(nowIso) - updatedAt < STARTING_TIMEOUT_MS)
-    return undefined;
-  const reason: AgentHealthReason =
-    snapshot.restart?.outcome === 'pending' ? 'restart_failed' : 'start_failed';
-  const restart =
-    snapshot.restart?.outcome === 'pending'
-      ? {
-          ...snapshot.restart,
-          completedAt: nowIso,
-          outcome: 'failed' as const,
-          reason,
-        }
-      : snapshot.restart;
+  if (!Number.isFinite(updatedAt) || Date.parse(nowIso) - updatedAt < STARTING_TIMEOUT_MS) return undefined;
+  const reason: AgentHealthReason = snapshot.restart?.outcome === 'pending' ? 'restart_failed' : 'start_failed';
+  const restart = snapshot.restart?.outcome === 'pending'
+    ? { ...snapshot.restart, completedAt: nowIso, outcome: 'failed' as const, reason }
+    : snapshot.restart;
   return {
     reason,
     ...(restart ? { restart } : {}),
@@ -279,10 +268,7 @@ function inspectRunningItem(input: RunningItemHealthInput): Omit<
 // died).
 export function sampleApiHealth(
   snapshot: AgentRuntimeHealthSummary | undefined,
-  queue: {
-    active?: { startedAt?: string; workerId: string };
-    runningItemId?: string;
-  },
+  queue: { active?: { startedAt?: string; workerId: string }; runningItemId?: string },
   nowIso: string,
 ): { health: AgentRuntimeHealthSummary; evidence?: StaleRunningEvidence } {
   const timedOut = snapshot && startingTimeoutHealth(snapshot, nowIso);
@@ -311,10 +297,7 @@ export function sampleApiHealth(
   }
   if (!snapshot) return { health: syntheticHealth('unknown', undefined, undefined, nowIso) };
   const runtimeReason = runtimeProcessReason(snapshot.runtime);
-  if (runtimeReason)
-    return {
-      health: syntheticHealth('unhealthy', runtimeReason, snapshot, nowIso),
-    };
+  if (runtimeReason) return { health: syntheticHealth('unhealthy', runtimeReason, snapshot, nowIso) };
   return { health: snapshot };
 }
 

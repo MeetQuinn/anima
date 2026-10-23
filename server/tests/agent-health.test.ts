@@ -1,14 +1,7 @@
-import {
-  AgentHealthEvidenceStore,
-  HEALTH_EVIDENCE_CAP,
-} from '../runtime/agent-health-evidence.store.js';
-
+import { AgentHealthEvidenceStore, HEALTH_EVIDENCE_CAP } from '../runtime/agent-health-evidence.store.js';
 import { buildAgentDiagnostics } from '../diagnostics/agent-diagnostics.service.js';
-
 import { JsonFile } from '../storage/json-file.js';
-
 import type { StaleRunningEvidence } from '../../shared/diagnostics.js';
-
 import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -206,44 +199,22 @@ test('restart summaries carry across writes until a healthy write clears a faile
   };
 
   const carried = applyHealthWrite(
-    {
-      reason: 'restart_failed',
-      restart: failedRestart,
-      state: 'unhealthy',
-      updatedAt: '2026-06-03T19:30:00.000Z',
-    },
+    { reason: 'restart_failed', restart: failedRestart, state: 'unhealthy', updatedAt: '2026-06-03T19:30:00.000Z' },
     { state: 'starting', updatedAt: '2026-06-03T19:30:30.000Z' },
   );
   assert.equal(carried.restart?.requestId, 'restart-1');
 
   const healthy = applyHealthWrite(
-    {
-      reason: 'restart_failed',
-      restart: failedRestart,
-      state: 'unhealthy',
-      updatedAt: '2026-06-03T19:30:00.000Z',
-    },
-    {
-      runtime: runtimeSnapshot(),
-      state: 'healthy',
-      updatedAt: '2026-06-03T19:31:00.000Z',
-    },
+    { reason: 'restart_failed', restart: failedRestart, state: 'unhealthy', updatedAt: '2026-06-03T19:30:00.000Z' },
+    { runtime: runtimeSnapshot(), state: 'healthy', updatedAt: '2026-06-03T19:31:00.000Z' },
   );
   assert.equal(healthy.state, 'healthy');
   assert.equal(healthy.restart, undefined);
 
   const recoveredRestart = { ...failedRestart, outcome: 'recovered' as const };
   const keptRecovered = applyHealthWrite(
-    {
-      restart: recoveredRestart,
-      state: 'healthy',
-      updatedAt: '2026-06-03T19:32:00.000Z',
-    },
-    {
-      runtime: runtimeSnapshot(),
-      state: 'healthy',
-      updatedAt: '2026-06-03T19:33:00.000Z',
-    },
+    { restart: recoveredRestart, state: 'healthy', updatedAt: '2026-06-03T19:32:00.000Z' },
+    { runtime: runtimeSnapshot(), state: 'healthy', updatedAt: '2026-06-03T19:33:00.000Z' },
   );
   assert.equal(keptRecovered.restart?.outcome, 'recovered');
 });
@@ -271,11 +242,7 @@ test('runtime handle health debounces transient child issues before escalating',
 
   const withinDebounce = runtimeHandleHealth(
     missing,
-    {
-      reason: 'provider_child_missing',
-      state: 'degraded',
-      updatedAt: '2026-06-05T10:00:00.000Z',
-    },
+    { reason: 'provider_child_missing', state: 'degraded', updatedAt: '2026-06-05T10:00:00.000Z' },
     '2026-06-05T10:00:05.000Z',
   );
   assert.deepEqual(withinDebounce, {
@@ -286,11 +253,7 @@ test('runtime handle health debounces transient child issues before escalating',
 
   const escalated = runtimeHandleHealth(
     missing,
-    {
-      reason: 'provider_child_missing',
-      state: 'degraded',
-      updatedAt: '2026-06-05T10:00:00.000Z',
-    },
+    { reason: 'provider_child_missing', state: 'degraded', updatedAt: '2026-06-05T10:00:00.000Z' },
     '2026-06-05T10:00:11.000Z',
   );
   assert.deepEqual(escalated, {
@@ -301,11 +264,7 @@ test('runtime handle health debounces transient child issues before escalating',
 
   const alreadyUnhealthy = runtimeHandleHealth(
     missing,
-    {
-      reason: 'provider_child_missing',
-      state: 'unhealthy',
-      updatedAt: '2026-06-05T10:00:11.000Z',
-    },
+    { reason: 'provider_child_missing', state: 'unhealthy', updatedAt: '2026-06-05T10:00:11.000Z' },
     '2026-06-05T10:00:12.000Z',
   );
   assert.equal(alreadyUnhealthy.state, 'unhealthy');
@@ -325,11 +284,7 @@ test('starting snapshots time out to start_failed or restart_failed', () => {
   assert.equal(notStarting, undefined);
 
   const timedOut = startingTimeoutHealth(
-    {
-      runtime: runtimeSnapshot(),
-      state: 'starting',
-      updatedAt: '2026-06-05T10:00:00.000Z',
-    },
+    { runtime: runtimeSnapshot(), state: 'starting', updatedAt: '2026-06-05T10:00:00.000Z' },
     '2026-06-05T10:00:31.000Z',
   );
   assert.equal(timedOut?.state, 'unhealthy');
@@ -339,11 +294,7 @@ test('starting snapshots time out to start_failed or restart_failed', () => {
 
   const restartTimedOut = startingTimeoutHealth(
     {
-      restart: {
-        outcome: 'pending',
-        requestId: 'restart-1',
-        requestedAt: '2026-06-05T10:00:00.000Z',
-      },
+      restart: { outcome: 'pending', requestId: 'restart-1', requestedAt: '2026-06-05T10:00:00.000Z' },
       state: 'starting',
       updatedAt: '2026-06-05T10:00:00.000Z',
     },
@@ -363,36 +314,17 @@ test('stale running item predicate covers worker and item ownership mismatches',
     nowMs,
     runningItemId: 'item-1',
   };
-  const active = {
-    startedAt: '2026-06-05T10:00:10.000Z',
-    workerId: 'worker-1',
-  };
+  const active = { startedAt: '2026-06-05T10:00:10.000Z', workerId: 'worker-1' };
 
+  assert.equal(isStaleRunningItem({ ...base, runtime: runtimeSnapshot() }), true, 'no active record');
+  assert.equal(isStaleRunningItem({ ...base, active, runtime: undefined }), true, 'no runtime snapshot');
   assert.equal(
-    isStaleRunningItem({ ...base, runtime: runtimeSnapshot() }),
-    true,
-    'no active record',
-  );
-  assert.equal(
-    isStaleRunningItem({ ...base, active, runtime: undefined }),
-    true,
-    'no runtime snapshot',
-  );
-  assert.equal(
-    isStaleRunningItem({
-      ...base,
-      active,
-      runtime: runtimeSnapshot({ workerId: 'worker-other' }),
-    }),
+    isStaleRunningItem({ ...base, active, runtime: runtimeSnapshot({ workerId: 'worker-other' }) }),
     true,
     'worker mismatch',
   );
   assert.equal(
-    isStaleRunningItem({
-      ...base,
-      active,
-      runtime: runtimeSnapshot({ activeItemId: 'item-other' }),
-    }),
+    isStaleRunningItem({ ...base, active, runtime: runtimeSnapshot({ activeItemId: 'item-other' }) }),
     true,
     'item mismatch with zero grace',
   );
@@ -420,10 +352,7 @@ test('stale running item predicate covers worker and item ownership mismatches',
     isStaleRunningItem({
       ...base,
       active,
-      runtime: runtimeSnapshot({
-        activeItemId: 'item-1',
-        processId: process.pid,
-      }),
+      runtime: runtimeSnapshot({ activeItemId: 'item-1', processId: process.pid }),
     }),
     false,
     'live matching worker',
@@ -432,10 +361,7 @@ test('stale running item predicate covers worker and item ownership mismatches',
     isStaleRunningItem({
       ...base,
       active,
-      runtime: runtimeSnapshot({
-        activeItemId: 'item-1',
-        processId: deadPid(),
-      }),
+      runtime: runtimeSnapshot({ activeItemId: 'item-1', processId: deadPid() }),
     }),
     true,
     'dead worker process',
@@ -452,12 +378,7 @@ test('stale running item predicate covers worker and item ownership mismatches',
     'wedged provider child with the host-side check enabled',
   );
   assert.equal(
-    isStaleRunningItem({
-      ...base,
-      active,
-      includeProviderChildCheck: false,
-      runtime: wedgedChild,
-    }),
+    isStaleRunningItem({ ...base, active, includeProviderChildCheck: false, runtime: wedgedChild }),
     false,
     'wedged provider child ignored on the API read side',
   );
@@ -475,32 +396,20 @@ test('api health derives synthetics for missing or stale snapshots', () => {
   assert.equal(idleMissing.health.reason, undefined);
 
   const healthySnapshot = {
-    runtime: runtimeSnapshot({
-      activeItemId: 'item-1',
-      processId: process.pid,
-    }),
+    runtime: runtimeSnapshot({ activeItemId: 'item-1', processId: process.pid }),
     state: 'healthy' as const,
     updatedAt: '2026-06-05T09:59:59.000Z',
   };
   const passthrough = sampleApiHealth(
     healthySnapshot,
-    {
-      active: { startedAt: '2026-06-05T09:59:00.000Z', workerId: 'worker-1' },
-      runningItemId: 'item-1',
-    },
+    { active: { startedAt: '2026-06-05T09:59:00.000Z', workerId: 'worker-1' }, runningItemId: 'item-1' },
     nowIso,
   );
   assert.deepEqual(passthrough.health, healthySnapshot);
 
   const staleWorker = sampleApiHealth(
     healthySnapshot,
-    {
-      active: {
-        startedAt: '2026-06-05T09:59:00.000Z',
-        workerId: 'worker-other',
-      },
-      runningItemId: 'item-1',
-    },
+    { active: { startedAt: '2026-06-05T09:59:00.000Z', workerId: 'worker-other' }, runningItemId: 'item-1' },
     nowIso,
   );
   assert.equal(staleWorker.health.state, 'unhealthy');
@@ -576,21 +485,13 @@ test('provider error clear only touches a provider_error snapshot', () => {
   assert.equal(cleared?.updatedAt, '2026-06-04T02:00:30.000Z');
 
   const withoutRuntime = applyProviderErrorClear(
-    {
-      reason: 'provider_error',
-      state: 'degraded',
-      updatedAt: '2026-06-04T02:00:00.000Z',
-    },
+    { reason: 'provider_error', state: 'degraded', updatedAt: '2026-06-04T02:00:00.000Z' },
     '2026-06-04T02:00:30.000Z',
   );
   assert.equal(withoutRuntime?.state, 'unknown');
   assert.equal(withoutRuntime?.reason, undefined);
 
-  for (const reason of [
-    'provider_rate_limited',
-    'provider_auth_failed',
-    'provider_quota_exhausted',
-  ] as const) {
+  for (const reason of ['provider_rate_limited', 'provider_auth_failed', 'provider_quota_exhausted'] as const) {
     const kept = applyProviderErrorClear(
       { reason, state: 'degraded', updatedAt: '2026-06-04T02:00:00.000Z' },
       '2026-06-04T02:00:30.000Z',
@@ -606,10 +507,7 @@ test('agent health service clears provider_error inside the store lock and keeps
     const store = new AgentHealthStore({ animaHome: stateDir });
     const service = new AgentHealthService(store);
 
-    await service.clearProviderError({
-      agentId: 'alpha',
-      updatedAt: '2026-06-04T03:00:00.000Z',
-    });
+    await service.clearProviderError({ agentId: 'alpha', updatedAt: '2026-06-04T03:00:00.000Z' });
     assert.equal(await store.get('alpha'), undefined);
 
     await service.writeProviderFailure({
@@ -618,10 +516,7 @@ test('agent health service clears provider_error inside the store lock and keeps
       runtime: runtimeSnapshot({ workerId: 'worker-poisoned' }),
       updatedAt: '2026-06-04T03:00:10.000Z',
     });
-    await service.clearProviderError({
-      agentId: 'alpha',
-      updatedAt: '2026-06-04T03:00:20.000Z',
-    });
+    await service.clearProviderError({ agentId: 'alpha', updatedAt: '2026-06-04T03:00:20.000Z' });
     const cleared = await store.get('alpha');
     assert.equal(cleared?.state, 'healthy');
     assert.equal(cleared?.reason, undefined);
@@ -634,10 +529,7 @@ test('agent health service clears provider_error inside the store lock and keeps
       reason: 'provider_rate_limited',
       updatedAt: '2026-06-04T03:00:30.000Z',
     });
-    await service.clearProviderError({
-      agentId: 'alpha',
-      updatedAt: '2026-06-04T03:00:40.000Z',
-    });
+    await service.clearProviderError({ agentId: 'alpha', updatedAt: '2026-06-04T03:00:40.000Z' });
     const rateLimited = await store.get('alpha');
     assert.equal(rateLimited?.reason, 'provider_rate_limited');
     assert.equal(rateLimited?.updatedAt, '2026-06-04T03:00:30.000Z');
@@ -647,10 +539,7 @@ test('agent health service clears provider_error inside the store lock and keeps
       reason: 'provider_auth_failed',
       updatedAt: '2026-06-04T03:00:50.000Z',
     });
-    await service.clearProviderError({
-      agentId: 'alpha',
-      updatedAt: '2026-06-04T03:01:00.000Z',
-    });
+    await service.clearProviderError({ agentId: 'alpha', updatedAt: '2026-06-04T03:01:00.000Z' });
     const authFailed = await store.get('alpha');
     assert.equal(authFailed?.reason, 'provider_auth_failed');
     assert.equal(authFailed?.updatedAt, '2026-06-04T03:00:50.000Z');
@@ -721,38 +610,23 @@ for (const transition of ['complete', 'next-item', 'none', 'worker-mismatch'] as
     await withAnimaHome(stateDir, async () => {
       const queue = new WakeQueueService('milo');
       const health = new AgentHealthService(new AgentHealthStore({ animaHome: stateDir }));
-      const first = await ingestEvent(
-        makeSlackEvent({
-          channelId: 'C-demo',
-          teamId: 'T-demo',
-          text: 'Synthetic first item',
-          ts: '1770000000.000012',
-          userId: 'U1',
-        }),
-        { agentId: 'milo', stateDir },
-      );
-      await queue.takeNextRunnable({
-        isWorkerAlive: () => true,
-        workerId: 'worker-live',
-      });
+      const first = await ingestEvent(makeSlackEvent({
+        channelId: 'C-demo', teamId: 'T-demo', text: 'Synthetic first item',
+        ts: '1770000000.000012', userId: 'U1',
+      }), { agentId: 'milo', stateDir });
+      await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-live' });
       await setActiveRuntimeItem({
-        agentId: 'milo',
-        itemId: first.item.id,
-        workerId: 'worker-live',
+        agentId: 'milo', itemId: first.item.id, workerId: 'worker-live',
         startedAt: '2026-01-01T00:00:00.000Z',
       });
-      const publish = (activeItemId?: string) =>
-        health.writeHealth({
-          agentId: 'milo',
-          state: 'healthy',
-          updatedAt: new Date().toISOString(),
-          runtime: {
-            ...(activeItemId ? { activeItemId } : {}),
-            processId: process.pid,
-            providerChildExpected: false,
-            workerId: transition === 'worker-mismatch' ? 'worker-other' : 'worker-live',
-          },
-        });
+      const publish = (activeItemId?: string) => health.writeHealth({
+        agentId: 'milo', state: 'healthy', updatedAt: new Date().toISOString(),
+        runtime: {
+          ...(activeItemId ? { activeItemId } : {}),
+          processId: process.pid, providerChildExpected: false,
+          workerId: transition === 'worker-mismatch' ? 'worker-other' : 'worker-live',
+        },
+      });
       await publish(first.item.id);
       const originalGet = health.get.bind(health);
       let reads = 0;
@@ -762,20 +636,11 @@ for (const transition of ['complete', 'next-item', 'none', 'worker-mismatch'] as
           await queue.complete(first.item.id);
           expectedItemId = undefined;
           if (transition === 'next-item') {
-            const next = await ingestEvent(
-              makeSlackEvent({
-                channelId: 'C-demo',
-                teamId: 'T-demo',
-                text: 'Synthetic next item',
-                ts: '1770000000.000013',
-                userId: 'U1',
-              }),
-              { agentId: 'milo', stateDir },
-            );
-            await queue.takeNextRunnable({
-              isWorkerAlive: () => true,
-              workerId: 'worker-live',
-            });
+            const next = await ingestEvent(makeSlackEvent({
+              channelId: 'C-demo', teamId: 'T-demo', text: 'Synthetic next item',
+              ts: '1770000000.000013', userId: 'U1',
+            }), { agentId: 'milo', stateDir });
+            await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-live' });
             expectedItemId = next.item.id;
           }
           await publish(expectedItemId);
@@ -785,14 +650,8 @@ for (const transition of ['complete', 'next-item', 'none', 'worker-mismatch'] as
       const status = await new RuntimeService(health).getStatus('milo');
       assert.equal(status.currentItemId, expectedItemId);
       assert.equal(status.itemCount, (await queue.list()).length);
-      assert.equal(
-        status.health?.state,
-        transition === 'worker-mismatch' ? 'unhealthy' : 'healthy',
-      );
-      assert.equal(
-        status.health?.reason,
-        transition === 'worker-mismatch' ? 'stale_running_item' : undefined,
-      );
+      assert.equal(status.health?.state, transition === 'worker-mismatch' ? 'unhealthy' : 'healthy');
+      assert.equal(status.health?.reason, transition === 'worker-mismatch' ? 'stale_running_item' : undefined);
       assert.equal(reads, transition === 'none' ? 1 : 2);
       const history = await new AgentHealthEvidenceStore('milo').list();
       assert.equal(history.length, transition === 'worker-mismatch' ? 1 : 0);

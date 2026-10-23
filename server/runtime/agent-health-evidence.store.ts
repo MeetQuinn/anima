@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
-import { join } from "node:path";
-import { z } from "zod";
-import type { StaleRunningEvidence } from "../../shared/diagnostics.js";
-import { resolveAnimaHome } from "../anima-home.js";
-import { JsonStore } from "../storage/json-store.js";
-import { AGENT_ID } from "../storage/schema/agent.store.js";
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { z } from 'zod';
+import type { StaleRunningEvidence } from '../../shared/diagnostics.js';
+import { resolveAnimaHome } from '../anima-home.js';
+import { JsonStore } from '../storage/json-store.js';
+import { AGENT_ID } from '../storage/schema/agent.store.js';
 
 export const HEALTH_EVIDENCE_CAP = 20;
 const identifier = z.string().min(1).max(256);
@@ -13,13 +13,13 @@ const Evidence: z.ZodType<StaleRunningEvidence> = z.object({
   observedAt: z.string().datetime(),
   snapshotUpdatedAt: z.string().max(64).optional(),
   mismatch: z.enum([
-    "active_missing",
-    "snapshot_missing",
-    "worker_mismatch",
-    "item_mismatch",
-    "worker_dead",
-    "provider_child_missing",
-    "provider_child_exited",
+    'active_missing',
+    'snapshot_missing',
+    'worker_mismatch',
+    'item_mismatch',
+    'worker_dead',
+    'provider_child_missing',
+    'provider_child_exited',
   ]),
   queue: z.object({
     runningItemId: identifier,
@@ -57,10 +57,10 @@ export class AgentHealthEvidenceStore {
   private readonly file: JsonStore<z.infer<typeof File>>;
 
   constructor(agentId: string, animaHome = resolveAnimaHome()) {
-    if (!AGENT_ID.test(agentId) || agentId === "." || agentId === "..")
-      throw new Error("Invalid agent id");
+    if (!AGENT_ID.test(agentId) || agentId === '.' || agentId === '..')
+      throw new Error('Invalid agent id');
     this.file = new JsonStore<z.infer<typeof File>>({
-      path: () => join(animaHome, "agents", agentId, "health-evidence.json"),
+      path: () => join(animaHome, 'agents', agentId, 'health-evidence.json'),
       writeRoot: () => animaHome,
       mode: 0o600,
       empty: () => ({ events: [] }),
@@ -82,9 +82,9 @@ export class AgentHealthEvidenceStore {
         snapshotUpdatedAt: _snapshotUpdatedAt,
         ...identity
       } = evidence;
-      fingerprint = createHash("sha256")
+      fingerprint = createHash('sha256')
         .update(JSON.stringify(identity))
-        .digest("hex");
+        .digest('hex');
     }
     // Normal polls do not acquire a file lock, create a file, or rewrite timestamps.
     if ((await this.file.read()).activeFingerprint === fingerprint) return;

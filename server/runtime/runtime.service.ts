@@ -1,23 +1,19 @@
 import { resolveAnimaHome } from '../anima-home.js';
-
-import { AgentHealthEvidenceStore } from './agent-health-evidence.store.js';import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { AgentHealthEvidenceStore } from './agent-health-evidence.store.js';
+import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { isAgentRunnable } from '../agents/agent-config-ops.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import type {
   AgentConfig,
 } from '../../shared/agent-config.js';
 import { isDeferredQueuedInboxItem, type InboxItem } from '../../shared/inbox.js';
-
-import type { AgentStatusSummary, DeferredWakeSummary } from '../../shared/snapshot.js';
+import type {
+  AgentStatusSummary,
+  DeferredWakeSummary,
+} from '../../shared/snapshot.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import { nowIso } from '../ids.js';
-
-import {
-  AgentHealthService,
-  defaultAgentHealthService,
-  sampleApiHealth,
-  restartStatus,
-} from './agent-health.service.js';
+import { AgentHealthService, defaultAgentHealthService, sampleApiHealth, restartStatus } from './agent-health.service.js';
 import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
 import { latestPrimaryRunningItem } from './item-state.js';
@@ -53,10 +49,7 @@ export class RuntimeService {
   }
 
   async restartAgent(agentId: string): Promise<{ requestId: string }> {
-    const agent = await defaultAgentRegistryService
-      .serviceFor(agentId)
-      .getConfig()
-      .catch(() => undefined);
+    const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig().catch(() => undefined);
     if (!agent) throw new RuntimeServiceError(404, 'Agent not found');
     if (!agent.enabled) throw new RuntimeServiceError(409, 'Agent is disabled. Enable it to run.');
     const command = await defaultAgentRestartCommandStore.request(agentId);
@@ -70,16 +63,11 @@ export class RuntimeService {
     return { requestId: command.requestId };
   }
 
-  private async statusForAgent(
-    agent: AgentConfig,
-    confirmStale = true,
-  ): Promise<AgentStatusSummary> {
+  private async statusForAgent(agent: AgentConfig, confirmStale = true): Promise<AgentStatusSummary> {
     const queue = wakeQueueServiceForAgent(agent.id);
     const items = await queue.list();
     const running = latestPrimaryRunningItem(items);
-    const active = running
-      ? await findActiveRuntimeItem(agent.id, { list: async () => items })
-      : undefined;
+    const active = running ? await findActiveRuntimeItem(agent.id, { list: async () => items }) : undefined;
     const currentItemStartedAt = active?.startedAt ?? running?.handling.startedAt;
     const sample = await this.healthForAgent(agent, {
       ...(active ? { active } : {}),
