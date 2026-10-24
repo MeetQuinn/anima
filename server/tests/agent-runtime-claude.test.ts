@@ -164,6 +164,7 @@ test('claude-code runtime streams activity, persists Claude session metadata, an
         'if (process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== "272000") process.exit(59);',
         'if (process.env.MCP_TOOL_TIMEOUT !== "600000") process.exit(66);',
         'if (process.env.CLAUDE_AUTO_BACKGROUND_TASKS !== "1") process.exit(67);',
+        'if (process.env.CLAUDE_CODE_TRANSCRIPT_LOCAL_GC !== "1") process.exit(68);',
         `if (process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY !== ${JSON.stringify(CLAUDE_DISABLE_AUTO_MEMORY)}) process.exit(64);`,
         `if (!readFileSync('CLAUDE.md', 'utf8').includes(${JSON.stringify(claudeMdSentinel)})) process.exit(65);`,
         'if (!systemPrompt.includes("You are Anima, general-purpose Anima agent.")) process.exit(53);',

@@ -97,6 +97,7 @@ test('claude provider env keeps configured values but hard-disables native auto-
     CLAUDE_AUTO_BACKGROUND_TASKS: '1',
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: CLAUDE_DISABLE_AUTO_MEMORY,
+    CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: '1',
     MCP_TOOL_TIMEOUT: '600000',
   });
   assert.deepEqual(
@@ -105,6 +106,7 @@ test('claude provider env keeps configured values but hard-disables native auto-
         CLAUDE_AUTO_BACKGROUND_TASKS: '0',
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '120000',
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: '0',
         EXTRA: 'kept',
         MCP_TOOL_TIMEOUT: '120000',
       },
@@ -114,6 +116,7 @@ test('claude provider env keeps configured values but hard-disables native auto-
       CLAUDE_AUTO_BACKGROUND_TASKS: '0',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '120000',
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: CLAUDE_DISABLE_AUTO_MEMORY,
+      CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: '0',
       EXTRA: 'kept',
       MCP_TOOL_TIMEOUT: '120000',
     },
