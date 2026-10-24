@@ -15,6 +15,12 @@ export const CLAUDE_DEFAULT_AUTO_BACKGROUND_TASKS = '1';
 // background keeps the agent's Claude process from going idle until it ends.
 // Ten minutes leaves room for slow tools; a server's own `timeout` still wins.
 export const CLAUDE_DEFAULT_MCP_TOOL_TIMEOUT_MS = 10 * 60 * 1000;
+// Claude Code keeps every line of a session transcript, and an agent's session
+// lives for weeks, so transcripts reach gigabytes. With this set, after each
+// compaction Claude Code drops the pre-compaction history once the file passes
+// 5 MB; resuming restores the same conversation. Only the launch environment can
+// turn it on, not a settings `env` block.
+export const CLAUDE_DEFAULT_TRANSCRIPT_LOCAL_GC = '1';
 export const CLAUDE_FAST_MODE_SETTINGS = JSON.stringify({ fastMode: true });
 export const CLAUDE_DISALLOWED_TOOLS = [
   'AskUserQuestion',
@@ -30,6 +36,7 @@ export function claudeProviderEnv(config: ClaudeCodeAgentProviderConfig): Record
   return {
     CLAUDE_AUTO_BACKGROUND_TASKS: CLAUDE_DEFAULT_AUTO_BACKGROUND_TASKS,
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(CLAUDE_DEFAULT_AUTO_COMPACT_WINDOW),
+    CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: CLAUDE_DEFAULT_TRANSCRIPT_LOCAL_GC,
     MCP_TOOL_TIMEOUT: String(CLAUDE_DEFAULT_MCP_TOOL_TIMEOUT_MS),
     ...(config.env ?? {}),
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: CLAUDE_DISABLE_AUTO_MEMORY,
