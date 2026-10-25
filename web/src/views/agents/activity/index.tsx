@@ -390,12 +390,12 @@ export function ActivityStatusSummary({
           </span>
         )}
       </div>
-      {connection && (
+      {connection && connection.severity !== 'normal' && (
         <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-sans text-[11px]">
-          <span className="font-medium" style={{ color: connection.severity === 'error' ? 'var(--color-health-error)' : connection.severity === 'warning' ? 'var(--color-health-warn-ink)' : 'var(--color-text-muted)' }}>
+          <span className="font-medium" style={{ color: connection.severity === 'error' ? 'var(--color-health-error)' : 'var(--color-health-warn-ink)' }}>
             {connection.label}
           </span>
-          {connection.severity !== 'normal' && <span className="text-text-muted">{connection.detail}</span>}
+          <span className="text-text-muted">{connection.detail}</span>
         </div>
       )}
     </div>
