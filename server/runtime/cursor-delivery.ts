@@ -3,7 +3,7 @@
 // One service prepares a consistent observed snapshot + commit plan at claim/start,
 // then commits once at the provider-neutral runtime.started seam (idempotent on
 // retry). Queue settle is CAS-after-cursor: only still-queued Slack wakes on the
-// exact same surface whose observed ordinals are ≤ the captured tail.
+// exact same surface whose observations are present in the delivered window.
 
 import { slackMessageEventId, slackSurfaceId } from '../ids.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -23,7 +23,6 @@ import { slackDisplayLabel } from '../slack/slack.helper.js';
 import { renderSlackCursorExtras } from './delivery-prompt.js';
 import { ACTORLESS_SLACK_WAKE_BOT_ID } from './cursor-wake-journal-backfill.js';
 import {
-  exactEarlierMessagesMarker,
   observedSenderLabel,
   truncatedMarkerSuffix,
 } from './send-hold-copy.js';
@@ -95,15 +94,8 @@ export interface CursorDeliveryPlan {
 
 export type PrepareCursorDeliveryResult =
   | { kind: 'disabled' }
-  | { kind: 'already_delivered' }
   | { kind: 'prepared'; plan: CursorDeliveryPlan }
   | { kind: 'failed'; error: CursorDeliveryError };
-
-function bypassesCursorAlreadyDelivered(
-  resumeReason: InboxItem['handling']['resumeReason'],
-): boolean {
-  return resumeReason === 'runtime_restart' || resumeReason === 'deferred_retry';
-}
 
 /** Test override: undefined = read server config (default on). */
 let enabledOverride: boolean | undefined;
@@ -187,8 +179,8 @@ export function triggerEventId(item: SlackInboxItem): string {
 
 /**
  * Prepare at claim/start. Does not advance cursors or settle queue.
- * When the trigger is already covered by the primary surface cursor, returns
- * already_delivered so the worker can settle without a provider turn.
+ * A context cursor is not a receipt for each wake: bounded views and send-hold
+ * can advance past omitted rows. Any surviving queued trigger must still run.
  */
 export async function prepareCursorDelivery(input: {
   agentId: string;
@@ -239,13 +231,8 @@ export async function prepareCursorDelivery(input: {
       };
     }
 
-    // Recovery: trigger already covered by cursor → settle without provider.
-    // Never skip a runtime_restart primary — that is interrupted work, not a
-    // coalesced duplicate wake. Same for deferred_retry (operator Retry-now
-    // replacement wake after rate-limit deferral). Cursor coverage may skip
-    // later queued wakes only.
-    // Fail-closed first: cursor past the reconciled journal tail is corruption /
-    // partial restore — must not silently swallow reused ordinals as delivered.
+    // The cursor bounds context reads, not wake acknowledgement. Keep the
+    // corruption check, but never settle a request merely because it is older.
     const primaryCursor = await store.getCursor(triggerSurfaceId);
     if (primaryCursor.status === 'present') {
       const primaryIndex = await store.getIndexReconciled(triggerSurfaceId);
@@ -258,12 +245,6 @@ export async function prepareCursorDelivery(input: {
             `cursor deliveredOrdinal ${primaryCursor.deliveredOrdinal} beyond reconciled tail ${reconciledTail} on ${triggerSurfaceId}`,
           ),
         };
-      }
-      if (
-        !bypassesCursorAlreadyDelivered(item.handling.resumeReason)
-        && primaryCursor.deliveredOrdinal >= triggerEntry.ordinal
-      ) {
-        return { kind: 'already_delivered' };
       }
     }
 
@@ -278,7 +259,6 @@ export async function prepareCursorDelivery(input: {
     const surfaces = await buildSharedBudgetSurfacePlans(store, surfaceIds, {
       triggerEventId: eventId,
       triggerSurfaceId,
-      triggerOrdinal: triggerEntry.ordinal,
       triggerItem: triggerForEnvelope,
     });
 
@@ -387,11 +367,9 @@ export async function commitCursorDelivery(input: {
   }
 
   const coalescedItemIds = await coalesceCoveredWakes({
-    agentId: plan.agentId,
     queue: input.queue,
     surfaces: plan.surfaces,
     excludeItemIds: new Set([plan.triggerItemId, ...(input.excludeItemIds ?? [])]),
-    store,
   });
 
   plan.committed = true;
@@ -399,24 +377,21 @@ export async function commitCursorDelivery(input: {
 }
 
 /**
- * Settle still-queued Slack wakes on the same exact surface whose observed
- * ordinals are within the captured tail. Never touches the active item, other
- * surfaces, later-than-tail rows, staged rows, or non-Slack items.
+ * Settle still-queued Slack wakes whose observations actually appear in this
+ * accepted context window on the exact same surface. Never touches the active
+ * item, other surfaces, unshown rows, staged rows, or non-Slack items.
  *
  * Candidate selection is read-side; the settle is one atomic queue-store batch
  * so the selected set moves to seen together.
  */
 export async function coalesceCoveredWakes(input: {
-  agentId: string;
   queue: WakeQueueService;
   surfaces: SurfaceDeliveryPlan[];
   excludeItemIds: Set<string>;
-  store?: ObservedConversationStore;
 }): Promise<string[]> {
-  const store = input.store ?? observedConversationStoreForAgent(input.agentId);
-  const surfaceTails = new Map(
-    input.surfaces.map((s) => [s.surfaceId, s.nextDeliveredOrdinal] as const),
-  );
+  const shownBySurface = new Map(input.surfaces.map((surface) => [
+    surface.surfaceId, new Set(surface.entries.map((entry) => entry.eventId)),
+  ]));
   const items = await input.queue.list();
   const candidateIds: string[] = [];
 
@@ -431,13 +406,7 @@ export async function coalesceCoveredWakes(input: {
       messageTs: item.messageTs,
       threadTs: item.threadTs,
     });
-    const tail = surfaceTails.get(surfaceId);
-    if (tail === undefined) continue; // other surface
-
-    const eventId = triggerEventId(item);
-    const entry = await findObservationByEventId(store, surfaceId, eventId);
-    if (!entry) continue;
-    if (entry.ordinal > tail) continue; // later than captured tail
+    if (!shownBySurface.get(surfaceId)?.has(triggerEventId(item))) continue;
 
     candidateIds.push(item.id);
   }
@@ -536,7 +505,6 @@ async function buildSharedBudgetSurfacePlans(
   opts: {
     triggerEventId: string;
     triggerSurfaceId: string;
-    triggerOrdinal: number;
     triggerItem: SlackInboxItem;
   },
 ): Promise<SurfaceDeliveryPlan[]> {
@@ -813,16 +781,10 @@ export function mergeCursorDeliveryPlans(
     candidateCount: s.candidateCount,
   }));
   const surfaces = assembleSurfacePlansFromSelection(raw, selected);
-  const primary = plans.reduce((a, b) =>
-    Math.max(...a.surfaces.map((s) => s.nextDeliveredOrdinal))
-      >= Math.max(...b.surfaces.map((s) => s.nextDeliveredOrdinal))
-      ? a
-      : b,
-  );
   return {
-    agentId: primary.agentId,
-    triggerItemId: primary.triggerItemId,
-    triggerEventId: primary.triggerEventId,
+    agentId: plans[0]!.agentId,
+    triggerItemId: triggerItem.id,
+    triggerEventId: triggerEventId(triggerItem),
     surfaces,
     promptBody: renderCursorDeliveryEnvelope(clippedTrigger, surfaces),
     committed: false,
@@ -975,10 +937,9 @@ export function renderCursorDeliveryEnvelopeFromEntries(
   const parts: string[] = ['Slack conversation update:'];
   if (sorted.length > 0) {
     parts.push('');
-    // Iris: earlier-omitted marker above shown rows (gap is chronologically
-    // before the newest-fitting set) — same placement as HELD delta.
+    // A forced older trigger can leave gaps after it, not only before the window.
     if (omitted > 0) {
-      parts.push(exactEarlierMessagesMarker(omitted));
+      parts.push(`(+${omitted} observed messages not shown in this window)`);
     }
     for (const entry of sorted) {
       parts.push(formatObservedLine(entry));

@@ -42,13 +42,10 @@ import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 import { TeamRunLimiter } from './team-run-limiter.js';
 import {
-  coalesceCoveredWakes,
   commitCursorDelivery,
   prepareCursorDelivery,
-  surfacesForSlackWake,
 } from './cursor-delivery.js';
 import { backfillActiveSlackWakeJournal } from './cursor-wake-journal-backfill.js';
-import { observedConversationStoreForAgent } from '../storage/schema/observed-conversation.store.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
@@ -308,12 +305,11 @@ export class AgentRuntimeWorker {
   }
 
   /**
-   * @returns `'ran'` when a provider turn ran; `'settled'` when the item was
-   * completed without a turn; `'deferred'` when the item was requeued without
+   * @returns `'ran'` when a provider turn ran; `'deferred'` when requeued without
    * tombstone (e.g. cursor-delivery prepare fail-closed) — stop this drain
    * cycle to avoid a hot reclaim loop.
    */
-  private async processClaimedItem(item: InboxItem): Promise<'ran' | 'settled' | 'deferred'> {
+  private async processClaimedItem(item: InboxItem): Promise<'ran' | 'deferred'> {
     let context: RuntimeItemContext | undefined;
     let memoryCoherenceBeforeDigest: string | undefined;
     let runtimeFailureRecorded = false;
@@ -338,39 +334,6 @@ export class AgentRuntimeWorker {
         agentId: this.options.agentId,
         item: context.item,
       });
-      if (prepared.kind === 'already_delivered') {
-        // Crash recovery: cursor already covers this wake — settle without a provider turn,
-        // and coalesce any other same-surface wakes already under that cursor.
-        await this.queue.complete(item.id);
-        if (context.item.kind === 'slack') {
-          const store = observedConversationStoreForAgent(this.options.agentId);
-          const surfaceIds = surfacesForSlackWake(context.item);
-          const surfaces = await Promise.all(surfaceIds.map(async (surfaceId) => {
-            const cursor = await store.getCursor(surfaceId);
-            const next = cursor.status === 'present' ? cursor.deliveredOrdinal : 0;
-            return {
-              surfaceId,
-              cursorExpected: cursor.status === 'absent'
-                ? { status: 'absent' as const }
-                : { status: 'present' as const, deliveredOrdinal: cursor.deliveredOrdinal },
-              nextDeliveredOrdinal: next,
-              entries: [],
-              candidateCount: 0,
-              omittedCount: 0,
-              establishOnly: next === 0,
-            };
-          }));
-          await coalesceCoveredWakes({
-            agentId: this.options.agentId,
-            queue: this.queue,
-            surfaces,
-            excludeItemIds: new Set([item.id]),
-            store,
-          });
-        }
-        releaseFollowups?.();
-        return 'settled';
-      }
       if (prepared.kind === 'failed') {
         // Fail-closed without tombstone: requeue so repair can retry later.
         // Do not queue.fail — that moves the id to seen and loses the wake.

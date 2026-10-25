@@ -117,8 +117,10 @@ from its conversation. The envelope labels the original wake as a trigger, with
 received, queued, and (when claimed) start timestamps. If newer messages are
 included, it marks the trigger as earlier and asks the agent to reconcile later
 completion, cancellation, or reassignment before acting. It does not infer that
-every older request is obsolete: still-open requests remain actionable. Covered
-queued wakes on the same surface are coalesced at provider start; DMs and mentions
+every older request is obsolete: still-open requests remain actionable. Only queued wakes actually shown on the same surface are coalesced at provider
+start; a context cursor alone cannot acknowledge an omitted request. Merged
+follow-ups likewise leave unshown requests queued. A crash after provider delivery
+but before queue acknowledgement can repeat a request rather than lose it; DMs and mentions
 in other conversations remain queued. Thread-follow eligibility is unchanged. This makes
 delayed delivery explicit; it is not a semantic classifier or a guarantee about
 the model’s interpretation. Explicitly disabling cursor delivery retains the

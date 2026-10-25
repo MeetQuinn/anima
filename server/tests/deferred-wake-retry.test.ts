@@ -229,7 +229,7 @@ test('retryDeferredWakeNow rejects deferred reminder (unsupported kind)', async 
   }
 });
 
-test('deferred_retry bypasses cursor already_delivered and frames the missed request', async () => {
+test('deferred_retry delivers the missed request even beyond the context watermark', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-deferred-retry-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -262,7 +262,7 @@ test('deferred_retry bypasses cursor already_delivered and frames the missed req
       item.handling.resumeReason = 'deferred_retry';
 
       const prepared = await prepareCursorDelivery({ agentId, item, store });
-      assert.notEqual(prepared.kind, 'already_delivered');
+      assert.equal(prepared.kind, 'prepared');
       assert.equal(prepared.kind, 'prepared');
 
       const prompt = buildCodeAgentDeliveryPrompt(item, {

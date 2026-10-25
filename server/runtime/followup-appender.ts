@@ -17,6 +17,7 @@ import {
   mergeCursorDeliveryPlans,
   prepareCursorDelivery,
   primarySurfaceId,
+  triggerEventId,
   type CursorDeliveryPlan,
 } from './cursor-delivery.js';
 import type { SlackInboxItem } from '../../shared/inbox.js';
@@ -115,10 +116,6 @@ async function tryFollowupBatch(
         agentId: input.runtimeConfig.agentId,
         item: context.item,
       });
-      if (prepared.kind === 'already_delivered') {
-        await input.queue.complete(context.item.id).catch(() => undefined);
-        continue;
-      }
       if (prepared.kind === 'failed') {
         skippedItemIds.add(context.item.id);
         await input.queue.requeueBatch([context.item.id]);
@@ -371,6 +368,16 @@ export function groupFollowupContexts(contexts: RuntimeItemContext[]): {
       baseTrigger,
     );
     const mergedPlan = mergeCursorDeliveryPlans(acc.plans, triggerItem);
+    // A bounded union can omit some claimed wakes. Only acknowledge members
+    // whose request was actually shown; the caller requeues the rest as overflow.
+    const shown = new Set(mergedPlan.surfaces.flatMap(
+      (surface) => surface.entries.map((entry) => entry.eventId),
+    ));
+    shown.add(triggerEventId(triggerItem)); // The envelope always includes its trigger.
+    const deliveredMembers = acc.members.filter(
+      (member) => shown.has(triggerEventId(member.item as SlackInboxItem)),
+    );
+
     // Union files/previews from every member onto the lead so the bridge's
     // single rendered inbox item still carries full attachment metadata for
     // non-lead wakes whose cursors advance with the group.
@@ -386,7 +393,7 @@ export function groupFollowupContexts(contexts: RuntimeItemContext[]): {
     units[i] = {
       kind: 'slack_group',
       lead,
-      members: acc.members,
+      members: deliveredMembers,
       mergedPlan,
     };
     bridgeContexts.push(lead);
