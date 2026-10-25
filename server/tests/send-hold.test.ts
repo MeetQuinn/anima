@@ -585,7 +585,7 @@ test('messageTsFromSlackFileInfo reads share stamp for own observation', () => {
   assert.equal(messageTsFromSlackFileInfo(undefined, 'D1'), undefined);
 });
 
-test('wake-time cursor view places earlier-omitted marker above shown rows', () => {
+test('wake-time cursor view places omission marker above shown rows', () => {
   const now = new Date().toISOString();
   const entries = [1, 2].map((ord) => ({
     channelId: 'D1',
@@ -617,11 +617,11 @@ test('wake-time cursor view places earlier-omitted marker above shown rows', () 
   } as SlackInboxItem;
   const body = renderCursorDeliveryEnvelopeFromEntries(trigger, entries, 5);
   const lines = body.split('\n');
-  const markerIdx = lines.findIndex((l) => l.includes('earlier message'));
+  const markerIdx = lines.findIndex((l) => l.includes('observed messages not shown'));
   const rowIdx = lines.findIndex((l) => l.includes('row-1'));
   assert.ok(markerIdx >= 0 && rowIdx >= 0);
   assert.ok(markerIdx < rowIdx, `cursor view marker above rows:\n${body}`);
-  assert.match(body, /\(\+5 earlier messages not shown\)/);
+  assert.match(body, /\(\+5 observed messages not shown in this window\)/);
 });
 
 test('own posts after cursor do not hold; cursor advances through own tail', async () => {

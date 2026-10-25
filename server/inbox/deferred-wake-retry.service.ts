@@ -20,8 +20,7 @@ export type DeferredWakeRetryResult =
  *
  * Clears the parked item so its notBefore cannot fire later, and enqueues a
  * unique Slack wake that keeps the original channel/message/thread anchors
- * with `resumeReason: deferred_retry` so cursor already_delivered does not
- * swallow the turn.
+ * with `resumeReason: deferred_retry` so the prompt explains the retry.
  */
 export async function retryDeferredWakeNow(
   agentId: string,

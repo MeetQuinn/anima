@@ -100,7 +100,8 @@ export type ConversationIndex = z.infer<typeof ConversationIndexSchema>;
  * - `deliveredOrdinal: null` → **confirmed absent** (never delivered into this
  *   conversation; "no-cursor lands" applies only to this state).
  * - `deliveredOrdinal: 0` → present at origin (established, nothing past start).
- * - `deliveredOrdinal: N>0` → delivered through ordinal N inclusive.
+ * - `deliveredOrdinal: N>0` → context watermark through ordinal N inclusive.
+ *   Bounded displays can omit rows; this is not proof that every wake was shown.
  *
  * A missing cursor file reads as confirmed absent via empty().
  */

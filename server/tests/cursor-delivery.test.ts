@@ -19,6 +19,7 @@ import {
   CURSOR_DELIVERY_MAX_MESSAGE_BYTES,
   clipObservedText,
 } from '../runtime/cursor-delivery.js';
+import { evaluateSendHold } from '../runtime/send-hold.js';
 import { groupFollowupContexts } from '../runtime/followup-appender.js';
 import type { RuntimeItemContext } from '../runtime/types.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -32,7 +33,7 @@ import {
 import type { SlackInboxItem } from '../../shared/inbox.js';
 import { withAnimaHome } from './anima-home.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
-import type { AgentRuntimeInput } from '../providers/contract.js';
+import type { AgentRuntimeFollowupInput, AgentRuntimeInput } from '../providers/contract.js';
 import { ControlledRuntime, silentLogger } from './helpers/runtime-worker.js';
 import { defaultAgentConfig, waitFor, writeAgentConfigs } from './helpers/harness.js';
 import { observeAcrossClockStep } from './helpers/observed-journal.js';
@@ -172,7 +173,7 @@ test('first wake: bounded context + trigger retained; child thread established p
     assert.match(prepared.plan.promptBody, /Wake trigger:/);
     assert.match(prepared.plan.promptBody, /msg-25/);
     // Chronological flat view (no per-surface headers).
-    assert.match(prepared.plan.promptBody, /earlier message/);
+    assert.match(prepared.plan.promptBody, /observed messages not shown in this window/);
 
     const committed = await commitCursorDelivery({ plan: prepared.plan, queue, store });
     assert.ok(committed.advanced.includes('slack:T1:C1'));
@@ -345,7 +346,7 @@ test('same-surface covered wake coalesced once; other/later/staged/non-Slack unt
   });
 });
 
-test('crash between cursor and queue: later claim self-heals without provider (already_delivered)', async () => {
+test('a queued wake older than the context watermark is still delivered', async () => {
   await withEnabledStore(async (store, agentId) => {
     await store.observe({
       teamId: 'T1',
@@ -376,11 +377,12 @@ test('crash between cursor and queue: later claim self-heals without provider (a
     });
 
     const again = await prepareCursorDelivery({ agentId, item, store });
-    assert.equal(again.kind, 'already_delivered');
+    assert.equal(again.kind, 'prepared');
+    if (again.kind === 'prepared') assert.match(again.plan.promptBody, /Wake trigger:/);
   });
 });
 
-test('already_delivered refuses cursor beyond reconciled journal tail', async () => {
+test('prepare refuses cursor beyond reconciled journal tail', async () => {
   // Partial restore/corruption: cursor present@3 while index/journal tail is 2.
   // Wake for ordinal 2 must not silently already_deliver and swallow reused ordinals.
   await withEnabledStore(async (store, agentId) => {
@@ -638,7 +640,7 @@ test('strict CAS rejects stale plan after concurrent advance (not silent rewrite
   });
 });
 
-test('runtime_restart is never already_delivered (preserves recovery continuation)', async () => {
+test('runtime_restart preserves recovery continuation', async () => {
   await withEnabledStore(async (store, agentId) => {
     await store.observe({
       teamId: 'T1',
@@ -659,8 +661,8 @@ test('runtime_restart is never already_delivered (preserves recovery continuatio
     item.handling.resumeReason = 'runtime_restart';
 
     const prepared = await prepareCursorDelivery({ agentId, item, store });
-    // Must prepare (or at least not already_delivered) so the worker runs continuation.
-    assert.notEqual(prepared.kind, 'already_delivered');
+    // The worker must run the recovery continuation.
+    assert.equal(prepared.kind, 'prepared');
     assert.equal(prepared.kind, 'prepared');
 
     // Prompt path still prefers restart continuation over cursor body.
@@ -972,7 +974,7 @@ test('single-plan merge preserves omission count', async () => {
     );
     const after = merged.surfaces.reduce((n, s) => n + s.omittedCount, 0);
     assert.equal(after, before);
-    assert.match(merged.promptBody, /earlier message/);
+    assert.match(merged.promptBody, /observed messages not shown in this window/);
   });
 });
 
@@ -1145,7 +1147,7 @@ test('merge does not double-count overlapping omissions on the same surface', as
     // Unique pool is still ~40: shown + omitted ≈ 40, not 20+40.
     assert.ok(shown + omitted <= 45, `shown=${shown} omitted=${omitted}`);
     assert.ok(omitted <= omittedA + 5, `omitted ${omitted} should not be ~2× ${omittedA}`);
-    assert.match(merged.promptBody, /earlier message/);
+    assert.match(merged.promptBody, /observed messages not shown in this window/);
   });
 });
 
@@ -1812,5 +1814,231 @@ test('newer context marks queued mentions too without replacing the trigger or i
     assert.match(prepared.plan.promptBody, /wake=mention/);
     assert.match(prepared.plan.promptBody, /newer messages alone do not cancel them/);
     assert.equal(prepared.plan.triggerItemId, trigger.id);
+  });
+});
+
+for (const shape of ['count', 'bytes', 'out-of-order'] as const) {
+  test(`bounded ${shape} context never settles an omitted queued mention`, async () => {
+    await withEnabledStore(async (store, agentId, queue) => {
+      const events: SlackInboxItem[] = [];
+      const count = shape === 'bytes' ? 8 : 26;
+      for (let i = 1; i <= count; i += 1) {
+        const ts = shape === 'out-of-order' && i === 2 ? '0.5' : `${i}.0`;
+        const event = slackItem({ channelId: 'C-gap', threadTs: '0.0', messageTs: ts,
+          text: `request-${i}-must-survive ${shape === 'bytes' ? 'x'.repeat(5_000) : ''}` });
+        event.wakeReason = i === 2 ? 'mention' : 'thread_follow';
+        events.push(event);
+        await store.observe({ teamId: 'T1', channelId: event.channelId, threadTs: event.threadTs,
+          messageTs: ts, text: event.text!, userId: 'U1' });
+        await queue.enqueue(event);
+      }
+      const trigger = events[0]!;
+      const prepared = await prepareCursorDelivery({ agentId, item: trigger, store });
+      assert.equal(prepared.kind, 'prepared');
+      if (prepared.kind !== 'prepared') return;
+      assert.ok(Buffer.byteLength(prepared.plan.promptBody) <= CURSOR_DELIVERY_MAX_BYTES);
+      const missing = events.filter((event) => !prepared.plan.promptBody.includes(event.text!.split(' ')[0]!));
+      assert.ok(missing.some((event) => event.id === events[1]!.id), 'mention lies outside rendered window');
+      await commitCursorDelivery({ plan: prepared.plan, queue, store });
+      for (const event of missing) {
+        assert.ok(await queue.find(event.id), `omitted wake remains queued: ${event.id}`);
+        const again = await prepareCursorDelivery({ agentId, item: event, store });
+        assert.equal(again.kind, 'prepared', 'context cursor is not proof that this request was delivered');
+        if (again.kind === 'prepared') assert.ok(again.plan.promptBody.includes(event.text!.split(' ')[0]!));
+      }
+      assert.doesNotMatch(prepared.plan.promptBody, /earlier messages not shown/);
+    });
+  });
+}
+
+test('merged follow-up membership includes only requests actually rendered', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    const events: SlackInboxItem[] = [];
+    for (let i = 1; i <= 30; i += 1) {
+      const event = slackItem({ channelId: 'C-merged-gap', messageTs: `${i}.0`, threadTs: '0.0', text: `request-${i}-must-survive` });
+      events.push(event);
+      await store.observe({ teamId: 'T1', channelId: event.channelId, threadTs: event.threadTs,
+        messageTs: event.messageTs, text: event.text!, userId: 'U1' });
+    }
+    const contexts: RuntimeItemContext[] = [];
+    for (const event of events.slice(0, 16)) {
+      const prepared = await prepareCursorDelivery({ agentId, item: event, store });
+      assert.equal(prepared.kind, 'prepared');
+      if (prepared.kind !== 'prepared') return;
+      contexts.push({ item: event, cursorDelivery: prepared.plan } as RuntimeItemContext);
+    }
+    const grouped = groupFollowupContexts(contexts);
+    for (const unit of grouped.units) {
+      if (unit.kind !== 'slack_group') continue;
+      assert.equal(unit.mergedPlan.triggerItemId, unit.lead.item.id);
+      for (const member of unit.members) {
+        assert.ok(unit.mergedPlan.promptBody.includes((member.item as SlackInboxItem).text!), `accepted request absent: ${member.item.id}`);
+      }
+    }
+  });
+});
+
+test('worker drains a mention omitted from the first bounded context after a long primary', async () => {
+  await withEnabledStore(async (store, agentId, queue, stateDir) => {
+    const runtime = new class extends ControlledRuntime {
+      override async run(input: AgentRuntimeInput) {
+        await input.effects.recordRuntime('runtime.started');
+        if (this.calls.length > 0) { this.calls.push(input); return {}; }
+        return super.run(input);
+      }
+    }();
+    const worker = new AgentRuntimeWorker({ agentId, agentRuntime: runtime, homePath: stateDir, stateDir, queue, workerId: 'gap-test' }, silentLogger);
+    async function enqueue(event: SlackInboxItem) {
+      await store.observe({ teamId: 'T1', channelId: event.channelId, messageTs: event.messageTs,
+        threadTs: event.threadTs, text: event.text!, userId: 'U1' });
+      await queue.enqueue(event);
+    }
+    let drain: Promise<number> | undefined;
+    try {
+      await enqueue(slackItem({ channelId: 'D-primary-gap', messageTs: '1.0', text: 'long primary' }));
+      drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+      const events: SlackInboxItem[] = [];
+      for (let i = 1; i <= 26; i += 1) {
+        const event = slackItem({ channelId: 'C-worker-gap', messageTs: `${i}.0`, threadTs: '0.0', text: `request-${i}-must-survive` });
+        event.wakeReason = i === 2 ? 'mention' : 'thread_follow';
+        events.push(event);
+        await enqueue(event);
+      }
+      runtime.finishNext();
+      await drain;
+      assert.equal((await queue.list()).length, 0);
+      for (const event of events) {
+        assert.ok(runtime.calls.some((call) => call.prompt.includes(event.text!)), `never delivered: ${event.id}`);
+      }
+      assert.ok(runtime.calls.length > 2, 'omitted work requires another delivery');
+    } finally {
+      await worker.close();
+      await drain;
+    }
+  });
+});
+
+test('send-hold context advance does not erase an omitted queued request', async () => {
+  await withEnabledStore(async (store, agentId, queue) => {
+    await store.observe({ teamId: 'T1', channelId: 'D-held', messageTs: '1.0', text: 'initial', userId: 'U1' });
+    await store.advanceCursor({ surfaceId: 'slack:T1:D-held', expected: { status: 'absent' }, nextDeliveredOrdinal: 1 });
+    let missed: SlackInboxItem | undefined;
+    for (let i = 2; i <= 27; i += 1) {
+      const event = slackItem({ channelId: 'D-held', messageTs: `${i}.0`, text: `held-request-${i}-must-survive` });
+      await store.observe({ teamId: 'T1', channelId: event.channelId, messageTs: event.messageTs, text: event.text!, userId: 'U1' });
+      await queue.enqueue(event);
+      missed ??= event;
+    }
+    const held = await evaluateSendHold({ agentId, teamId: 'T1', channelId: 'D-held', channelKind: 'dm', tool: 'anima.message.send', store, writeOutput: () => {} });
+    assert.equal(held.kind, 'held');
+    if (held.kind !== 'held') return;
+    assert.ok(!held.stdout.includes(missed!.text!));
+    const prepared = await prepareCursorDelivery({ agentId, item: missed!, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind === 'prepared') assert.ok(prepared.plan.promptBody.includes(missed!.text!));
+    assert.ok(await queue.find(missed!.id));
+  });
+});
+
+test('worker follow-up batches acknowledge every request only in a prompt that includes it', async () => {
+  await withEnabledStore(async (store, agentId, queue, stateDir) => {
+    const accepted: AgentRuntimeFollowupInput[] = [];
+    const runtime = new class extends ControlledRuntime {
+      override async run(input: AgentRuntimeInput) {
+        await input.effects.recordRuntime('runtime.started');
+        return super.run(input);
+      }
+      override async appendToActiveRun(input: AgentRuntimeFollowupInput) {
+        accepted.push(input);
+        return { accepted: true };
+      }
+    }();
+    const worker = new AgentRuntimeWorker({ agentId, agentRuntime: runtime, homePath: stateDir, stateDir, queue,
+      workerId: 'follow-gap-test' }, silentLogger);
+    async function enqueue(event: SlackInboxItem) {
+      await store.observe({ teamId: 'T1', channelId: event.channelId, messageTs: event.messageTs,
+        threadTs: event.threadTs, text: event.text!, userId: 'U1' });
+      await queue.enqueue(event);
+    }
+    let drain: Promise<number> | undefined;
+    try {
+      await enqueue(slackItem({ channelId: 'D-follow-primary', messageTs: '1.0', text: 'long primary' }));
+      drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+      worker.setIntakePaused(true);
+      const events: SlackInboxItem[] = [];
+      for (let i = 1; i <= 30; i += 1) {
+        const event = slackItem({ channelId: 'C-follow-gap', messageTs: `${i}.0`, threadTs: '0.0', text: `follow-request-${i}-must-survive` });
+        events.push(event);
+        await enqueue(event);
+      }
+      worker.setIntakePaused(false);
+      await waitFor(async () => (await queue.list()).every((item) => item.id === runtime.calls[0]!.itemId || item.handling.appendedToItemId), { timeoutMs: 10_000 });
+      for (const input of accepted) {
+        for (const id of input.itemIds) {
+          const event = events.find((candidate) => candidate.id === id)!;
+          assert.ok(input.prompt.includes(event.text!), `acknowledged without delivery: ${id}`);
+        }
+      }
+      for (const event of events) assert.ok(accepted.some((input) => input.prompt.includes(event.text!)), `never shown: ${event.id}`);
+      runtime.finishNext();
+      await drain;
+      assert.equal((await queue.list()).length, 0);
+    } finally {
+      worker.setIntakePaused(false);
+      await worker.close();
+      await drain;
+    }
+  });
+});
+
+test('automatic rate-limit retry delivers the request after its context cursor has advanced', async () => {
+  await withEnabledStore(async (store, agentId, _queue, stateDir) => {
+    let claimAt: Date | undefined;
+    const queue = new class extends WakeQueueService {
+      override async takeNextRunnable(input: Parameters<WakeQueueService['takeNextRunnable']>[0]) {
+        return super.takeNextRunnable({ ...input, now: claimAt ?? input.now });
+      }
+    }(agentId);
+    const runtime = new class extends ControlledRuntime {
+      override async run(input: AgentRuntimeInput) {
+        this.calls.push(input);
+        await input.effects.recordRuntime('runtime.started');
+        if (this.calls.length === 1) throw new Error('Too many requests, resets in 45 minutes (api status 429)');
+        return { text: 'completed after reset' };
+      }
+    }();
+    const worker = new AgentRuntimeWorker({ agentId, agentRuntime: runtime, homePath: stateDir,
+      stateDir, queue, workerId: 'automatic-retry-test' }, silentLogger);
+    const event = slackItem({ channelId: 'D-auto-retry', messageTs: '1.0', text: 'Please finish this request after quota resets' });
+    try {
+      await store.observe({ teamId: 'T1', channelId: event.channelId, messageTs: event.messageTs,
+        text: event.text!, userId: 'U1' });
+      await queue.enqueue(event);
+      assert.equal(await worker.drainOnce(), 0);
+      assert.equal(runtime.calls.length, 1);
+      const deferred = await queue.find(event.id);
+      assert.equal(deferred?.handling.status, 'queued');
+      assert.equal(deferred?.handling.deferrals, 1);
+      assert.equal(deferred?.handling.resumeReason, undefined);
+      const notBefore = Date.parse(deferred!.handling.notBefore!);
+      assert.ok(notBefore > Date.now());
+      const cursor = await store.getCursor('slack:T1:D-auto-retry');
+      assert.equal(cursor.status, 'present');
+      if (cursor.status === 'present') assert.equal(cursor.deliveredOrdinal, 1);
+      assert.equal(await worker.drainOnce(), 0);
+      assert.equal(runtime.calls.length, 1, 'quota delay still applies');
+      // Move only the queue's claim clock past the persisted reset, without an
+      // operator Retry-now, a new wake, or a process-wide timer mock.
+      claimAt = new Date(notBefore + 1);
+      assert.equal(await worker.drainOnce(), 1);
+      assert.equal(runtime.calls.length, 2);
+      assert.equal(runtime.calls[1]!.itemId, event.id);
+      assert.ok(runtime.calls[1]!.prompt.includes(event.text!));
+      assert.equal(await queue.find(event.id), undefined);
+    } finally {
+      await worker.close();
+    }
   });
 });
