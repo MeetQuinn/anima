@@ -107,6 +107,7 @@ const groups = {
     'provider-runtime-commands.test.js',
     'provider-usage.test.js',
     'provider-connection.test.js',
+    'provider-controller-slot.test.js',
     'grok-launch-args.test.js',
     'grok-tool-summary.test.js',
     'inbox-slack-events.test.js',
@@ -150,6 +151,7 @@ const groups = {
   ],
   runtime: [
     'provider-child-process.test.js',
+    'provider-termination-recovery.test.js',
     'agent-runtime-codex.test.js',
     'agent-runtime-claude.test.js',
     'agent-runtime-grok.test.js',
