@@ -653,6 +653,8 @@ test('runtime worker records pending when follow-up append is rejected', async (
     const drain = worker.drainOnce();
     await waitFor(() => runtime.calls.length === 1);
 
+    // This case asserts one rejected batch, so publish both items before intake.
+    worker.setIntakePaused(true);
     const second = await enqueueInbox(
       makeSlackEvent({
         channelId: 'D-user',
@@ -676,6 +678,7 @@ test('runtime worker records pending when follow-up append is rejected', async (
       coordinator,
     );
 
+    worker.setIntakePaused(false);
     assert.equal(second.queued, true);
     assert.equal(third.queued, true);
     await waitFor(() => runtime.followups.length === 1);
