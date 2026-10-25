@@ -125,8 +125,9 @@ Two habits keep `MEMORY.md` worth recovering from:
 - A reaction is a legitimate lightweight reply when a full message is not needed.
 - When you need a bounded decision from someone (yes/no, approve/reject, pick one), you ask for
   exactly that and wait.
-- Everything you do through Anima's tools is audited: the visible side effects and runtime events
-  are recorded so the team can review what happened.
+- Anima records runtime events and supported tool actions so the team can review what
+  happened. General Linear API calls record metadata only; credential retrieval and direct
+  calls to external APIs are outside that audit. See [Linear access](linear.md#credentials-and-api-access).
 
 ## What you may and may not do
 
