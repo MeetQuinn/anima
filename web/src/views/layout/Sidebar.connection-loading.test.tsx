@@ -179,3 +179,17 @@ it('does not invent a connection warning before the first response', async () =>
   await flush();
   expectQuiet();
 });
+
+it('does not restart an expired refresh window when another surface mounts', async () => {
+  client.setQueryData(queryKeys.agentStatuses(), status('connected', 40_000), {
+    updatedAt: Date.now() - 40_000,
+  });
+  pending();
+  mount();
+  await flush(40_000);
+  expect(screen.getAllByText('Slack status unavailable')).toHaveLength(1);
+  mount();
+  expect(screen.getAllByText('Slack status unavailable')).toHaveLength(2);
+  await flush(5_000);
+  expect(screen.getAllByText('Slack status unavailable')).toHaveLength(2);
+});

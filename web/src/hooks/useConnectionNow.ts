@@ -47,7 +47,7 @@ export function useConnectionRevalidation(query: {
   dataUpdatedAt: number;
   errorUpdatedAt: number;
 }): number | undefined {
-  const [mountedAt] = useState(Date.now);
+  const [mountedAt] = useState(() => (timer ? 0 : Date.now()));
   const { now, resumedAt } = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const since = Math.max(mountedAt, resumedAt);
   const pending =
