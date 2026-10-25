@@ -1323,7 +1323,7 @@ export async function managedProviderEnvForAgent(
     } catch {
       // Linear is optional. A failed refresh must not prevent Slack work, and
       // error bodies from credentials must not enter the agent log.
-      console.warn(`Agent ${agent.id}: Linear credentials unavailable; use anima linear token to retry.`);
+      console.warn(`Agent ${agent.id}: Linear credentials unavailable; Linear API and dedicated commands refresh them on demand.`);
     }
   }
   if (!agent.feishu.connected) return env;

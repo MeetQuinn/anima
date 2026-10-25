@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { getOperationAST, parse } from 'graphql';
 import { z } from 'zod';
 import { activityServiceForAgent, type ActivityService } from '../activities/activity.service.js';
 import type { LinearIdentityService } from '../linear/identity.service.js';
@@ -7,8 +6,11 @@ import { resolveToolItemId } from './tool-context.js';
 
 type ApiInput = { query: string; variables: Record<string, unknown>; operationName?: string };
 
-function operationKind(input: ApiInput): 'query' | 'mutation' | 'subscription' | 'unknown' {
-  try { return getOperationAST(parse(input.query), input.operationName)?.operation ?? 'unknown'; }
+async function operationKind(input: ApiInput): Promise<'query' | 'mutation' | 'subscription' | 'unknown'> {
+  try {
+    const { getOperationAST, parse } = await import('graphql');
+    return getOperationAST(parse(input.query), input.operationName)?.operation ?? 'unknown';
+  }
   catch { return 'unknown'; }
 }
 
@@ -16,10 +18,13 @@ function operationKind(input: ApiInput): 'query' | 'mutation' | 'subscription' |
 export async function runLinearApi(identity: LinearIdentityService, input: ApiInput): Promise<unknown> {
   let itemId: string | undefined;
   try { itemId = await resolveToolItemId({ agent: identity.agentId }); }
-  catch { console.error('Linear API runtime association is unavailable.'); }
+  catch {
+    itemId = process.env.ANIMA_INBOX_ITEM_ID?.trim() || undefined;
+    console.error('Linear API runtime association lookup failed; using the inherited item ID when available.');
+  }
   const payload: Record<string, unknown> = {
     tool: 'anima.linear.api', platform: 'linear', callId: randomUUID(),
-    operation: operationKind(input),
+    operation: await operationKind(input),
   };
   if (itemId) payload.itemId = itemId;
   const activity: ActivityService = activityServiceForAgent(identity.agentId);

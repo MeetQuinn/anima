@@ -11,6 +11,7 @@ import { managedProviderEnvForAgent } from '../runtime/host.js';
 import { registerLinearCommands } from '../tools/linear-cli.js';
 import { runLinearApi } from '../tools/linear-api.js';
 import { ActivityService, activityServiceForAgent } from '../activities/activity.service.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { withTempAnimaHome } from './helpers/harness.js';
 import { FakeLinear, install, seedLinear } from './helpers/linear.js';
@@ -134,6 +135,8 @@ test('managed child environment gets a Linear token in the selected home; failur
   const disconnected = await managedProviderEnvForAgent(agent, home, 'synthetic-slack');
   assert.equal(disconnected.LINEAR_ACCESS_TOKEN, undefined); assert.equal(disconnected.SLACK_BOT_TOKEN, 'synthetic-slack');
   assert.equal(warnings.length, 1); assert.doesNotMatch(warnings.join(), /sentinel|refreshed/);
+  assert.doesNotMatch(warnings.join(), /anima linear token/);
+  assert.match(warnings.join(), /commands refresh them on demand/);
 }));
 
 test('registered Linear CLI creates and comments proactively, records outbox, and audits API metadata without token or request content', async (t) => withTempAnimaHome(async (home) => {
@@ -276,4 +279,22 @@ test('API operation classification follows selection and never changes arbitrary
   const rows = await activityServiceForAgent('scout').readAll();
   assert.equal(new Set(rows.map((r) => r.payload?.callId)).size, cases.length);
   assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|literal|issueDelete/);
+}));
+
+test('API audit keeps the inherited run when the active-item lookup fails without exposing its error', async (t) => withTempAnimaHome(async (home) => {
+  const { identity } = await seedLinear(home);
+  t.mock.method(WakeQueueService.prototype, 'list', async () => { throw new Error('PRIVATE_QUEUE_ERROR_SENTINEL'); });
+  t.mock.method(identity, 'request', async () => ({ ok: true }));
+  const warnings: string[] = [];
+  t.mock.method(console, 'error', (message: string) => warnings.push(message));
+  const previous = process.env.ANIMA_INBOX_ITEM_ID;
+  t.after(() => { if (previous === undefined) delete process.env.ANIMA_INBOX_ITEM_ID; else process.env.ANIMA_INBOX_ITEM_ID = previous; });
+  process.env.ANIMA_INBOX_ITEM_ID = '  inherited-api-run  ';
+  assert.deepEqual(await runLinearApi(identity, { query: '{ viewer { id } }', variables: {} }), { ok: true });
+  process.env.ANIMA_INBOX_ITEM_ID = '  ';
+  assert.deepEqual(await runLinearApi(identity, { query: '{ viewer { id } }', variables: {} }), { ok: true });
+  const rows = await activityServiceForAgent('scout').readAll();
+  assert.deepEqual(rows.map((r) => r.payload?.itemId), ['inherited-api-run', 'inherited-api-run', undefined, undefined]);
+  assert.equal(warnings.length, 2);
+  assert.doesNotMatch(JSON.stringify([rows, warnings]), /PRIVATE_QUEUE_ERROR_SENTINEL/);
 }));
