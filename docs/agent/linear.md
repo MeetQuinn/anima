@@ -44,17 +44,17 @@ audit warning after success does not mean the external write failed.
 
 At startup the runtime supplies `LINEAR_ACCESS_TOKEN` and
 `LINEAR_ACCESS_TOKEN_EXPIRES_AT` when the identity is available. This is a snapshot;
-an already-running child does not receive refreshed environment variables. Get current
-credentials when needed:
+an already-running child does not receive refreshed environment variables. Prefer
+`anima linear api` below: it refreshes credentials and uses them inside the request,
+without returning the token to your tool output.
 
-```sh
-anima linear token
-```
-
-The JSON contains `accessToken`, `expiresAt`, `organizationId` and `appUserId`. Keep it
-private; never paste it into messages or files shared with others. Anima keeps the
-refresh token and refreshes access on demand. A refresh failure leaves other connected
-places available, but Linear commands still require a connected, enabled identity.
+If another program needs current credentials, `anima linear token` returns JSON with
+`accessToken`, `expiresAt`, `organizationId` and `appUserId`. Capture its stdout inside
+the consuming program and use the token there. Do not run it as a standalone provider
+tool call or echo the captured value: tool output can be retained in the provider's
+transcript. Never paste the JSON into messages or shared files. Anima retains the
+refresh token. A refresh failure leaves other connected places available, but Linear
+commands still require a connected, enabled identity.
 
 For API operations without a dedicated command, pass GraphQL JSON on stdin:
 
@@ -67,9 +67,21 @@ JSON
 `variables` and `operationName` are optional. This command refreshes credentials,
 uses Linear's fixed GraphQL endpoint, returns the `data` object and fails on GraphQL
 errors (including partial results). It never retries a request. For a failed mutation,
-inspect the affected object before attempting another write. API bodies and credentials
-are not copied into Anima's activity or message ledger; direct calls using the token
-have the same limitation. Use common commands when you want their outbox receipts.
+inspect the affected object before attempting another write.
+
+API activity records contain a generated call ID, the agent/run association when
+available, operation type and request outcome. Operation selection follows GraphQL's
+`operationName`; unparseable or ambiguous input is recorded as `unknown` and forwarded
+unchanged. Records omit operation/field names, query text, variables, results, error
+bodies and credentials. Request completion does not assert that every mutation
+succeeded: inspect the returned result. A failed call records an unknown outcome,
+which does not prove that a write had no effect.
+
+If the initial audit cannot be recorded, no API request is sent. If recording the
+outcome fails after a response, the command preserves the result and prints a warning;
+do not repeat a write to repair the local audit. Generic API calls do not create chat
+outbox entries. Use dedicated create/comment/session commands for their outbox receipts.
+Direct calls with the token remain outside Anima's activity and message records.
 
 ## Notifications and follow-up
 

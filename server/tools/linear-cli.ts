@@ -8,6 +8,7 @@ import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearIssueService, LinearIssueCreate, LinearCommentCreate } from '../linear/issue.service.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { withToolActivity } from './tool-context.js';
+import { runLinearApi } from './linear-api.js';
 
 function identityFor(agent: string | undefined): LinearIdentityService {
   const id = resolveAgentIdFrom(agent);
@@ -25,8 +26,8 @@ function pageOptions(command: Command): Command {
 
 export function registerLinearCommands(program: Command): void {
   const linear = program.command('linear').description('Use this agent’s Linear identity for issues, comments and work sessions.').option('--agent <id>', 'agent identity');
-  // Credentials and arbitrary API bodies deliberately avoid activity payloads:
-  // those records are not a place to copy access tokens or arbitrary secrets.
+  // Credential output is for programmatic consumption, not activity records.
+  // Arbitrary API calls record only fixed metadata, never their bodies.
   linear.command('token').description('Get a current access token (JSON); keep it private.')
     .action(async (_options, command: Command) => {
       const { accessToken, expiresAt, organizationId, appUserId } = await identityFor(command.optsWithGlobals().agent).credentials();
@@ -37,7 +38,7 @@ export function registerLinearCommands(program: Command): void {
       let raw: unknown;
       try { raw = JSON.parse(await readStdin()); } catch { throw new Error('Expected GraphQL JSON with query, optional variables and operationName.'); }
       const input = z.object({ query: z.string().trim().min(1).max(100_000), variables: z.record(z.string(), z.unknown()).default({}), operationName: z.string().min(1).optional() }).strict().parse(raw);
-      const result = await identityFor(command.optsWithGlobals().agent).request(input.query, input.variables, z.unknown(), input.operationName);
+      const result = await runLinearApi(identityFor(command.optsWithGlobals().agent), input);
       console.log(JSON.stringify(result, null, 2));
     });
   pageOptions(linear.command('teams').description('List teams this app can access.')).action(async (_options, command: Command) => {

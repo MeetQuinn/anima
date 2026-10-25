@@ -192,6 +192,29 @@ async function runPackSmoke() {
       { cwd: installDir },
     );
 
+    // GraphQL is lazy: CLI help alone cannot verify the installed parser.
+    const moduleUrl = (path) => pathToFileURL(join(serverDir, path)).href;
+    await run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import assert from 'node:assert/strict';
+       const { withAnimaHome } = await import(${JSON.stringify(moduleUrl("anima-home.js"))});
+       const { runLinearApi } = await import(${JSON.stringify(moduleUrl("tools/linear-api.js"))});
+       const { activityServiceForAgent } = await import(${JSON.stringify(moduleUrl("activities/activity.service.js"))});
+       await withAnimaHome(${JSON.stringify(workDir)}, async () => {
+         const result = await runLinearApi({ agentId: 'pack-smoke', request: async () => ({ ok: true }) },
+           { query: 'query Q { viewer { id } } mutation M { issueDelete(id:"synthetic") { success } }', operationName: 'M', variables: {} });
+         assert.deepEqual(result, { ok: true });
+         const rows = await activityServiceForAgent('pack-smoke').readAll();
+         assert.equal(rows.length, 2);
+         assert.ok(rows.every(row => row.payload.operation === 'mutation'));
+       });`,
+      ],
+      { cwd: installDir },
+    );
+
     console.log("animactl package smoke OK");
   } finally {
     await rm(workDir, { force: true, recursive: true });

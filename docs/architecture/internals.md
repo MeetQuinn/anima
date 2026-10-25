@@ -226,7 +226,7 @@ For operator-facing setup and scopes, see [Feishu runbook](../agent/feishu.md).
 ## Invariants That Matter
 
 - Plain provider output is not a reply; visible chat output begins at the `server/tools/` outbox boundary.
-- Every outbound action goes through audited `anima` CLI tools registered from `server/cli/anima.ts`.
+- Supported outbound messaging is recorded by `anima` CLI tools registered from `server/cli/anima.ts`. General Linear API calls record operation metadata without message content or outbox entries; token retrieval and direct external API calls are outside this audit boundary.
 - Wake-queue v2 format in `server/storage/schema/wake-queue.store.ts` has read migration from older files but no downgrade path below its introduction.
 - Subscription `subscriptionId` strings from `server/inbox/subscription.service.ts` are compatibility surface; do not change their shapes without a migration.
 - Provider transports are enum-validated in `shared/agent-config.ts`, so removed values fail loudly instead of silently falling back.

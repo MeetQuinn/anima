@@ -9,7 +9,9 @@ import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearIssueService } from '../linear/issue.service.js';
 import { managedProviderEnvForAgent } from '../runtime/host.js';
 import { registerLinearCommands } from '../tools/linear-cli.js';
-import { activityServiceForAgent } from '../activities/activity.service.js';
+import { runLinearApi } from '../tools/linear-api.js';
+import { ActivityService, activityServiceForAgent } from '../activities/activity.service.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { withTempAnimaHome } from './helpers/harness.js';
 import { FakeLinear, install, seedLinear } from './helpers/linear.js';
@@ -133,9 +135,11 @@ test('managed child environment gets a Linear token in the selected home; failur
   const disconnected = await managedProviderEnvForAgent(agent, home, 'synthetic-slack');
   assert.equal(disconnected.LINEAR_ACCESS_TOKEN, undefined); assert.equal(disconnected.SLACK_BOT_TOKEN, 'synthetic-slack');
   assert.equal(warnings.length, 1); assert.doesNotMatch(warnings.join(), /sentinel|refreshed/);
+  assert.doesNotMatch(warnings.join(), /anima linear token/);
+  assert.match(warnings.join(), /commands refresh them on demand/);
 }));
 
-test('registered Linear CLI creates and comments proactively, records outbox, and keeps token/API secrets out of audit', async (t) => withTempAnimaHome(async (home) => {
+test('registered Linear CLI creates and comments proactively, records outbox, and audits API metadata without token or request content', async (t) => withTempAnimaHome(async (home) => {
   const fake = new Workspace(); const { store } = await seedLinear(home, fake);
   t.mock.method(globalThis, 'fetch', fake.fetch);
   const output: string[] = []; const diagnostics: string[] = [];
@@ -166,10 +170,131 @@ test('registered Linear CLI creates and comments proactively, records outbox, an
   assert.equal(threaded.find((m) => m.text === 'Start a new discussion')?.threadTs, root.id);
   const auditBefore = await activityServiceForAgent('scout').readAll();
   const token = await run('token'); assert.equal(token.accessToken, install.accessToken); assert.equal(token.refreshToken, undefined);
+  assert.deepEqual(await activityServiceForAgent('scout').readAll(), auditBefore);
   stdin = JSON.stringify({ query: 'query First { viewer { id } } query Second { viewer { id } }', variables: {}, operationName: 'Second' });
   assert.equal((await run('api')).viewer.id, install.appUserId);
   assert.equal(fake.requests.at(-1)!.operationName, 'Second');
   assert.doesNotMatch(JSON.stringify(await messageServiceForAgent('scout').list()), /access-sentinel|refresh-sentinel|query First/);
-  assert.deepEqual(await activityServiceForAgent('scout').readAll(), auditBefore);
+  const apiAudit = (await activityServiceForAgent('scout').readAll()).slice(auditBefore.length);
+  assert.deepEqual(apiAudit.map((a) => a.type), ['tool.call.started', 'tool.call.completed']);
+  assert.ok(apiAudit.every((a) => a.payload?.operation === 'query'));
+  assert.doesNotMatch(JSON.stringify(apiAudit), /query First|Second|access-sentinel|refresh-sentinel/);
   assert.equal(commented.body, 'An ordinary reply'); assert.deepEqual((await store.read()).receipts, {});
+}));
+
+test('raw Linear mutations correlate metadata while names, literals, variables and results stay private', async (t) => withTempAnimaHome(async (home) => {
+  const fake = new FakeLinear();
+  const result = { issueDelete: { success: false, privateResult: 'PRIVATE_RESULT_SENTINEL' } };
+  let requests = 0;
+  fake.fetch = async (_url, init) => {
+    requests++;
+    assert.equal(JSON.parse(String(init?.body)).operationName, 'PrivateOperationName');
+    return Response.json({ data: result });
+  };
+  const { identity } = await seedLinear(home, fake);
+  const previous = process.env.ANIMA_INBOX_ITEM_ID;
+  process.env.ANIMA_INBOX_ITEM_ID = 'synthetic-api-run';
+  t.after(() => { if (previous === undefined) delete process.env.ANIMA_INBOX_ITEM_ID; else process.env.ANIMA_INBOX_ITEM_ID = previous; });
+  const input = {
+    query: '# PRIVATE_COMMENT_SENTINEL\nquery Other { viewer { id } } mutation PrivateOperationName($secret:String!) { privateAlias: issueDelete(id:$secret) { success } }',
+    operationName: 'PrivateOperationName', variables: { secret: 'PRIVATE_VARIABLE_SENTINEL' },
+  };
+  assert.deepEqual(await runLinearApi(identity, input), result);
+  const rows = await activityServiceForAgent('scout').readAll();
+  assert.equal(requests, 1);
+  assert.deepEqual(rows.map((r) => r.type), ['tool.call.started', 'tool.call.completed']);
+  assert.equal(rows[0]!.payload?.callId, rows[1]!.payload?.callId);
+  assert.match(String(rows[0]!.payload?.callId), /^[0-9a-f-]{36}$/);
+  for (const row of rows) {
+    assert.equal(row.payload?.itemId, 'synthetic-api-run');
+    assert.equal(row.payload?.operation, 'mutation');
+    assert.equal(row.payload?.tool, 'anima.linear.api');
+    assert.equal(row.payload?.platform, 'linear');
+    assert.deepEqual(Object.keys(row.payload ?? {}).sort(), ['callId', 'itemId', 'operation', ...(row.type.endsWith('completed') ? ['outcome'] : []), 'platform', 'status', 'tool'].sort());
+  }
+  assert.equal(rows[1]!.payload?.outcome, 'request_completed', 'HTTP success does not claim mutation success:true');
+  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|PrivateOperationName|privateAlias|issueDelete|secret|access-sentinel/);
+  assert.equal((await messageServiceForAgent('scout').list()).entries.length, 0);
+}));
+
+for (const mode of ['network', 'partial', 'invalid-json', 'unauthorized'] as const) test(`raw Linear API records uncertainty without response content or retry: ${mode}`, async () => withTempAnimaHome(async (home) => {
+  const fake = new FakeLinear(); let requests = 0;
+  fake.fetch = async () => {
+    requests++;
+    if (mode === 'network') throw new Error('PRIVATE_NETWORK_SENTINEL');
+    if (mode === 'partial') return Response.json({ data: { privateData: 'PRIVATE_RESULT_SENTINEL' }, errors: [{ message: 'PRIVATE_ERROR_SENTINEL' }] });
+    if (mode === 'invalid-json') return new Response('PRIVATE_INVALID_SENTINEL');
+    return new Response('PRIVATE_UNAUTHORIZED_SENTINEL', { status: 401 });
+  };
+  const { identity } = await seedLinear(home, fake);
+  await assert.rejects(runLinearApi(identity, { query: 'mutation HiddenName { privateAlias: issueDelete(id:"PRIVATE_LITERAL_SENTINEL") { success } }', variables: {} }));
+  const rows = await activityServiceForAgent('scout').readAll();
+  assert.deepEqual(rows.map((r) => r.type), ['tool.call.started', 'tool.call.failed']);
+  assert.equal(rows[1]!.payload?.outcome, 'unknown');
+  assert.equal(rows[1]!.payload?.callId, rows[0]!.payload?.callId);
+  assert.equal(requests, 1);
+  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|HiddenName|privateAlias|issueDelete|sentinel/);
+  assert.equal((await messageServiceForAgent('scout').list()).entries.length, 0);
+}));
+
+for (const stage of ['started', 'completed', 'failed'] as const) test(`Linear API audit failure at ${stage} never resends or conceals the API result`, async (t) => withTempAnimaHome(async (home) => {
+  const fake = new FakeLinear(); let requests = 0;
+  fake.fetch = async () => { requests++; if (stage === 'failed') throw new Error('PRIVATE_NETWORK_SENTINEL'); return Response.json({ data: { ok: true } }); };
+  const { identity } = await seedLinear(home, fake);
+  const record = ActivityService.prototype.record;
+  t.mock.method(ActivityService.prototype, 'record', async function (this: ActivityService, input: Parameters<ActivityService['record']>[0]) {
+    if (input.type === `tool.call.${stage}`) throw new Error('PRIVATE_AUDIT_SENTINEL');
+    return record.call(this, input);
+  });
+  const warnings: string[] = [];
+  t.mock.method(console, 'error', (message: string) => warnings.push(message));
+  const request = runLinearApi(identity, { query: 'mutation { issueDelete(id:"PRIVATE_LITERAL_SENTINEL") { success } }', variables: {} });
+  if (stage === 'completed') await assert.doesNotReject(async () => { assert.deepEqual(await request, { ok: true }); });
+  else await assert.rejects(request, stage === 'started' ? /no request was sent/ : /Linear request failed/);
+  assert.equal(requests, stage === 'started' ? 0 : 1);
+  const rows = await activityServiceForAgent('scout').readAll();
+  assert.equal(rows.length, stage === 'started' ? 0 : 1);
+  assert.doesNotMatch(JSON.stringify([rows, warnings]), /PRIVATE_|sentinel|issueDelete/);
+  assert.equal((await messageServiceForAgent('scout').list()).entries.length, 0);
+}));
+
+test('API operation classification follows selection and never changes arbitrary request forwarding', async (t) => withTempAnimaHome(async (home) => {
+  const { identity } = await seedLinear(home);
+  const calls: string[] = [];
+  t.mock.method(identity, 'request', async (query: string) => { calls.push(query); return {}; });
+  const cases = [
+    { query: '{ viewer { id } }', operation: 'query' },
+    { query: 'query Q { viewer { ...F } } fragment F on User { id }', operation: 'query' },
+    { query: 'mutation M { issueDelete(id:"literal") { success } } query Q { viewer { id } }', operationName: 'Q', operation: 'query' },
+    { query: 'query Q { viewer { id } } mutation M { issueDelete(id:"literal") { success } }', operationName: 'M', operation: 'mutation' },
+    { query: 'query Q { viewer { id } } mutation M { issueDelete(id:"literal") { success } }', operation: 'unknown' },
+    { query: 'query malformed { PRIVATE_FIELD_SENTINEL(', operation: 'unknown' },
+  ];
+  for (const input of cases) {
+    await runLinearApi(identity, { query: input.query, variables: {}, operationName: input.operationName });
+    const row = (await activityServiceForAgent('scout').readAll()).at(-1)!;
+    assert.equal(row.payload?.operation, input.operation);
+  }
+  assert.deepEqual(calls, cases.map((c) => c.query));
+  const rows = await activityServiceForAgent('scout').readAll();
+  assert.equal(new Set(rows.map((r) => r.payload?.callId)).size, cases.length);
+  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|literal|issueDelete/);
+}));
+
+test('API audit keeps the inherited run when the active-item lookup fails without exposing its error', async (t) => withTempAnimaHome(async (home) => {
+  const { identity } = await seedLinear(home);
+  t.mock.method(WakeQueueService.prototype, 'list', async () => { throw new Error('PRIVATE_QUEUE_ERROR_SENTINEL'); });
+  t.mock.method(identity, 'request', async () => ({ ok: true }));
+  const warnings: string[] = [];
+  t.mock.method(console, 'error', (message: string) => warnings.push(message));
+  const previous = process.env.ANIMA_INBOX_ITEM_ID;
+  t.after(() => { if (previous === undefined) delete process.env.ANIMA_INBOX_ITEM_ID; else process.env.ANIMA_INBOX_ITEM_ID = previous; });
+  process.env.ANIMA_INBOX_ITEM_ID = '  inherited-api-run  ';
+  assert.deepEqual(await runLinearApi(identity, { query: '{ viewer { id } }', variables: {} }), { ok: true });
+  process.env.ANIMA_INBOX_ITEM_ID = '  ';
+  assert.deepEqual(await runLinearApi(identity, { query: '{ viewer { id } }', variables: {} }), { ok: true });
+  const rows = await activityServiceForAgent('scout').readAll();
+  assert.deepEqual(rows.map((r) => r.payload?.itemId), ['inherited-api-run', 'inherited-api-run', undefined, undefined]);
+  assert.equal(warnings.length, 2);
+  assert.doesNotMatch(JSON.stringify([rows, warnings]), /PRIVATE_QUEUE_ERROR_SENTINEL/);
 }));
