@@ -112,6 +112,18 @@ Slack and Feishu use different platform adapters, then enter the same runtime sh
 6. **The agent takes explicit team actions.** Messages, file transfers, reactions, and bounded questions sent through Anima return to the relevant Slack or Feishu conversation.
 7. **Anima records its side of the boundary.** Queue transitions, provider runtime events, and Anima-mediated actions become local activity records for diagnosis and review.
 
+With Slack cursor delivery, a queued wake receives the newest bounded context
+from its conversation. The envelope labels the original wake as a trigger, with
+received, queued, and (when claimed) start timestamps. If newer messages are
+included, it marks the trigger as earlier and asks the agent to reconcile later
+completion, cancellation, or reassignment before acting. It does not infer that
+every older request is obsolete: still-open requests remain actionable. Covered
+queued wakes on the same surface are coalesced at provider start; DMs and mentions
+in other conversations remain queued. Thread-follow eligibility is unchanged. This makes
+delayed delivery explicit; it is not a semantic classifier or a guarantee about
+the model’s interpretation. Explicitly disabling cursor delivery retains the
+single-message path.
+
 The outbox is a precise boundary, not a claim that Anima observes every effect. Plain provider output is not automatically a chat reply. A team-visible message or file must be sent through an Anima action. The provider may also edit files, run commands, push to GitHub, or use other configured tools. Those effects belong to the corresponding filesystem, repository, or tool and are not made transactional by the outbox.
 
 For the human-facing rules about mentions, followed threads, and agent replies, see [Work with one agent](../guide/working-with-your-agent.md).
