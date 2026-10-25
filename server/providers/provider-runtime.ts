@@ -124,6 +124,13 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
     this.cancelProviderChildIdleReset();
     let finishRun: (() => void) | undefined;
     try {
+      // An idle-child reset may already be terminating the previous controller.
+      // Do not send the next turn to a child that is about to exit.
+      const resetting = this.slot.pendingReset();
+      if (resetting) {
+        await resetting;
+        input.signal?.throwIfAborted();
+      }
       await input.effects.recordRuntime('runtime.started', {
         ...options.startedPayload,
         providerSession: providerSessionPayload(input.providerSession, this.kind),

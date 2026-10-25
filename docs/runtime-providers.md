@@ -54,6 +54,8 @@ point; live background work is exposed through health and keeps the controller n
 
 `close` is optional. It is for provider adapters that keep resources alive across items, such as a persistent child process. `AgentRuntimeCloseOptions` lets the caller choose the kill signal and a force-kill deadline.
 
+When a controller starts terminating its child, it sends `SIGTERM` and schedules `SIGKILL` after five seconds by default. A caller can supply a shorter or longer deadline; a concurrent close cannot postpone an already scheduled kill. The terminating child remains visible to health and later close calls until completion, and a new turn waits for that teardown before starting. This covers a Claude child that ignores stop or idle-timeout cancellation; it does not diagnose why the native process stopped making progress.
+
 Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, OpenCode ACP, and pi RPC) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude and Codex become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks or terminals.
 
 `health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, how the live one looks, and any provider-native background work) for the runtime health service. `providerWork` distinguishes a main turn that also has background work (`working` plus a count) from a completed main turn whose background work remains (`background` plus a count).
