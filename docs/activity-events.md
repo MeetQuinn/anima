@@ -155,14 +155,20 @@ failures; successful completion rows aren't emitted yet (see [Known gaps](#known
 | `(missing)` legacy Kimi tool-calls without `payload.tool`                                                                                                            | Pre-rename Kimi logs.                               | Hidden       | —                                                                                                                                                                                           | —                              |
 
 For Claude `TaskCreate` and `TaskUpdate`, the task summary copies only `subject`,
-`activeForm` (or `active_form`), `taskId` (or `task_id`), and `status` from tool
+`activeForm` (or `active_form`), `taskId` (or `id` / `task_id`), and `status` from tool
 input. These become `taskSubject`, `taskActiveForm`, `taskId`, and `taskStatus`;
 `target` is derived from the same fields. It excludes `description` and arbitrary
 `metadata`, including nested values. This restriction applies to the task summary,
 not to the provider's own transcript.
 
-A terminal update containing only an ID and status displays the ID. The mapper
-does not recover a subject from an earlier create result or another session.
+For root Claude tasks, a successful structured create result associates its assigned
+ID with the input subject. Successful renames update that association; deletion
+removes it after the activity is recorded. The per-agent display cache survives
+turns and runtime restarts, isolates native session IDs, and retains up to 1,000
+names. Updates with only an ID and status can then show the name. Unknown or
+evicted IDs, unscoped/subagent events, and unreadable cache files fall back to the
+provider summary. Existing activity history is not rewritten. Description and
+metadata never enter this cache.
 
 ### 3. Chat actions
 

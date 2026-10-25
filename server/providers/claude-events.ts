@@ -190,10 +190,16 @@ async function recordJsonlLine(
   const rootLine = isClaudeRootLine(parsed);
   const providerTools = providerToolCallsFromClaudeEvent(parsed, subagentLinkage);
   for (const tool of providerTools) {
+    if (rootLine && isRecord(parsed) && (tool['providerToolName'] === 'TaskCreate' || tool['providerToolName'] === 'TaskUpdate')) {
+      const sessionId = stringField(parsed, 'session_id') ?? stringField(parsed, 'sessionId');
+      if (sessionId) tool['taskSessionId'] = sessionId;
+    }
     const providerToolId = stringField(tool, 'providerToolId');
     if (providerToolId) state.providerToolsById.set(providerToolId, tool);
     await recordClaudeToolStarted(effects, tool, state, rootLine);
   }
+
+  await recordClaudeTaskName(effects, parsed, state.providerToolsById);
 
   const providerToolFailures = providerToolFailuresFromClaudeEvent(parsed, runtimeKind, state.providerToolsById, eventType, subagentLinkage);
   for (const failure of providerToolFailures) {
@@ -226,6 +232,43 @@ async function recordJsonlLine(
     return reasoningExposed;
   }
   return reasoningExposed;
+}
+
+async function recordClaudeTaskName(
+  effects: AgentRuntimeEffects,
+  value: unknown,
+  tools: Map<string, Record<string, unknown>>,
+): Promise<void> {
+  if (!isRecord(value) || value['type'] !== 'user' || !isClaudeRootLine(value)) return;
+  const sessionId = stringField(value, 'session_id') ?? stringField(value, 'sessionId');
+  const message = value['message'];
+  if (!sessionId || !isRecord(message) || !Array.isArray(message['content'])) return;
+  const results = message['content'].filter((block): block is Record<string, unknown> => isRecord(block) && block['type'] === 'tool_result');
+  for (const result of results) {
+    const toolId = stringField(result, 'tool_use_id');
+    const tool = toolId ? tools.get(toolId) : undefined;
+    if (!tool || tool['taskSessionId'] !== sessionId || result['is_error'] === true) continue;
+    const name = tool['providerToolName'];
+    if (name !== 'TaskCreate' && name !== 'TaskUpdate') continue;
+    // A message-level output is unambiguous only for a single result block.
+    const output = result['tool_use_result'] ?? (results.length === 1 ? value['tool_use_result'] ?? value['toolUseResult'] : undefined);
+    if (isRecord(output) && output['success'] === false) continue;
+    let taskId = stringField(tool, 'taskId');
+    let subject = stringField(tool, 'taskSubject');
+    if (name === 'TaskCreate') {
+      if (!isRecord(output) || !isRecord(output['task'])) continue;
+      taskId = stringField(output['task'], 'id');
+      if (!taskId || !subject) continue;
+    } else if (tool['taskStatus'] === 'deleted') {
+      subject = undefined;
+    } else if (!subject) {
+      continue;
+    }
+    if (!taskId) continue;
+    const event: Record<string, unknown> = { eventType: 'claude.task.name', taskSessionId: sessionId, taskId };
+    if (subject) event['taskSubject'] = subject;
+    await effects.recordEvent(event);
+  }
 }
 
 function providerToolFailuresFromClaudeEvent(
@@ -690,7 +733,7 @@ function summarizeClaudeToolInput(
   }
   if (name === 'TaskCreate' || name === 'TaskUpdate') {
     const taskActiveForm = stringField(input, 'activeForm') ?? stringField(input, 'active_form');
-    const taskId = stringField(input, 'taskId') ?? stringField(input, 'task_id');
+    const taskId = stringField(input, 'taskId') ?? stringField(input, 'id') ?? stringField(input, 'task_id');
     const taskStatus = stringField(input, 'status');
     const taskSubject = stringField(input, 'subject');
     const target = taskSubject ?? taskActiveForm ?? (taskId ? `Task #${taskId}` : undefined);

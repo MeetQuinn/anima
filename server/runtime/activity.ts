@@ -6,6 +6,8 @@ import { isRuntimeEventNoise } from '../../shared/runtime-event-noise.js';
 import { truncateForActivity } from '../activities/format.js';
 import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
 import type { ItemStopReason } from './types.js';
+import { ProviderTaskNameStore } from '../storage/schema/provider-task-name.store.js';
+import { ProviderTaskNameService } from './provider-task-name.service.js';
 
 export interface RuntimeActivityTarget {
   agentId: string;
@@ -35,6 +37,14 @@ export async function recordRuntimeEvent(
   payload: Record<string, unknown>,
   createdAt?: string,
 ): Promise<void> {
+  if (runtimeKind === 'claude-code' && payload['eventType'] === 'claude.task.name') {
+    try {
+      await new ProviderTaskNameService(new ProviderTaskNameStore(target.agentId)).remember(payload);
+    } catch {
+      // A display-cache failure must not interrupt the provider's work.
+    }
+    return;
+  }
   const activityInput = {
     ...(createdAt ? { createdAt } : {}),
     payload: {
@@ -158,6 +168,11 @@ export async function recordRuntimeToolStarted(
   target: RuntimeActivityTarget,
   payload: Record<string, unknown>,
 ): Promise<void> {
+  try {
+    payload = await new ProviderTaskNameService(new ProviderTaskNameStore(target.agentId)).enrich(payload);
+  } catch {
+    // Missing/corrupt display state falls back to the provider's own summary.
+  }
   await activityServiceForAgent(target.agentId).record({
     payload: { ...(target.itemId ? { itemId: target.itemId } : {}), ...payload },
     type: 'tool.call.started',

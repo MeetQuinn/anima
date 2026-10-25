@@ -2382,3 +2382,45 @@ test('claude-code exposes terminal evidence before a list and clears it for a ne
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+test('claude task names survive a controller restart and enrich an ID-only terminal update', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'anima-claude-task-restart-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(home, async () => {
+      const fakeClaude = join(home, 'claude');
+      await writeFile(fakeClaude, [
+        '#!/usr/bin/env node',
+        "import readline from 'node:readline';",
+        "const send = (value) => process.stdout.write(JSON.stringify({ session_id: 'task-session', parent_tool_use_id: null, ...value }) + '\\n');",
+        "send({ type: 'system', subtype: 'init' });",
+        "readline.createInterface({ input: process.stdin }).once('line', () => {",
+        "  if (process.argv.includes('--resume')) {",
+        "    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'complete', name: 'TaskUpdate', input: { taskId: '7', status: 'completed' } }] } });",
+        "  } else {",
+        "    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'create', name: 'TaskCreate', input: { subject: 'Trace login failure' } }] } });",
+        "    send({ type: 'user', tool_use_result: { task: { id: '7', subject: 'Trace login failure' } }, message: { content: [{ type: 'tool_result', tool_use_id: 'create', is_error: false, content: 'Task #7 created successfully: Trace login failure' }] } });",
+        "  }",
+        "  send({ type: 'result', subtype: 'success', result: 'done' });",
+        '});',
+      ].join('\n'));
+      await chmod(fakeClaude, 0o755);
+      const config = { env: runtimeTestEnv(home), kind: 'claude-code' as const };
+      runtime = createAgentRuntime(config, { command: fakeClaude });
+      const first = await ingestEvent(makeSlackEvent({ channelId: 'D-task', teamId: 'T-test', text: 'start', userId: 'U1' }), { agentId: 'anima', stateDir: home });
+      await runtime.run(await runtimeInput(runtime, first, await loadState()));
+      await runtime.close?.();
+      runtime = createAgentRuntime(config, { command: fakeClaude });
+      const second = await ingestEvent(makeSlackEvent({ channelId: 'D-task', teamId: 'T-test', text: 'finish', userId: 'U1' }), { agentId: 'anima', stateDir: home });
+      await runtime.run(await runtimeInput(runtime, second, await loadState()));
+      const rows = await activitiesForInboxItemWindow('anima', second.item.id);
+      const completed = rows.find((row) => row.payload?.['providerToolId'] === 'complete');
+      assert.equal(completed?.payload?.['taskSubject'], 'Trace login failure');
+      assert.equal(completed?.payload?.['taskStatus'], 'completed');
+      assert.equal(completed?.payload?.['taskId'], '7');
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(home, { recursive: true, force: true });
+  }
+});
