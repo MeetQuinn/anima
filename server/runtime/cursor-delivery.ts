@@ -32,13 +32,13 @@ import {
 export const CURSOR_DELIVERY_MAX_MESSAGES = 20;
 /**
  * Max UTF-8 bytes of the final provider-facing rendered envelope (PRD / Iris):
- * snapshot rows + Latest wake + previews + file metadata — everything the
+ * snapshot rows + Wake trigger + previews + file metadata — everything the
  * agent turn receives from the cursor view.
  */
 export const CURSOR_DELIVERY_MAX_BYTES = 16 * 1024;
 /**
  * Per-message clip in UTF-8 bytes, applied to snapshot rows and to the trigger
- * text in Latest wake. The trigger appears in both places, so two clipped copies
+ * text in Wake trigger. The trigger appears in both places, so two clipped copies
  * plus envelope overhead must still fit CURSOR_DELIVERY_MAX_BYTES; extras
  * (previews/files) are shrunk against the remainder. Bytes, not characters,
  * because the envelope budget is a prompt-size bound.
@@ -88,7 +88,7 @@ export interface CursorDeliveryPlan {
   triggerItemId: string;
   triggerEventId: string;
   surfaces: SurfaceDeliveryPlan[];
-  /** Prompt body for the Slack wake (includes bounded context + latest wake). */
+  /** Prompt body for the Slack wake (includes bounded context + wake trigger). */
   promptBody: string;
   committed: boolean;
 }
@@ -272,7 +272,7 @@ export async function prepareCursorDelivery(input: {
     const triggerForEnvelope = clipTriggerExtrasForEnvelope(item);
 
     // Build raw per-surface candidates, then allocate ONE shared 20/16KiB budget
-    // for the final provider-facing envelope (rows + Latest wake + previews/files).
+    // for the final provider-facing envelope (rows + Wake trigger + previews/files).
     // nextDeliveredOrdinal is computed only from rows that survive that budget —
     // never truncate the rendered evidence after choosing the advance.
     const surfaces = await buildSharedBudgetSurfacePlans(store, surfaceIds, {
@@ -601,7 +601,7 @@ async function buildSharedBudgetSurfacePlans(
       : undefined;
 
   // Envelope-aware selection: only keep rows that fit the final provider-facing
-  // rendered envelope (incl. Latest wake + previews/files). Advance tracks
+  // rendered envelope (incl. Wake trigger + previews/files). Advance tracks
   // exactly these rows — no post-hoc truncation. Omission budget uses the
   // index-derived population, not the retained-window length.
   const selected = selectNewestFittingForEnvelope(tagged, {
@@ -831,7 +831,7 @@ export function mergeCursorDeliveryPlans(
 
 /**
  * Newest-fitting selection measured against the final provider-facing envelope
- * (rows + Latest wake + previews + files). Only rows that fit are returned;
+ * (rows + Wake trigger + previews + files). Only rows that fit are returned;
  * nextDeliveredOrdinal must be derived from this set alone.
  */
 export function selectNewestFittingForEnvelope(
@@ -948,7 +948,7 @@ export function formatObservedLine(entry: ObservedConversationEntry): string {
 }
 
 /**
- * Final provider-facing cursor envelope: chronological rows + Latest wake +
+ * Final provider-facing cursor envelope: chronological rows + Wake trigger +
  * previews/files. Must not post-truncate after nextDeliveredOrdinal is chosen;
  * callers select rows so this string is already ≤ 16 KiB.
  */
@@ -987,7 +987,18 @@ export function renderCursorDeliveryEnvelopeFromEntries(
     parts.push('', '(no prior observed messages in window)');
   }
 
-  parts.push('', 'Latest wake:', buildLatestWakeLine(trigger));
+  const newer = sorted.filter((entry) =>
+    surfacesForSlackWake(trigger).includes(entry.surfaceId)
+    && compareByConversationTime({ messageTs: entry.messageTs }, { messageTs: trigger.messageTs }) > 0,
+  );
+  parts.push('', newer.length > 0 ? 'Earlier wake trigger (newer context above):' : 'Wake trigger:', buildWakeTriggerLine(trigger));
+  if (newer.length > 0) {
+    const latest = newer.at(-1)!;
+    parts.push(
+      `Latest included message on this conversation: ${latest.messageTs}.`,
+      'The trigger is an earlier message. Read the later context before acting; work that has since been completed, cancelled, or reassigned must not be repeated. Continue any still-open requests; newer messages alone do not cancel them.',
+    );
+  }
   if (trigger.attentionSuggestion) {
     parts.push('', trigger.attentionSuggestion);
   }
@@ -1026,7 +1037,7 @@ export function truncateUtf8(text: string, maxBytes: number): string {
 }
 
 /**
- * Clip previews/files so chrome + Latest wake + extras fit in the envelope
+ * Clip previews/files so chrome + Wake trigger + extras fit in the envelope
  * budget even with zero snapshot rows. Never leave an over-cap prepared plan.
  */
 /** Envelope line + sender label + row separators around a snapshot row. */
@@ -1037,7 +1048,7 @@ export function clipTriggerExtrasForEnvelope(trigger: SlackInboxItem): SlackInbo
   let previews = trigger.previews?.map((p) => ({ ...p }));
   let files = trigger.files?.map((f) => ({ ...f }));
   let attention = trigger.attentionSuggestion;
-  // The trigger is rendered twice (its snapshot row + Latest wake). Extras are
+  // The trigger is rendered twice (its snapshot row + Wake trigger). Extras are
   // shrunk against a budget that reserves the row copy, so a long trigger cannot
   // push the mandatory row out of the envelope.
   const triggerRowReserve = Buffer.byteLength(clipObservedText(trigger.text ?? ''), 'utf8') + TRIGGER_ROW_ENVELOPE_OVERHEAD_BYTES;
@@ -1094,7 +1105,7 @@ export function clipTriggerExtrasForEnvelope(trigger: SlackInboxItem): SlackInbo
       files = undefined;
     }
   }
-  // Last resort: empty extras; Latest wake text already clipped per-message.
+  // Last resort: empty extras; Wake trigger text already clipped per-message.
   if (measure() > extrasBudget) {
     previews = undefined;
     files = undefined;
@@ -1116,7 +1127,7 @@ export function primarySurfaceId(plan: CursorDeliveryPlan): string {
   return plan.surfaces[0]?.surfaceId ?? plan.triggerEventId;
 }
 
-function buildLatestWakeLine(event: SlackInboxItem): string {
+function buildWakeTriggerLine(event: SlackInboxItem): string {
   const actor = slackDisplayLabel({
     displayName: event.actor?.displayName ?? event.actor?.realName,
     handle: event.actor?.handle,
@@ -1128,13 +1139,15 @@ function buildLatestWakeLine(event: SlackInboxItem): string {
     { key: 'message_ts', value: event.messageTs },
     { key: 'wake', value: event.wakeReason },
     { key: 'time', value: envelopeTime(event.receivedAt) },
+    { key: 'queued_at', value: envelopeTime(event.handling.queuedAt ?? event.handling.createdAt) },
+    { key: 'claimed_at', value: event.handling.startedAt ? envelopeTime(event.handling.startedAt) : undefined },
     { key: 'user_id', value: event.actor?.userId },
   ]);
   let text = event.text ?? '';
   if (!text && event.files?.length) {
     text = `[file: ${event.files.map((f) => f.name).join(', ')}]`;
   }
-  // Same clip as snapshot rows — never re-expand a long trigger in Latest wake.
+  // Same clip as snapshot rows — never re-expand a long trigger in Wake trigger.
   text = clipObservedText(text);
   return `${env} ${actor}: ${text}`;
 }

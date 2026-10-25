@@ -31,13 +31,16 @@ import {
 } from '../storage/schema/observed-conversation.store.js';
 import type { SlackInboxItem } from '../../shared/inbox.js';
 import { withAnimaHome } from './anima-home.js';
-import { defaultAgentConfig, writeAgentConfigs } from './helpers/harness.js';
+import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
+import type { AgentRuntimeInput } from '../providers/contract.js';
+import { ControlledRuntime, silentLogger } from './helpers/runtime-worker.js';
+import { defaultAgentConfig, waitFor, writeAgentConfigs } from './helpers/harness.js';
 import { observeAcrossClockStep } from './helpers/observed-journal.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { makeSlackEvent } from './helpers/slack.js';
 
 async function withEnabledStore<T>(
-  body: (store: ObservedConversationStore, agentId: string, queue: WakeQueueService) => Promise<T>,
+  body: (store: ObservedConversationStore, agentId: string, queue: WakeQueueService, stateDir: string) => Promise<T>,
   storeOptions?: { maxArchives?: number; maxBytes?: number },
 ): Promise<T> {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cursor-del-'));
@@ -47,7 +50,7 @@ async function withEnabledStore<T>(
     return await withAnimaHome(stateDir, async () => {
       const store = new ObservedConversationStore('anima', storeOptions);
       const queue = new WakeQueueService('anima');
-      return body(store, 'anima', queue);
+      return body(store, 'anima', queue, stateDir);
     });
   } finally {
     setCursorDeliveryEnabledForTests(undefined);
@@ -166,7 +169,7 @@ test('first wake: bounded context + trigger retained; child thread established p
     assert.equal(child.nextDeliveredOrdinal, 0);
 
     assert.match(prepared.plan.promptBody, /Slack conversation update:/);
-    assert.match(prepared.plan.promptBody, /Latest wake:/);
+    assert.match(prepared.plan.promptBody, /Wake trigger:/);
     assert.match(prepared.plan.promptBody, /msg-25/);
     // Chronological flat view (no per-surface headers).
     assert.match(prepared.plan.promptBody, /earlier message/);
@@ -1728,5 +1731,86 @@ test('prepare failure requeues without tombstone (retryable)', async () => {
     // Ensure we can claim again: take would get it if we markRunning cycle.
     // Key invariant: status remains queued, not settled via fail.
     assert.notEqual(listed.find((i) => i.id === item.id)?.handling.status, 'failed');
+  });
+});
+
+test('a blocked primary delivers old follow work as earlier context and still drains an independent DM', async () => {
+  await withEnabledStore(async (store, agentId, queue, stateDir) => {
+    const runtime = new class extends ControlledRuntime {
+      override async run(input: AgentRuntimeInput) {
+        await input.effects.recordRuntime('runtime.started');
+        return super.run(input);
+      }
+    }();
+    const worker = new AgentRuntimeWorker({ agentId, agentRuntime: runtime, homePath: stateDir, stateDir, queue, workerId: 'stale-test' }, silentLogger);
+    const t0 = Date.now() - 2 * 60 * 60 * 1000;
+    function item(channelId: string, offset: number, text: string, threadTs?: string) {
+      const at = new Date(t0 + offset).toISOString();
+      const event = slackItem({ channelId, messageTs: String((t0 + offset) / 1000), text, ...(threadTs ? { threadTs } : {}) });
+      event.receivedAt = at;
+      event.handling = { createdAt: at, queuedAt: at, updatedAt: at, status: 'queued' };
+      event.wakeReason = channelId.startsWith('D') ? 'dm' : 'thread_follow';
+      return event;
+    }
+    async function enqueue(event: SlackInboxItem) {
+      await store.observe({ teamId: event.teamId, channelId: event.channelId, messageTs: event.messageTs, text: event.text ?? '', userId: 'U1', receivedAt: event.receivedAt, ...(event.threadTs ? { threadTs: event.threadTs } : {}) });
+      await queue.enqueue(event);
+    }
+    const primary = item('D-primary', 0, 'long primary');
+    const hold = item('C-review', 60_000, 'HOLD: fix the old implementation', '100.0');
+    const clear = item('C-review', 120_000, 'CLEAR: fix verified', '100.0');
+    const merged = item('C-review', 180_000, 'MERGED: review finished', '100.0');
+    const direct = item('D-independent', 240_000, 'Please do this still-open request');
+    let drain: Promise<number> | undefined;
+    try {
+      await enqueue(primary);
+      drain = worker.drainOnce();
+      await waitFor(() => runtime.calls.length === 1);
+      for (const event of [hold, clear, merged, direct]) await enqueue(event);
+      runtime.finishNext();
+      await waitFor(() => runtime.calls.length === 2);
+      const prompt = runtime.calls[1]!.prompt;
+      assert.match(prompt, /Earlier wake trigger \(newer context above\):/);
+      assert.doesNotMatch(prompt, /Latest wake:/);
+      assert.match(prompt, /completed, cancelled, or reassigned must not be repeated/);
+      assert.match(prompt, /Continue any still-open requests/);
+      assert.ok(prompt.includes(`Latest included message on this conversation: ${merged.messageTs}.`));
+      assert.ok(prompt.includes(`queued_at=${hold.handling.queuedAt!.replace(/\.\d{3}Z$/, 'Z')}`));
+      assert.match(prompt, /claimed_at=/);
+      assert.ok(prompt.indexOf('HOLD:') < prompt.indexOf('CLEAR:'));
+      assert.ok(prompt.indexOf('CLEAR:') < prompt.indexOf('MERGED:'));
+      assert.ok(Buffer.byteLength(prompt) <= CURSOR_DELIVERY_MAX_BYTES);
+      assert.equal(await queue.find(clear.id), undefined);
+      assert.equal(await queue.find(merged.id), undefined);
+      assert.ok(await queue.find(direct.id));
+      runtime.finishNext();
+      await waitFor(() => runtime.calls.length === 3);
+      assert.equal(runtime.calls[2]!.itemId, direct.id);
+      assert.match(runtime.calls[2]!.prompt, /Wake trigger:/);
+      assert.doesNotMatch(runtime.calls[2]!.prompt, /Earlier wake trigger/);
+      assert.match(runtime.calls[2]!.prompt, /still-open request/);
+      runtime.finishNext();
+      assert.equal(await drain, 3);
+      assert.equal((await queue.list()).length, 0);
+    } finally {
+      await worker.close();
+      await drain;
+    }
+  });
+});
+
+test('newer context marks queued mentions too without replacing the trigger or inferring cancellation', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    const trigger = slackItem({ channelId: 'C1', messageTs: '200.000001', threadTs: '100.0', text: '@agent investigate this' });
+    trigger.wakeReason = 'mention';
+    await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: trigger.messageTs, threadTs: '100.0', text: trigger.text!, userId: 'U1' });
+    await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: '200.000002', threadTs: '100.0', text: 'Additional evidence, work remains open', userId: 'U2' });
+    const prepared = await prepareCursorDelivery({ agentId, item: trigger, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    assert.match(prepared.plan.promptBody, /Earlier wake trigger/);
+    assert.match(prepared.plan.promptBody, /wake=mention/);
+    assert.match(prepared.plan.promptBody, /newer messages alone do not cancel them/);
+    assert.equal(prepared.plan.triggerItemId, trigger.id);
   });
 });
