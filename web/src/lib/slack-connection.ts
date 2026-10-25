@@ -6,13 +6,21 @@ const SNAPSHOT_STALE_MS = 30_000;
 export function slackConnectionDisplay(
   health: AgentRuntimeHealthSummary | undefined,
   now = Date.now(),
+  revalidatingCachedAt?: number,
 ) {
   const connection = health?.runtime?.transports?.slack;
   if (!connection) return undefined;
+  const stale = now - Date.parse(connection.observedAt) > SNAPSHOT_STALE_MS;
   if (
-    health?.reason === 'start_failed' ||
-    now - Date.parse(connection.observedAt) > SNAPSHOT_STALE_MS
+    health?.reason !== 'start_failed' &&
+    stale &&
+    connection.state === 'connected' &&
+    revalidatingCachedAt !== undefined &&
+    revalidatingCachedAt - Date.parse(connection.observedAt) <= SNAPSHOT_STALE_MS
   ) {
+    return undefined;
+  }
+  if (health?.reason === 'start_failed' || stale) {
     return {
       label: 'Slack status unavailable',
       detail: 'Connection status has not been updated. Check the runtime.',
