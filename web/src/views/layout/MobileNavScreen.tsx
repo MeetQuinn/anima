@@ -1,4 +1,4 @@
-import { useConnectionNow } from '@/hooks/useConnectionNow';
+import { useConnectionNow, useConnectionRevalidation } from '@/hooks/useConnectionNow';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, GripVertical, Pencil, Plus, Settings } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -104,7 +104,9 @@ export default function MobileNavScreen({
     navigate(`/kb/${id}`);
   };
 
-  const { data: statuses = [] } = useAgentStatuses({ poll: true });
+  const statusQuery = useAgentStatuses({ poll: true });
+  const { data: statuses = [] } = statusQuery;
+  const connectionRevalidatingAt = useConnectionRevalidation(statusQuery);
   const statusByAgentId = new Map(statuses.map((status) => [status.agentId, status]));
 
   return (
@@ -307,6 +309,7 @@ export default function MobileNavScreen({
                     <MobileSortableItem key={agent.id} id={agent.id}>
                       <AgentRow
                         nowMs={now.getTime()}
+                        connectionRevalidatingAt={connectionRevalidatingAt}
                         agent={agent}
                         index={agentIndexMap.get(agent.id) ?? 0}
                         active={agent.id === lastSelectedId}

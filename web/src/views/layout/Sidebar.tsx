@@ -1,4 +1,4 @@
-import { useConnectionNow } from '@/hooks/useConnectionNow';
+import { useConnectionNow, useConnectionRevalidation } from '@/hooks/useConnectionNow';
 import { useState } from 'react';
 import { ChevronLeft, Plus, Settings } from 'lucide-react';
 import {
@@ -107,7 +107,9 @@ export default function Sidebar({
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const { data: statuses = [] } = useAgentStatuses({ poll: true });
+  const statusQuery = useAgentStatuses({ poll: true });
+  const { data: statuses = [] } = statusQuery;
+  const connectionRevalidatingAt = useConnectionRevalidation(statusQuery);
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const { agentId } = parseLocation(pathname);
@@ -225,7 +227,7 @@ export default function Sidebar({
     const dotTitle = sidebarDotTitle(collapsedStatus?.health, work.state, work.backgroundTaskCount);
     const backgroundRing = sidebarUsesBackgroundRing(collapsedStatus?.health, work.state);
     const showCollapsedDot = enabled && !notConnected;
-    const connection = enabled ? slackConnectionDisplay(collapsedStatus?.health, now.getTime()) : undefined;
+    const connection = enabled ? slackConnectionDisplay(collapsedStatus?.health, now.getTime(), connectionRevalidatingAt) : undefined;
     const connectionWarning = connection && connection.severity !== 'normal' ? connection : undefined;
     return (
       <div key={agent.id} className="relative w-full flex justify-center">
@@ -298,6 +300,7 @@ export default function Sidebar({
       <SortableItem key={agent.id} id={agent.id} presentation>
         <AgentRow
           nowMs={now.getTime()}
+          connectionRevalidatingAt={connectionRevalidatingAt}
           agent={agent}
           index={agentIndexMap.get(agent.id) ?? 0}
           active={agentId === agent.id}

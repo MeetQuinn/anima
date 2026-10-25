@@ -68,6 +68,7 @@ export function AgentRow({
   focused = false,
   touch = false,
   nowMs,
+  connectionRevalidatingAt,
 }: {
   agent: AgentConfig;
   index: number;
@@ -84,8 +85,9 @@ export function AgentRow({
   // both surfaces sit on the dark spine.
   touch?: boolean;
   nowMs?: number;
+  connectionRevalidatingAt?: number;
 }) {
-  const connection = enabled ? slackConnectionDisplay(status?.health, nowMs) : undefined;
+  const connection = enabled ? slackConnectionDisplay(status?.health, nowMs, connectionRevalidatingAt) : undefined;
   const color = agentColor(index);
   const displayName = agentDisplayName(agent);
   const avatarUrl = agentAvatarUrl(agent);

@@ -35,7 +35,7 @@ import { activityRow, isNarrativeStep } from '@/lib/activities';
 import { clockHM, formatRelativeShort } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
-import { useConnectionNow } from '@/hooks/useConnectionNow';
+import { useConnectionNow, useConnectionRevalidation } from '@/hooks/useConnectionNow';
 import {
   agentHealthDegradedText,
   agentHealthReasonText,
@@ -272,15 +272,17 @@ export function ActivityStatusSummary({
   now,
   onRetryDeferred,
   retryingDeferredId,
+  connectionRevalidatingAt,
 }: {
   status: AgentStatusSummary | undefined;
   latestActivity: ActivityRecord | undefined;
   now: Date;
   onRetryDeferred?: (itemId: string) => void;
   retryingDeferredId?: string | null;
+  connectionRevalidatingAt?: number;
 }) {
   if (!status) return null;
-  const connection = slackConnectionDisplay(status.health, now.getTime());
+  const connection = slackConnectionDisplay(status.health, now.getTime(), connectionRevalidatingAt);
   const work = agentWorkState(status);
   const running = work.state === 'working';
   const background = work.state === 'background';
@@ -521,7 +523,9 @@ function FeishuRecommendedPermissionsConnectBanner({
 
 export default function Activity() {
   const { data: agents = [] } = useAgents();
-  const { data: agentStatuses = [] } = useAgentStatuses({ poll: true });
+  const statusQuery = useAgentStatuses({ poll: true });
+  const { data: agentStatuses = [] } = statusQuery;
+  const connectionRevalidatingAt = useConnectionRevalidation(statusQuery);
   const { agentId } = useParams<{ agentId: string }>();
   const agent = agents.find((a) => a.id === agentId);
   const [searchParams] = useSearchParams();
@@ -854,6 +858,7 @@ export default function Activity() {
       )}
 
       <ActivityStatusSummary
+        connectionRevalidatingAt={connectionRevalidatingAt}
         status={currentStatus}
         latestActivity={latestCurrentItemActivity}
         now={now}
