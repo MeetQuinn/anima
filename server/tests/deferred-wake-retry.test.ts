@@ -263,7 +263,6 @@ test('deferred_retry delivers the missed request even beyond the context waterma
 
       const prepared = await prepareCursorDelivery({ agentId, item, store });
       assert.equal(prepared.kind, 'prepared');
-      assert.equal(prepared.kind, 'prepared');
 
       const prompt = buildCodeAgentDeliveryPrompt(item, {
         cursorDeliveryPromptBody: prepared.kind === 'prepared' ? prepared.plan.promptBody : undefined,

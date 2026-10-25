@@ -1992,3 +1992,53 @@ test('worker follow-up batches acknowledge every request only in a prompt that i
     }
   });
 });
+
+test('automatic rate-limit retry delivers the request after its context cursor has advanced', async () => {
+  await withEnabledStore(async (store, agentId, _queue, stateDir) => {
+    let claimAt: Date | undefined;
+    const queue = new class extends WakeQueueService {
+      override async takeNextRunnable(input: Parameters<WakeQueueService['takeNextRunnable']>[0]) {
+        return super.takeNextRunnable({ ...input, now: claimAt ?? input.now });
+      }
+    }(agentId);
+    const runtime = new class extends ControlledRuntime {
+      override async run(input: AgentRuntimeInput) {
+        this.calls.push(input);
+        await input.effects.recordRuntime('runtime.started');
+        if (this.calls.length === 1) throw new Error('Too many requests, resets in 45 minutes (api status 429)');
+        return { text: 'completed after reset' };
+      }
+    }();
+    const worker = new AgentRuntimeWorker({ agentId, agentRuntime: runtime, homePath: stateDir,
+      stateDir, queue, workerId: 'automatic-retry-test' }, silentLogger);
+    const event = slackItem({ channelId: 'D-auto-retry', messageTs: '1.0', text: 'Please finish this request after quota resets' });
+    try {
+      await store.observe({ teamId: 'T1', channelId: event.channelId, messageTs: event.messageTs,
+        text: event.text!, userId: 'U1' });
+      await queue.enqueue(event);
+      assert.equal(await worker.drainOnce(), 0);
+      assert.equal(runtime.calls.length, 1);
+      const deferred = await queue.find(event.id);
+      assert.equal(deferred?.handling.status, 'queued');
+      assert.equal(deferred?.handling.deferrals, 1);
+      assert.equal(deferred?.handling.resumeReason, undefined);
+      const notBefore = Date.parse(deferred!.handling.notBefore!);
+      assert.ok(notBefore > Date.now());
+      const cursor = await store.getCursor('slack:T1:D-auto-retry');
+      assert.equal(cursor.status, 'present');
+      if (cursor.status === 'present') assert.equal(cursor.deliveredOrdinal, 1);
+      assert.equal(await worker.drainOnce(), 0);
+      assert.equal(runtime.calls.length, 1, 'quota delay still applies');
+      // Move only the queue's claim clock past the persisted reset, without an
+      // operator Retry-now, a new wake, or a process-wide timer mock.
+      claimAt = new Date(notBefore + 1);
+      assert.equal(await worker.drainOnce(), 1);
+      assert.equal(runtime.calls.length, 2);
+      assert.equal(runtime.calls[1]!.itemId, event.id);
+      assert.ok(runtime.calls[1]!.prompt.includes(event.text!));
+      assert.equal(await queue.find(event.id), undefined);
+    } finally {
+      await worker.close();
+    }
+  });
+});
