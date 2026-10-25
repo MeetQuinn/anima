@@ -87,6 +87,10 @@ test('unconfirmed, mismatched, failed and ambiguous create results cannot assign
     if (mode !== 'missing') await send(m, reply);
     await send(m, use('u', 'TaskUpdate', { taskId: '7', status: 'completed' }));
     assert.equal((await updates(mode)).at(-1)?.['taskSubject'], undefined, mode);
+    if (mode === 'wrong-session') {
+      await send(m, use('other-session-update', 'TaskUpdate', { taskId: '7', status: 'completed' }, 'other'));
+      assert.equal((await updates(mode)).at(-1)?.['taskSubject'], undefined, 'mismatched result cannot poison its own session either');
+    }
   }
 }));
 
