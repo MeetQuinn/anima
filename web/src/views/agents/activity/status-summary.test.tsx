@@ -227,7 +227,11 @@ describe('ActivityStatusSummary Slack connection', () => {
     status.health!.runtime!.transports!.slack = { state: 'connected', observedAt: now.toISOString(), since: now.toISOString(), attempts: 0 };
     view.rerender(<ActivityStatusSummary latestActivity={undefined} now={now} status={status} />);
     expect(screen.getByText('Working')).toBeTruthy();
-    expect(screen.getByText('Slack connected')).toBeTruthy();
+    expect(screen.queryByText('Slack connected')).toBeNull();
+    expect(screen.queryByText('Slack disconnected')).toBeNull();
     expect(screen.queryByText(/invalid_auth/)).toBeNull();
+    view.rerender(<ActivityStatusSummary latestActivity={undefined} now={new Date(now.getTime() + 31_000)} status={status} />);
+    expect(screen.getByText('Slack status unavailable')).toBeTruthy();
+    expect(screen.getByText('Working')).toBeTruthy();
   });
 });
