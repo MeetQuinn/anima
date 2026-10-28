@@ -251,6 +251,94 @@ test('file send supports multi-file batch with caption and thread', async () => 
   }
 });
 
+// `message send --file` is the same file post as `file send`: one upload, the
+// body as the caption, and a caption resolves readable mentions like a message.
+test('message send --file posts files as one message with the body as a mention-resolved caption', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-message-file-test-'));
+  const completeCalls: Array<Record<string, unknown>> = [];
+  const uploadedBytes: string[] = [];
+  let apiUrl = '';
+  let getUploadCount = 0;
+  const slackApi = await startSlackApiMock((method, body) => {
+    if (method === 'users.list') {
+      return { members: [{ id: 'U0B68F373GU', is_bot: true, is_stranger: false, name: 'felix', team_id: 'T-demo' }], ok: true };
+    }
+    if (method === 'conversations.info') {
+      return { channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' }, ok: true };
+    }
+    if (method === 'conversations.members') return { members: ['U0B68F373GU'], ok: true };
+    if (method === 'files.getUploadURLExternal') {
+      getUploadCount += 1;
+      return { ok: true, file_id: `F-msg-${getUploadCount}`, upload_url: `${apiUrl}/upload-bytes/${getUploadCount}` };
+    }
+    if (method.startsWith('upload-bytes/')) {
+      uploadedBytes.push(body);
+      return { ok: true };
+    }
+    if (method === 'files.completeUploadExternal') {
+      completeCalls.push(slackRequestBody(body));
+      return {
+        ok: true,
+        files: [
+          { id: 'F-msg-1', ...sharedIn('C-product', '1770000200.000400', '1770000200.000001') },
+          { id: 'F-msg-2', ...sharedIn('C-product', '1770000200.000400', '1770000200.000001') },
+        ],
+      };
+    }
+    if (method === 'files.info') return { ok: true, file: { id: 'F-msg-1', mimetype: 'text/plain', size: 4 } };
+    if (method === 'chat.postMessage') throw new Error('a file post must not also post a text message');
+    throw new Error(`unexpected method ${method}`);
+  });
+  apiUrl = slackApi.url;
+
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackAgentConfig(stateDir);
+      const itemId = await ingestSlackThread(stateDir);
+      const a = join(stateDir, 'a.txt');
+      const b = join(stateDir, 'b.txt');
+      await writeFile(a, 'aaaa');
+      await writeFile(b, 'bbbb');
+
+      const send = await runNode(
+        [cliPath, 'message', 'send', '--channel', 'C-product', '--thread-ts', '1770000200.000001', '--file', a, '--file', b],
+        {
+          env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
+          input: 'For @felix: **both** logs',
+        },
+      );
+      assert.equal(send.status, 0, send.stderr || send.stdout);
+      assert.equal(
+        send.stdout.trim(),
+        'uploaded successfully. channel=#product, thread_ts=1770000200.000001, message_ts=1770000200.000400, files=2.',
+      );
+      assert.deepEqual(uploadedBytes.sort(), ['aaaa', 'bbbb']);
+      assert.equal(completeCalls.length, 1);
+      assert.equal(completeCalls[0]!['thread_ts'], '1770000200.000001');
+      assert.equal(parseFilesField(completeCalls[0]!['files']).length, 2);
+      assert.deepEqual(captionBlocks(completeCalls[0]!), [{ type: 'markdown', text: 'For <@U0B68F373GU>: **both** logs' }]);
+
+      const completed = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
+      assert.equal(completed?.type, 'external.effect.completed');
+      assert.equal(completed?.payload?.['effect'], 'slack.file.send');
+      assert.equal(completed?.payload?.['tool'], 'anima.file.send');
+      assert.equal(completed?.payload?.['fileCount'], 2);
+      assert.equal(completed?.payload?.['caption'], 'For @felix: **both** logs');
+      assert.equal(completed?.payload?.['slackCaption'], 'For <@U0B68F373GU>: **both** logs');
+      assert.deepEqual(completed?.payload?.['resolvedMentions'], [{ id: 'U0B68F373GU', label: '@felix', type: 'user' }]);
+      assert.equal(completed?.payload?.['warnings'], undefined);
+      assert.equal(completed?.payload?.['ts'], '1770000200.000400');
+      assert.equal(
+        (completed?.payload?.['threadSubscription'] as Record<string, unknown> | undefined)?.['threadTs'],
+        '1770000200.000001',
+      );
+    });
+  } finally {
+    await slackApi.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 // The seam this case guards is what reaches Slack, so it asserts the outgoing
 // `blocks` on the wire. The mock answers 200 to anything and validates nothing;
 // it cannot tell us Slack renders the result. That half is a real-Slack probe,
@@ -284,6 +372,8 @@ test('file send posts captions as one Slack markdown block, entities and Markdow
         upload_url: `http://127.0.0.1:${uploadAddr.port}/upload/${getUploadCount}`,
       };
     }
+    // A caption's mentions get the same membership check as a message's.
+    if (method === 'conversations.members') return { members: ['U0B3ZB0NCLA'], ok: true };
     if (method === 'files.completeUploadExternal') {
       completeCalls.push(slackRequestBody(body));
       return { ok: true, files: [{ id: `F-cap-${getUploadCount}` }] };
@@ -913,7 +1003,7 @@ test('file commands reject agent and item flags', async () => {
   assert.match(send.stderr, /^error input\.invalid_options \(not retryable\): /);
 });
 
-test('file send rejects missing local path before any Slack call', async () => {
+for (const command of ['file send', 'message send --file']) test(`${command} rejects missing local path before any Slack call`, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-missing-path-test-'));
   let upstreamCalls = 0;
   const slackApi = await startSlackApiMock(() => {
@@ -926,7 +1016,9 @@ test('file send rejects missing local path before any Slack call', async () => {
       const itemId = await ingestSlackThread(stateDir);
 
       const send = await runNode(
-        [cliPath, 'file', 'send', '--channel', 'C-product', join(stateDir, 'does-not-exist.png')],
+        command === 'file send'
+          ? [cliPath, 'file', 'send', '--channel', 'C-product', join(stateDir, 'does-not-exist.png')]
+          : [cliPath, 'message', 'send', '--channel', 'C-product', '--file', join(stateDir, 'does-not-exist.png')],
         {
           env: {
             ...process.env,

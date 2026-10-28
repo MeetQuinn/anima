@@ -2,39 +2,22 @@ import { existsSync } from 'node:fs';
 import { readFile, stat as fsStat } from 'node:fs/promises';
 import { basename } from 'node:path';
 
-import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '../feishu/client.js';
 import type {
   FeishuMessageClient,
   FeishuReceiveIdType,
 } from '../feishu/client.js';
 import { safeFilename } from '../storage/safe-filename.js';
-import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
-import { slackCaptionBlocks } from './slack-message-format.js';
-import {
-  completeSlackFileUpload,
-  readSlackFileMetadataAfterUpload,
-  SLACK_FILE_METADATA_REQUEST_TIMEOUT_MS,
-  uploadSlackFile,
-} from './slack-file-upload.js';
-import { createAgentSlackDeadlineWebClient } from '../agents/agent-slack.service.js';
-import { finalizeSentSlackMessage, sentThreadSubscriptionPayload } from '../messages/sent-message.service.js';
-import {
-  slackOutputTarget,
-  slackTargetPayload,
-  slackTargetSummary,
-  type SlackTargetSummary,
-} from './slack-target.js';
 import { outcomeLine, type OutcomePart } from './outcome-line.js';
+import { runSlackSend, type LocalFileToSend, type UploadedFilePayload } from './slack-send.js';
 import {
+  currentFeishuItem,
   feishuMessageClientForOpts,
   resolveToolAgentId,
-  slackWebClientForOpts,
   withToolActivity,
   readOptionalStdin,
 } from './tool-context.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
-import { evaluateSendHold, observeOwnOutboundPost } from '../runtime/send-hold.js';
 
 export interface FileSendInputData {
   agent?: string;
@@ -43,26 +26,6 @@ export interface FileSendInputData {
   paths: string[];
   threadTs?: string;
   item?: string;
-}
-
-interface UploadedFilePayload {
-  fileId: string;
-  filename: string;
-  kind?: string;
-  mimetype: string;
-  messageId?: string;
-  permalink?: string;
-  sizeBytes: number;
-  thumb360?: string;
-  thumb720?: string;
-  title?: string;
-}
-
-interface ValidatedLocalFile {
-  filename: string;
-  mimetype: string;
-  path: string;
-  sizeBytes: number;
 }
 
 interface FeishuFileTarget {
@@ -74,19 +37,27 @@ interface FeishuFileTarget {
 
 type FeishuMessageClientFactory = typeof createDefaultFeishuMessageClient;
 
-interface FileSendDeps {
+export interface FileSendDeps {
   createFeishuMessageClient?: FeishuMessageClientFactory;
+  writeOutput?: (line: string) => void;
 }
 
+// `anima file send` is `anima message send --file` with its own flags: the
+// same validation, the same Feishu path and the same Slack send pipeline.
 export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = {}): Promise<void> {
   const agentId = resolveToolAgentId(opts);
   if (!agentId) throw new Error('file send requires current agent context for audit');
   if (!opts.channel) throw new Error('file send requires --channel or --chat-id');
   if (!opts.paths.length) throw new Error('file send requires at least one path');
+  const files = await validateLocalFiles(opts.paths);
+  const caption = await captionFromOpts(opts);
+  await sendLocalFiles({ agentId, caption: caption ?? '', deps, files, opts: { ...opts, channel: opts.channel } });
+}
 
-  // Validate every path up front so we fail closed before any Slack call.
-  // Mirrors text-send: bad input never reaches Slack.
-  const validated = await Promise.all(opts.paths.map(async (path) => {
+// Validate every path up front so a send fails closed before any platform
+// call: bad input never reaches Slack or Feishu.
+export async function validateLocalFiles(paths: readonly string[]): Promise<LocalFileToSend[]> {
+  return Promise.all(paths.map(async (path) => {
     if (!existsSync(path)) throw new Error(`file not found: ${path}`);
     const stats = await fsStat(path);
     if (!stats.isFile()) throw new Error(`not a regular file: ${path}`);
@@ -94,19 +65,28 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
     const filename = safeFilename(basename(path));
     return { path, filename, mimetype: mimeFromName(filename), sizeBytes: stats.size };
   }));
+}
 
-  const caption = await captionFromOpts(opts);
-  const chatTarget = resolveChatTarget(opts.channel);
+/** Post validated local files as one message, with `caption` ('' for none). */
+export async function sendLocalFiles(input: {
+  agentId: string;
+  caption: string;
+  deps?: FileSendDeps;
+  files: LocalFileToSend[];
+  opts: { agent?: string; channel: string; item?: string; threadTs?: string };
+}): Promise<void> {
+  const { agentId, caption, files, opts } = input;
+  const chatTarget = resolveChatTarget(opts.channel, await currentFeishuItem(agentId, opts));
   if (chatTarget.platform === 'feishu') {
     const { client } = await feishuMessageClientForOpts(
       opts,
-      deps.createFeishuMessageClient ?? createDefaultFeishuMessageClient,
+      input.deps?.createFeishuMessageClient ?? createDefaultFeishuMessageClient,
     );
     await runFeishuFileSend({
       agentId,
-      caption,
+      ...(caption ? { caption } : {}),
       client,
-      files: validated,
+      files,
       opts,
       target: {
         displayName: chatTarget.displayName ?? 'Feishu chat',
@@ -117,148 +97,12 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
     });
     return;
   }
-
-  const { agent, client } = await slackWebClientForOpts(opts);
-  const teamId = agent.slack.teamId || undefined;
-
-  const channel = await resolveSlackChannelArgument({
-    channel: opts.channel,
-    client,
-    teamId,
-  });
-  const threadTs = opts.threadTs;
-  const target = await slackTargetSummary({ channel, client, teamId });
-
-  const basePayload: Record<string, unknown> = {
-    ...slackTargetPayload(channel),
-    ...target,
-    ...(threadTs ? { threadTs } : {}),
-    fileCount: validated.length,
-    files: validated.map((entry) => ({ filename: entry.filename, sizeBytes: entry.sizeBytes })),
-    ...(caption ? { caption } : {}),
-    tool: 'anima.file.send',
-  };
-
-  if (!teamId) throw new Error(`Agent ${agent.id} has no Slack team id configured`);
-
-  // Caption transform is preparation (not irreversible); hold still runs before
-  // any upload URL / bytes. A too-long caption fails here, before any upload.
-  const captionBlocks = caption ? slackCaptionBlocks(caption) : undefined;
-  const captionText = caption === undefined ? undefined : (captionBlocks?.[0]?.text ?? '');
-
-  // Pre-commit hold: after target/caption prep, before first irreversible upload.
-  await assertSlackContactAllowed({
-    agentId, teamId, channelId: channel.id, dmUserId: target.dmUserId,
-    client, content: { text: captionText }, tool: 'anima.file.send',
-  });
-  const hold = await evaluateSendHold({
+  await runSlackSend({
     agentId,
-    teamId,
-    channelKind: target.channelKind,
-    channelId: channel.id,
-    ...(threadTs ? { threadTs } : {}),
-    tool: 'anima.file.send',
-    botUserId: agent.slack.botUserId,
-  });
-  if (hold.kind === 'held') return;
-
-  await withToolActivity({
-    audit: { agentId },
-    basePayload,
-    effectType: 'slack.file.send',
-    op: async () => {
-      // Step 1+2: per-file upload URL + POST bytes.
-      const uploaded = await Promise.all(
-        validated.map((entry) => uploadSlackFile({ client, localPath: entry.path })),
-      );
-
-      // Step 3: single completeUploadExternal posts all N files as one message.
-      const completed = await completeSlackFileUpload({
-        channelId: channel.id,
-        client,
-        files: uploaded.map((file) => ({ fileId: file.fileId })),
-        ...(threadTs ? { threadTs } : {}),
-        ...(captionBlocks ? { captionBlocks } : {}),
-      });
-
-      // The files have posted, so these reads must neither fail the send nor
-      // hang it: per-file permalink/thumbs for the audit and the message ts
-      // share one deadline, on a client with no retries or 429 waits.
-      const metadata = await readSlackFileMetadataAfterUpload({
-        channelId: channel.id,
-        createClient: (signal) => createAgentSlackDeadlineWebClient(agent, signal, SLACK_FILE_METADATA_REQUEST_TIMEOUT_MS),
-        fileIds: uploaded.map((file) => file.fileId),
-        // One upload posts every file as one message: any file's share ts is it.
-        knownMessageTs: completed.find((file) => file.messageTs)?.messageTs,
-      });
-      const { messageTs } = metadata;
-      const titleByFileId = new Map(completed.map((file) => [file.fileId, file.title]));
-      const uploads = uploaded.map((file): UploadedFilePayload => {
-        const info = metadata.infoByFileId.get(file.fileId);
-        const title = titleByFileId.get(file.fileId);
-        return {
-          fileId: file.fileId,
-          filename: file.filename,
-          mimetype: info?.mimetype ?? file.mimetype,
-          sizeBytes: info?.size ?? file.sizeBytes,
-          ...(info?.permalink ? { permalink: info.permalink } : {}),
-          ...(info?.thumb_360 ? { thumb360: info.thumb_360 } : {}),
-          ...(info?.thumb_720 ? { thumb720: info.thumb_720 } : {}),
-          ...(title ? { title } : {}),
-          ...(messageTs ? { messageId: messageTs } : {}),
-        };
-      });
-
-      // Own journal immediately after irreversible complete.
-      if (messageTs) {
-        await observeOwnOutboundPost({
-          agentId,
-          teamId,
-          channelId: channel.id,
-          messageTs,
-          ...(threadTs ? { threadTs } : {}),
-          text: caption ?? validated.map((f) => f.filename).join(', '),
-          botUserId: agent.slack.botUserId,
-        });
-      }
-
-      // Same bookkeeping as a message post: a reply follows its thread even
-      // without the share ts; a top-level post needs it to follow its own thread.
-      const isDm = target.channelKind === 'dm';
-      const finalization = await finalizeSentSlackMessage({
-        agentId,
-        channelId: channel.id,
-        isDm,
-        messageTs: messageTs ?? threadTs,
-        ...(threadTs ? { threadTs } : {}),
-      });
-      const warnings = [...finalization.warnings];
-      if (!messageTs && !threadTs && !isDm) {
-        warnings.push('Slack did not report the file message ts in time, so replies in its thread reach you only if they mention you.');
-      }
-
-      console.log(slackFileOutputLine({
-        fileCount: uploads.length,
-        messageTs,
-        target,
-        threadTs,
-        warnings,
-      }));
-
-      return {
-        result: undefined,
-        completedPayload: {
-          ...(caption && captionText !== caption ? { slackCaption: captionText } : {}),
-          status: 'sent',
-          ...(finalization.threadSubscription
-            ? { threadSubscription: sentThreadSubscriptionPayload(finalization.threadSubscription) }
-            : {}),
-          ...(messageTs ? { ts: messageTs } : {}),
-          uploads,
-          ...(warnings.length ? { warnings } : {}),
-        },
-      };
-    },
+    files,
+    opts,
+    text: caption,
+    ...(input.deps?.writeOutput ? { writeOutput: input.deps.writeOutput } : {}),
   });
 }
 
@@ -266,8 +110,8 @@ async function runFeishuFileSend(input: {
   agentId: string;
   caption?: string;
   client: FeishuMessageClient;
-  files: ValidatedLocalFile[];
-  opts: FileSendInputData;
+  files: LocalFileToSend[];
+  opts: { agent?: string; item?: string; threadTs?: string };
   target: FeishuFileTarget;
 }): Promise<void> {
   for (const file of input.files) {
@@ -393,21 +237,7 @@ function feishuFileOutputLine(input: {
   return outcomeLine('uploaded', parts);
 }
 
-function slackFileOutputLine(input: {
-  fileCount: number;
-  messageTs?: string;
-  target: SlackTargetSummary;
-  threadTs?: string;
-  warnings: string[];
-}): string {
-  const parts: OutcomePart[] = [slackOutputTarget(input.target)];
-  if (input.threadTs) parts.push(['thread_ts', input.threadTs]);
-  if (input.messageTs) parts.push(['message_ts', input.messageTs]);
-  parts.push(['files', input.fileCount]);
-  return outcomeLine('uploaded', parts, input.warnings.length ? { note: input.warnings.join(' ') } : undefined);
-}
-
-function assertFeishuFileSize(file: ValidatedLocalFile): void {
+function assertFeishuFileSize(file: LocalFileToSend): void {
   const limit = isFeishuImageCandidate(file) ? 10 * 1024 * 1024 : 30 * 1024 * 1024;
   if (file.sizeBytes > limit) {
     const limitMb = Math.floor(limit / 1024 / 1024);
@@ -415,7 +245,7 @@ function assertFeishuFileSize(file: ValidatedLocalFile): void {
   }
 }
 
-function isFeishuImageCandidate(file: Pick<ValidatedLocalFile, 'filename' | 'mimetype'>): boolean {
+function isFeishuImageCandidate(file: Pick<LocalFileToSend, 'filename' | 'mimetype'>): boolean {
   return file.mimetype.toLowerCase().startsWith('image/') || /\.(bmp|gif|ico|jpe?g|png|tiff?|webp)$/i.test(file.filename);
 }
 

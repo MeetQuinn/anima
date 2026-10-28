@@ -14,7 +14,7 @@ import { SubscriptionStore } from '../storage/schema/subscription.store.js';
 import { runMessageSend } from '../tools/messages.js';
 import { withToolActivity } from '../tools/tool-context.js';
 import { withAnimaHome } from './anima-home.js';
-import { slackPostBody, startSlackApiMock } from './helpers/slack-api.js';
+import { slackPostBody, slackRequestBody, startSlackApiMock } from './helpers/slack-api.js';
 
 const AGENT = 'scout';
 const CHANNEL = 'C-product';
@@ -65,6 +65,45 @@ describe('Slack accepted send finalization', { concurrency: 1 }, () => {
         const subscriptions = await new SubscriptionStore(AGENT).list();
         assert.equal(subscriptions.some((subscription) => subscription.kind === 'thread' && subscription.threadTs === TS),
           !faults.includes('subscription'), 'subscription still runs when engagement fails');
+      });
+    });
+  }
+
+  // A file post is the same pipeline: once Slack has the files, local
+  // bookkeeping failures become warnings, never a failure that invites a resend.
+  for (const faults of [[], ['activity'], ['outbox'], ['subscription']] as Fault[][]) {
+    test(`accepted file post survives ${faults.join(' + ') || 'normal bookkeeping'}`, async (t) => {
+      await withSendFixture(t, { faults }, async (state, stateDir) => {
+        const path = join(stateDir, 'report.txt');
+        await writeFile(path, 'synthetic report');
+        await runMessageSend({ agent: AGENT, channel: CHANNEL, files: [path], text: '' }, {
+          writeOutput: (line) => { state.events.push('stdout'); state.lines.push(line); },
+        });
+        assert.equal(state.posts.length, 1, 'local failures must never retry the upload');
+        assert.equal(state.lines.length, 1);
+        assert.match(state.lines[0]!, /^uploaded successfully\./);
+        assert.match(state.lines[0]!, new RegExp(`message_ts=${TS.replaceAll('.', '\\.')}, files=1`));
+        assert.equal(state.events.at(-1), 'stdout', 'the receipt is printed after audit finalization');
+        for (const fault of faults) assert.ok(state.injected.includes(fault), `${fault} seam was exercised`);
+        if (faults.includes('activity')) {
+          assert.match(state.lines[0]!, /Files were sent, but their local completion audit and outbox record could not be saved\. Do not resend them\./);
+        }
+        if (faults.includes('outbox')) {
+          assert.match(state.lines[0]!, /Files were sent, but their local outbox record could not be saved\. Do not resend them\./);
+        }
+        if (faults.includes('subscription')) assert.match(state.lines[0]!, /thread subscription could not be saved\. Do not resend it/);
+        if (!faults.length) assert.doesNotMatch(state.lines[0]!, /Do not resend/);
+        const activities = await new ActivityService(AGENT).readAll();
+        assert.equal(activities.filter((activity) => activity.type === 'external.effect.failed').length, 0);
+        const completed = activities.find((activity) => activity.type === 'external.effect.completed');
+        assert.equal(Boolean(completed), !faults.includes('activity'));
+        if (completed) {
+          assert.equal(completed.payload?.['effect'], 'slack.file.send');
+          assert.equal(completed.payload?.['ts'], TS);
+        }
+        const subscriptions = await new SubscriptionStore(AGENT).list();
+        assert.equal(subscriptions.some((subscription) => subscription.kind === 'thread' && subscription.threadTs === TS),
+          !faults.includes('subscription'));
       });
     });
   }
@@ -159,17 +198,28 @@ async function withSendFixture(t: TestContext, options: {
   const state = { events: [] as string[], injected: [] as Fault[], lines: [] as string[], posts: [] as Record<string, unknown>[] };
   const faults = options.faults ?? [];
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-send-finalization-'));
+  let apiUrl = '';
+  const shared = { shares: { public: { [CHANNEL]: [{ ts: TS }] } } };
   const slackApi = await startSlackApiMock((method, requestBody) => {
     if (method === 'auth.test') return { ok: true, team_id: TEAM, user_id: 'U-scout' };
     if (method === 'users.list') return { ok: true, members: [] };
     if (method === 'users.conversations' || method === 'conversations.list') return { ok: true, channels: [] };
     if (method === 'conversations.info') return { ok: true, channel: { id: CHANNEL, is_channel: true, name: 'product' } };
     if (method === 'conversations.members') return { ok: true, members: ['U-scout'] };
+    if (method === 'files.getUploadURLExternal') return { ok: true, file_id: 'F-report', upload_url: `${apiUrl}/upload-bytes` };
+    if (method === 'upload-bytes') return { ok: true };
+    if (method === 'files.completeUploadExternal') {
+      state.events.push('post');
+      state.posts.push(slackRequestBody(requestBody));
+      return { ok: true, files: [{ id: 'F-report', ...shared }] };
+    }
+    if (method === 'files.info') return { ok: true, file: { id: 'F-report', ...shared } };
     if (method !== 'chat.postMessage') throw new Error(`unexpected Slack method ${method}`);
     state.events.push('post');
     state.posts.push(slackPostBody(requestBody));
     return options.rejectPost ? { ok: false, error: 'not_in_channel' } : { ok: true, channel: CHANNEL, ts: TS };
   });
+  apiUrl = slackApi.url;
   const previousUrl = process.env.ANIMA_SLACK_API_URL;
   process.env.ANIMA_SLACK_API_URL = slackApi.url;
   const originalRecord = ActivityService.prototype.record;

@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createFeishuMessageClient } from '../feishu/client.js';
-import { runFileSend } from '../tools/file-send.js';
+import { runFileSend, type FileSendDeps } from '../tools/file-send.js';
+import { runMessageSend } from '../tools/messages.js';
 import { runFileFetch } from '../tools/files-cli.js';
 import { runMessageRead } from '../tools/message-read.js';
 import { withAnimaHome } from './anima-home.js';
@@ -164,7 +165,7 @@ test('Feishu uploaded files can be sent to chats and topics', async () => {
   assert.deepEqual(imageResult, { chatId: 'oc_test_chat', messageId: 'om_image', threadId: 'omt_topic' });
 });
 
-test('file send can upload to a Feishu chat explicitly', async () => {
+for (const entry of ['file send', 'message send --file'] as const) test(`${entry} can upload to a Feishu chat explicitly`, async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-feishu-file-send-test-'));
   const logLines: string[] = [];
   const order: string[] = [];
@@ -181,13 +182,10 @@ test('file send can upload to a Feishu chat explicitly', async () => {
       console.log = (...args: unknown[]) => {
         logLines.push(args.map(String).join(' '));
       };
-      await runFileSend(
-        {
-          agent: 'scout',
-          caption: 'see attached',
-          channel: 'oc_target_chat',
-          paths: [localPath],
-        },
+      const send = entry === 'file send'
+        ? (deps: FileSendDeps) => runFileSend({ agent: 'scout', caption: 'see attached', channel: 'oc_target_chat', paths: [localPath] }, deps)
+        : (deps: FileSendDeps) => runMessageSend({ agent: 'scout', channel: 'oc_target_chat', files: [localPath], text: 'see attached' }, deps);
+      await send(
         {
           createFeishuMessageClient() {
             return {

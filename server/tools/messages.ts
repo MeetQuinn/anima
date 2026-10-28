@@ -4,30 +4,19 @@ import { createFeishuMessageClient as createDefaultFeishuMessageClient } from '.
 import type { FeishuReceiveIdType } from '../feishu/client.js';
 import { markdownToFeishuPost } from '../feishu/markdown-to-feishu-post.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
-import { errorMessage, nowIso } from '../ids.js';
+import { nowIso } from '../ids.js';
 import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
-import {
-  finalizeSentSlackMessage,
-  postedSlackThreadTs,
-  sentThreadSubscriptionPayload,
-} from '../messages/sent-message.service.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { SLACK_NO_UNFURL, slackMessageContentForText } from './slack-message-format.js';
 import {
   mentionWarningsForTarget,
   slackTextForPostMessage,
-  type SlackTextForPostMessage,
 } from './slack-message-mentions.js';
-import {
-  slackOutputTarget,
-  slackTargetPayload,
-  slackTargetSummary,
-  slackThreadSummary,
-  type SlackTargetSummary,
-  type SlackThreadSummary,
-} from './slack-target.js';
+import { slackTargetPayload, slackTargetSummary } from './slack-target.js';
 import { outcomeLine, type OutcomePart } from './outcome-line.js';
+import { sendLocalFiles, validateLocalFiles } from './file-send.js';
+import { runSlackSend, slackMessageRedirectLink, slackOutputLine, slackTextPayload } from './slack-send.js';
 import {
   loadAgentFromOpts,
   currentFeishuItem,
@@ -35,13 +24,10 @@ import {
   resolveToolAgentId,
   slackWebClientForOpts,
   withToolActivity,
+  readOptionalStdin,
   readStdin,
 } from './tool-context.js';
 import type { FeishuInboxItem, FeishuOnboardingInboxItem } from '../../shared/inbox.js';
-import {
-  evaluateSendHold,
-  observeOwnOutboundPost,
-} from '../runtime/send-hold.js';
 
 interface MessageGlobalInput {
   agent?: string;
@@ -50,6 +36,8 @@ interface MessageGlobalInput {
 
 interface MessageSendInput extends MessageGlobalInput {
   channel?: string;
+  /** Local paths to post as one file message; the body becomes the caption. */
+  files?: string[];
   text?: string;
   threadTs?: string;
 }
@@ -60,7 +48,6 @@ interface MessageUpdateInput extends MessageGlobalInput {
   text?: string;
 }
 
-type SlackPostMessagePayload = Parameters<WebClient['chat']['postMessage']>[0];
 type SlackUpdateMessagePayload = Parameters<WebClient['chat']['update']>[0];
 type FeishuMessageClientFactory = typeof createDefaultFeishuMessageClient;
 
@@ -77,9 +64,18 @@ interface MessageSendDeps {
 }
 
 export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDeps = {}): Promise<void> {
-  const text = opts.text ?? await readStdin();
   const agentId = resolveToolAgentId(opts);
   if (!agentId) throw new Error('message send requires current agent context for audit');
+  if (opts.files?.length) {
+    // Files post as one message; the body, if any, is their caption. Paths are
+    // checked before stdin is read or any platform call is made.
+    if (!opts.channel) throw new Error('message send requires --channel or --chat-id');
+    const files = await validateLocalFiles(opts.files);
+    const caption = opts.text ?? await readOptionalStdin() ?? '';
+    await sendLocalFiles({ agentId, caption, deps, files, opts: { ...opts, channel: opts.channel } });
+    return;
+  }
+  const text = opts.text ?? await readStdin();
   const feishuItem = await currentFeishuItem(agentId, opts);
   const chatTarget = resolveChatTarget(opts.channel, feishuItem);
   if (chatTarget.platform === 'feishu') {
@@ -104,122 +100,12 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
     }
   }
   if (!opts.channel) throw new Error('message send requires --channel or --chat-id');
-  const { agent, client } = await slackWebClientForOpts(opts);
-  const teamId = agent.slack.teamId || undefined;
-  const channel = await resolveSlackChannelArgument({
-    channel: opts.channel,
-    client,
-    teamId,
-  });
-  const threadTs = opts.threadTs;
-  const target = await slackTargetSummary({ channel, client, teamId });
-  const thread = threadTs ? slackThreadSummary(target, threadTs) : undefined;
-  if (!teamId) throw new Error(`Agent ${agent.id} has no Slack team id configured`);
-
-  // Target + mention preparation (before hold; hold is immediately before the
-  // first irreversible Slack op and outside withToolActivity).
-  const slackText = await slackTextForPostMessage({ channelId: channel.id, client, teamId, text });
-  const content = slackMessageContentForText(slackText.text);
-  const warnings = await mentionWarningsForTarget({
-    channelId: channel.id,
-    client,
-    slackText,
-    target,
-    teamId,
-  });
-  const payload = {
-    ...(content.blocks ? { blocks: content.blocks } : {}),
-    ...SLACK_NO_UNFURL,
-    channel: channel.id,
-    text: content.text,
-    ...(threadTs ? { thread_ts: threadTs } : {}),
-  } as SlackPostMessagePayload;
-
-  const basePayload = {
-    ...slackTargetPayload(channel),
-    ...target,
-    ...(thread ? thread : {}),
-    ...(threadTs ? { threadTs } : {}),
-    tool: 'anima.message.send',
-  };
-
-  // Pre-commit hold: after target/mention prep, before postMessage.
-  await assertSlackContactAllowed({
-    agentId, teamId, channelId: channel.id, dmUserId: target.dmUserId,
-    client, content, tool: 'anima.message.send',
-  });
-  const hold = await evaluateSendHold({
+  await runSlackSend({
     agentId,
-    teamId,
-    channelKind: target.channelKind,
-    channelId: channel.id,
-    ...(threadTs ? { threadTs } : {}),
-    tool: 'anima.message.send',
-    botUserId: agent.slack.botUserId,
-    writeOutput: deps.writeOutput,
+    opts: { ...opts, channel: opts.channel },
+    text,
+    ...(deps.writeOutput ? { writeOutput: deps.writeOutput } : {}),
   });
-  if (hold.kind === 'held') return;
-
-  const response = await withToolActivity({
-    audit: { agentId },
-    basePayload,
-    effectType: 'slack.message.send',
-    onCompletedAuditError: (stage, error) => {
-      if (stage === 'activity') {
-        console.warn(`Sent message completion audit write failed for ${agentId}: ${errorMessage(error)}`);
-      }
-      warnings.push(`Message was sent, but its local ${stage === 'activity' ? 'completion audit and outbox record' : 'outbox record'} could not be saved. Do not resend it.`);
-    },
-    op: async () => {
-      const response = await client.chat.postMessage(payload);
-      const channelId = response.channel ?? channel.id;
-      // Own observation immediately after irreversible response (before
-      // engagement / subscription bookkeeping that can throw).
-      if (response.ts) {
-        await observeOwnOutboundPost({
-          agentId,
-          teamId,
-          channelId,
-          messageTs: response.ts,
-          ...(threadTs ? { threadTs } : {}),
-          text,
-          botUserId: agent.slack.botUserId,
-        });
-      }
-      const permalink = slackMessageRedirectLink({ channelId, messageTs: response.ts });
-      const postedThreadTs = postedSlackThreadTs(response, threadTs);
-      const finalization = await finalizeSentSlackMessage({
-        agentId,
-        channelId,
-        isDm: target.channelKind === 'dm',
-        messageTs: response.ts,
-        ...(postedThreadTs ? { threadTs: postedThreadTs } : {}),
-      });
-      warnings.push(...finalization.warnings);
-      return {
-        result: response,
-        completedPayload: {
-          payload,
-          ...slackTextPayload(slackText, text),
-          messageFormat: content.format,
-          ...(content.blockCount ? { blockCount: content.blockCount } : {}),
-          ...(permalink ? { permalink } : {}),
-          ...(warnings.length ? { warnings } : {}),
-          ...(finalization.threadSubscription ? { threadSubscription: sentThreadSubscriptionPayload(finalization.threadSubscription) } : {}),
-          status: 'sent',
-          text,
-          ...(response.ts ? { ts: response.ts } : {}),
-        },
-      };
-    },
-  });
-  (deps.writeOutput ?? console.log)(slackOutputLine({
-    messageTs: response.ts,
-    status: 'sent',
-    target,
-    ...(thread ? { thread } : {}),
-    warnings,
-  }));
 }
 
 async function runFeishuMessageSend(input: {
@@ -458,35 +344,6 @@ async function runFeishuMessageUpdate(input: {
       };
     },
   });
-}
-
-function slackTextPayload(slackText: SlackTextForPostMessage, originalText: string): Record<string, unknown> {
-  return {
-    ...(slackText.resolved.length > 0 ? { resolvedMentions: slackText.resolved } : {}),
-    ...(slackText.text !== originalText ? { slackText: slackText.text } : {}),
-    ...(slackText.unresolved.length > 0 ? { unresolvedMentions: slackText.unresolved } : {}),
-  };
-}
-
-function slackMessageRedirectLink(input: {
-  channelId: string;
-  messageTs?: string;
-}): string | undefined {
-  if (!input.messageTs) return undefined;
-  return `https://slack.com/app_redirect?channel=${encodeURIComponent(input.channelId)}&message_ts=${encodeURIComponent(input.messageTs)}`;
-}
-
-function slackOutputLine(input: {
-  messageTs?: string;
-  status: 'sent' | 'updated';
-  target: SlackTargetSummary;
-  thread?: SlackThreadSummary;
-  warnings?: string[];
-}): string {
-  const parts: OutcomePart[] = [slackOutputTarget(input.target)];
-  if (input.thread) parts.push(['thread_ts', input.thread.threadTs]);
-  if (input.messageTs) parts.push(['message_ts', input.messageTs]);
-  return outcomeLine(input.status, parts, input.warnings?.length ? { note: input.warnings.join(' ') } : undefined);
 }
 
 function feishuOutputLine(input: {
