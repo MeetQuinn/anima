@@ -116,7 +116,7 @@ export function slackMessageContentForText(input: string): SlackMessageContent {
 export function slackCaptionBlocks(caption: string): SlackMarkdownBlock[] | undefined {
   if (!caption.trim()) return undefined;
   const text = slackMarkdownBlockText(caption);
-  assertMarkdownBlockLength(text, "caption is too long", "send the text as a message instead");
+  assertMarkdownBlockLength(text, "caption is too long", "shorten it, or send the long text as a file");
   return [{ type: "markdown", text }];
 }
 

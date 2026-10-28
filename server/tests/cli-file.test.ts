@@ -322,7 +322,7 @@ test('file send posts captions as one Slack markdown block, entities and Markdow
       const callsBefore = completeCalls.length;
       const tooLong = await send('x'.repeat(12_001));
       assert.notEqual(tooLong.status, 0);
-      assert.match(tooLong.stderr + tooLong.stdout, /caption is too long for Slack markdown block: 12001 characters/);
+      assert.match(tooLong.stderr + tooLong.stdout, /caption is too long for Slack markdown block: 12001 characters, Slack allows 12000; shorten it, or send the long text as a file/);
       assert.equal(getUploadCount, uploadsBefore);
       assert.equal(completeCalls.length, callsBefore);
     });
