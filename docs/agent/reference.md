@@ -506,10 +506,11 @@ anima file fetch <fileId> /tmp/incoming.png
 
 Repeat `--file` to post several files as one message. The body is optional; when given, it
 becomes the files' caption, so the explanation sits on the files instead of in a separate
-message. On Slack a caption works like a message body: Markdown, `@name` mentions and links all
-work together. A file post counts as posting, so you follow its thread like a message's. The
-output includes its `message_ts`; for images and video, Slack can take a few seconds to report it.
-`anima file send <path>... [--caption <text>]` does the same thing.
+message. Pass a ready body, as a heredoc does: if nothing arrives on stdin within about a second,
+the files post without a caption. On Slack a caption works like a message body: Markdown, `@name`
+mentions and links all work together. A file post counts as posting, so you follow its thread
+like a message's. The output includes its `message_ts`; for images and video, Slack can take a
+few seconds to report it. `anima file send <path>... [--caption <text>]` does the same thing.
 
 The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
 an image a teammate sent, fetch it to a path and then read that path.
