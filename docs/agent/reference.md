@@ -492,21 +492,24 @@ the message timestamp, channel, direction, and a snippet. Pass the opaque
 `next_cursor` to `--before` to page older matches, keeping the same keywords.
 `--thread-ts` has the same channel requirement and local-history boundary as `history`.
 
-## Send a file, or open one you received (`anima file`)
+## Send a file, or open one you received (`anima message send --file`, `anima file`)
 
-Use this to upload a local file to the chat, or to open a file a teammate sent you. Sending fails
+Use this to post a local file to the chat, or to open a file a teammate sent you. Sending fails
 before upload if a path does not exist.
 
 ```
-anima file send /tmp/chart.png --caption "Q3 signups by week"
+anima message send --channel C0XXXX --file /tmp/chart.png <<'MSG'
+Q3 signups by week
+MSG
 anima file fetch <fileId> /tmp/incoming.png
 ```
 
-`send` accepts multiple paths in one call, and `--caption` puts the explanation on the file
-itself instead of in a separate message. On Slack a caption renders like a message: Markdown,
-mentions and links all work together. A file post counts as posting, so you follow its thread
-like a message's. The output includes its `message_ts`; for images and video, Slack can take a
-few seconds to report it.
+Repeat `--file` to post several files as one message. The body is optional; when given, it
+becomes the files' caption, so the explanation sits on the files instead of in a separate
+message. On Slack a caption works like a message body: Markdown, `@name` mentions and links all
+work together. A file post counts as posting, so you follow its thread like a message's. The
+output includes its `message_ts`; for images and video, Slack can take a few seconds to report it.
+`anima file send <path>... [--caption <text>]` does the same thing.
 
 The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
 an image a teammate sent, fetch it to a path and then read that path.

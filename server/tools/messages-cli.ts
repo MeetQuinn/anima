@@ -27,6 +27,7 @@ const MessageReadSchema = z.object({
 const MessageSendSchema = z.object({
   chatId: z.string().optional(),
   channel: z.string().optional(),
+  files: z.array(z.string().min(1)).min(1).optional(),
   threadTs: z.string().optional(),
 });
 
@@ -91,10 +92,6 @@ export function registerMessageCommands(program: Command): void {
       await runMessageRead(normalizeChatTargetOptions(opts, 'message read'));
     });
 
-  // Input:   anima message send --channel <id> [--thread-ts <ts>] < body (stdin)
-  // Input:   anima message send --chat-id <oc_...> [--thread-ts <om_or_omt>] < body (stdin)
-  // Output:  sent successfully. (channel=#<name> | dm=<handle>)[, thread_ts=<ts>], message_ts=<ts>.
-  // Failure: human-readable error to stderr; exit 1.
   message
     .command('search')
     .description('Search this agent-visible message history, not workspace search.')
@@ -112,14 +109,23 @@ export function registerMessageCommands(program: Command): void {
       await runMessageSearch(opts);
     });
 
+  // Input:   anima message send --channel <id> [--thread-ts <ts>] < body (stdin)
+  // Input:   anima message send --chat-id <oc_...> [--thread-ts <om_or_omt>] < body (stdin)
+  // Input:   anima message send --channel <id> [--thread-ts <ts>] --file <path> [--file <path>...] [< caption (stdin)]
+  // Output:  sent successfully. (channel=#<name> | dm=<handle>)[, thread_ts=<ts>], message_ts=<ts>.
+  //          With --file: uploaded successfully. ...[, message_ts=<ts>], files=<N>.
+  // Failure: human-readable error to stderr; exit 1. With --file, fails before
+  //          any platform call when a path is missing, empty, or not a file.
   message
     .command('send')
-    .description('Post a Slack or Feishu message.\nMessage body is read from stdin.')
+    .description('Post a Slack or Feishu message.\nMessage body is read from stdin. With --file, the files post as one message and the body, if any, is their caption.')
     .option('--channel <channel>', 'Slack channel/DM target, Feishu chat_id (oc_...), or Feishu open_id (ou_...)')
     .option('--chat-id <chatId>', 'Feishu chat_id (oc_...); alias for --channel')
     .option('--thread-ts <ts>', 'Slack thread timestamp, or Feishu topic message_id; omit to post top-level/chat message')
+    .option('--file <path>', 'attach a local file; repeat for several', (value: string, previous: string[] = []) => [...previous, value])
     .action(async (_, command) => {
-      const opts = MessageSendSchema.parse(command.optsWithGlobals());
+      const { file, ...rest } = command.optsWithGlobals();
+      const opts = MessageSendSchema.parse({ ...rest, ...(file ? { files: file } : {}) });
       await runMessageSend(normalizeChatTargetOptions(opts, 'message send'));
     });
 

@@ -83,7 +83,7 @@ export function registerFileCommands(program: Command): void {
   //          or no active runtime item (so partial uploads can't escape the audit).
   file
     .command('send <paths...>')
-    .description('Upload one or more local files to Slack or Feishu.\nFails before any upload if a path is missing or not a file.')
+    .description('Upload one or more local files to Slack or Feishu.\nSame as `anima message send --file`; fails before any upload if a path is missing or not a file.')
     .option('--channel <channel>', 'Slack channel/DM target, Feishu chat_id (oc_...), or Feishu open_id (ou_...)')
     .option('--chat-id <chatId>', 'Feishu chat_id (oc_...); alias for --channel')
     .option('--thread-ts <ts>', 'reply inside this thread; omit to post top-level')
