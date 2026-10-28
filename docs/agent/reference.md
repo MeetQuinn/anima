@@ -503,7 +503,8 @@ anima file fetch <fileId> /tmp/incoming.png
 ```
 
 `send` accepts multiple paths in one call, and `--caption` puts the explanation on the file
-itself instead of in a separate message.
+itself instead of in a separate message. On Slack a caption renders like a message: Markdown,
+mentions and links all work together.
 
 The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
 an image a teammate sent, fetch it to a path and then read that path.

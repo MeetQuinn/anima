@@ -8,15 +8,17 @@ import type {
 
 import { errorMessage } from '../ids.js';
 import { safeFilename } from '../storage/safe-filename.js';
+import type { SlackMessageBlock } from './slack-message-format.js';
 
 export type SlackFileInfo = NonNullable<FilesInfoResponse['file']>;
 
 export interface SlackFileClient {
   files: {
     completeUploadExternal(input: {
+      // Wide enough for WebClient's Block | KnownBlock union to satisfy it.
+      blocks?: Array<{ type: string }>;
       channel_id?: string;
       files: Array<{ id: string; title?: string }>;
-      initial_comment?: string;
       thread_ts?: string;
     }): Promise<FilesCompleteUploadExternalResponse>;
     getUploadURLExternal(input: { filename: string; length: number }): Promise<FilesGetUploadURLExternalResponse>;
@@ -35,7 +37,11 @@ export interface UploadedSlackFile {
 // Slack's modern upload flow is two-step:
 //   1. files.getUploadURLExternal -> { upload_url, file_id }
 //   2. POST the bytes to upload_url
-//   3. files.completeUploadExternal({ files: [{ id }], channel_id, thread_ts?, initial_comment? })
+//   3. files.completeUploadExternal({ files: [{ id }], channel_id, thread_ts?, blocks? })
+//
+// The caption goes in `blocks`, never `initial_comment`: Slack ignores
+// `blocks` whenever `initial_comment` is set, and `initial_comment` is plain
+// mrkdwn, which cannot render GFM.
 //
 // `uploadSlackFile` covers step 1-2 for one local path. The file-send tool
 // batches the resulting file ids into one completeUploadExternal call so N
@@ -88,7 +94,7 @@ export interface CompletedSlackUploadFile {
 }
 
 export async function completeSlackFileUpload(input: {
-  caption?: string;
+  captionBlocks?: SlackMessageBlock[];
   channelId: string;
   client: SlackFileClient;
   files: Array<{ fileId: string; title?: string }>;
@@ -101,7 +107,7 @@ export async function completeSlackFileUpload(input: {
       ...(title && { title }),
     })),
     ...(input.threadTs && { thread_ts: input.threadTs }),
-    ...(input.caption && { initial_comment: input.caption }),
+    ...(input.captionBlocks && { blocks: input.captionBlocks }),
   });
   const titleByFileId = new Map<string, string | undefined>(
     (completion.files ?? []).map((file) => [file.id ?? '', file.title]),

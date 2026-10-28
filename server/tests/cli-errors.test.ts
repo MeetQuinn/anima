@@ -40,7 +40,7 @@ test('anima CLI help does not load the Slack or Feishu SDKs', async () => {
     assert.equal(result.status, 0);
     const loaded = JSON.parse(await readFile(loadedPath, 'utf8')) as string[];
     assert.ok(loaded.some((url) => url.includes('/dist/server/cli/')), 'the hook saw the CLI load');
-    const sdks = ['@larksuiteoapi/node-sdk', '@slack/web-api', 'slackify-markdown'];
+    const sdks = ['@larksuiteoapi/node-sdk', '@slack/web-api', 'mdast-util-from-markdown'];
     assert.deepEqual(
       sdks.filter((sdk) => loaded.some((url) => url.includes(`/node_modules/${sdk}/`))),
       [],
