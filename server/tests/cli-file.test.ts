@@ -752,6 +752,92 @@ test('file send without a reported message ts still follows a reply thread, and 
   }
 });
 
+// A files.info read after the upload must not hold the result hostage: the
+// files have posted. Slack already reported the share ts at completion here,
+// and the per-file read hangs until its 5 s request timeout cancels it (the
+// 10 s deadline over all reads is unit-tested in slack-files.test.ts).
+test('file send succeeds without retrying when files.info hangs after upload', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-hung-info-test-'));
+  const counts = { complete: 0, info: 0, infoClosed: 0, upload: 0 };
+  const server = createServer((request, response) => {
+    void readHttpBody(request).then(() => {
+      const method = new URL(request.url ?? '/', 'http://127.0.0.1').pathname.replace(/^\/api\//, '');
+      const reply = (body: object) => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(body));
+      };
+      if (method === 'files.info') {
+        counts.info += 1;
+        response.on('close', () => { counts.infoClosed += 1; });
+        return;
+      }
+      if (method === '/upload') {
+        counts.upload += 1;
+        return reply({ ok: true });
+      }
+      if (method === 'conversations.info') {
+        return reply({ channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' }, ok: true });
+      }
+      if (method === 'files.getUploadURLExternal') {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('server not bound');
+        return reply({ ok: true, file_id: 'F-hung-1', upload_url: `http://127.0.0.1:${address.port}/upload` });
+      }
+      if (method === 'files.completeUploadExternal') {
+        counts.complete += 1;
+        return reply({ ok: true, files: [{ id: 'F-hung-1', ...sharedIn('C-product', '1770000900.000001') }] });
+      }
+      response.writeHead(500, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: `unexpected method ${method}`, ok: false }));
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('server not bound');
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackAgentConfig(stateDir);
+      const localPath = join(stateDir, 'chart.png');
+      await writeFile(localPath, Buffer.from('x'));
+      const started = Date.now();
+      const send = await runNode(
+        [cliPath, 'file', 'send', '--channel', 'C-product', localPath],
+        {
+          env: {
+            ...process.env,
+            ANIMA_AGENT_ID: 'scout',
+            ANIMA_HOME: stateDir,
+            ANIMA_INBOX_ITEM_ID: '',
+            ANIMA_SLACK_API_URL: `http://127.0.0.1:${address.port}/api/`,
+          },
+        },
+      );
+      const elapsedMs = Date.now() - started;
+      assert.equal(send.status, 0, send.stderr || send.stdout);
+      assert.equal(send.stdout.trim(), 'uploaded successfully. channel=#product, message_ts=1770000900.000001, files=1.');
+      assert.doesNotMatch(send.stderr, /WebClient/, 'the expected read timeout is not reported as a failure');
+      assert.ok(elapsedMs < 12_000, `bounded by the read timeout and deadline, took ${elapsedMs} ms`);
+      // Posted once, read once: no retry of the post or of the hung read, and
+      // the read was cancelled rather than left running.
+      assert.deepEqual(counts, { complete: 1, info: 1, infoClosed: 1, upload: 1 });
+
+      const completed = allActivities(await loadState()).at(-1);
+      assert.equal(completed?.payload?.['status'], 'sent');
+      assert.equal(completed?.payload?.['ts'], '1770000900.000001');
+      assert.equal(
+        (completed?.payload?.['threadSubscription'] as Record<string, unknown> | undefined)?.['threadTs'],
+        '1770000900.000001',
+      );
+    });
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    await once(server, 'close');
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('file fetch supports --file-id/--output and positional output aliases', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-fetch-alias-test-'));
   const downloadServer = createServer((_request, response) => {

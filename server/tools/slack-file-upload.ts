@@ -1,4 +1,5 @@
 import { readFile, stat as fsStat } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { basename } from 'node:path';
 import type {
   FilesCompleteUploadExternalResponse,
@@ -128,32 +129,92 @@ export async function completeSlackFileUpload(input: {
 // images, PDFs and video, the message ts often appears in files.info a second
 // or more after completeUploadExternal returns (measured: up to ~3.5 s for a
 // 1.4 MB PNG; text files are immediate). Thread follow, the own-post journal
-// and the printed message ts all need it, so wait a bounded time.
+// and the printed message ts all need it, so poll for it, under one deadline.
 export const SLACK_FILE_SHARE_RETRY_DELAYS_MS: readonly number[] = [500, 1000, 1500, 2000, 3000];
+export const SLACK_FILE_METADATA_DEADLINE_MS = 10_000;
+// One files.info read right after an upload has taken 4.5 s on real Slack.
+export const SLACK_FILE_METADATA_REQUEST_TIMEOUT_MS = 5_000;
+
+export interface SlackFileInfoClient {
+  files: Pick<SlackFileClient['files'], 'info'>;
+}
+
+export interface SlackFileMetadata {
+  infoByFileId: Map<string, SlackFileInfo>;
+  /** Ts of the message the upload posted in the channel, if Slack reported it in time. */
+  messageTs?: string;
+}
 
 /**
- * Poll files.info until it reports the message ts of the file's share in
- * `channelId`. Returns undefined when Slack has not reported it after every
- * delay. Never throws: the upload has already posted.
+ * After an upload has posted: read files.info for each file, then poll for
+ * the message ts of their share in `channelId` unless it is already known.
+ * Every read shares one deadline. At the deadline, in-flight reads are
+ * cancelled through the client's signal and whatever is known is returned.
+ * Never throws: the upload has already posted, and nothing here may make the
+ * caller report a failure or retry it.
  */
-export async function waitForSlackFileShareTs(input: {
+export async function readSlackFileMetadataAfterUpload(input: {
   channelId: string;
-  client: SlackFileClient;
-  fileId: string;
-  sleep?: (ms: number) => Promise<void>;
-}): Promise<string | undefined> {
-  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  for (const delayMs of SLACK_FILE_SHARE_RETRY_DELAYS_MS) {
-    await sleep(delayMs);
-    try {
-      const info = (await input.client.files.info({ file: input.fileId })).file;
-      const messageTs = messageTsFromSlackFileInfo(info, input.channelId);
-      if (messageTs) return messageTs;
-    } catch {
-      // Keep waiting; a failed read does not change what was posted.
-    }
+  /** Must cancel its requests when `signal` aborts, with no retries or 429 waits of its own. */
+  createClient: (signal: AbortSignal) => SlackFileInfoClient;
+  deadlineMs?: number;
+  fileIds: readonly string[];
+  knownMessageTs?: string;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}): Promise<SlackFileMetadata> {
+  const controller = new AbortController();
+  const { signal } = controller;
+  let client: SlackFileInfoClient;
+  try {
+    client = input.createClient(signal);
+  } catch {
+    return { infoByFileId: new Map(), ...(input.knownMessageTs ? { messageTs: input.knownMessageTs } : {}) };
   }
-  return undefined;
+  const sleep = input.sleep ?? sleepUnlessAborted;
+  const infoByFileId = new Map<string, SlackFileInfo>();
+  let messageTs = input.knownMessageTs;
+  const read = async (fileId: string): Promise<void> => {
+    try {
+      const info = (await client.files.info({ file: fileId })).file;
+      // A read that lands after the deadline changes nothing already returned.
+      if (signal.aborted || !info) return;
+      infoByFileId.set(fileId, info);
+      messageTs ??= messageTsFromSlackFileInfo(info, input.channelId);
+    } catch {
+      // Best effort: a failed read never changes what was posted.
+    }
+  };
+  const readAll = async (): Promise<void> => {
+    await Promise.all(input.fileIds.map(read));
+    const [firstFileId] = input.fileIds;
+    if (!firstFileId) return;
+    // One upload posts every file as one message: any file's share ts is it.
+    for (const delayMs of SLACK_FILE_SHARE_RETRY_DELAYS_MS) {
+      if (messageTs || signal.aborted) return;
+      await sleep(delayMs, signal);
+      if (signal.aborted) return;
+      await read(firstFileId);
+    }
+  };
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    // The race also bounds a client that ignores its signal.
+    await Promise.race([
+      readAll(),
+      new Promise<void>((resolve) => {
+        deadline = setTimeout(resolve, input.deadlineMs ?? SLACK_FILE_METADATA_DEADLINE_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+    controller.abort();
+  }
+  return { infoByFileId: new Map(infoByFileId), ...(messageTs ? { messageTs } : {}) };
+}
+
+async function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  // Aborting ends the wait at once, so no timer keeps the CLI alive.
+  await delay(ms, undefined, { signal }).catch(() => undefined);
 }
 
 // Best-effort mime guess from extension. Slack also infers this, but the tool

@@ -1,6 +1,8 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -10,9 +12,11 @@ import { MANUAL_FETCH_BYTES, downloadSlackFile } from '../slack/slack-file.servi
 import {
   SLACK_FILE_SHARE_RETRY_DELAYS_MS,
   completeSlackFileUpload,
-  waitForSlackFileShareTs,
+  readSlackFileMetadataAfterUpload,
   type SlackFileClient,
+  type SlackFileInfoClient,
 } from '../tools/slack-file-upload.js';
+import { createSlackDeadlineWebClient } from '../slack/client.js';
 
 test('manual Slack file fetch allows large user-requested downloads', () => {
   assert.ok(MANUAL_FETCH_BYTES >= 500 * 1024 * 1024);
@@ -138,72 +142,144 @@ test('writeFile + downloadSlackFile roundtrip with a temp source url is consiste
   }
 });
 
-function fakeSlackFileClient(input: {
-  complete?: Awaited<ReturnType<SlackFileClient['files']['completeUploadExternal']>>;
-  info?: (call: number) => Awaited<ReturnType<SlackFileClient['files']['info']>>;
-}): SlackFileClient & { infoCalls: number } {
-  const client = {
-    infoCalls: 0,
+type FileInfoResponse = Awaited<ReturnType<SlackFileClient['files']['info']>>;
+
+function fakeFileInfoClient(info: (fileId: string, call: number) => FileInfoResponse | Promise<FileInfoResponse>) {
+  const calls: string[] = [];
+  const client: SlackFileInfoClient = {
     files: {
-      completeUploadExternal: async () => input.complete ?? { ok: true },
-      getUploadURLExternal: async () => ({ ok: true }),
-      info: async () => {
-        client.infoCalls += 1;
-        if (!input.info) throw new Error('unexpected files.info');
-        return input.info(client.infoCalls);
+      info: async ({ file }) => {
+        calls.push(file);
+        return info(file, calls.length);
       },
     },
   };
-  return client;
+  return { calls, client };
+}
+
+function recordSleeps() {
+  const slept: number[] = [];
+  return { slept, sleep: async (ms: number) => { slept.push(ms); } };
 }
 
 test('completeSlackFileUpload reads the message ts when Slack already reports the share', async () => {
-  const client = fakeSlackFileClient({
-    complete: {
-      ok: true,
-      files: [
-        { id: 'F1', title: 'a.txt', shares: { public: { C1: [{ ts: '1770000000.000100' }] } } },
-        { id: 'F2', shares: {} },
-      ],
+  const client: SlackFileClient = {
+    files: {
+      completeUploadExternal: async () => ({
+        ok: true,
+        files: [
+          { id: 'F1', title: 'a.txt', shares: { public: { C1: [{ ts: '1770000000.000100' }] } } },
+          { id: 'F2', shares: {} },
+        ],
+      }),
+      getUploadURLExternal: async () => ({ ok: true }),
+      info: async () => { throw new Error('unexpected files.info'); },
     },
-  });
+  };
   assert.deepEqual(
     await completeSlackFileUpload({ channelId: 'C1', client, files: [{ fileId: 'F1' }, { fileId: 'F2' }] }),
     [{ fileId: 'F1', messageTs: '1770000000.000100', title: 'a.txt' }, { fileId: 'F2' }],
   );
 });
 
-test('waitForSlackFileShareTs polls files.info until Slack reports the share in that channel', async () => {
-  const slept: number[] = [];
-  const client = fakeSlackFileClient({
-    info: (call) => {
-      if (call === 1) throw new Error('ratelimited');
-      if (call === 2) return { ok: true, file: { id: 'F1', shares: { public: { 'C-other': [{ ts: '1.1' }] } } } };
-      return { ok: true, file: { id: 'F1', shares: { private: { C1: [{ ts: '1770000000.000200' }] } } } };
-    },
+test('file metadata after upload: a known ts means one read per file and no polling', async () => {
+  const { calls, client } = fakeFileInfoClient((file) => ({ ok: true, file: { id: file, permalink: `https://x/${file}` } }));
+  const { slept, sleep } = recordSleeps();
+  const metadata = await readSlackFileMetadataAfterUpload({
+    channelId: 'C1', createClient: () => client, fileIds: ['F1', 'F2'], knownMessageTs: '1770000000.000100', sleep,
   });
-  const ts = await waitForSlackFileShareTs({
-    channelId: 'C1',
-    client,
-    fileId: 'F1',
-    sleep: async (ms) => { slept.push(ms); },
-  });
-  assert.equal(ts, '1770000000.000200');
-  assert.equal(client.infoCalls, 3);
-  assert.deepEqual(slept, SLACK_FILE_SHARE_RETRY_DELAYS_MS.slice(0, 3));
+  assert.equal(metadata.messageTs, '1770000000.000100');
+  assert.deepEqual([...metadata.infoByFileId.keys()].sort(), ['F1', 'F2']);
+  assert.deepEqual(calls.sort(), ['F1', 'F2']);
+  assert.deepEqual(slept, []);
 });
 
-test('waitForSlackFileShareTs gives up after its bounded schedule without throwing', async () => {
-  const slept: number[] = [];
-  const client = fakeSlackFileClient({ info: () => ({ ok: true, file: { id: 'F1' } }) });
-  const ts = await waitForSlackFileShareTs({
-    channelId: 'C1',
-    client,
-    fileId: 'F1',
-    sleep: async (ms) => { slept.push(ms); },
+test('file metadata after upload polls until Slack reports the share in that channel', async () => {
+  const { calls, client } = fakeFileInfoClient((file, call) => {
+    if (call <= 2) return { ok: true, file: { id: file, mimetype: 'image/png' } };
+    if (call === 3) throw new Error('ratelimited');
+    if (call === 4) return { ok: true, file: { id: file, shares: { public: { 'C-other': [{ ts: '1.1' }] } } } };
+    return { ok: true, file: { id: file, shares: { private: { C1: [{ ts: '1770000000.000200' }] } } } };
   });
-  assert.equal(ts, undefined);
+  const { slept, sleep } = recordSleeps();
+  const metadata = await readSlackFileMetadataAfterUpload({ channelId: 'C1', createClient: () => client, fileIds: ['F1', 'F2'], sleep });
+  assert.equal(metadata.messageTs, '1770000000.000200');
+  // Both files once, then only the first file until its share shows up.
+  assert.deepEqual(calls, ['F1', 'F2', 'F1', 'F1', 'F1']);
+  assert.deepEqual(slept, SLACK_FILE_SHARE_RETRY_DELAYS_MS.slice(0, 3));
+  assert.equal(metadata.infoByFileId.get('F2')?.mimetype, 'image/png');
+});
+
+test('file metadata after upload gives up after its schedule without throwing', async () => {
+  const { calls, client } = fakeFileInfoClient((file) => ({ ok: true, file: { id: file } }));
+  const { slept, sleep } = recordSleeps();
+  const metadata = await readSlackFileMetadataAfterUpload({ channelId: 'C1', createClient: () => client, fileIds: ['F1'], sleep });
+  assert.equal(metadata.messageTs, undefined);
   assert.deepEqual(slept, [...SLACK_FILE_SHARE_RETRY_DELAYS_MS]);
-  assert.equal(client.infoCalls, SLACK_FILE_SHARE_RETRY_DELAYS_MS.length);
-  assert.ok(slept.reduce((sum, ms) => sum + ms, 0) <= 10_000, 'a file send never waits more than about 10 s');
+  assert.equal(calls.length, 1 + SLACK_FILE_SHARE_RETRY_DELAYS_MS.length);
+});
+
+test('file metadata after upload returns at its deadline even if a read never settles', async () => {
+  let signal: AbortSignal | undefined;
+  const { client } = fakeFileInfoClient(() => new Promise<FileInfoResponse>(() => {}));
+  const start = performance.now();
+  const metadata = await readSlackFileMetadataAfterUpload({
+    channelId: 'C1',
+    createClient: (s) => { signal = s; return client; },
+    deadlineMs: 100,
+    fileIds: ['F1'],
+    knownMessageTs: '1770000000.000300',
+  });
+  assert.ok(performance.now() - start < 1_000);
+  assert.equal(metadata.messageTs, '1770000000.000300');
+  assert.equal(metadata.infoByFileId.size, 0);
+  assert.equal(signal?.aborted, true, 'the deadline cancels the transport');
+});
+
+test('file metadata transport aborts a hanging read and never waits out a 429', async () => {
+  let requests = 0;
+  let mode: 'hang' | 'rate-limit' = 'hang';
+  let closed!: () => void;
+  const socketClosed = new Promise<void>((resolve) => { closed = resolve; });
+  const server = createServer((_request, response) => {
+    requests++;
+    if (mode === 'hang') response.on('close', closed);
+    else response.writeHead(429, { 'retry-after': '60' }).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const previousUrl = process.env.ANIMA_SLACK_API_URL;
+  process.env.ANIMA_SLACK_API_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/`;
+  const createClient = (signal: AbortSignal) => createSlackDeadlineWebClient('test-only-token', signal, 5_000);
+  try {
+    // A hung read: the deadline returns what is known and closes the socket.
+    let start = performance.now();
+    const hung = await readSlackFileMetadataAfterUpload({
+      channelId: 'C1', createClient, deadlineMs: 200, fileIds: ['F1'], knownMessageTs: '1770000000.000400',
+    });
+    assert.ok(performance.now() - start < 1_000);
+    assert.equal(hung.messageTs, '1770000000.000400');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([socketClosed, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('files.info socket was not aborted')), 500);
+      })]);
+    } finally { clearTimeout(timer); }
+    assert.equal(requests, 1, 'no SDK retry of the hung read');
+
+    // A 429: each read fails at once (no Retry-After wait), one request per read.
+    mode = 'rate-limit';
+    requests = 0;
+    start = performance.now();
+    const limited = await readSlackFileMetadataAfterUpload({
+      channelId: 'C1', createClient, deadlineMs: 5_000, fileIds: ['F1'], sleep: async () => {},
+    });
+    assert.ok(performance.now() - start < 2_000, '429 must not wait for SDK backoff');
+    assert.equal(limited.messageTs, undefined);
+    assert.equal(requests, 1 + SLACK_FILE_SHARE_RETRY_DELAYS_MS.length);
+  } finally {
+    if (previousUrl === undefined) delete process.env.ANIMA_SLACK_API_URL;
+    else process.env.ANIMA_SLACK_API_URL = previousUrl;
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

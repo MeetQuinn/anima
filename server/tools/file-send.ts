@@ -13,11 +13,11 @@ import { assertSlackContactAllowed } from '../messages/contact-policy.service.js
 import { slackCaptionBlocks } from './slack-message-format.js';
 import {
   completeSlackFileUpload,
-  type SlackFileClient,
-  type SlackFileInfo,
+  readSlackFileMetadataAfterUpload,
+  SLACK_FILE_METADATA_REQUEST_TIMEOUT_MS,
   uploadSlackFile,
-  waitForSlackFileShareTs,
 } from './slack-file-upload.js';
+import { createAgentSlackDeadlineWebClient } from '../agents/agent-slack.service.js';
 import { finalizeSentSlackMessage, sentThreadSubscriptionPayload } from '../messages/sent-message.service.js';
 import {
   slackOutputTarget,
@@ -34,11 +34,7 @@ import {
   readOptionalStdin,
 } from './tool-context.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
-import {
-  evaluateSendHold,
-  messageTsFromSlackFileInfo,
-  observeOwnOutboundPost,
-} from '../runtime/send-hold.js';
+import { evaluateSendHold, observeOwnOutboundPost } from '../runtime/send-hold.js';
 
 export interface FileSendInputData {
   agent?: string;
@@ -185,12 +181,22 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         ...(captionBlocks ? { captionBlocks } : {}),
       });
 
-      // Per-file enrichment: permalink + thumbs for the audit.
+      // The files have posted, so these reads must neither fail the send nor
+      // hang it: per-file permalink/thumbs for the audit and the message ts
+      // share one deadline, on a client with no retries or 429 waits.
+      const metadata = await readSlackFileMetadataAfterUpload({
+        channelId: channel.id,
+        createClient: (signal) => createAgentSlackDeadlineWebClient(agent, signal, SLACK_FILE_METADATA_REQUEST_TIMEOUT_MS),
+        fileIds: uploaded.map((file) => file.fileId),
+        // One upload posts every file as one message: any file's share ts is it.
+        knownMessageTs: completed.find((file) => file.messageTs)?.messageTs,
+      });
+      const { messageTs } = metadata;
       const titleByFileId = new Map(completed.map((file) => [file.fileId, file.title]));
-      const enriched = await Promise.all(uploaded.map(async (file) => {
-        const info = await safeFetchSlackFileInfo({ client, fileId: file.fileId });
+      const uploads = uploaded.map((file): UploadedFilePayload => {
+        const info = metadata.infoByFileId.get(file.fileId);
         const title = titleByFileId.get(file.fileId);
-        const payload: UploadedFilePayload = {
+        return {
           fileId: file.fileId,
           filename: file.filename,
           mimetype: info?.mimetype ?? file.mimetype,
@@ -199,16 +205,9 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
           ...(info?.thumb_360 ? { thumb360: info.thumb_360 } : {}),
           ...(info?.thumb_720 ? { thumb720: info.thumb_720 } : {}),
           ...(title ? { title } : {}),
+          ...(messageTs ? { messageId: messageTs } : {}),
         };
-        return { payload, shareTs: messageTsFromSlackFileInfo(info, channel.id) };
-      }));
-
-      // One completeUploadExternal posts every file as one message, so any
-      // file's share ts is that message's ts.
-      const messageTs = completed.find((file) => file.messageTs)?.messageTs
-        ?? enriched.find((file) => file.shareTs)?.shareTs
-        ?? await waitForSlackFileShareTs({ channelId: channel.id, client, fileId: uploaded[0]!.fileId });
-      const uploads = enriched.map(({ payload }) => (messageTs ? { ...payload, messageId: messageTs } : payload));
+      });
 
       // Own journal immediately after irreversible complete.
       if (messageTs) {
@@ -378,17 +377,6 @@ async function sendFeishuCaption(input: {
     receiveIdType: input.target.receiveIdType,
     text: input.caption,
   });
-}
-
-async function safeFetchSlackFileInfo(input: {
-  client: SlackFileClient;
-  fileId: string;
-}): Promise<SlackFileInfo | undefined> {
-  try {
-    return (await input.client.files.info({ file: input.fileId })).file;
-  } catch {
-    return undefined;
-  }
 }
 
 function feishuFileOutputLine(input: {
