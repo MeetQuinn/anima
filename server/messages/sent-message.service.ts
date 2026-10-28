@@ -55,3 +55,18 @@ export async function finalizeSentSlackMessage(input: {
   }
   return { ...(threadSubscription ? { threadSubscription } : {}), warnings };
 }
+
+/** Audit shape of the thread follow a sent message created or refreshed. */
+export function sentThreadSubscriptionPayload(subscription: {
+  kind: string;
+  mutedAt?: string;
+  subscriptionId: string;
+  threadTs?: string;
+}): Record<string, unknown> {
+  return {
+    subscriptionId: subscription.subscriptionId,
+    kind: subscription.kind,
+    ...(subscription.mutedAt ? { mutedAt: subscription.mutedAt } : {}),
+    ...(subscription.threadTs ? { threadTs: subscription.threadTs } : {}),
+  };
+}

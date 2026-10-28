@@ -7,6 +7,7 @@ import type {
 } from '@slack/web-api';
 
 import { errorMessage } from '../ids.js';
+import { messageTsFromSlackFileInfo } from '../runtime/send-hold.js';
 import { safeFilename } from '../storage/safe-filename.js';
 import type { SlackMessageBlock } from './slack-message-format.js';
 
@@ -90,6 +91,8 @@ export async function uploadSlackFile(input: {
 
 export interface CompletedSlackUploadFile {
   fileId: string;
+  /** Ts of the message the upload posted, when Slack already reports it here. */
+  messageTs?: string;
   title?: string;
 }
 
@@ -109,13 +112,48 @@ export async function completeSlackFileUpload(input: {
     ...(input.threadTs && { thread_ts: input.threadTs }),
     ...(input.captionBlocks && { blocks: input.captionBlocks }),
   });
-  const titleByFileId = new Map<string, string | undefined>(
-    (completion.files ?? []).map((file) => [file.id ?? '', file.title]),
-  );
-  return input.files.map(({ fileId }) => ({
-    fileId,
-    ...(titleByFileId.get(fileId) ? { title: titleByFileId.get(fileId) } : {}),
-  }));
+  const completedById = new Map((completion.files ?? []).map((file) => [file.id ?? '', file]));
+  return input.files.map(({ fileId }) => {
+    const completed = completedById.get(fileId);
+    const messageTs = messageTsFromSlackFileInfo(completed, input.channelId);
+    return {
+      fileId,
+      ...(messageTs ? { messageTs } : {}),
+      ...(completed?.title ? { title: completed.title } : {}),
+    };
+  });
+}
+
+// Slack posts the file message only once it has processed the upload. For
+// images, PDFs and video, the message ts often appears in files.info a second
+// or more after completeUploadExternal returns (measured: up to ~3.5 s for a
+// 1.4 MB PNG; text files are immediate). Thread follow, the own-post journal
+// and the printed message ts all need it, so wait a bounded time.
+export const SLACK_FILE_SHARE_RETRY_DELAYS_MS: readonly number[] = [500, 1000, 1500, 2000, 3000];
+
+/**
+ * Poll files.info until it reports the message ts of the file's share in
+ * `channelId`. Returns undefined when Slack has not reported it after every
+ * delay. Never throws: the upload has already posted.
+ */
+export async function waitForSlackFileShareTs(input: {
+  channelId: string;
+  client: SlackFileClient;
+  fileId: string;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<string | undefined> {
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (const delayMs of SLACK_FILE_SHARE_RETRY_DELAYS_MS) {
+    await sleep(delayMs);
+    try {
+      const info = (await input.client.files.info({ file: input.fileId })).file;
+      const messageTs = messageTsFromSlackFileInfo(info, input.channelId);
+      if (messageTs) return messageTs;
+    } catch {
+      // Keep waiting; a failed read does not change what was posted.
+    }
+  }
+  return undefined;
 }
 
 // Best-effort mime guess from extension. Slack also infers this, but the tool

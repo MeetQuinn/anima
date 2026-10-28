@@ -6,7 +6,11 @@ import { markdownToFeishuPost } from '../feishu/markdown-to-feishu-post.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { errorMessage, nowIso } from '../ids.js';
 import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
-import { finalizeSentSlackMessage, postedSlackThreadTs } from '../messages/sent-message.service.js';
+import {
+  finalizeSentSlackMessage,
+  postedSlackThreadTs,
+  sentThreadSubscriptionPayload,
+} from '../messages/sent-message.service.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import { SLACK_NO_UNFURL, slackMessageContentForText } from './slack-message-format.js';
@@ -201,7 +205,7 @@ export async function runMessageSend(opts: MessageSendInput, deps: MessageSendDe
           ...(content.blockCount ? { blockCount: content.blockCount } : {}),
           ...(permalink ? { permalink } : {}),
           ...(warnings.length ? { warnings } : {}),
-          ...(finalization.threadSubscription ? { threadSubscription: subscriptionPayload(finalization.threadSubscription) } : {}),
+          ...(finalization.threadSubscription ? { threadSubscription: sentThreadSubscriptionPayload(finalization.threadSubscription) } : {}),
           status: 'sent',
           text,
           ...(response.ts ? { ts: response.ts } : {}),
@@ -454,15 +458,6 @@ async function runFeishuMessageUpdate(input: {
       };
     },
   });
-}
-
-function subscriptionPayload(subscription: { kind: string; mutedAt?: string; subscriptionId: string; threadTs?: string }): Record<string, unknown> {
-  return {
-    subscriptionId: subscription.subscriptionId,
-    kind: subscription.kind,
-    ...(subscription.mutedAt ? { mutedAt: subscription.mutedAt } : {}),
-    ...(subscription.threadTs ? { threadTs: subscription.threadTs } : {}),
-  };
 }
 
 function slackTextPayload(slackText: SlackTextForPostMessage, originalText: string): Record<string, unknown> {

@@ -7,6 +7,12 @@ import assert from 'node:assert/strict';
 import { slackFileFromRaw } from '../slack/slack.helper.js';
 import { safeFilename } from '../storage/safe-filename.js';
 import { MANUAL_FETCH_BYTES, downloadSlackFile } from '../slack/slack-file.service.js';
+import {
+  SLACK_FILE_SHARE_RETRY_DELAYS_MS,
+  completeSlackFileUpload,
+  waitForSlackFileShareTs,
+  type SlackFileClient,
+} from '../tools/slack-file-upload.js';
 
 test('manual Slack file fetch allows large user-requested downloads', () => {
   assert.ok(MANUAL_FETCH_BYTES >= 500 * 1024 * 1024);
@@ -130,4 +136,74 @@ test('writeFile + downloadSlackFile roundtrip with a temp source url is consiste
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
+});
+
+function fakeSlackFileClient(input: {
+  complete?: Awaited<ReturnType<SlackFileClient['files']['completeUploadExternal']>>;
+  info?: (call: number) => Awaited<ReturnType<SlackFileClient['files']['info']>>;
+}): SlackFileClient & { infoCalls: number } {
+  const client = {
+    infoCalls: 0,
+    files: {
+      completeUploadExternal: async () => input.complete ?? { ok: true },
+      getUploadURLExternal: async () => ({ ok: true }),
+      info: async () => {
+        client.infoCalls += 1;
+        if (!input.info) throw new Error('unexpected files.info');
+        return input.info(client.infoCalls);
+      },
+    },
+  };
+  return client;
+}
+
+test('completeSlackFileUpload reads the message ts when Slack already reports the share', async () => {
+  const client = fakeSlackFileClient({
+    complete: {
+      ok: true,
+      files: [
+        { id: 'F1', title: 'a.txt', shares: { public: { C1: [{ ts: '1770000000.000100' }] } } },
+        { id: 'F2', shares: {} },
+      ],
+    },
+  });
+  assert.deepEqual(
+    await completeSlackFileUpload({ channelId: 'C1', client, files: [{ fileId: 'F1' }, { fileId: 'F2' }] }),
+    [{ fileId: 'F1', messageTs: '1770000000.000100', title: 'a.txt' }, { fileId: 'F2' }],
+  );
+});
+
+test('waitForSlackFileShareTs polls files.info until Slack reports the share in that channel', async () => {
+  const slept: number[] = [];
+  const client = fakeSlackFileClient({
+    info: (call) => {
+      if (call === 1) throw new Error('ratelimited');
+      if (call === 2) return { ok: true, file: { id: 'F1', shares: { public: { 'C-other': [{ ts: '1.1' }] } } } };
+      return { ok: true, file: { id: 'F1', shares: { private: { C1: [{ ts: '1770000000.000200' }] } } } };
+    },
+  });
+  const ts = await waitForSlackFileShareTs({
+    channelId: 'C1',
+    client,
+    fileId: 'F1',
+    sleep: async (ms) => { slept.push(ms); },
+  });
+  assert.equal(ts, '1770000000.000200');
+  assert.equal(client.infoCalls, 3);
+  assert.deepEqual(slept, SLACK_FILE_SHARE_RETRY_DELAYS_MS.slice(0, 3));
+});
+
+test('waitForSlackFileShareTs gives up after its bounded schedule without throwing', async () => {
+  const slept: number[] = [];
+  const client = fakeSlackFileClient({ info: () => ({ ok: true, file: { id: 'F1' } }) });
+  const ts = await waitForSlackFileShareTs({
+    channelId: 'C1',
+    client,
+    fileId: 'F1',
+    sleep: async (ms) => { slept.push(ms); },
+  });
+  assert.equal(ts, undefined);
+  assert.deepEqual(slept, [...SLACK_FILE_SHARE_RETRY_DELAYS_MS]);
+  assert.equal(client.infoCalls, SLACK_FILE_SHARE_RETRY_DELAYS_MS.length);
+  assert.ok(slept.reduce((sum, ms) => sum + ms, 0) <= 10_000, 'a file send never waits more than about 10 s');
 });

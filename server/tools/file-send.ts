@@ -16,7 +16,9 @@ import {
   type SlackFileClient,
   type SlackFileInfo,
   uploadSlackFile,
+  waitForSlackFileShareTs,
 } from './slack-file-upload.js';
+import { finalizeSentSlackMessage, sentThreadSubscriptionPayload } from '../messages/sent-message.service.js';
 import {
   slackOutputTarget,
   slackTargetPayload,
@@ -183,13 +185,12 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         ...(captionBlocks ? { captionBlocks } : {}),
       });
 
-      // Per-file enrichment: permalink + thumbs + share message_ts for own journal.
+      // Per-file enrichment: permalink + thumbs for the audit.
       const titleByFileId = new Map(completed.map((file) => [file.fileId, file.title]));
-      const enriched: UploadedFilePayload[] = await Promise.all(uploaded.map(async (file) => {
+      const enriched = await Promise.all(uploaded.map(async (file) => {
         const info = await safeFetchSlackFileInfo({ client, fileId: file.fileId });
         const title = titleByFileId.get(file.fileId);
-        const shareTs = messageTsFromSlackFileInfo(info, channel.id);
-        return {
+        const payload: UploadedFilePayload = {
           fileId: file.fileId,
           filename: file.filename,
           mimetype: info?.mimetype ?? file.mimetype,
@@ -198,28 +199,51 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
           ...(info?.thumb_360 ? { thumb360: info.thumb_360 } : {}),
           ...(info?.thumb_720 ? { thumb720: info.thumb_720 } : {}),
           ...(title ? { title } : {}),
-          ...(shareTs ? { messageId: shareTs } : {}),
         };
+        return { payload, shareTs: messageTsFromSlackFileInfo(info, channel.id) };
       }));
 
-      // Own journal immediately after irreversible complete — use first share ts.
-      const ownMessageTs = enriched.find((f) => f.messageId)?.messageId;
-      if (ownMessageTs) {
+      // One completeUploadExternal posts every file as one message, so any
+      // file's share ts is that message's ts.
+      const messageTs = completed.find((file) => file.messageTs)?.messageTs
+        ?? enriched.find((file) => file.shareTs)?.shareTs
+        ?? await waitForSlackFileShareTs({ channelId: channel.id, client, fileId: uploaded[0]!.fileId });
+      const uploads = enriched.map(({ payload }) => (messageTs ? { ...payload, messageId: messageTs } : payload));
+
+      // Own journal immediately after irreversible complete.
+      if (messageTs) {
         await observeOwnOutboundPost({
           agentId,
           teamId,
           channelId: channel.id,
-          messageTs: ownMessageTs,
+          messageTs,
           ...(threadTs ? { threadTs } : {}),
           text: caption ?? validated.map((f) => f.filename).join(', '),
           botUserId: agent.slack.botUserId,
         });
       }
 
+      // Same bookkeeping as a message post: a reply follows its thread even
+      // without the share ts; a top-level post needs it to follow its own thread.
+      const isDm = target.channelKind === 'dm';
+      const finalization = await finalizeSentSlackMessage({
+        agentId,
+        channelId: channel.id,
+        isDm,
+        messageTs: messageTs ?? threadTs,
+        ...(threadTs ? { threadTs } : {}),
+      });
+      const warnings = [...finalization.warnings];
+      if (!messageTs && !threadTs && !isDm) {
+        warnings.push('Slack did not report the file message ts in time, so replies in its thread reach you only if they mention you.');
+      }
+
       console.log(slackFileOutputLine({
-        fileCount: enriched.length,
+        fileCount: uploads.length,
+        messageTs,
         target,
         threadTs,
+        warnings,
       }));
 
       return {
@@ -227,7 +251,12 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         completedPayload: {
           ...(caption && captionText !== caption ? { slackCaption: captionText } : {}),
           status: 'sent',
-          uploads: enriched,
+          ...(finalization.threadSubscription
+            ? { threadSubscription: sentThreadSubscriptionPayload(finalization.threadSubscription) }
+            : {}),
+          ...(messageTs ? { ts: messageTs } : {}),
+          uploads,
+          ...(warnings.length ? { warnings } : {}),
         },
       };
     },
@@ -378,13 +407,16 @@ function feishuFileOutputLine(input: {
 
 function slackFileOutputLine(input: {
   fileCount: number;
+  messageTs?: string;
   target: SlackTargetSummary;
   threadTs?: string;
+  warnings: string[];
 }): string {
   const parts: OutcomePart[] = [slackOutputTarget(input.target)];
   if (input.threadTs) parts.push(['thread_ts', input.threadTs]);
+  if (input.messageTs) parts.push(['message_ts', input.messageTs]);
   parts.push(['files', input.fileCount]);
-  return outcomeLine('uploaded', parts);
+  return outcomeLine('uploaded', parts, input.warnings.length ? { note: input.warnings.join(' ') } : undefined);
 }
 
 function assertFeishuFileSize(file: ValidatedLocalFile): void {
