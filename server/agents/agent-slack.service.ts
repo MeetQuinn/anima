@@ -28,7 +28,7 @@ import {
   slackAppManifestUrl,
   slackAppManifestYaml,
 } from '../slack/app-manifest.js';
-import { createSlackWebClient } from '../slack/client.js';
+import { createSlackDeadlineWebClient, createSlackWebClient } from '../slack/client.js';
 import {
   hasRequiredSlackManifestBotScopes,
   missingRequiredSlackManifestBotScopes,
@@ -308,6 +308,15 @@ function isWithinTtl(iso: string | undefined, ttlMs: number): boolean {
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return false;
   return Date.now() - then < ttlMs;
+}
+
+/** A bounded, cancellable client for best-effort reads; see createSlackDeadlineWebClient. */
+export function createAgentSlackDeadlineWebClient(
+  agent: AgentConfig,
+  signal: AbortSignal,
+  requestTimeoutMs: number,
+): WebClient {
+  return createSlackDeadlineWebClient(requireBotToken(agent), signal, requestTimeoutMs);
 }
 
 function requireBotToken(agent: AgentConfig): string {

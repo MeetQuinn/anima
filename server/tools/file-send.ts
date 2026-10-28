@@ -13,10 +13,12 @@ import { assertSlackContactAllowed } from '../messages/contact-policy.service.js
 import { slackCaptionBlocks } from './slack-message-format.js';
 import {
   completeSlackFileUpload,
-  type SlackFileClient,
-  type SlackFileInfo,
+  readSlackFileMetadataAfterUpload,
+  SLACK_FILE_METADATA_REQUEST_TIMEOUT_MS,
   uploadSlackFile,
 } from './slack-file-upload.js';
+import { createAgentSlackDeadlineWebClient } from '../agents/agent-slack.service.js';
+import { finalizeSentSlackMessage, sentThreadSubscriptionPayload } from '../messages/sent-message.service.js';
 import {
   slackOutputTarget,
   slackTargetPayload,
@@ -32,11 +34,7 @@ import {
   readOptionalStdin,
 } from './tool-context.js';
 import { resolveChatTarget } from './chat-target-resolver.js';
-import {
-  evaluateSendHold,
-  messageTsFromSlackFileInfo,
-  observeOwnOutboundPost,
-} from '../runtime/send-hold.js';
+import { evaluateSendHold, observeOwnOutboundPost } from '../runtime/send-hold.js';
 
 export interface FileSendInputData {
   agent?: string;
@@ -183,12 +181,21 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         ...(captionBlocks ? { captionBlocks } : {}),
       });
 
-      // Per-file enrichment: permalink + thumbs + share message_ts for own journal.
+      // The files have posted, so these reads must neither fail the send nor
+      // hang it: per-file permalink/thumbs for the audit and the message ts
+      // share one deadline, on a client with no retries or 429 waits.
+      const metadata = await readSlackFileMetadataAfterUpload({
+        channelId: channel.id,
+        createClient: (signal) => createAgentSlackDeadlineWebClient(agent, signal, SLACK_FILE_METADATA_REQUEST_TIMEOUT_MS),
+        fileIds: uploaded.map((file) => file.fileId),
+        // One upload posts every file as one message: any file's share ts is it.
+        knownMessageTs: completed.find((file) => file.messageTs)?.messageTs,
+      });
+      const { messageTs } = metadata;
       const titleByFileId = new Map(completed.map((file) => [file.fileId, file.title]));
-      const enriched: UploadedFilePayload[] = await Promise.all(uploaded.map(async (file) => {
-        const info = await safeFetchSlackFileInfo({ client, fileId: file.fileId });
+      const uploads = uploaded.map((file): UploadedFilePayload => {
+        const info = metadata.infoByFileId.get(file.fileId);
         const title = titleByFileId.get(file.fileId);
-        const shareTs = messageTsFromSlackFileInfo(info, channel.id);
         return {
           fileId: file.fileId,
           filename: file.filename,
@@ -198,28 +205,44 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
           ...(info?.thumb_360 ? { thumb360: info.thumb_360 } : {}),
           ...(info?.thumb_720 ? { thumb720: info.thumb_720 } : {}),
           ...(title ? { title } : {}),
-          ...(shareTs ? { messageId: shareTs } : {}),
+          ...(messageTs ? { messageId: messageTs } : {}),
         };
-      }));
+      });
 
-      // Own journal immediately after irreversible complete — use first share ts.
-      const ownMessageTs = enriched.find((f) => f.messageId)?.messageId;
-      if (ownMessageTs) {
+      // Own journal immediately after irreversible complete.
+      if (messageTs) {
         await observeOwnOutboundPost({
           agentId,
           teamId,
           channelId: channel.id,
-          messageTs: ownMessageTs,
+          messageTs,
           ...(threadTs ? { threadTs } : {}),
           text: caption ?? validated.map((f) => f.filename).join(', '),
           botUserId: agent.slack.botUserId,
         });
       }
 
+      // Same bookkeeping as a message post: a reply follows its thread even
+      // without the share ts; a top-level post needs it to follow its own thread.
+      const isDm = target.channelKind === 'dm';
+      const finalization = await finalizeSentSlackMessage({
+        agentId,
+        channelId: channel.id,
+        isDm,
+        messageTs: messageTs ?? threadTs,
+        ...(threadTs ? { threadTs } : {}),
+      });
+      const warnings = [...finalization.warnings];
+      if (!messageTs && !threadTs && !isDm) {
+        warnings.push('Slack did not report the file message ts in time, so replies in its thread reach you only if they mention you.');
+      }
+
       console.log(slackFileOutputLine({
-        fileCount: enriched.length,
+        fileCount: uploads.length,
+        messageTs,
         target,
         threadTs,
+        warnings,
       }));
 
       return {
@@ -227,7 +250,12 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         completedPayload: {
           ...(caption && captionText !== caption ? { slackCaption: captionText } : {}),
           status: 'sent',
-          uploads: enriched,
+          ...(finalization.threadSubscription
+            ? { threadSubscription: sentThreadSubscriptionPayload(finalization.threadSubscription) }
+            : {}),
+          ...(messageTs ? { ts: messageTs } : {}),
+          uploads,
+          ...(warnings.length ? { warnings } : {}),
         },
       };
     },
@@ -351,17 +379,6 @@ async function sendFeishuCaption(input: {
   });
 }
 
-async function safeFetchSlackFileInfo(input: {
-  client: SlackFileClient;
-  fileId: string;
-}): Promise<SlackFileInfo | undefined> {
-  try {
-    return (await input.client.files.info({ file: input.fileId })).file;
-  } catch {
-    return undefined;
-  }
-}
-
 function feishuFileOutputLine(input: {
   fileCount: number;
   receiveId: string;
@@ -378,13 +395,16 @@ function feishuFileOutputLine(input: {
 
 function slackFileOutputLine(input: {
   fileCount: number;
+  messageTs?: string;
   target: SlackTargetSummary;
   threadTs?: string;
+  warnings: string[];
 }): string {
   const parts: OutcomePart[] = [slackOutputTarget(input.target)];
   if (input.threadTs) parts.push(['thread_ts', input.threadTs]);
+  if (input.messageTs) parts.push(['message_ts', input.messageTs]);
   parts.push(['files', input.fileCount]);
-  return outcomeLine('uploaded', parts);
+  return outcomeLine('uploaded', parts, input.warnings.length ? { note: input.warnings.join(' ') } : undefined);
 }
 
 function assertFeishuFileSize(file: ValidatedLocalFile): void {

@@ -37,6 +37,7 @@ test('file send uploads a local file and records an audited Slack output', async
   if (!uploadAddr || typeof uploadAddr === 'string') throw new Error('upload server not bound');
 
   let getUploadCount = 0;
+  let infoCount = 0;
   const slackApi = await startSlackApiMock((method, body) => {
     if (method === 'conversations.info') {
       return {
@@ -58,6 +59,7 @@ test('file send uploads a local file and records an audited Slack output', async
       };
     }
     if (method === 'files.info') {
+      infoCount += 1;
       return {
         ok: true,
         file: {
@@ -68,6 +70,9 @@ test('file send uploads a local file and records an audited Slack output', async
           size: 12,
           thumb_360: 'https://files.slack.com/secure/F-test-1/thumb_360.png',
           thumb_720: 'https://files.slack.com/secure/F-test-1/thumb_720.png',
+          // Slack reports an image's message only after processing it: not on
+          // the first read right after completeUploadExternal.
+          ...(infoCount > 1 ? sharedIn('C-product', '1770000300.000200') : {}),
         },
       };
     }
@@ -95,7 +100,8 @@ test('file send uploads a local file and records an audited Slack output', async
         },
       );
       assert.equal(send.status, 0, send.stderr || send.stdout);
-      assert.match(send.stdout, /uploaded successfully\. channel=#product, files=1\./);
+      assert.equal(send.stdout.trim(), 'uploaded successfully. channel=#product, message_ts=1770000300.000200, files=1.');
+      assert.equal(infoCount, 2, 'waited for the share ts after the first read lacked it');
 
       // Slack upload POST happened
       assert.equal(uploadUrls.length, 1);
@@ -125,6 +131,20 @@ test('file send uploads a local file and records an audited Slack output', async
       assert.equal(uploads[0]?.['mimetype'], 'image/png');
       assert.equal(uploads[0]?.['permalink'], 'https://anima.slack.com/files/U-scout/F-test-1/screenshot.png');
       assert.equal(uploads[0]?.['thumb360'], 'https://files.slack.com/secure/F-test-1/thumb_360.png');
+      assert.equal(uploads[0]?.['messageId'], '1770000300.000200');
+      assert.equal(completed?.payload?.['ts'], '1770000300.000200');
+
+      // A top-level file post follows its own thread, like a message post, so
+      // replies under it wake the agent without a mention.
+      assert.deepEqual(completed?.payload?.['threadSubscription'], {
+        subscriptionId: 'slack-subscription:scout:C-product:thread:1770000300.000200',
+        kind: 'thread',
+        threadTs: '1770000300.000200',
+      });
+      const state = await loadState();
+      assert.ok(Object.values(state.subscriptions).some(
+        (subscription) => subscription.kind === 'thread' && subscription.threadTs === '1770000300.000200',
+      ));
     });
   } finally {
     await slackApi.close();
@@ -162,7 +182,13 @@ test('file send supports multi-file batch with caption and thread', async () => 
     }
     if (method === 'files.completeUploadExternal') {
       completeCalls.push(slackRequestBody(body));
-      return { ok: true, files: [{ id: 'F-batch-1' }, { id: 'F-batch-2' }] };
+      return {
+        ok: true,
+        files: [
+          { id: 'F-batch-1', ...sharedIn('C-product', '1770000200.000300', '1770000200.000001') },
+          { id: 'F-batch-2', ...sharedIn('C-product', '1770000200.000300', '1770000200.000001') },
+        ],
+      };
     }
     if (method === 'files.info') {
       return { ok: true, file: { id: 'F-batch-1', mimetype: 'image/png', size: 8, permalink: 'https://anima.slack.com/files/F-batch-1' } };
@@ -193,7 +219,10 @@ test('file send supports multi-file batch with caption and thread', async () => 
         },
       );
       assert.equal(send.status, 0, send.stderr || send.stdout);
-      assert.match(send.stdout, /uploaded successfully\. channel=#product, thread_ts=1770000200\.000001, files=2\./);
+      assert.equal(
+        send.stdout.trim(),
+        'uploaded successfully. channel=#product, thread_ts=1770000200.000001, message_ts=1770000200.000300, files=2.',
+      );
 
       assert.equal(completeCalls.length, 1);
       const complete = completeCalls[0]!;
@@ -206,6 +235,13 @@ test('file send supports multi-file batch with caption and thread', async () => 
       assert.equal(completed?.payload?.['fileCount'], 2);
       assert.equal(completed?.payload?.['caption'], 'see attached');
       assert.equal(completed?.payload?.['threadTs'], '1770000200.000001');
+      assert.equal(completed?.payload?.['ts'], '1770000200.000300');
+      const uploads = completed?.payload?.['uploads'] as Array<Record<string, unknown>>;
+      assert.deepEqual(uploads.map((upload) => upload['messageId']), ['1770000200.000300', '1770000200.000300']);
+      assert.equal(
+        (completed?.payload?.['threadSubscription'] as Record<string, unknown> | undefined)?.['threadTs'],
+        '1770000200.000001',
+      );
     });
   } finally {
     await slackApi.close();
@@ -253,7 +289,7 @@ test('file send posts captions as one Slack markdown block, entities and Markdow
       return { ok: true, files: [{ id: `F-cap-${getUploadCount}` }] };
     }
     if (method === 'files.info') {
-      return { ok: true, file: { id: `F-cap-${getUploadCount}`, mimetype: 'image/png', size: 4 } };
+      return { ok: true, file: { id: `F-cap-${getUploadCount}`, mimetype: 'image/png', size: 4, ...sharedIn('C-product', `1770000400.00000${getUploadCount}`) } };
     }
     throw new Error(`unexpected method ${method}`);
   });
@@ -362,7 +398,7 @@ test('file send does not block on an idle stdin pipe when --caption is absent', 
       return { ok: true, files: [{ id: 'F-idle-1' }] };
     }
     if (method === 'files.info') {
-      return { ok: true, file: { id: 'F-idle-1', mimetype: 'image/png', size: 4, permalink: 'https://anima.slack.com/files/F-idle-1' } };
+      return { ok: true, file: { id: 'F-idle-1', mimetype: 'image/png', size: 4, permalink: 'https://anima.slack.com/files/F-idle-1', ...sharedIn('C-product', '1770000500.000001') } };
     }
     throw new Error(`unexpected method ${method}`);
   });
@@ -432,7 +468,7 @@ test('file send accepts caption from stdin when --caption is not passed', async 
       return { ok: true, files: [{ id: 'F-stdin-1' }] };
     }
     if (method === 'files.info') {
-      return { ok: true, file: { id: 'F-stdin-1', mimetype: 'image/png', size: 4, permalink: 'https://anima.slack.com/files/F-stdin-1' } };
+      return { ok: true, file: { id: 'F-stdin-1', mimetype: 'image/png', size: 4, permalink: 'https://anima.slack.com/files/F-stdin-1', ...sharedIn('C-product', '1770000600.000001') } };
     }
     throw new Error(`unexpected method ${method}`);
   });
@@ -589,7 +625,7 @@ test('file send records audit without an active item', async () => {
       return { ok: true, files: [{ id: 'F-no-item-1', title: 'sent.png' }] };
     }
     if (method === 'files.info') {
-      return { ok: true, file: { id: 'F-no-item-1', mimetype: 'image/png', name: 'sent.png', size: 1 } };
+      return { ok: true, file: { id: 'F-no-item-1', mimetype: 'image/png', name: 'sent.png', size: 1, ...sharedIn('C-product', '1770000700.000001') } };
     }
     throw new Error(`unexpected method ${method}`);
   });
@@ -621,6 +657,183 @@ test('file send records audit without an active item', async () => {
     await slackApi.close();
     uploadServer.close();
     await once(uploadServer, 'close');
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+// Slack sometimes never reports the share in time. This waits out the full
+// bounded schedule twice (about 16 s); the schedule itself is unit-tested in
+// slack-files.test.ts.
+test('file send without a reported message ts still follows a reply thread, and warns on a top-level post', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-no-share-ts-test-'));
+  const uploadServer = createServer((request, response) => {
+    void readHttpBody(request).then(() => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ ok: true }));
+    });
+  });
+  uploadServer.listen(0, '127.0.0.1');
+  await once(uploadServer, 'listening');
+  const uploadAddr = uploadServer.address();
+  if (!uploadAddr || typeof uploadAddr === 'string') throw new Error('upload server not bound');
+
+  let uploadCount = 0;
+  let infoCount = 0;
+  const slackApi = await startSlackApiMock((method) => {
+    if (method === 'conversations.info') {
+      return {
+        channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' },
+        ok: true,
+      };
+    }
+    if (method === 'files.getUploadURLExternal') {
+      uploadCount += 1;
+      return { ok: true, file_id: `F-slow-${uploadCount}`, upload_url: `http://127.0.0.1:${uploadAddr.port}/upload/${uploadCount}` };
+    }
+    if (method === 'files.completeUploadExternal') {
+      return { ok: true, files: [{ id: `F-slow-${uploadCount}` }] };
+    }
+    if (method === 'files.info') {
+      infoCount += 1;
+      return { ok: true, file: { id: `F-slow-${uploadCount}`, mimetype: 'video/mp4', size: 1 } };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackAgentConfig(stateDir);
+      const localPath = join(stateDir, 'clip.mp4');
+      await writeFile(localPath, Buffer.from('x'));
+      const send = (extra: string[]) => runNode(
+        [cliPath, 'file', 'send', '--channel', 'C-product', ...extra, localPath],
+        {
+          env: {
+            ...process.env,
+            ANIMA_AGENT_ID: 'scout',
+            ANIMA_HOME: stateDir,
+            ANIMA_INBOX_ITEM_ID: '',
+            ANIMA_SLACK_API_URL: slackApi.url,
+          },
+        },
+      );
+
+      // A reply needs only its thread to follow it.
+      const reply = await send(['--thread-ts', '1770000800.000001']);
+      assert.equal(reply.status, 0, reply.stderr || reply.stdout);
+      assert.equal(reply.stdout.trim(), 'uploaded successfully. channel=#product, thread_ts=1770000800.000001, files=1.');
+      assert.ok(infoCount > 1, 'waited before giving up on the share ts');
+      let completed = allActivities(await loadState()).at(-1);
+      assert.equal(completed?.payload?.['ts'], undefined);
+      assert.equal(
+        (completed?.payload?.['threadSubscription'] as Record<string, unknown> | undefined)?.['threadTs'],
+        '1770000800.000001',
+      );
+      assert.equal(completed?.payload?.['warnings'], undefined);
+
+      // A top-level post cannot follow its own thread without its ts; say so.
+      const topLevel = await send([]);
+      assert.equal(topLevel.status, 0, topLevel.stderr || topLevel.stdout);
+      assert.equal(
+        topLevel.stdout.trim(),
+        'uploaded successfully. channel=#product, files=1. Note: Slack did not report the file message ts in time, so replies in its thread reach you only if they mention you.',
+      );
+      completed = allActivities(await loadState()).at(-1);
+      assert.equal(completed?.payload?.['status'], 'sent');
+      assert.equal(completed?.payload?.['threadSubscription'], undefined);
+      assert.equal((completed?.payload?.['warnings'] as string[] | undefined)?.length, 1);
+      const threads = Object.values((await loadState()).subscriptions).filter((subscription) => subscription.kind === 'thread');
+      assert.deepEqual(threads.map((subscription) => subscription.threadTs), ['1770000800.000001']);
+    });
+  } finally {
+    await slackApi.close();
+    uploadServer.close();
+    await once(uploadServer, 'close');
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+// A files.info read after the upload must not hold the result hostage: the
+// files have posted. Slack already reported the share ts at completion here,
+// and the per-file read hangs until its 5 s request timeout cancels it (the
+// 10 s deadline over all reads is unit-tested in slack-files.test.ts).
+test('file send succeeds without retrying when files.info hangs after upload', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-hung-info-test-'));
+  const counts = { complete: 0, info: 0, infoClosed: 0, upload: 0 };
+  const server = createServer((request, response) => {
+    void readHttpBody(request).then(() => {
+      const method = new URL(request.url ?? '/', 'http://127.0.0.1').pathname.replace(/^\/api\//, '');
+      const reply = (body: object) => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(body));
+      };
+      if (method === 'files.info') {
+        counts.info += 1;
+        response.on('close', () => { counts.infoClosed += 1; });
+        return;
+      }
+      if (method === '/upload') {
+        counts.upload += 1;
+        return reply({ ok: true });
+      }
+      if (method === 'conversations.info') {
+        return reply({ channel: { id: 'C-product', is_channel: true, name: 'product', name_normalized: 'product' }, ok: true });
+      }
+      if (method === 'files.getUploadURLExternal') {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('server not bound');
+        return reply({ ok: true, file_id: 'F-hung-1', upload_url: `http://127.0.0.1:${address.port}/upload` });
+      }
+      if (method === 'files.completeUploadExternal') {
+        counts.complete += 1;
+        return reply({ ok: true, files: [{ id: 'F-hung-1', ...sharedIn('C-product', '1770000900.000001') }] });
+      }
+      response.writeHead(500, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: `unexpected method ${method}`, ok: false }));
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('server not bound');
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await writeSlackAgentConfig(stateDir);
+      const localPath = join(stateDir, 'chart.png');
+      await writeFile(localPath, Buffer.from('x'));
+      const started = Date.now();
+      const send = await runNode(
+        [cliPath, 'file', 'send', '--channel', 'C-product', localPath],
+        {
+          env: {
+            ...process.env,
+            ANIMA_AGENT_ID: 'scout',
+            ANIMA_HOME: stateDir,
+            ANIMA_INBOX_ITEM_ID: '',
+            ANIMA_SLACK_API_URL: `http://127.0.0.1:${address.port}/api/`,
+          },
+        },
+      );
+      const elapsedMs = Date.now() - started;
+      assert.equal(send.status, 0, send.stderr || send.stdout);
+      assert.equal(send.stdout.trim(), 'uploaded successfully. channel=#product, message_ts=1770000900.000001, files=1.');
+      assert.doesNotMatch(send.stderr, /WebClient/, 'the expected read timeout is not reported as a failure');
+      assert.ok(elapsedMs < 12_000, `bounded by the read timeout and deadline, took ${elapsedMs} ms`);
+      // Posted once, read once: no retry of the post or of the hung read, and
+      // the read was cancelled rather than left running.
+      assert.deepEqual(counts, { complete: 1, info: 1, infoClosed: 1, upload: 1 });
+
+      const completed = allActivities(await loadState()).at(-1);
+      assert.equal(completed?.payload?.['status'], 'sent');
+      assert.equal(completed?.payload?.['ts'], '1770000900.000001');
+      assert.equal(
+        (completed?.payload?.['threadSubscription'] as Record<string, unknown> | undefined)?.['threadTs'],
+        '1770000900.000001',
+      );
+    });
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    await once(server, 'close');
     await rm(stateDir, { force: true, recursive: true });
   }
 });
@@ -753,6 +966,12 @@ function exampleSlackThread() {
     ts: '1770000200.000002',
     userId: 'U-alice',
   });
+}
+
+// Slack's share stamp for the message an upload posted in a channel, as
+// files.info and files.completeUploadExternal report it.
+function sharedIn(channelId: string, ts: string, threadTs?: string) {
+  return { shares: { public: { [channelId]: [{ ts, ...(threadTs ? { thread_ts: threadTs } : {}) }] } } };
 }
 
 function captionBlocks(complete: Record<string, unknown>): Array<{ type: string; text: string }> {
