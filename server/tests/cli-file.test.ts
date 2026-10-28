@@ -14,6 +14,7 @@ import { readHttpBody, slackRequestBody, startSlackApiMock } from './helpers/sla
 import { ingestEvent } from './helpers/inbox.js';
 import { withAnimaHome } from './anima-home.js';
 import { runNode } from './helpers/run-node.js';
+import { slackMarkdownBlockText } from '../tools/slack-message-format.js';
 
 const cliPath = resolve('dist/server/cli/anima.js');
 
@@ -196,7 +197,7 @@ test('file send supports multi-file batch with caption and thread', async () => 
 
       assert.equal(completeCalls.length, 1);
       const complete = completeCalls[0]!;
-      assert.equal(complete['initial_comment'], 'see attached');
+      assert.deepEqual(captionBlocks(complete), [{ type: 'markdown', text: 'see attached' }]);
       assert.equal(complete['thread_ts'], '1770000200.000001');
       const files = parseFilesField(complete['files']);
       assert.equal(files.length, 2);
@@ -214,13 +215,15 @@ test('file send supports multi-file batch with caption and thread', async () => 
   }
 });
 
-// The seam these two cases guard is what reaches Slack, so they assert the
-// outgoing `initial_comment` on the wire. The mock answers 200 to anything and
-// validates nothing — it cannot tell us Slack renders the result. That half is
-// proven by a real-Slack probe, recorded on the PR; this half only locks in
-// which branch each caption takes and what the audit trail records.
-test('file send converts Markdown captions but sends entity captions verbatim', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-caption-branch-test-'));
+// The seam this case guards is what reaches Slack, so it asserts the outgoing
+// `blocks` on the wire. The mock answers 200 to anything and validates nothing;
+// it cannot tell us Slack renders the result. That half is a real-Slack probe,
+// recorded on the PR: a markdown block in files.completeUploadExternal renders
+// a mention, a channel link, a labelled URL, a bullet list and CJK-adjacent bold
+// in one caption. This half locks in that every caption takes that one path and
+// what the audit trail records.
+test('file send posts captions as one Slack markdown block, entities and Markdown together', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-cli-file-caption-block-test-'));
   const completeCalls: Array<Record<string, unknown>> = [];
 
   const uploadServer = createServer((_request, response) => {
@@ -262,54 +265,66 @@ test('file send converts Markdown captions but sends entity captions verbatim', 
       const png = join(stateDir, 'shot.png');
       await writeFile(png, Buffer.from('aaaa'));
 
-      const send = async (caption: string) => {
-        const result = await runNode(
-          [cliPath, 'file', 'send', '--channel', 'C-product', '--caption', caption, png],
-          {
-            env: {
-              ...process.env,
-              ANIMA_AGENT_ID: 'scout',
-              ANIMA_HOME: stateDir,
-              ANIMA_INBOX_ITEM_ID: itemId,
-              ANIMA_SLACK_API_URL: slackApi.url,
-            },
+      const send = async (caption: string) => runNode(
+        [cliPath, 'file', 'send', '--channel', 'C-product', '--caption', caption, png],
+        {
+          env: {
+            ...process.env,
+            ANIMA_AGENT_ID: 'scout',
+            ANIMA_HOME: stateDir,
+            ANIMA_INBOX_ITEM_ID: itemId,
+            ANIMA_SLACK_API_URL: slackApi.url,
           },
-        );
+        },
+      );
+      const sent = async (caption: string) => {
+        const result = await send(caption);
         assert.equal(result.status, 0, result.stderr || result.stdout);
+        const complete = completeCalls.at(-1)!;
+        assert.ok(!('initial_comment' in complete), 'initial_comment would make Slack ignore blocks');
+        return { complete, audit: (await activitiesForInboxItemWindow('scout', itemId)).at(-1) };
       };
 
-      // The user's original report: Markdown in a long caption showing raw.
-      await send('**bold** and `code`');
-      assert.equal(completeCalls.at(-1)?.['initial_comment'], '​*bold*​ and `code`');
+      // The reported shape: a mention plus GFM. Before, any `<` sent the caption
+      // as raw mrkdwn, so `**` and `- ` showed literally.
+      const mixed = '<@U0B3ZB0NCLA> 视频做好了，**4:55**。\n\n- **讲法**：三个主题\n- **字幕**：英文';
+      const reported = await sent(mixed);
+      assert.deepEqual(captionBlocks(reported.complete), [{ type: 'markdown', text: slackMarkdownBlockText(mixed) }]);
+      assert.match(captionBlocks(reported.complete)[0]!.text, /^<@U0B3ZB0NCLA> /);
+      assert.match(captionBlocks(reported.complete)[0]!.text, /\n- \*\*讲法\*\*/);
+      assert.equal(reported.audit?.payload?.['caption'], mixed);
 
-      // Audit keeps the author's input AND records the transformed form that
-      // Slack actually received — the input alone would misdescribe the effect.
-      const converted = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
-      assert.equal(converted?.payload?.['caption'], '**bold** and `code`');
-      assert.equal(converted?.payload?.['slackCaption'], '​*bold*​ and `code`');
-
-      // #541: a caption carrying Slack's own entity syntax must reach Slack
-      // untouched. Conversion escaped the channel link's `>` and stripped the
-      // labelled URL's brackets, destroying both.
+      // #541's entity forms reach Slack byte-for-byte inside the block.
       const entities = 'cc <@U0B3ZB0NCLA> in <#C0B8U0ZR2AW|code-review>: <https://example.com|Docs>';
-      await send(entities);
-      assert.equal(completeCalls.at(-1)?.['initial_comment'], entities);
-
+      const kept = await sent(entities);
+      assert.deepEqual(captionBlocks(kept.complete), [{ type: 'markdown', text: entities }]);
       // Nothing was transformed, so there is no second form to record.
-      const raw = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
-      assert.equal(raw?.payload?.['caption'], entities);
-      assert.equal(raw?.payload?.['slackCaption'], undefined);
+      assert.equal(kept.audit?.payload?.['caption'], entities);
+      assert.equal(kept.audit?.payload?.['slackCaption'], undefined);
 
-      // A whitespace-only caption converts to '' and is dropped from the send:
-      // Slack receives NO comment. The audit has to say so. Keying the record on
-      // the converted value's truthiness would skip this case and leave the
-      // payload asserting a caption that was never posted.
-      await send('   ');
-      assert.ok(!('initial_comment' in (completeCalls.at(-1) ?? {})));
+      // Captions share the message transform, so a URL glued to CJK punctuation
+      // is wrapped to link. The audit records the form Slack actually received.
+      const glued = '预览：https://example.com/a，看一下';
+      const linked = await sent(glued);
+      assert.equal(captionBlocks(linked.complete)[0]!.text, '预览：<https://example.com/a>，看一下');
+      assert.equal(linked.audit?.payload?.['caption'], glued);
+      assert.equal(linked.audit?.payload?.['slackCaption'], '预览：<https://example.com/a>，看一下');
 
-      const blank = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
-      assert.equal(blank?.payload?.['caption'], '   ');
-      assert.equal(blank?.payload?.['slackCaption'], '');
+      // A whitespace-only caption posts no caption at all. The audit has to say
+      // so, rather than assert a caption that was never posted.
+      const blank = await sent('   ');
+      assert.ok(!('blocks' in blank.complete));
+      assert.equal(blank.audit?.payload?.['caption'], '   ');
+      assert.equal(blank.audit?.payload?.['slackCaption'], '');
+
+      // An over-long caption fails before any upload URL or bytes.
+      const uploadsBefore = getUploadCount;
+      const callsBefore = completeCalls.length;
+      const tooLong = await send('x'.repeat(12_001));
+      assert.notEqual(tooLong.status, 0);
+      assert.match(tooLong.stderr + tooLong.stdout, /caption is too long for Slack markdown block: 12001 characters/);
+      assert.equal(getUploadCount, uploadsBefore);
+      assert.equal(completeCalls.length, callsBefore);
     });
   } finally {
     await slackApi.close();
@@ -376,7 +391,8 @@ test('file send does not block on an idle stdin pipe when --caption is absent', 
       assert.equal(send.status, 0, send.stderr || send.stdout);
       assert.ok(Date.now() - startedAt < 30_000, 'send must not wait for stdin EOF');
       assert.equal(completeCalls.length, 1);
-      assert.equal(completeCalls[0]!['initial_comment'], undefined);
+      assert.ok(!('blocks' in completeCalls[0]!));
+      assert.ok(!('initial_comment' in completeCalls[0]!));
     });
   } finally {
     await slackApi.close();
@@ -451,7 +467,7 @@ test('file send accepts caption from stdin when --caption is not passed', async 
       // Caption survived shell-quoting hell because it never hit the shell.
       assert.equal(completeCalls.length, 1);
       const complete = completeCalls[0]!;
-      assert.equal(complete['initial_comment'], captionWithShellMetachars);
+      assert.deepEqual(captionBlocks(complete), [{ type: 'markdown', text: captionWithShellMetachars }]);
 
       // Audit payload preserves the same caption string.
       const completed = (await activitiesForInboxItemWindow('scout', itemId)).at(-1);
@@ -737,6 +753,13 @@ function exampleSlackThread() {
     ts: '1770000200.000002',
     userId: 'U-alice',
   });
+}
+
+function captionBlocks(complete: Record<string, unknown>): Array<{ type: string; text: string }> {
+  const value = complete['blocks'];
+  const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value;
+  assert.ok(Array.isArray(parsed), 'completeUploadExternal carries caption blocks');
+  return parsed as Array<{ type: string; text: string }>;
 }
 
 function parseFilesField(value: unknown): Array<{ id: string; title?: string }> {

@@ -100,18 +100,33 @@ function slackMentionHeadings(input: string): string {
 
 export function slackMessageContentForText(input: string): SlackMessageContent {
   const text = slackMarkdownBlockText(input);
-  const length = Array.from(text).length;
-  if (length > MARKDOWN_TEXT_LIMIT) {
-    throw new Error(
-      `message is too long for Slack markdown block: ${length} characters, Slack allows ${MARKDOWN_TEXT_LIMIT}; send a file instead`,
-    );
-  }
+  assertMarkdownBlockLength(text, "message is too long", "send a file instead");
   return {
     blockCount: 1,
     blocks: [{ type: "markdown", text }],
     format: "markdown",
     text: fallbackText(text),
   };
+}
+
+// A file caption is the same `markdown` block as a message, passed as
+// files.completeUploadExternal `blocks`. Slack renders mentions, channel links
+// and labelled URLs as entities and Markdown as formatting, so a caption
+// carrying both no longer has to choose one. A blank caption has no block.
+export function slackCaptionBlocks(caption: string): SlackMarkdownBlock[] | undefined {
+  if (!caption.trim()) return undefined;
+  const text = slackMarkdownBlockText(caption);
+  assertMarkdownBlockLength(text, "caption is too long", "send the text as a message instead");
+  return [{ type: "markdown", text }];
+}
+
+function assertMarkdownBlockLength(text: string, problem: string, advice: string): void {
+  const length = Array.from(text).length;
+  if (length > MARKDOWN_TEXT_LIMIT) {
+    throw new Error(
+      `${problem} for Slack markdown block: ${length} characters, Slack allows ${MARKDOWN_TEXT_LIMIT}; ${advice}`,
+    );
+  }
 }
 
 function fallbackText(text: string): string {

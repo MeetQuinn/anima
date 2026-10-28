@@ -10,7 +10,7 @@ import type {
 } from '../feishu/client.js';
 import { safeFilename } from '../storage/safe-filename.js';
 import { assertSlackContactAllowed } from '../messages/contact-policy.service.js';
-import { slackCaptionText } from './slack-mrkdwn.js';
+import { slackCaptionBlocks } from './slack-message-format.js';
 import {
   completeSlackFileUpload,
   type SlackFileClient,
@@ -144,8 +144,9 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
   if (!teamId) throw new Error(`Agent ${agent.id} has no Slack team id configured`);
 
   // Caption transform is preparation (not irreversible); hold still runs before
-  // any upload URL / bytes.
-  const captionText = caption ? slackCaptionText(caption) : undefined;
+  // any upload URL / bytes. A too-long caption fails here, before any upload.
+  const captionBlocks = caption ? slackCaptionBlocks(caption) : undefined;
+  const captionText = caption === undefined ? undefined : (captionBlocks?.[0]?.text ?? '');
 
   // Pre-commit hold: after target/caption prep, before first irreversible upload.
   await assertSlackContactAllowed({
@@ -179,7 +180,7 @@ export async function runFileSend(opts: FileSendInputData, deps: FileSendDeps = 
         client,
         files: uploaded.map((file) => ({ fileId: file.fileId })),
         ...(threadTs ? { threadTs } : {}),
-        ...(captionText ? { caption: captionText } : {}),
+        ...(captionBlocks ? { captionBlocks } : {}),
       });
 
       // Per-file enrichment: permalink + thumbs + share message_ts for own journal.
@@ -400,7 +401,7 @@ function isFeishuImageCandidate(file: Pick<ValidatedLocalFile, 'filename' | 'mim
 
 // Caption resolution: --caption wins; if absent, read stdin so a heredoc body
 // works (same convention as `anima message send --text`). Returns undefined
-// for the empty case so `completeUploadExternal` omits `initial_comment`.
+// for the empty case so `completeUploadExternal` gets no caption blocks.
 async function captionFromOpts(opts: { caption?: string }): Promise<string | undefined> {
   if (opts.caption !== undefined) {
     return opts.caption.length > 0 ? opts.caption : undefined;
