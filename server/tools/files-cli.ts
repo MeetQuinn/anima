@@ -77,10 +77,12 @@ export function registerFileCommands(program: Command): void {
 
   // Input:   anima file send --channel <id> [--thread-ts <ts>] [--caption <text> | stdin] <path>...
   // Input:   anima file send --chat-id <oc_...> [--thread-ts <om_or_omt>] [--caption <text> | stdin] <path>...
-  // Output:  uploaded successfully. (channel=#<name> | dm=<handle>)[, thread_ts=<ts>], files=<N>.
+  //          Same send path as `anima message send --file <path>...`.
+  // Output:  uploaded successfully. (channel=#<name> | dm=<handle>)[, thread_ts=<ts>][, message_ts=<ts>], files=<N>.
   // Failure: human-readable error to stderr; exit 1.
-  //          Fails closed before any platform call when --channel/path missing, path is not a file,
-  //          or no active runtime item (so partial uploads can't escape the audit).
+  //          Fails closed before any platform call when there is no agent identity for the audit,
+  //          --channel or a path is missing, or a path is not a regular file or is empty. An active
+  //          runtime item is not required; the send is audited without one.
   file
     .command('send <paths...>')
     .description('Upload one or more local files to Slack or Feishu.\nSame as `anima message send --file`; fails before any upload if a path is missing or not a file.')
