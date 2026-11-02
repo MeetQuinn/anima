@@ -226,8 +226,8 @@ it.each([
       lastError:
         'Linear authorization could not be exchanged (HTTP 400). Check the Client ID, registered redirect URL and network, then prepare authorization again.',
     },
-    title: 'Linear couldn’t confirm the app',
-    body: 'callback URL in Linear still uses your public address. Then authorize again. Details: HTTP 400.',
+    title: 'Authorization couldn’t be completed',
+    body: 'uses your public address, and this machine’s network. Then authorize again. Details: HTTP 400.',
     removable: false,
   },
   {
@@ -236,7 +236,7 @@ it.each([
       lastError:
         'Linear app identity could not be verified (connection failed). Check the app configuration and network, then prepare authorization again.',
     },
-    title: 'Linear couldn’t verify the app',
+    title: 'Anima couldn’t verify the app',
     body: 'Details: connection failed.',
     removable: false,
   },
@@ -385,7 +385,9 @@ it.each([
   expect(within(dialog).getByText('Last event').nextElementSibling!.textContent).toBe('None yet');
   expect(screen.queryByRole('alert')).toBeNull();
   expect(dialog.textContent).not.toMatch(/\bport\b/i);
-  expect(dialog.textContent).toContain('Check the forwarding for /webhook on your public address.');
+  expect(dialog.textContent).toContain(
+    'Check the forwarding for /webhook on your public address, and the app’s webhook URL and event subscriptions in Linear.',
+  );
 });
 
 it('an unreadable status cannot start an installation and recovers on retry', async () => {

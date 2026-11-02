@@ -44,14 +44,14 @@ function failureNotice(lastError: string): Notice {
     return { title: 'Authorization was declined in Linear', body: 'Authorize again whenever you’re ready.' };
   if (lastError.startsWith('Linear authorization could not be exchanged'))
     return {
-      title: 'Linear couldn’t confirm the app',
+      title: 'Authorization couldn’t be completed',
       body: withDetail(
-        'Check the Client ID, and that the app’s callback URL in Linear still uses your public address. Then authorize again.',
+        'Check the Client ID, that the app’s callback URL in Linear uses your public address, and this machine’s network. Then authorize again.',
       ),
     };
   if (lastError.startsWith('Linear app identity could not be verified'))
     return {
-      title: 'Linear couldn’t verify the app',
+      title: 'Anima couldn’t verify the app',
       body: withDetail('Check the app’s settings in Linear and this machine’s network, then authorize again.'),
     };
   return { title: 'Authorization didn’t finish', body: lastError };
@@ -432,7 +432,8 @@ function ConnectedView({
 
       <p className="font-sans text-[12px] leading-relaxed text-text-subtle">
         No “Received by Anima.” in Linear after a mention? Check the forwarding for{' '}
-        <span className="font-mono">/webhook</span> on your public address.
+        <span className="font-mono">/webhook</span> on your public address, and the app’s webhook URL
+        and event subscriptions in Linear.
       </p>
 
       {error && (

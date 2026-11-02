@@ -26,23 +26,31 @@ export type LinearCallbackOutcome = 'connected' | 'declined' | 'failed';
  */
 export class LinearCallbackRejected extends Error {}
 
+/**
+ * Thrown by finish() only after it has checked the session binding: the
+ * attempt belonged to this session and its exchange failed. This is the only
+ * failure that may name the agent.
+ */
+export class LinearCallbackFailed extends Error {}
+
 export class LinearIdentityService {
   readonly store: LinearStore;
   constructor(readonly agentId: string, readonly client = new LinearClient(), store = new LinearStore(agentId)) {
     this.store = store;
   }
 
-  // Returns the agent only once finish() has checked the session binding; a
-  // failure after that point (exchange, verification, storage) stays attributed
-  // to that agent so the dashboard can open it and show the recorded reason.
+  // Names the agent only when finish() vouches for the session binding: a
+  // completed or declined attempt, or a LinearCallbackFailed thrown after the
+  // check. Anything else, including a read error before the check, is
+  // rethrown and names no agent.
   static async finishCallback(state: string, code: string | undefined, binding: string): Promise<{ agentId: string; outcome: LinearCallbackOutcome }> {
     for (const agent of await defaultAgentRegistryService.listAgentConfigs()) {
       if ((await new LinearStore(agent.id).read()).pending?.id === state) {
         try {
           return { agentId: agent.id, outcome: await new LinearIdentityService(agent.id).finish(state, code, binding) };
         } catch (error) {
-          if (error instanceof LinearCallbackRejected) throw error;
-          return { agentId: agent.id, outcome: 'failed' };
+          if (error instanceof LinearCallbackFailed) return { agentId: agent.id, outcome: 'failed' };
+          throw error;
         }
       }
     }
@@ -176,7 +184,7 @@ export class LinearIdentityService {
         : `Linear app identity could not be verified (${reason}). Check the app configuration and network, then prepare authorization again.`;
       await this.store.update((current) => current.pending?.id === state && current.pending.expiresAt === 0
         ? { ...current, pending: undefined, lastError: message } : current);
-      throw new Error(message);
+      throw new LinearCallbackFailed(message);
     }
   }
 

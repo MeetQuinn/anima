@@ -40,7 +40,8 @@ Set it in **Settings → Server**, or when you connect the first agent.
 6. After you approve, Linear returns you to the agent's profile with the Linear dialog
    open. Authorization completes installation; there is no required test task. Mention the
    agent or delegate an issue to it. If Linear does not show "Received by Anima." after a
-   mention, check the forwarding for `/webhook`.
+   mention, check the forwarding for `/webhook` on your public address, and the app's
+   webhook URL and event subscriptions in Linear.
 
 For `https://anima.example.com`, forward these paths:
 

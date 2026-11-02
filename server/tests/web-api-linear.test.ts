@@ -219,3 +219,40 @@ test('declined and expired OAuth returns stay with their own attempt and never t
     assert.equal(fake.tokenCalls, 0);
   } finally { await app.close(); }
 }));
+
+test('a failure before the session check names no agent, even for a known state', async (t) => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  await defaultDashboardAuthService.setPassword('synthetic-password');
+  await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com' });
+  const fake = new FakeLinear(); t.mock.method(globalThis, 'fetch', fake.fetch);
+  const app = buildWebApp();
+  const login = async () => String((await app.inject({ method: 'POST', url: '/api/auth/login', payload: { password: 'synthetic-password' } })).headers['set-cookie']).split(';')[0]!;
+  try {
+    const cookie = await login(), other = await login();
+    const prepared = await app.inject({ method: 'POST', url: '/api/agents/scout/linear/install', headers: { cookie }, payload: {
+      clientId: install.clientId, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+    } });
+    assert.equal(prepared.statusCode, 200);
+    const url = `/api/linear/oauth/complete?state=${new URL(prepared.json().authorizationUrl).searchParams.get('state')}&code=synthetic-code`;
+    const saved = await new LinearStore('scout').read();
+    const read = LinearStore.prototype.read;
+    // The first read finds the attempt; the second is finish()'s, before it checks the session.
+    for (const session of [other, cookie]) {
+      let reads = 0;
+      const fault = t.mock.method(LinearStore.prototype, 'read', async function (this: LinearStore) {
+        if (++reads === 2) throw new Error('synthetic-read-failure');
+        return read.call(this);
+      });
+      const response = await app.inject({ url, headers: { cookie: session } });
+      fault.mock.restore();
+      assert.equal(reads, 2);
+      assertRetryPage(response, true);
+      assert.deepEqual(await new LinearStore('scout').read(), saved);
+    }
+    assert.equal(fake.tokenCalls, 0);
+    // Control: the same request without the fault completes for its own session.
+    assertRetryPage(await app.inject({ url, headers: { cookie: other } }), true);
+    assertReturnPage(await app.inject({ url, headers: { cookie } }), 'scout', 'connected');
+    assert.equal(fake.tokenCalls, 1);
+  } finally { await app.close(); }
+}));

@@ -106,8 +106,8 @@ export default function PublicUrlSettings() {
           Public address
         </h3>
         <p className="max-w-prose font-serif text-[13px] leading-relaxed text-text-muted">
-          The HTTPS address that reaches this machine. Integrations like Linear build their webhook and
-          sign-in URLs from it.
+          The HTTPS address you forward to this machine. Integrations like Linear build their webhook
+          and callback URLs from it.
         </p>
       </div>
       {query.isPending && (

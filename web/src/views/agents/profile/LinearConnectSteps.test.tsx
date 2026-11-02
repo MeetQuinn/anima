@@ -89,7 +89,7 @@ it('reveals credentials after the app step, enables Authorize only with both val
 it('clicking Create marks the app step done so the credentials come next', () => {
   mount();
   fireEvent.click(screen.getByRole('link', { name: 'Create app in Linear' }));
-  expect(screen.getByText('Created in Linear.')).toBeTruthy();
+  expect(screen.getByText('Opened in Linear.')).toBeTruthy();
   expect(screen.getByLabelText('Client ID')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Change' }));
   expect(screen.getByRole('link', { name: 'Create app in Linear' })).toBeTruthy();

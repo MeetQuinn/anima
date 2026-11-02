@@ -92,7 +92,7 @@ export function LinearConnectSteps({
           Connect {agentName} to Linear
         </h3>
         <p className="font-serif text-[14px] leading-relaxed text-text-muted">
-          {agentName} gets its own Linear app, so your team can mention it or assign it issues.
+          {agentName} gets its own Linear app, so your team can mention it or delegate issues to it.
         </p>
       </header>
 
@@ -100,7 +100,7 @@ export function LinearConnectSteps({
         <Step n={1} state={step1} title={reusedApp ? 'Use your Linear app' : 'Create the app in Linear'}>
           {appReady ? (
             <p className="font-serif text-[13px] text-text-muted">
-              {reusedApp ? 'Using an app you already created.' : 'Created in Linear.'}{' '}
+              {reusedApp ? 'Using an app you already created.' : 'Opened in Linear.'}{' '}
               <button
                 type="button"
                 disabled={busy}
@@ -228,7 +228,7 @@ export function LinearConnectSteps({
                   </div>
                 </div>
                 <p className="font-sans text-[11px] text-text-subtle">
-                  Stored on this machine and never shown again.
+                  The signing secret is stored on this machine and never shown again.
                 </p>
               </div>
             )}
@@ -238,8 +238,8 @@ export function LinearConnectSteps({
             {appReady && (
               <div className="space-y-3">
                 <p className="font-serif text-[13px] leading-relaxed text-text-muted">
-                  Linear asks which teams {agentName} can work in. Pick all of them to cover the whole
-                  workspace.
+                  Linear asks which teams {agentName} can access. Choose all available teams for
+                  workspace-wide work; workspace admins can change this later in Linear.
                 </p>
                 {(error || serverError) && (
                   <p role="alert" className="font-sans text-[12px] leading-relaxed text-health-error">
