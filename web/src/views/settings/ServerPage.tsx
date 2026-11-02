@@ -132,7 +132,7 @@ export default function ServerPage() {
             </dl>
           </div>
       <div className="py-5"><PublicUrlSettings /></div>
-      <details className="py-5"><summary className="cursor-pointer text-[13px] text-text-muted">Advanced integration settings</summary><div className="pt-4"><LinearWebhookSettings /></div></details>
+      <details className="py-5"><summary className="min-h-[44px] cursor-pointer py-2 text-[13px] text-text-muted md:min-h-[32px]">Advanced integration settings</summary><div className="pt-4"><LinearWebhookSettings /></div></details>
     </div>
   );
 }

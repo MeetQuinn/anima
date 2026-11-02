@@ -60,8 +60,12 @@ export function registerAgentLinearRoutes(app: FastifyInstance): void {
   app.get('/api/linear/oauth/complete', async (request, reply) => {
     reply.header('cache-control', 'no-store').header('referrer-policy', 'no-referrer');
     const callback = Callback.parse(request.query);
-    await LinearIdentityService.finishCallback(callback.state, callback.code,
-      bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)));
+    try {
+      await LinearIdentityService.finishCallback(callback.state, callback.code,
+        bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)));
+    } catch {
+      return reply.code(400).type('text/plain').send('Authorization could not finish. Return to Anima to see the error and prepare authorization again using your existing app.');
+    }
     return reply.type('text/plain').send(callback.code
       ? 'Linear app installed. Close this tab and return to Anima.'
       : 'Authorization was declined. Close this tab and return to Anima to try again.');

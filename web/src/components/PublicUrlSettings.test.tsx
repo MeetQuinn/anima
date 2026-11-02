@@ -10,7 +10,7 @@ vi.mock('@/api/public-url', () => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
-  api.read.mockResolvedValue({ dashboardPort: 14174 });
+  api.read.mockResolvedValue({});
 });
 it('validates a global origin, saves it normalized and refreshes the connection form', async () => {
   const client = new QueryClient();
@@ -32,7 +32,7 @@ it('validates a global origin, saves it normalized and refreshes the connection 
   submit();
   await screen.findByText(/Could not save/);
   expect(screen.queryByText(/private-secret/)).toBeNull();
-  api.save.mockResolvedValue({ publicUrl: 'https://anima.example.com', dashboardPort: 14174 });
+  api.save.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   submit();
   await screen.findByText(/Public address saved/);
   expect(api.save).toHaveBeenLastCalledWith('https://anima.example.com');

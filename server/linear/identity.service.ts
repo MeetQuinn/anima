@@ -150,10 +150,13 @@ export class LinearIdentityService {
         } }));
         return { ...current, installation, pending: undefined, receipts: {}, operations: {}, sessionStarts: {}, lastError: undefined, lastSignedWebhookAt: undefined };
       });
-    } catch {
+    } catch (error) {
+      const reason = error instanceof LinearApiError && error.failure
+        ? error.failure === 'http' ? `HTTP ${error.status}` : error.failure === 'network' ? 'connection failed' : 'invalid or rejected response'
+        : 'verification or storage failed';
       const message = stage === 'token'
-        ? 'Linear authorization could not be exchanged. Check the Client ID, registered redirect URL and network, then prepare authorization again.'
-        : 'Linear app identity could not be verified. Check the app configuration and network, then prepare authorization again.';
+        ? `Linear authorization could not be exchanged (${reason}). Check the Client ID, registered redirect URL and network, then prepare authorization again.`
+        : `Linear app identity could not be verified (${reason}). Check the app configuration and network, then prepare authorization again.`;
       await this.store.update((current) => current.pending?.id === state && current.pending.expiresAt === 0
         ? { ...current, pending: undefined, lastError: message } : current);
       throw new Error(message);

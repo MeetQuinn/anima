@@ -12,15 +12,16 @@ export function LinearConnectSteps({
   busy,
   disabled,
   onInstall,
+  retrying = false,
 }: {
   agentName: string;
   busy: boolean;
   disabled: boolean;
-  onBusy: (busy: boolean) => void;
+  retrying?: boolean;
   onInstall: (input: LinearInstallRequest) => Promise<void>;
 }) {
   const setup = useQuery({ queryKey: linearSetupKey, queryFn: fetchLinearSetup, retry: false });
-  const [step, setStep] = useState<'create' | 'credentials'>('create');
+  const [step, setStep] = useState<'create' | 'credentials'>(retrying ? 'credentials' : 'create');
   const [name, setName] = useState(() => defaultLinearAppName(agentName));
   const callback = setup.data?.callbackUrl ?? '';
   const [clientId, setClientId] = useState('');
@@ -50,7 +51,7 @@ export function LinearConnectSteps({
       listener: setup.data.listener,
     });
     if (!parsed.success) {
-      setError('Check the client ID, signing secret and callback URL.');
+      setError('Check the Client ID and Webhook signing secret.');
       return;
     }
     setError('');
@@ -97,7 +98,7 @@ export function LinearConnectSteps({
         >
           Open Server settings
         </a>
-        <Button variant="ghost" onClick={() => void setup.refetch()}>
+        <Button variant="ghost" className="text-[13px] font-normal" onClick={() => void setup.refetch()}>
           Refresh settings
         </Button>
       </div>
@@ -162,6 +163,11 @@ export function LinearConnectSteps({
               <dt>OAuth callback URL</dt>
               <dd className="font-mono">{callback}</dd>
             </dl>
+            <p className="mt-3 break-words text-[12px] leading-relaxed text-text-muted">
+              Forward /webhook to {setup.data.listener.host.includes(':') ? `[${setup.data.listener.host}]` : setup.data.listener.host}:{setup.data.listener.port}/webhook.
+              {' '}Forward /api/linear/oauth/callback to the dashboard’s loopback listener on its configured port.
+              Other dashboard routes can remain private.
+            </p>
           </div>
           <details
             open={optionsOpen || !validName}
@@ -209,10 +215,11 @@ export function LinearConnectSteps({
       ) : (
         <form onSubmit={(event) => void install(event)} className="space-y-4">
           <h3 className="font-serif text-[20px] font-semibold text-text">Connect your app</h3>
+          {retrying && <p className="text-[13px] leading-relaxed text-text-muted">Use your existing Linear app. Enter its Client ID and signing secret again, then prepare a new authorization.</p>}
           <p className="text-[13px] leading-relaxed text-text-muted">
             In the Linear app settings, copy the Client ID and Webhook signing secret below. You’ll
             then authorize access in Linear. To work across the workspace, choose all available
-            teams there. Linear still controls access to private teams.
+            teams there. Linear asks which teams the agent can access. Workspace admins can change this later in Linear.
           </p>
           <label className="block">
             <span className="mb-1 block text-[12px] text-text-muted">Client ID</span>

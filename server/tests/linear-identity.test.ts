@@ -206,3 +206,27 @@ test('late failed exchange cannot clear a newer authorization and denial does no
   assert.equal((await identity.store.read()).pending, undefined);
   assert.match((await identity.status()).lastError!, /declined/);
 }));
+
+for (const endpoint of ['token', 'identity'] as const) for (const failure of ['network', '400', '503', 'response'] as const) {
+  test(`OAuth diagnostic keeps only safe failure category: ${endpoint}/${failure}`, async () => withTempAnimaHome(async (home) => {
+    await writeAgentConfigs(home, [{ id: 'scout' }] as any);
+    const fake = new FakeLinear();
+    let calls = 0;
+    const identity = new LinearIdentityService('scout', new LinearClient(async (url, init) => {
+      const targeted = endpoint === 'token' ? String(url).endsWith('/token') : String(url).endsWith('/graphql');
+      if (!targeted) return fake.fetch(url, init);
+      calls++;
+      if (failure === 'network') throw new Error('synthetic-private-error-sentinel');
+      return new Response('synthetic-private-response-sentinel', { status: failure === 'response' ? 200 : Number(failure) });
+    }));
+    const state = new URL((await identity.begin(request, 'binding')).authorizationUrl).searchParams.get('state')!;
+    const expected = failure === 'network' ? 'connection failed' : failure === 'response' ? 'invalid or rejected response' : `HTTP ${failure}`;
+    await assert.rejects(identity.finish(state, 'secret-code', 'binding'), (error: Error) => {
+      assert.ok(error.message.includes(expected)); assert.ok(!error.message.includes('sentinel')); return true;
+    });
+    const file = await identity.store.read();
+    assert.equal(file.pending, undefined); assert.equal(file.installation, undefined);
+    assert.ok(file.lastError!.includes(expected)); assert.ok(!JSON.stringify(file).includes('sentinel'));
+    assert.equal(calls, 1, 'No automatic exchange replay');
+  }));
+}

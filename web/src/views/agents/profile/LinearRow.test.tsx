@@ -79,7 +79,7 @@ it('installation and read errors stay visible without echoing server credential 
   api.install.mockRejectedValue(new Error('synthetic-private-error-sentinel'));
   mount(); await screen.findByText('Not connected'); await openSettings();
   prepare();
-  await screen.findByText(/Installation could not start/); expect(screen.queryByText(/private-error-sentinel/)).toBeNull();
+  await screen.findByText(/Authorization could not start/); expect(screen.queryByText(/private-error-sentinel/)).toBeNull();
 });
 
 it('unreadable settings cannot start an installation', async () => {
@@ -177,7 +177,7 @@ it.each(['install', 'remove'] as const)('cannot dismiss a pending %s or lose its
   fireEvent.click(screen.getByRole('button', { name: 'Close Linear settings' }));
   expect(screen.getByRole('dialog')).toBe(dialog);
   await act(async () => reject(new Error('private-failure-sentinel')));
-  await screen.findByText(operation === 'remove' ? /Removal failed/ : /Installation could not start/);
+  await screen.findByText(operation === 'remove' ? /Removal failed/ : /Authorization could not start/);
   expect(screen.queryByText(/private-failure-sentinel/)).toBeNull();
   fireEvent.keyDown(dialog, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBeNull();
@@ -313,15 +313,30 @@ it('keeps exchange-status focus away from Remove when authorization completes', 
   client.clear();
 });
 
-it('returns to setup after a failed exchange without keeping a consumed authorization link', async () => {
+for (const reason of ['Linear authorization could not be exchanged.', 'Linear authorization was declined.']) it(`returns to existing app setup and keeps focus after ${reason}`, async () => {
   api.status.mockResolvedValue(base);
   api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=consumed' });
   const client = mount(); await screen.findByText('Not connected'); await openSettings(); prepare();
   await screen.findByRole('link', { name: 'Authorize in Linear' });
-  api.status.mockResolvedValue({ ...base, lastError: 'Linear authorization could not be exchanged. Prepare authorization again.' });
+  api.status.mockResolvedValue({ ...base, lastError: reason });
   await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
-  await screen.findByRole('link', { name: 'Create app in Linear' });
+  await screen.findByLabelText('Client ID');
+  expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
+  expect(screen.getByText(/Use your existing Linear app/)).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
-  expect(screen.getByRole('alert').textContent).toContain('could not be exchanged');
+  expect(screen.getByRole('alert').textContent).toContain(reason);
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('alert')));
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+  await screen.findByRole('link', { name: 'Create app in Linear' });
   expect(api.remove).not.toHaveBeenCalled();
 });
+
+for (const reason of ['Use a separate Linear app for each agent.', 'Set the Anima public URL in Server settings and refresh the connection form.', 'private-input-sentinel']) {
+  it(`shows only allowlisted installation start errors: ${reason}`, async () => {
+    api.install.mockRejectedValueOnce(new Error(reason));
+    mount(); await screen.findByText('Not connected'); await openSettings(); prepare();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain(reason === 'private-input-sentinel' ? 'Authorization could not start.' : reason);
+    expect(alert.textContent).not.toContain('private-input-sentinel');
+  });
+}

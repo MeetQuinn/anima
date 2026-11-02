@@ -32,18 +32,22 @@ in this Anima home.
    **I already have an app** and make sure its URLs and subscriptions match.
 4. Copy the **Client ID** and **Webhook signing secret** into Anima. Select **Prepare
    authorization**, then **Authorize in Linear**. Choose all available teams if the agent
-   should work across the workspace; Linear controls the granted access, including private
-   teams. Do not paste the secret into chat.
+   should work across the workspace. Linear asks which teams the agent can access; workspace
+   admins can change this later in Linear. Do not paste the secret into chat.
 5. Return to Anima. Authorization completes installation. You can mention the agent or
    delegate an issue to it. If Linear does not show "Received by Anima." after you mention
    it, check HTTPS forwarding. There is no required test task.
 
 For `https://anima.example.com`, forward these paths:
 
-| Public path                  | Local destination                                         |
-| ---------------------------- | --------------------------------------------------------- |
-| `/webhook`                   | The Linear listener, by default `127.0.0.1:14185/webhook` |
-| `/api/linear/oauth/callback` | The dashboard's same path, on its configured port         |
+| Public path                  | Local destination                                          |
+| ---------------------------- | ---------------------------------------------------------- |
+| `/webhook`                   | The Linear listener, by default `127.0.0.1:14185/webhook`  |
+| `/api/linear/oauth/callback` | The loopback dashboard's same path, on its configured port |
+
+Forward the public callback to the loopback dashboard listener, not the restricted LAN or
+tailnet listener. The browser may return to a LAN/tailnet dashboard, but it must still
+match that listener's allowed peer and host lists.
 
 Keep the webhook's raw body and `Linear-Signature` unchanged. The dashboard and other API
 routes can remain private. The public callback only returns the browser to the dashboard
@@ -68,7 +72,8 @@ before downgrading to a version without it.
 
 Installation uses PKCE and a single-use state bound to the initiating dashboard session,
 valid for ten minutes. A failed exchange or declined authorization clears that attempt and
-shows a retry explanation. Prepare again to get a new code; the failed attempt is not retried
+shows a retry explanation with a safe connection, HTTP-status or response category;
+raw errors, response bodies and credentials are not recorded. Use your existing app, enter its Client ID and signing secret again, then prepare a new authorization; the failed attempt is not retried
 automatically. Expired attempts, or consumed attempts left by an older version or an interrupted
 process, can be removed using **Remove connection**. Removing an attempt never uninstalls
 the app at Linear. There is no separate CLI installation flow.

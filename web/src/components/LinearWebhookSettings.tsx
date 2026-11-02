@@ -9,13 +9,7 @@ export const linearSetupKey = ['linear', 'setup'] as const;
 export const linearInputClass =
   'h-[44px] w-full min-w-0 rounded-sm border border-border-soft bg-surface px-3 font-mono text-[13px] text-text outline-none focus-visible:border-accent disabled:cursor-not-allowed disabled:bg-surface-elevated disabled:text-text-muted disabled:opacity-60';
 
-export default function LinearWebhookSettings({
-  onSaved,
-  onBusy,
-}: {
-  onSaved?: () => void;
-  onBusy?: (busy: boolean) => void;
-}) {
+export default function LinearWebhookSettings() {
   const [saved, setSaved] = useState(false);
   const query = useQuery({ queryKey: linearSetupKey, queryFn: fetchLinearSetup, retry: false });
   return (
@@ -45,11 +39,7 @@ export default function LinearWebhookSettings({
         <WebhookForm
           key={JSON.stringify(query.data)}
           data={query.data}
-          onSaved={() => {
-            setSaved(true);
-            onSaved?.();
-          }}
-          onBusy={onBusy}
+          onSaved={() => setSaved(true)}
         />
       )}
       {saved && (
@@ -64,11 +54,9 @@ export default function LinearWebhookSettings({
 function WebhookForm({
   data,
   onSaved,
-  onBusy,
 }: {
   data: LinearSetup;
-  onSaved?: () => void;
-  onBusy?: (busy: boolean) => void;
+  onSaved: () => void;
 }) {
   const client = useQueryClient();
   const [host, setHost] = useState(data.listener.host);
@@ -85,20 +73,18 @@ function WebhookForm({
       return;
     }
     setBusy(true);
-    onBusy?.(true);
     setError('');
     try {
       const result = await saveLinearSetup(parsed.data);
       client.setQueryData(linearSetupKey, result);
       void client.invalidateQueries({ queryKey: ['agent'] });
-      onSaved?.();
+      onSaved();
     } catch {
       setError(
-        'Could not save. Check the HTTPS address and use a port other than the dashboard port. An installed app or an authorization in progress must keep its current listener.',
+        'Could not save. Check the bind address and use a port other than the dashboard port. An installed app or an authorization in progress must keep its current listener.',
       );
     } finally {
       setBusy(false);
-      onBusy?.(false);
     }
   }
   return (
@@ -106,7 +92,7 @@ function WebhookForm({
       <p className="break-words text-[12px] leading-relaxed text-text-muted">
         Forward <span className="font-mono">{data.webhookUrl ?? '/webhook'}</span> to{' '}
         <span className="font-mono">{host.includes(':') ? `[${host}]` : host}:{port}/webhook</span>.
-        {' '}Forward /api/linear/oauth/callback to the dashboard port. Other dashboard routes can remain private.
+        {' '}Forward /api/linear/oauth/callback to the loopback dashboard on its configured port. Other dashboard routes can remain private.
       </p>
       <details>
         <summary className="cursor-pointer py-2 font-sans text-[12px] text-text-muted">

@@ -89,3 +89,69 @@ for (const readOnly of [false, true]) {
     }));
   }
 }
+
+test('private LAN OAuth completion permits only navigation from an allowed peer and host with the original session', async (t) => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  await defaultDashboardAuthService.setPassword('synthetic-password');
+  await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com' });
+  const fake = new FakeLinear(); t.mock.method(globalThis, 'fetch', fake.fetch);
+  const local = buildWebApp();
+  const lan = buildWebApp({ allowedPeers: ['100.100.100.10'], allowedHosts: ['anima-lan'], port: 4174 });
+  const remoteAddress = '100.100.100.10', host = 'anima-lan:4174';
+  try {
+    const login = await lan.inject({ remoteAddress, method: 'POST', url: '/api/auth/login', headers: { host }, payload: { password: 'synthetic-password' } });
+    assert.equal(login.statusCode, 200);
+    const cookie = String(login.headers['set-cookie']).split(';')[0]!;
+    const prepared = await lan.inject({ remoteAddress, method: 'POST', url: '/api/agents/scout/linear/install', headers: { host, cookie, origin: `http://${host}`, 'sec-fetch-site': 'same-origin' }, payload: {
+      clientId: install.clientId, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+    } });
+    assert.equal(prepared.statusCode, 200);
+    const state = new URL(prepared.json().authorizationUrl).searchParams.get('state')!;
+    const relay = await local.inject({ url: `/api/linear/oauth/callback?state=${state}&code=synthetic-code`, headers: { host: 'agents.example.com', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate' } });
+    assert.equal(relay.statusCode, 303);
+    const target = new URL(String(relay.headers.location));
+    assert.equal(target.origin, `http://${host}`);
+    const url = target.pathname + target.search;
+    const headers = { host, cookie, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' };
+    for (const denied of [
+      { remoteAddress: '100.100.100.11', headers },
+      { remoteAddress, headers: { ...headers, host: 'evil.example:4174' } },
+      { remoteAddress, headers: { ...headers, 'sec-fetch-mode': 'cors' } },
+      { remoteAddress, headers: { ...headers, 'sec-fetch-dest': 'iframe' } },
+      { remoteAddress, method: 'POST' as const, headers },
+      { remoteAddress, url: '/api/health', headers },
+      { remoteAddress, url: `/api/linear/oauth/callback?state=${state}&code=synthetic-code`, headers },
+    ]) {
+      const response = await lan.inject({ url, ...denied });
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.json().error, 'network_access_denied');
+    }
+    assert.equal((await lan.inject({ remoteAddress, url, headers: { ...headers, cookie: '' } })).statusCode, 401);
+    const secondLogin = await lan.inject({ remoteAddress, method: 'POST', url: '/api/auth/login', headers: { host }, payload: { password: 'synthetic-password' } });
+    const other = String(secondLogin.headers['set-cookie']).split(';')[0]!;
+    assert.notEqual((await lan.inject({ remoteAddress, url, headers: { ...headers, cookie: other } })).statusCode, 200);
+    assert.equal(fake.tokenCalls, 0);
+    const completed = await lan.inject({ remoteAddress, url, headers });
+    assert.equal(completed.statusCode, 200);
+    assert.equal(fake.tokenCalls, 1);
+    assert.equal((await new LinearIdentityService('scout').status()).state, 'connected');
+  } finally { await local.close(); await lan.close(); }
+}));
+
+test('failed OAuth completion gives a readable return path and retains only safe diagnostics', async (t) => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com' });
+  t.mock.method(globalThis, 'fetch', async () => new Response('private-response-sentinel', { status: 503 }));
+  const app = buildWebApp();
+  try {
+    const prepared = await app.inject({ method: 'POST', url: '/api/agents/scout/linear/install', payload: {
+      clientId: install.clientId, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+    } });
+    const state = new URL(prepared.json().authorizationUrl).searchParams.get('state')!;
+    const response = await app.inject({ url: `/api/linear/oauth/complete?state=${state}&code=private-code-sentinel` });
+    assert.equal(response.statusCode, 400); assert.match(String(response.headers['content-type']), /text\/plain/);
+    assert.match(response.body, /Return to Anima/); assert.match(response.body, /existing app/); assert.doesNotMatch(response.body, /sentinel/);
+    const status = (await app.inject({ url: '/api/agents/scout/linear' })).json();
+    assert.equal(status.state, 'not_configured'); assert.match(status.lastError, /HTTP 503/); assert.doesNotMatch(JSON.stringify(status), /sentinel/);
+  } finally { await app.close(); }
+}));
