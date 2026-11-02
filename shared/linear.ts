@@ -14,15 +14,18 @@ export const LinearListenerConfig = z.object({
 }).strict();
 export type LinearListenerConfig = z.infer<typeof LinearListenerConfig>;
 
+export const LinearCallbackUrl = z.string().url().max(2048).refine((value) => {
+  let url: URL;
+  try { url = new URL(value); } catch { return false; }
+  return !url.username && !url.password && !url.search && !url.hash
+      && url.pathname === '/api/linear/oauth/callback'
+      && (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)));
+}, 'Use an HTTPS or loopback callback ending in /api/linear/oauth/callback');
+
 export const LinearInstallRequest = z.object({
   clientId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
   signingSecret: z.string().min(16).max(1024),
-  callbackUrl: z.string().url().max(2048).refine((value) => {
-    const url = new URL(value);
-    return !url.username && !url.password && !url.search && !url.hash
-      && url.pathname === '/api/linear/oauth/callback'
-      && (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)));
-  }, 'Use an HTTPS or loopback callback ending in /api/linear/oauth/callback'),
+  callbackUrl: LinearCallbackUrl,
   listener: LinearListenerConfig,
 }).strict();
 export type LinearInstallRequest = z.infer<typeof LinearInstallRequest>;

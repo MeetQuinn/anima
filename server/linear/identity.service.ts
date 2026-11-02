@@ -10,6 +10,7 @@ import { LinearStore, type LinearInstallation } from '../storage/schema/linear.s
 import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
 import { LinearListenerStore } from '../storage/schema/linear-listener.store.js';
 import { processAlive } from '../runtime/item-state.js';
+import { LinearSetupService } from './setup.service.js';
 import { LinearApiError, LinearClient } from './client.js';
 
 const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.literal(true) }), organization: z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(256) }),
@@ -83,8 +84,8 @@ export class LinearIdentityService {
     }
     const config = await serverConfigStore.read();
     if (request.listener.port === (config.dashboardPort ?? 4174)) throw new Error('Webhook port must differ from the dashboard port.');
-    if (config.linearWebhook && JSON.stringify(config.linearWebhook) !== JSON.stringify(request.listener)
-      && agents.some((agent) => agent.linear?.connected)) throw new Error('All installed agents share one webhook listener; keep its existing host and port.');
+    if (config.linearWebhook && (config.linearWebhook.host !== request.listener.host || config.linearWebhook.port !== request.listener.port)
+      && (await new LinearSetupService().read()).listenerLocked) throw new Error('All installed agents share one webhook listener; keep its existing host and port.');
     const pending = {
       id: randomBytes(32).toString('base64url'), clientId: request.clientId,
       signingSecret: request.signingSecret, callbackUrl: request.callbackUrl,

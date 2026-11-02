@@ -443,7 +443,7 @@ export default function Profile() {
                 )}
               </Field>
             )}
-            <LinearRow key={agentId} agentId={agentId} />
+            <LinearRow key={agentId} agentId={agentId} agentName={agent.profile.displayName || agentId} />
           </div>
           {slackConnected && (
             <div className="mt-4">

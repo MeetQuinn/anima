@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, Settings2, X } from 'lucide-react';
@@ -7,6 +7,8 @@ import { refreshAgentData } from '@/api/agents';
 import { Button } from '@/components/ui/button';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { Field } from './Primitives';
+import type { LinearInstallRequest } from '@shared/linear';
+import { LinearConnectSteps } from './LinearConnectSteps';
 
 const listenerFailures = {
   address_in_use: 'The port is already in use. Free it or choose a different listener port.',
@@ -16,7 +18,7 @@ const listenerFailures = {
   other: 'The listener could not bind. Check the runtime logs and listener settings.',
 };
 
-export function LinearRow({ agentId }: { agentId: string }) {
+export function LinearRow({ agentId, agentName = agentId }: { agentId: string; agentName?: string }) {
   const status = useQuery({
     queryKey: ['agent', agentId, 'linear'],
     queryFn: () => fetchLinearStatus(agentId),
@@ -24,24 +26,23 @@ export function LinearRow({ agentId }: { agentId: string }) {
     retry: false,
   });
   const [open, setOpen] = useState(false);
-  const [clientId, setClientId] = useState('');
-  const [secret, setSecret] = useState('');
-  const [callback, setCallback] = useState(`${window.location.origin}/api/linear/oauth/callback`);
-  const [host, setHost] = useState('127.0.0.1');
-  const [port, setPort] = useState('14185');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [authorizationUrl, setAuthorizationUrl] = useState('');
   const authorizationLink = useRef<HTMLAnchorElement>(null);
+  const identitySummary = useRef<HTMLParagraphElement>(null);
   const data = status.data;
+  const expiredAuthorization = data?.state === 'not_configured' && Boolean(data.clientId);
   useEffect(() => {
-    if (open && authorizationUrl && !busy) authorizationLink.current?.focus();
-  }, [open, authorizationUrl, busy]);
+    if (!open || busy) return;
+    if (expiredAuthorization) identitySummary.current?.focus();
+    else if (authorizationUrl) authorizationLink.current?.focus();
+  }, [open, authorizationUrl, busy, expiredAuthorization]);
   useEffect(() => {
     if (data?.state === 'connected' || data?.state === 'revoked') refreshAgentData(agentId);
   }, [data?.state, agentId]);
   const connected = data?.state === 'connected';
-  const configured = Boolean(data && data.state !== 'not_configured');
+  const configured = Boolean(data && (data.state !== 'not_configured' || expiredAuthorization));
   const listener = data?.listenerStatus;
   const listenerLabel =
     listener?.state === 'listening'
@@ -52,22 +53,12 @@ export function LinearRow({ agentId }: { agentId: string }) {
           ? 'Stopped'
           : 'Not observed';
 
-  async function install(event: FormEvent) {
-    event.preventDefault();
+  async function install(input: LinearInstallRequest) {
     setBusy(true);
     setError('');
     setAuthorizationUrl('');
     try {
-      const result = await installLinear(agentId, {
-        clientId,
-        signingSecret: secret,
-        callbackUrl: callback,
-        listener: {
-          host: data?.listener?.host ?? host,
-          port: data?.listener?.port ?? Number(port),
-        },
-      });
-      setSecret('');
+      const result = await installLinear(agentId, input);
       setAuthorizationUrl(result.authorizationUrl);
       await status.refetch();
     } catch {
@@ -84,7 +75,6 @@ export function LinearRow({ agentId }: { agentId: string }) {
     try {
       await removeLinear(agentId);
       setAuthorizationUrl('');
-      setSecret('');
       await status.refetch();
       refreshAgentData(agentId);
     } catch {
@@ -95,7 +85,6 @@ export function LinearRow({ agentId }: { agentId: string }) {
   }
   const close = useCallback(() => {
     if (busy) return;
-    setSecret('');
     setError('');
     setOpen(false);
   }, [busy]);
@@ -105,9 +94,7 @@ export function LinearRow({ agentId }: { agentId: string }) {
       ? 'Authorization revoked'
       : data?.state === 'installing'
         ? 'Awaiting authorization'
-        : 'Not connected';
-  const inputClass =
-    'h-[44px] w-full min-w-0 rounded-sm border border-border-soft bg-surface px-3 font-mono text-[13px] text-text outline-none focus-visible:border-accent';
+        : expiredAuthorization ? 'Authorization needs attention' : 'Not connected';
 
   return (
     <>
@@ -143,10 +130,12 @@ export function LinearRow({ agentId }: { agentId: string }) {
         <LinearSettingsDialog busy={busy} onClose={close}>
           {configured && (
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="font-serif text-[15px] text-text">{identityLabel}</p>
+              <p ref={identitySummary} tabIndex={-1} className="font-serif text-[15px] text-text">
+                {identityLabel}
+              </p>
               <Button
-                variant="outline"
-                className="min-h-[44px]"
+                variant={connected ? 'outline' : 'ghost'}
+                className="min-h-[44px] text-[13px]"
                 onClick={() => void remove()}
                 disabled={busy}
               >
@@ -180,52 +169,70 @@ export function LinearRow({ agentId }: { agentId: string }) {
               </button>
             </p>
           )}
+          {connected && (
+            <p className="mt-3 font-sans text-[13px] leading-relaxed text-text-muted">
+              Connected. You can now mention this agent in Linear or delegate an issue to it. If Linear
+              does not show &quot;Received by Anima.&quot; after you mention it, check the HTTPS
+              forwarding to this machine.
+            </p>
+          )}
           {data && configured && (
-            <dl className="mt-4 grid gap-x-6 gap-y-3 border-t border-border-soft pt-4 sm:grid-cols-2">
-              <div className="min-w-0">
-                <dt className="chrome text-[11px] text-text-muted">Client ID</dt>
-                <dd className="mt-1 break-all font-mono text-[12px] text-text">{data.clientId}</dd>
-              </div>
-              <div>
-                <dt className="chrome text-[11px] text-text-muted">Last signed webhook received</dt>
-                <dd className="mt-1 font-sans text-[13px] text-text">
-                  {data.lastSignedWebhookAt
-                    ? new Date(data.lastSignedWebhookAt).toLocaleString()
-                    : 'None received'}
-                </dd>
-              </div>
-              <div>
-                <dt className="chrome text-[11px] text-text-muted">Rejected signature claims</dt>
-                <dd className="mt-1 font-sans text-[13px] text-text">{data.signatureFailures}</dd>
-              </div>
-              <div className="min-w-0">
-                <dt className="chrome text-[11px] text-text-muted">Configured listener address</dt>
-                <dd className="mt-1 break-all font-mono text-[12px] text-text">
-                  {data.listener
-                    ? `${data.listener.host}:${data.listener.port}/webhook`
-                    : 'Not configured'}
-                </dd>
-              </div>
-              <div className="min-w-0 sm:col-span-2">
-                <dt className="chrome text-[11px] text-text-muted">Local listener</dt>
-                <dd
-                  className={`mt-1 font-sans text-[13px] ${listener?.state === 'failed' ? 'text-health-error' : 'text-text'}`}
-                >
-                  {listenerLabel}
-                  {listener?.observedAt && (
-                    <span className="ml-2 text-text-muted">
-                      Observed {new Date(listener.observedAt).toLocaleString()}
-                    </span>
-                  )}
-                </dd>
-                <dd className="mt-1 font-sans text-[12px] leading-relaxed text-text-muted">
-                  {listener?.state === 'unknown' || !listener
-                    ? 'No current observation from the runtime. '
-                    : ''}
-                  This shared local listener state does not verify your public HTTPS ingress.
-                </dd>
-              </div>
-            </dl>
+            <details className="mt-4">
+              <summary className="cursor-pointer py-2 text-[12px] text-text-muted">
+                Connection details
+              </summary>
+              <dl className="mt-4 grid gap-x-6 gap-y-3 border-t border-border-soft pt-4 sm:grid-cols-2">
+                <div className="min-w-0">
+                  <dt className="chrome text-[11px] text-text-muted">Client ID</dt>
+                  <dd className="mt-1 break-all font-mono text-[12px] text-text">{data.clientId}</dd>
+                </div>
+                <div>
+                  <dt className="chrome text-[11px] text-text-muted">Last signed webhook received</dt>
+                  <dd className="mt-1 font-sans text-[13px] text-text">
+                    {data.lastSignedWebhookAt
+                      ? new Date(data.lastSignedWebhookAt).toLocaleString()
+                      : 'None received'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="chrome text-[11px] text-text-muted">Rejected signature claims</dt>
+                  <dd className="mt-1 font-sans text-[13px] text-text">{data.signatureFailures}</dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="chrome text-[11px] text-text-muted">Configured listener address</dt>
+                  <dd className="mt-1 break-all font-mono text-[12px] text-text">
+                    {data.listener
+                      ? `${data.listener.host}:${data.listener.port}/webhook`
+                      : 'Not configured'}
+                  </dd>
+                </div>
+                <div className="min-w-0 sm:col-span-2">
+                  <dt className="chrome text-[11px] text-text-muted">Local listener</dt>
+                  <dd
+                    className={`mt-1 font-sans text-[13px] ${listener?.state === 'failed' ? 'text-health-error' : 'text-text'}`}
+                  >
+                    {listenerLabel}
+                    {listener?.observedAt && (
+                      <span className="ml-2 text-text-muted">
+                        Observed {new Date(listener.observedAt).toLocaleString()}
+                      </span>
+                    )}
+                  </dd>
+                  <dd className="mt-1 font-sans text-[12px] leading-relaxed text-text-muted">
+                    {listener?.state === 'unknown' || !listener
+                      ? 'No current observation from the runtime. '
+                      : ''}
+                    This shared local listener state does not verify your public HTTPS ingress.
+                  </dd>
+                </div>
+              </dl>
+              <p className="mt-4 font-sans text-[12px] leading-relaxed text-text-muted">
+                Received requests persist locally. Requests never received during downtime are not
+                recovered after Linear's retry window or disabled delivery. Restore delivery, check
+                progress, then send a new prompt. Removing this connection does not uninstall the app
+                from Linear.
+              </p>
+            </details>
           )}
           {data?.lastError && (
             <p role="alert" className="mt-3 font-sans text-[13px] text-health-error">
@@ -239,118 +246,49 @@ export function LinearRow({ agentId }: { agentId: string }) {
               not a connection health check.
             </p>
           ) : null}
-          {data && !configured && (
-            <form onSubmit={(event) => void install(event)} className="space-y-4">
-              <p className="font-sans text-[13px] leading-relaxed text-text-muted">
-                Create a separate OAuth app for this agent in{' '}
-                <a
-                  href="https://linear.app/settings/api/applications"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-accent underline"
-                >
-                  Linear settings
-                </a>
-                . Select Agent session events, register the callback below, and expose the local
-                webhook through your own HTTPS ingress.
-              </p>
-              <label className="block">
-                <span className="mb-1 block font-sans text-[12px] text-text-muted">Client ID</span>
-                <input
-                  required
-                  disabled={busy}
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  className={inputClass}
-                  autoComplete="off"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block font-sans text-[12px] text-text-muted">
-                  Webhook signing secret
-                </span>
-                <input
-                  type="password"
-                  required
-                  disabled={busy}
-                  value={secret}
-                  onChange={(e) => setSecret(e.target.value)}
-                  className={inputClass}
-                  autoComplete="new-password"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block font-sans text-[12px] text-text-muted">
-                  OAuth callback URL
-                </span>
-                <input
-                  type="url"
-                  required
-                  disabled={busy}
-                  value={callback}
-                  onChange={(e) => setCallback(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-              <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-3">
-                <label>
-                  <span className="mb-1 block font-sans text-[12px] text-text-muted">
-                    Bind address
-                  </span>
-                  <input
-                    required
-                    value={data?.listener?.host ?? host}
-                    disabled={busy || Boolean(data?.listener)}
-                    onChange={(e) => setHost(e.target.value)}
-                    className={inputClass}
-                  />
-                </label>
-                <label>
-                  <span className="mb-1 block font-sans text-[12px] text-text-muted">Port</span>
-                  <input
-                    type="number"
-                    required
-                    min="1024"
-                    max="65535"
-                    value={data?.listener?.port ?? port}
-                    disabled={busy || Boolean(data?.listener)}
-                    onChange={(e) => setPort(e.target.value)}
-                    className={inputClass}
-                  />
-                </label>
-              </div>
-              <p className="font-sans text-[12px] leading-relaxed text-text-muted">
-                Loopback is the default. All agents share this listener. It serves only signed
-                webhooks at /webhook; the dashboard handles OAuth separately. Secrets stay in
-                runtime storage and are never shown back.
-              </p>
-              <Button type="submit" className="min-h-[44px]" disabled={busy || status.isError}>
-                {busy ? 'Preparing…' : 'Prepare authorization'}
-              </Button>
-            </form>
+          {data && !configured && !authorizationUrl && (
+            <LinearConnectSteps
+              agentName={agentName}
+              busy={busy}
+              disabled={status.isError}
+              onBusy={setBusy}
+              onInstall={install}
+            />
           )}
-          {authorizationUrl && !connected && (
-            <a
-              ref={authorizationLink}
-              href={authorizationUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-4 inline-flex min-h-[44px] items-center gap-2 rounded-sm border border-accent px-4 font-sans text-[13px] text-accent"
-            >
-              Authorize in Linear <ExternalLink className="size-3.5" />
-            </a>
+          {data?.state === 'installing' && !authorizationUrl && (
+            <p className="mt-3 text-[13px] text-text-muted">
+              Finish authorization in the Linear tab. If that tab is no longer available, remove this
+              pending connection and start again.
+            </p>
+          )}
+          {authorizationUrl && !connected && !expiredAuthorization && (
+            <div className="mt-4 space-y-2">
+              <p className="font-sans text-[12px] text-accent">3. Authorize</p>
+              <h3 className="font-serif text-[20px] font-semibold text-text">
+                Choose workspace access
+              </h3>
+              <p className="text-[13px] leading-relaxed text-text-muted">
+                Approve the workspace and teams in Linear, then return here to finish.
+              </p>
+              <a
+                ref={authorizationLink}
+                href={authorizationUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-4 inline-flex min-h-[44px] items-center gap-2 rounded-sm bg-primary px-4 font-sans text-[13px] text-primary-foreground"
+              >
+                Authorize in Linear <ExternalLink className="size-3.5" />
+              </a>
+              {!configured && (
+                <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
+                  Start again
+                </Button>
+              )}
+            </div>
           )}
           {error && (
             <p role="alert" className="mt-3 font-sans text-[13px] text-health-error">
               {error}
-            </p>
-          )}
-          {data && (
-            <p className="mt-4 font-sans text-[12px] leading-relaxed text-text-muted">
-              Received requests persist locally. Requests never received during downtime are not
-              recovered after Linear's retry window or disabled delivery. Restore delivery, check
-              progress, then send a new prompt. Removing this connection does not uninstall the app
-              from Linear.
             </p>
           )}
         </LinearSettingsDialog>

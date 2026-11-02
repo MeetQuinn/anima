@@ -4,6 +4,7 @@ import { fetchServerInfo, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
+import LinearWebhookSettings from '@/components/LinearWebhookSettings';
 import RestartButton from '@/components/RestartButton';
 import RuntimeUpgradeRow from '@/components/RuntimeUpgrade';
 
@@ -129,6 +130,7 @@ export default function ServerPage() {
               )}
             </dl>
           </div>
+      <div className="py-5"><LinearWebhookSettings /></div>
     </div>
   );
 }
