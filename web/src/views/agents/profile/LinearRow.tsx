@@ -30,12 +30,12 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
   const [error, setError] = useState('');
   const [authorizationUrl, setAuthorizationUrl] = useState('');
   const authorizationLink = useRef<HTMLAnchorElement>(null);
-  const removeButton = useRef<HTMLButtonElement>(null);
+  const identitySummary = useRef<HTMLParagraphElement>(null);
   const data = status.data;
   const expiredAuthorization = data?.state === 'not_configured' && Boolean(data.clientId);
   useEffect(() => {
     if (!open || busy) return;
-    if (expiredAuthorization) removeButton.current?.focus();
+    if (expiredAuthorization) identitySummary.current?.focus();
     else if (authorizationUrl) authorizationLink.current?.focus();
   }, [open, authorizationUrl, busy, expiredAuthorization]);
   useEffect(() => {
@@ -130,9 +130,10 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
         <LinearSettingsDialog busy={busy} onClose={close}>
           {configured && (
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="font-serif text-[15px] text-text">{identityLabel}</p>
+              <p ref={identitySummary} tabIndex={-1} className="font-serif text-[15px] text-text">
+                {identityLabel}
+              </p>
               <Button
-                ref={removeButton}
                 variant={connected ? 'outline' : 'ghost'}
                 className="min-h-[44px] text-[13px]"
                 onClick={() => void remove()}

@@ -261,7 +261,7 @@ it('lets an expired authorization start again without retaining its old link', a
   api.status.mockResolvedValue({ ...base, state: 'not_configured', clientId: 'client-id', lastError: 'Installation expired.' });
   await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
   const restart = await screen.findByRole('button', { name: 'Remove connection' });
-  await waitFor(() => expect(document.activeElement).toBe(restart));
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByText('Authorization needs attention')));
   expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
   api.status.mockResolvedValue(base);
   fireEvent.click(restart);
@@ -299,4 +299,18 @@ it('offers removal after reloading a consumed or expired pending authorization',
   fireEvent.click(screen.getByRole('button', { name: 'Remove connection' }));
   await screen.findByRole('link', { name: 'Create app in Linear' });
   expect(api.remove).toHaveBeenCalledTimes(1);
+});
+
+
+it('keeps exchange-status focus away from Remove when authorization completes', async () => {
+  api.status.mockResolvedValue({ ...base, clientId: 'consumed-client' });
+  const client = mount(); await screen.findByText('Not connected'); await openSettings(false);
+  const summary = screen.getByText('Authorization needs attention');
+  await waitFor(() => expect(document.activeElement).toBe(summary));
+  api.status.mockResolvedValue({ ...base, state: 'connected', clientId: 'consumed-client' });
+  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
+  expect(document.activeElement).toBe(summary);
+  expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Remove connection' }));
+  expect(api.remove).not.toHaveBeenCalled();
+  client.clear();
 });
