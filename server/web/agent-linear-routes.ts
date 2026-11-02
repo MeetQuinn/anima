@@ -1,14 +1,24 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { LinearSetupRequest } from '../../shared/linear-setup.js';
 import { LinearInstallRequest } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
+import { LinearSetupService } from '../linear/setup.service.js';
 import { cookieValue, DASHBOARD_AUTH_COOKIE } from '../settings/dashboard-auth.service.js';
 
 const Callback = z.object({ state: z.string().min(1).max(256), code: z.string().min(1).max(4096) });
 const bindingFor = (cookie: string | undefined) => createHash('sha256').update(cookie ?? 'local-dashboard').digest('hex');
 
 export function registerAgentLinearRoutes(app: FastifyInstance): void {
+  app.get('/api/linear/setup', async (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return new LinearSetupService().read();
+  });
+  app.put('/api/linear/setup', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return new LinearSetupService().save(LinearSetupRequest.parse(request.body));
+  });
   app.get<{ Params: { agentId: string } }>('/api/agents/:agentId/linear', async (request, reply) => {
     reply.header('cache-control', 'no-store');
     return new LinearIdentityService(request.params.agentId).status();
@@ -27,6 +37,6 @@ export function registerAgentLinearRoutes(app: FastifyInstance): void {
     const callback = Callback.parse(request.query);
     await LinearIdentityService.finishCallback(callback.state, callback.code,
       bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)));
-    return reply.type('text/plain').send('Linear app installed. Close this tab and refresh the agent settings.');
+    return reply.type('text/plain').send('Linear app installed. Close this tab and return to Anima.');
   });
 }

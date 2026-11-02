@@ -23,18 +23,35 @@ public domain. Forward only the public webhook URL to the configured local liste
 
 ## Install from the dashboard
 
-1. Open the agent's **Profile**. In **Setup**, select the **Configure Linear** icon on the **Linear** row to open its settings.
-2. Enter the app's client ID and webhook signing secret. Do not paste the secret into chat.
-3. Register the displayed **OAuth callback URL** in the Linear app. The callback uses the
-   existing dashboard, not the webhook port; it must be reachable from your browser.
-   Use HTTPS or a loopback HTTP address. An HTTP hostname such as `anima-host` is not a callback.
-4. Select the listener address and port. New installations default to `127.0.0.1:14185`,
-   separate from the dashboard and the development docs preview on port `14175`.
-   Choose another free port if needed for a new listener. A saved listener keeps its
-   existing address and port; all installed agents share it. If you expose it through a
-   reverse proxy, keep the raw request body and `Linear-Signature` header unchanged.
-5. Register your public webhook URL in Linear. Select **Prepare authorization**, then
-   **Authorize in Linear** and approve the app. Refresh Profile after the callback completes.
+1. Open the agent's **Profile**. In **Setup**, select **Configure Linear**.
+2. The first time, save this machine's **Public webhook URL**. Forward it through your
+   tunnel or reverse proxy to the local listener's `/webhook` path. Keep the raw request
+   body and `Linear-Signature` header unchanged. New listeners default to
+   `127.0.0.1:14185`; **Advanced listener settings** lets you choose another free port.
+   Existing listener addresses are preserved. All agents in this Anima home reuse these
+   settings; you can also edit them under **Settings → Server → Linear webhook**.
+3. Select **Create app in Linear**. Anima opens Linear's creation page with this agent's
+   name, callback URL, shared webhook URL and event subscriptions filled in. Review and
+   create the app. If you already created a separate app for this agent, select
+   **I already have an app** and make sure its URLs and subscriptions match.
+4. Copy the **Client ID** and **Webhook signing secret** from the app settings into Anima.
+   Select **Prepare authorization**, then **Authorize in Linear** and approve access to
+   your workspace and teams. Do not paste the secret into chat.
+5. Return to Anima. Authorization completes the installation; you can now mention the
+   agent in Linear or delegate an issue to it. There is no required test task.
+
+**App name and callback URL** contains the less common creation options. The callback
+returns to the dashboard address open in your browser, not the webhook listener. It must
+use HTTPS or loopback HTTP and end in `/api/linear/oauth/callback`. An HTTP hostname such
+as `anima-host` is not supported. Keep it identical in the app and in Anima. Linear app
+names must have 2–80 characters and cannot contain “Linear” or a URL; Anima adjusts the
+suggested name when needed, and you can edit it before creating the app.
+
+Saving a public URL does not create a tunnel or change existing apps at Linear. If you
+change it later, update each existing app's webhook URL too. The bind address and port
+cannot change while an app is installed or authorization is pending. Old installations
+continue working without a saved public URL. The new `linearWebhookUrl` setting is stored
+in this home's `config.json`; remove that key before downgrading to a version without it.
 
 Installation uses PKCE and a state tied to the current dashboard session. It expires after
 10 minutes and can be used once. If authorization fails or expires, remove the pending
@@ -145,7 +162,8 @@ An accepted external activity and local audit failure are different outcomes. If
 is lost, Anima stores an unknown result and checks the activity/link before a retry. It does
 not blindly resend. An unavailable lookup is not proof that nothing was sent.
 
-Protocol references: [OAuth](https://linear.app/developers/oauth-2-0-authentication),
+Protocol references: [app manifests](https://linear.app/developers/oauth-app-manifests),
+[OAuth](https://linear.app/developers/oauth-2-0-authentication),
 [webhooks](https://linear.app/developers/webhooks),
 [agent interactions](https://linear.app/developers/agent-interaction),
 [stop signals](https://linear.app/developers/agent-signals).

@@ -15,7 +15,7 @@ test('real dashboard guard protects Linear credentials, install/remove and bound
   const fake = new FakeLinear(); t.mock.method(globalThis, 'fetch', fake.fetch);
   const app = buildWebApp();
   try {
-    for (const [method, url] of [['GET', '/api/agents/scout/linear'], ['POST', '/api/agents/scout/linear/install'], ['DELETE', '/api/agents/scout/linear'], ['GET', '/api/linear/oauth/callback?state=synthetic&code=secret']] as const) {
+    for (const [method, url] of [['GET', '/api/linear/setup'], ['PUT', '/api/linear/setup'], ['GET', '/api/agents/scout/linear'], ['POST', '/api/agents/scout/linear/install'], ['DELETE', '/api/agents/scout/linear'], ['GET', '/api/linear/oauth/callback?state=synthetic&code=secret']] as const) {
       assert.equal((await app.inject({ method, url })).statusCode, 401);
     }
     const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { password: 'synthetic-dashboard-password' } });

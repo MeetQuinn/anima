@@ -4,8 +4,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { LinearStatus } from '@shared/linear';
 import { LinearRow } from './LinearRow';
 
-const api = vi.hoisted(() => ({ status: vi.fn(), install: vi.fn(), remove: vi.fn(), refresh: vi.fn() }));
-vi.mock('@/api/linear', () => ({ fetchLinearStatus: api.status, installLinear: api.install, removeLinear: api.remove }));
+const api = vi.hoisted(() => ({ status: vi.fn(), install: vi.fn(), remove: vi.fn(), refresh: vi.fn(), setup: vi.fn(), saveSetup: vi.fn() }));
+vi.mock('@/api/linear', () => ({ fetchLinearStatus: api.status, installLinear: api.install, removeLinear: api.remove, fetchLinearSetup: api.setup, saveLinearSetup: api.saveSetup }));
 vi.mock('@/api/agents', () => ({ refreshAgentData: api.refresh }));
 const base: LinearStatus = { state: 'not_configured', signatureFailures: 0 };
 function mount() {
@@ -13,48 +13,49 @@ function mount() {
   render(<QueryClientProvider client={client}><LinearRow agentId="scout" /></QueryClientProvider>);
   return client;
 }
-async function openSettings() {
+async function openSettings(advance = true) {
   const opener = screen.getByRole('button', { name: 'Configure Linear' });
   opener.focus();
   fireEvent.click(opener);
-  return screen.findByRole('dialog', { name: 'Linear' });
+  const dialog = await screen.findByRole('dialog', { name: 'Linear' });
+  if (advance && !screen.queryByText('App installed') && !screen.queryByRole('button', { name: 'Remove connection' }) && !screen.queryByText(/Linear settings could not be read/)) {
+    const next = await screen.findByRole('button', { name: 'I already have an app' });
+    fireEvent.click(next);
+  }
+  return dialog;
 }
-beforeEach(() => { vi.clearAllMocks(); api.status.mockResolvedValue(base); api.remove.mockResolvedValue({ removed: true }); });
+function prepare() {
+  for (const [label, value] of [['Client ID', 'client-id'], ['Webhook signing secret', 'synthetic-signing-sentinel']]) {
+    const input = screen.getByLabelText(label) as HTMLInputElement;
+    if (!input.value) fireEvent.change(input, { target: { value } });
+  }
+  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
+}
+beforeEach(() => { vi.clearAllMocks(); api.setup.mockResolvedValue({ webhookUrl: 'https://agents.example.com/webhook', listener: { host: '127.0.0.1', port: 14185 }, listenerLocked: false }); api.status.mockResolvedValue(base); api.remove.mockResolvedValue({ removed: true }); });
 
 it('enters credentials once, clears secret and opens the returned app authorization link without browser storage', async () => {
   api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
   mount(); await screen.findByText('Not connected'); await openSettings();
-  expect((screen.getByLabelText('Port') as HTMLInputElement).value).toBe('14185');
   fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'client-id' } });
   const secret = screen.getByLabelText('Webhook signing secret') as HTMLInputElement;
   fireEvent.change(secret, { target: { value: 'synthetic-signing-sentinel' } });
-  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
+  prepare();
   const link = await screen.findByRole('link', { name: 'Authorize in Linear' });
   expect(link.getAttribute('href')).toBe('https://linear.app/oauth/authorize?state=synthetic-state');
   expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ clientId: 'client-id', signingSecret: 'synthetic-signing-sentinel', listener: { host: '127.0.0.1', port: 14185 } }));
   await waitFor(() => expect(document.activeElement).toBe(link));
-  expect(secret.value).toBe(''); expect(JSON.stringify(localStorage)).not.toContain('synthetic-signing-sentinel');
+  expect(screen.queryByLabelText('Webhook signing secret')).toBeNull(); expect(JSON.stringify(localStorage)).not.toContain('synthetic-signing-sentinel');
 });
 
-it('preserves a custom listener port when preparing a new installation', async () => {
+it('uses the saved shared listener when connecting another agent', async () => {
+  api.setup.mockResolvedValue({ webhookUrl: 'https://agents.example.com/webhook', listener: { host: '::1', port: 15123 }, listenerLocked: true });
+  api.status.mockResolvedValue({ ...base, listener: { host: '::1', port: 15123 } });
   api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
   mount(); await screen.findByText('Not connected'); await openSettings();
-  fireEvent.change(screen.getByLabelText('Port'), { target: { value: '15123' } });
-  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
+  prepare();
   await screen.findByRole('link', { name: 'Authorize in Linear' });
-  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '127.0.0.1', port: 15123 } }));
-});
-
-it('keeps the saved shared listener when installing another agent', async () => {
-  api.status.mockResolvedValue({ ...base, listener: { host: '::1', port: 14175 } });
-  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
-  mount(); await screen.findByText('Not connected'); await openSettings();
-  const port = screen.getByLabelText('Port') as HTMLInputElement;
-  expect((screen.getByLabelText('Bind address') as HTMLInputElement).value).toBe('::1');
-  expect(port.value).toBe('14175'); expect(port.disabled).toBe(true);
-  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
-  await screen.findByRole('link', { name: 'Authorize in Linear' });
-  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '::1', port: 14175 } }));
+  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '::1', port: 15123 } }));
+  expect(api.saveSetup).not.toHaveBeenCalled();
 });
 
 it('shows factual timestamp and signature errors without claiming availability', async () => {
@@ -71,13 +72,13 @@ it('revoked identity can be removed before starting a separate install', async (
   const client = mount(); await screen.findByText('Authorization revoked'); await openSettings();
   api.status.mockResolvedValue(base); fireEvent.click(screen.getByRole('button', { name: 'Remove connection' }));
   await waitFor(() => expect(api.remove).toHaveBeenCalledWith('scout'));
-  await screen.findByRole('button', { name: 'Prepare authorization' }); client.clear();
+  await screen.findByRole('link', { name: 'Create app in Linear' }); client.clear();
 });
 
 it('installation and read errors stay visible without echoing server credential text', async () => {
   api.install.mockRejectedValue(new Error('synthetic-private-error-sentinel'));
   mount(); await screen.findByText('Not connected'); await openSettings();
-  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
+  prepare();
   await screen.findByText(/Installation could not start/); expect(screen.queryByText(/private-error-sentinel/)).toBeNull();
 });
 
@@ -152,7 +153,7 @@ it('keeps a pending authorization link when the settings are closed and reopened
   api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
   mount(); await screen.findByText('Not connected'); await openSettings();
   api.status.mockResolvedValue({ ...base, state: 'installing', clientId: 'client-id' });
-  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
+  prepare();
   await screen.findByRole('link', { name: 'Authorize in Linear' });
   await waitFor(() => expect((screen.getByRole('button', { name: 'Close Linear settings' }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByRole('button', { name: 'Close Linear settings' }));
@@ -168,7 +169,7 @@ it.each(['install', 'remove'] as const)('cannot dismiss a pending %s or lose its
   mount(); await screen.findByText(operation === 'remove' ? 'Workspace name unavailable' : 'Not connected');
   const dialog = await openSettings();
   if (operation === 'remove') fireEvent.click(screen.getByRole('button', { name: 'Remove connection' }));
-  else fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
+  else prepare();
   fireEvent.keyDown(dialog, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBe(dialog);
   fireEvent.click(dialog.parentElement!);
@@ -209,4 +210,77 @@ it('shows the workspace identity beside a labeled icon button, with listener det
   await openSettings();
   expect(screen.getByText('App installed')).toBeTruthy();
   expect(screen.getByText('Listening locally')).toBeTruthy();
+});
+
+it('opens a prefilled app with the machine URL and advances to just two credential fields', async () => {
+  mount(); await screen.findByText('Not connected'); await openSettings(false);
+  const link = await screen.findByRole('link', { name: 'Create app in Linear' });
+  const manifest = JSON.parse(new URL(link.getAttribute('href')!).searchParams.get('manifest')!);
+  expect(manifest.oauth.client_name).toBe('scout');
+  expect(manifest.webhook.url).toBe('https://agents.example.com/webhook');
+  expect(manifest.webhook.resourceTypes).toEqual(['AgentSessionEvent', 'AppUserNotification', 'PermissionChange']);
+  expect(manifest.oauth.redirect_uris).toEqual([`${window.location.origin}/api/linear/oauth/callback`]);
+  fireEvent.click(link);
+  expect(screen.getAllByRole('textbox')).toHaveLength(1);
+  expect(screen.getByLabelText('Webhook signing secret')).toBeTruthy();
+  expect(screen.queryByLabelText('Port')).toBeNull();
+  expect(api.install).not.toHaveBeenCalled();
+});
+
+it('finishes on OAuth success and only suggests mentioning or delegating, without a delivery-test gate', async () => {
+  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
+  const client = mount(); await screen.findByText('Not connected'); await openSettings();
+  prepare(); await screen.findByRole('link', { name: 'Authorize in Linear' });
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Close Linear settings' }) as HTMLButtonElement).disabled).toBe(false));
+  api.status.mockResolvedValue({ ...base, state: 'connected', workspaceName: 'Demo workspace' });
+  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
+  expect(await screen.findByText(/Connected. You can now mention this agent/)).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
+  expect(screen.queryByText(/pending verification|send a test|verify connection/i)).toBeNull();
+  expect(api.install).toHaveBeenCalledTimes(1);
+  expect(api.saveSetup).not.toHaveBeenCalled();
+});
+
+it('shows a one-time machine setup only when an ingress has not been saved', async () => {
+  api.setup.mockResolvedValue({ listener: { host: '127.0.0.1', port: 15123 }, listenerLocked: false });
+  api.saveSetup.mockImplementation(async (input) => ({ ...input, listenerLocked: false }));
+  mount(); await screen.findByText('Not connected'); await openSettings(false);
+  fireEvent.change(await screen.findByLabelText('Public webhook URL'), { target: { value: 'https://agents.example.com/webhook' } });
+  fireEvent.submit(screen.getByRole('button', { name: 'Save webhook settings' }).closest('form')!);
+  const link = await screen.findByRole('link', { name: 'Create app in Linear' });
+  expect(link.getAttribute('href')).toContain('manifest=');
+  expect(api.saveSetup).toHaveBeenCalledWith({ webhookUrl: 'https://agents.example.com/webhook', listener: { host: '127.0.0.1', port: 15123 } });
+  expect(api.install).not.toHaveBeenCalled();
+});
+
+it('lets an expired authorization start again without retaining its old link', async () => {
+  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=expired-state' });
+  const client = mount(); await screen.findByText('Not connected'); await openSettings();
+  api.status.mockResolvedValue({ ...base, state: 'installing' });
+  prepare(); await screen.findByRole('link', { name: 'Authorize in Linear' });
+  api.status.mockResolvedValue({ ...base, state: 'not_configured', lastError: 'Installation expired.' });
+  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
+  const restart = await screen.findByRole('button', { name: 'Start again' });
+  api.status.mockResolvedValue(base);
+  fireEvent.click(restart);
+  await screen.findByRole('link', { name: 'Create app in Linear' });
+  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
+  expect(api.remove).toHaveBeenCalledTimes(1);
+  expect(api.install).toHaveBeenCalledTimes(1);
+});
+
+
+it('retains entered credentials and explains a failed refresh of machine settings', async () => {
+  const client = mount(); await screen.findByText('Not connected'); await openSettings();
+  const input = screen.getByLabelText('Client ID');
+  fireEvent.change(input, { target: { value: 'unfinished-client' } }); input.focus();
+  api.setup.mockRejectedValueOnce(new Error('private-read-failure'));
+  await act(async () => { await client.refetchQueries({ queryKey: ['linear', 'setup'] }); });
+  await screen.findByText(/Could not refresh machine settings/);
+  expect(document.activeElement).toBe(input);
+  expect((input as HTMLInputElement).value).toBe('unfinished-client');
+  expect((screen.getByRole('button', { name: 'Prepare authorization' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByText(/private-read-failure/)).toBeNull();
+  expect(api.install).not.toHaveBeenCalled();
+  client.clear();
 });
