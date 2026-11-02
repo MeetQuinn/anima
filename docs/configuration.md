@@ -148,6 +148,13 @@ The package you pass to `npx` still decides what `start` and `restart` install. 
 | ------------------- | ----------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `workspacePlatform` | `"slack"` or `"feishu"` | `"slack"` | The chat platform chosen during onboarding. For an agent with no connected chat yet, the dashboard shows that platform's connection setup. |
 
+## Public address (`publicUrl`)
+
+`publicUrl` is this Anima home's public HTTPS origin, without a path, query or fragment.
+Set it in **Settings → Server**. Integrations derive their public URLs from it; saving it
+neither creates forwarding nor changes a platform's registered app URLs. See
+[Connect an agent to Linear](guide/connect-linear.md) for the two required forwarding paths.
+
 ## Linear webhook listener (`linearWebhook`)
 
 | Key                  | Type                   | Default         | What it does                                                  |

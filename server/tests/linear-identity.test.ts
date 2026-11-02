@@ -161,3 +161,48 @@ test('a refresh that wins the revocation lock keeps the Linear connection', asyn
     assert.equal((await agentStore.read()).linear!.connected, true);
   } finally { release(); await rejected; }
 }));
+
+for (const stage of ['token', 'identity'] as const) {
+  test(`failed OAuth ${stage} clears only its own consumed attempt and retains a safe retry explanation`, async () => withTempAnimaHome(async (home) => {
+    await writeAgentConfigs(home, [{ id: 'scout' }] as any);
+    let fail = true;
+    const fake = new FakeLinear();
+    const client = new LinearClient(async (url, init) => {
+      if (fail && String(url).endsWith(stage === 'token' ? '/token' : '/graphql')) throw new Error('secret-error-sentinel');
+      return fake.fetch(url, init);
+    });
+    const identity = new LinearIdentityService('scout', client);
+    const state = new URL((await identity.begin(request, 'binding')).authorizationUrl).searchParams.get('state')!;
+    await assert.rejects(identity.finish(state, 'code', 'binding'), /prepare authorization again/i);
+    const status = await identity.status();
+    assert.equal(status.state, 'not_configured'); assert.ok(status.lastError);
+    assert.doesNotMatch(JSON.stringify(status), /sentinel/);
+    assert.equal((await identity.store.read()).pending, undefined);
+    fail = false;
+    const retry = new URL((await identity.begin(request, 'binding')).authorizationUrl).searchParams.get('state')!;
+    assert.notEqual(retry, state);
+    await identity.finish(retry, 'new-code', 'binding');
+    assert.equal((await identity.status()).state, 'connected');
+  }));
+}
+
+test('late failed exchange cannot clear a newer authorization and denial does not call Linear', async () => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [{ id: 'scout' }] as any);
+  let reject!: (reason: Error) => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const identity = new LinearIdentityService('scout', new LinearClient(async () => {
+    entered(); return new Promise<Response>((_resolve, rejecter) => { reject = rejecter; });
+  }));
+  const first = new URL((await identity.begin(request, 'binding')).authorizationUrl).searchParams.get('state')!;
+  const failed = assert.rejects(identity.finish(first, 'code', 'binding'));
+  await started;
+  const second = new URL((await identity.begin(request, 'binding')).authorizationUrl).searchParams.get('state')!;
+  reject(new Error('secret')); await failed;
+  assert.equal((await identity.store.read()).pending!.id, second);
+  await assert.rejects(identity.finish(second, undefined, 'wrong-binding'));
+  assert.equal((await identity.store.read()).pending!.id, second);
+  await identity.finish(second, undefined, 'binding');
+  assert.equal((await identity.store.read()).pending, undefined);
+  assert.match((await identity.status()).lastError!, /declined/);
+}));

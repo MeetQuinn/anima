@@ -23,7 +23,7 @@ export class LinearIdentityService {
     this.store = store;
   }
 
-  static async finishCallback(state: string, code: string, binding: string): Promise<void> {
+  static async finishCallback(state: string, code: string | undefined, binding: string): Promise<void> {
     for (const agent of await defaultAgentRegistryService.listAgentConfigs()) {
       if ((await new LinearStore(agent.id).read()).pending?.id === state) {
         await new LinearIdentityService(agent.id).finish(state, code, binding);
@@ -31,6 +31,16 @@ export class LinearIdentityService {
       }
     }
     throw new Error('Linear installation expired or was removed.');
+  }
+
+  // The public callback only relays to the dashboard that started this attempt.
+  // It never exchanges a code or accepts a caller-supplied redirect destination.
+  static async callbackReturnUrl(state: string): Promise<string | undefined> {
+    for (const agent of await defaultAgentRegistryService.listAgentConfigs()) {
+      const pending = (await new LinearStore(agent.id).read()).pending;
+      if (pending?.id === state && pending.expiresAt > Date.now()) return pending.returnUrl;
+    }
+    throw new Error('Linear installation expired or was removed. Prepare authorization again.');
   }
 
   async status(): Promise<LinearStatus> {
@@ -67,11 +77,11 @@ export class LinearIdentityService {
     return result;
   }
 
-  async begin(input: LinearInstallRequest, binding: string): Promise<{ authorizationUrl: string }> {
-    return withFileLock(join(this.store.animaHome, 'linear-installation'), this.store.animaHome, () => this.beginLocked(input, binding));
+  async begin(input: LinearInstallRequest, binding: string, returnUrl?: string): Promise<{ authorizationUrl: string }> {
+    return withFileLock(join(this.store.animaHome, 'linear-installation'), this.store.animaHome, () => this.beginLocked(input, binding, returnUrl));
   }
 
-  private async beginLocked(input: LinearInstallRequest, binding: string): Promise<{ authorizationUrl: string }> {
+  private async beginLocked(input: LinearInstallRequest, binding: string, returnUrl?: string): Promise<{ authorizationUrl: string }> {
     const request = LinearInstallRequest.parse(input);
     await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
     const agents = await defaultAgentRegistryService.listAgentConfigs();
@@ -85,10 +95,10 @@ export class LinearIdentityService {
     const config = await serverConfigStore.read();
     if (request.listener.port === (config.dashboardPort ?? 4174)) throw new Error('Webhook port must differ from the dashboard port.');
     if (config.linearWebhook && (config.linearWebhook.host !== request.listener.host || config.linearWebhook.port !== request.listener.port)
-      && (await new LinearSetupService().read()).listenerLocked) throw new Error('All installed agents share one webhook listener; keep its existing host and port.');
+      && (await new LinearSetupService().read()).listenerLocked) throw new Error('An installed app or an authorization in progress uses this listener. Keep its existing host and port.');
     const pending = {
       id: randomBytes(32).toString('base64url'), clientId: request.clientId,
-      signingSecret: request.signingSecret, callbackUrl: request.callbackUrl,
+      signingSecret: request.signingSecret, callbackUrl: request.callbackUrl, returnUrl,
       verifier: randomBytes(32).toString('base64url'), binding, expiresAt: Date.now() + 10 * 60_000,
     };
     await this.store.update((file) => {
@@ -106,32 +116,48 @@ export class LinearIdentityService {
     return { authorizationUrl: url.toString() };
   }
 
-  async finish(state: string, code: string, binding: string): Promise<void> {
+  async finish(state: string, code: string | undefined, binding: string): Promise<void> {
     const file = await this.store.read();
     const pending = file.pending;
     if (!pending || pending.id !== state || pending.binding !== binding || pending.expiresAt <= Date.now()) throw new Error('Linear installation expired or does not belong to this dashboard session.');
+    if (!code) {
+      await this.store.update((current) => current.pending?.id === state && current.pending.expiresAt > Date.now()
+        ? { ...current, pending: undefined, lastError: 'Linear authorization was declined. Prepare authorization again when ready.' } : current);
+      return;
+    }
     // Consume before exchange. Removal/replacement changes this nonce; completion cannot restore it.
     await this.store.update((current) => {
       if (current.pending?.id !== state || current.pending.expiresAt <= Date.now()) throw new Error('Linear installation changed.');
       return { ...current, pending: { ...pending, expiresAt: 0 } };
     });
-    const tokens = await this.client.token({ grant_type: 'authorization_code', client_id: pending.clientId,
-      redirect_uri: pending.callbackUrl, code_verifier: pending.verifier, code });
-    const identity = await this.client.graphql(tokens.access_token, 'query($clientId:String!) { viewer { id app } organization { id name } applicationInfo(clientId:$clientId) { clientId } }', { clientId: pending.clientId }, Identity);
-    if (identity.applicationInfo.clientId !== pending.clientId) throw new Error('Linear application identity mismatch.');
-    const installation: LinearInstallation = {
-      id: randomUUID(), clientId: pending.clientId, signingSecret: pending.signingSecret,
-      organizationId: identity.organization.id, appUserId: identity.viewer.id, workspaceName: identity.organization.name,
-      accessToken: tokens.access_token, refreshToken: tokens.refresh_token,
-      expiresAt: Date.now() + tokens.expires_in * 1000, revoked: false,
-    };
-    await this.store.update(async (current) => {
-      if (current.pending?.id !== state || current.pending.expiresAt !== 0) throw new Error('Linear installation was removed or replaced.');
-      await new AgentStore(this.agentId).update((agent) => ({ ...agent, linear: {
-        connected: true, clientId: installation.clientId, organizationId: installation.organizationId, appUserId: installation.appUserId,
-      } }));
-      return { ...current, installation, pending: undefined, receipts: {}, operations: {}, sessionStarts: {}, lastError: undefined, lastSignedWebhookAt: undefined };
-    });
+    let stage: 'token' | 'identity' = 'token';
+    try {
+      const tokens = await this.client.token({ grant_type: 'authorization_code', client_id: pending.clientId,
+        redirect_uri: pending.callbackUrl, code_verifier: pending.verifier, code });
+      stage = 'identity';
+      const identity = await this.client.graphql(tokens.access_token, 'query($clientId:String!) { viewer { id app } organization { id name } applicationInfo(clientId:$clientId) { clientId } }', { clientId: pending.clientId }, Identity);
+      if (identity.applicationInfo.clientId !== pending.clientId) throw new Error('Linear application identity mismatch.');
+      const installation: LinearInstallation = {
+        id: randomUUID(), clientId: pending.clientId, signingSecret: pending.signingSecret,
+        organizationId: identity.organization.id, appUserId: identity.viewer.id, workspaceName: identity.organization.name,
+        accessToken: tokens.access_token, refreshToken: tokens.refresh_token,
+        expiresAt: Date.now() + tokens.expires_in * 1000, revoked: false,
+      };
+      await this.store.update(async (current) => {
+        if (current.pending?.id !== state || current.pending.expiresAt !== 0) throw new Error('Linear installation was removed or replaced.');
+        await new AgentStore(this.agentId).update((agent) => ({ ...agent, linear: {
+          connected: true, clientId: installation.clientId, organizationId: installation.organizationId, appUserId: installation.appUserId,
+        } }));
+        return { ...current, installation, pending: undefined, receipts: {}, operations: {}, sessionStarts: {}, lastError: undefined, lastSignedWebhookAt: undefined };
+      });
+    } catch {
+      const message = stage === 'token'
+        ? 'Linear authorization could not be exchanged. Check the Client ID, registered redirect URL and network, then prepare authorization again.'
+        : 'Linear app identity could not be verified. Check the app configuration and network, then prepare authorization again.';
+      await this.store.update((current) => current.pending?.id === state && current.pending.expiresAt === 0
+        ? { ...current, pending: undefined, lastError: message } : current);
+      throw new Error(message);
+    }
   }
 
   async remove(): Promise<void> {

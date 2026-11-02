@@ -28,10 +28,11 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [authorizationUrl, setAuthorizationUrl] = useState('');
+  const [preparedUrl, setAuthorizationUrl] = useState('');
   const authorizationLink = useRef<HTMLAnchorElement>(null);
   const identitySummary = useRef<HTMLParagraphElement>(null);
   const data = status.data;
+  const authorizationUrl = data?.state === 'not_configured' && !data.clientId && data.lastError && !busy ? '' : preparedUrl;
   const expiredAuthorization = data?.state === 'not_configured' && Boolean(data.clientId);
   useEffect(() => {
     if (!open || busy) return;

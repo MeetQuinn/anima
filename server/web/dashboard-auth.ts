@@ -15,6 +15,7 @@ const LoginBody = z.object({
 }).strict();
 
 const PUBLIC_API_PATHS = new Set([
+  '/api/linear/oauth/callback', // Public relay only; /complete keeps authentication and session binding.
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/session',

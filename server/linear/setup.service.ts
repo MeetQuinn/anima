@@ -20,7 +20,9 @@ export class LinearSetupService {
   async read(): Promise<LinearSetup> {
     const config = await serverConfigStore.read();
     return {
-      webhookUrl: config.linearWebhookUrl,
+      publicUrl: config.publicUrl,
+      webhookUrl: config.publicUrl ? `${config.publicUrl}/webhook` : undefined,
+      callbackUrl: config.publicUrl ? `${config.publicUrl}/api/linear/oauth/callback` : undefined,
       listener: config.linearWebhook ?? { host: '127.0.0.1', port: 14185 },
       listenerLocked: await this.listenerLocked(),
     };
@@ -37,9 +39,9 @@ export class LinearSetupService {
         if (locked && current.linearWebhook && (current.linearWebhook.host !== request.listener.host || current.linearWebhook.port !== request.listener.port)) {
           throw new Error('An installed app or an authorization in progress uses this listener. Keep its existing host and port.');
         }
-        return { ...current, linearWebhook: request.listener, linearWebhookUrl: request.webhookUrl };
+        return { ...current, linearWebhook: request.listener };
       });
-      return { ...request, listenerLocked: locked };
+      return this.read();
     });
   }
 }

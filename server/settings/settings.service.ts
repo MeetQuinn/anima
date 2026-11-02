@@ -1,3 +1,4 @@
+import { PublicUrlRequest, type PublicUrlSettings } from '../../shared/public-url.js';
 import { DEFAULT_MAX_CONCURRENT_AGENT_RUNS } from '../../shared/server-settings.js';
 import type {
   DashboardAuth,
@@ -29,6 +30,17 @@ export class ServerSettingsService {
     private readonly store: ServerConfigStore = serverConfigStore,
     private readonly webNetworkStore: WebNetworkStore = new WebNetworkStore(),
   ) {}
+
+  async getPublicUrl(): Promise<PublicUrlSettings> {
+    const config = await this.store.read();
+    return { publicUrl: config.publicUrl };
+  }
+
+  async setPublicUrl(input: unknown): Promise<PublicUrlSettings> {
+    const { publicUrl } = PublicUrlRequest.parse(input);
+    await this.store.update((config) => ({ ...config, publicUrl }));
+    return this.getPublicUrl();
+  }
 
   getWebNetwork(): Promise<WebNetworkConfig> {
     return this.webNetworkStore.read();
