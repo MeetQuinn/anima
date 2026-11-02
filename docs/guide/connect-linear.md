@@ -38,7 +38,8 @@ public domain. Forward only the public webhook URL to the configured local liste
    Select **Prepare authorization**, then **Authorize in Linear** and approve access to
    your workspace and teams. Do not paste the secret into chat.
 5. Return to Anima. Authorization completes the installation; you can now mention the
-   agent in Linear or delegate an issue to it. There is no required test task.
+   agent in Linear or delegate an issue to it. If Linear does not show "Received by Anima."
+   after you mention it, check the HTTPS forwarding to this machine. There is no required test task.
 
 **App name and callback URL** contains the less common creation options. The callback
 returns to the dashboard address open in your browser, not the webhook listener. It must
@@ -51,11 +52,14 @@ Saving a public URL does not create a tunnel or change existing apps at Linear. 
 change it later, update each existing app's webhook URL too. The bind address and port
 cannot change while an app is installed or authorization is pending. Old installations
 continue working without a saved public URL. The new `linearWebhookUrl` setting is stored
-in this home's `config.json`; remove that key before downgrading to a version without it.
+in the server `config.json` at the root of the Anima home, not an agent's configuration.
+Remove that key before downgrading to a version without it.
 
 Installation uses PKCE and a state tied to the current dashboard session. It expires after
 10 minutes and can be used once. If authorization fails or expires, remove the pending
-connection and prepare a new one. There is no separate CLI installation flow.
+connection and prepare a new one. A failed authorization can keep its pending record and
+reserve the shared listener until you remove that connection. Other installed apps still
+keep the listener locked. There is no separate CLI installation flow.
 
 The row shows the workspace name saved during installation. If an older installation has no
 saved name, it shows “Workspace name unavailable”. Reading settings does not fetch the name

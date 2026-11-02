@@ -51,5 +51,14 @@ it('preserves and locks an installed custom listener while allowing public addre
   expect((screen.getByLabelText('Bind address') as HTMLInputElement).disabled).toBe(true);
   expect((screen.getByLabelText('Port') as HTMLInputElement).value).toBe('15123');
   expect((screen.getByLabelText('Public webhook URL') as HTMLInputElement).disabled).toBe(false);
-  expect(screen.getByText(/update the webhook URL in existing Linear apps/)).toBeTruthy();
+  expect(screen.getByText(/consistent with the webhook URL in existing Linear apps/)).toBeTruthy();
+});
+
+it('explains existing app URLs when a legacy installation has no saved public URL', async () => {
+  api.read.mockResolvedValue({ ...defaults, listenerLocked: true });
+  mount();
+  const url = await screen.findByLabelText('Public webhook URL');
+  expect((url as HTMLInputElement).value).toBe('');
+  expect(screen.getByText(/consistent with the webhook URL in existing Linear apps/)).toBeTruthy();
+  expect((screen.getByLabelText('Bind address') as HTMLInputElement).disabled).toBe(true);
 });

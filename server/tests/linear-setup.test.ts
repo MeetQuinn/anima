@@ -71,7 +71,7 @@ test('machine setup and direct OAuth preparation cannot move a listener reserved
   const changed = { ...setup, listener: { ...setup.listener, port: 15123 } };
   for (const phase of ['pending', 'installed']) {
     assert.equal((await service.read()).listenerLocked, true, phase);
-    await assert.rejects(service.save(changed), /share this listener/);
+    await assert.rejects(service.save(changed), /An installed app or an authorization in progress uses this listener/);
     await assert.rejects(new LinearIdentityService('milo').begin({ clientId: 'milo-client', signingSecret: install.signingSecret, callbackUrl, listener: changed.listener }, 'binding'), /share one webhook listener/);
     assert.deepEqual((await serverConfigStore.read()).linearWebhook, setup.listener);
     if (phase === 'pending') await identity.finish(auth.searchParams.get('state')!, 'synthetic-code', 'binding');
@@ -113,7 +113,7 @@ test('the shared listener stays reserved while an OAuth code exchange is in flig
     for (let tries = 0; !fake.tokenCalls && tries < 100; tries++) await delay(10);
     assert.equal(fake.tokenCalls, 1);
     assert.equal((await setupService.read()).listenerLocked, true);
-    await assert.rejects(setupService.save({ ...setup, listener: { ...setup.listener, port: 15123 } }), /share this listener/);
+    await assert.rejects(setupService.save({ ...setup, listener: { ...setup.listener, port: 15123 } }), /An installed app or an authorization in progress uses this listener/);
     await assert.rejects(new LinearIdentityService('milo').begin({ clientId: 'milo-client', signingSecret: install.signingSecret, callbackUrl, listener: { ...setup.listener, port: 15123 } }, 'binding'), /share one webhook listener/);
   } finally { release(); await finishing; }
   assert.equal((await identity.status()).state, 'connected');

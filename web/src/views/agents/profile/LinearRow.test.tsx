@@ -235,6 +235,7 @@ it('finishes on OAuth success and only suggests mentioning or delegating, withou
   api.status.mockResolvedValue({ ...base, state: 'connected', workspaceName: 'Demo workspace' });
   await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
   expect(await screen.findByText(/Connected. You can now mention this agent/)).toBeTruthy();
+  expect(screen.getByText(/If Linear does not show/).textContent).toContain('check the HTTPS forwarding to this machine');
   expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
   expect(screen.queryByText(/pending verification|send a test|verify connection/i)).toBeNull();
   expect(api.install).toHaveBeenCalledTimes(1);

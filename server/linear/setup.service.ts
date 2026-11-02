@@ -35,7 +35,7 @@ export class LinearSetupService {
       await serverConfigStore.update((current) => {
         if (request.listener.port === (current.dashboardPort ?? 4174)) throw new Error('Webhook port must differ from the dashboard port.');
         if (locked && current.linearWebhook && (current.linearWebhook.host !== request.listener.host || current.linearWebhook.port !== request.listener.port)) {
-          throw new Error('Installed agents share this listener. Keep its existing host and port.');
+          throw new Error('An installed app or an authorization in progress uses this listener. Keep its existing host and port.');
         }
         return { ...current, linearWebhook: request.listener, linearWebhookUrl: request.webhookUrl };
       });

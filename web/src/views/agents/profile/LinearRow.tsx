@@ -171,7 +171,9 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
           )}
           {connected && (
             <p className="mt-3 font-sans text-[13px] leading-relaxed text-text-muted">
-              Connected. You can now mention this agent in Linear or delegate an issue to it.
+              Connected. You can now mention this agent in Linear or delegate an issue to it. If Linear
+              does not show &quot;Received by Anima.&quot; after you mention it, check the HTTPS
+              forwarding to this machine.
             </p>
           )}
           {data && configured && (

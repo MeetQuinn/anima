@@ -97,7 +97,7 @@ function WebhookForm({
       onSaved?.();
     } catch {
       setError(
-        'Could not save. Check the HTTPS address and use a port other than the dashboard port. Installed agents must keep their current listener.',
+        'Could not save. Check the HTTPS address and use a port other than the dashboard port. An installed app or an authorization in progress must keep its current listener.',
       );
     } finally {
       setBusy(false);
@@ -126,8 +126,8 @@ function WebhookForm({
           {host.includes(':') ? `[${host}]` : host}:{port}/webhook
         </span>{' '}
         on this machine.
-        {data.webhookUrl &&
-          ' If you change it, update the webhook URL in existing Linear apps too.'}
+        {(data.listenerLocked || data.webhookUrl) &&
+          ' Keep this address consistent with the webhook URL in existing Linear apps. If you change it, update those apps too.'}
       </p>
       <details>
         <summary className="cursor-pointer py-2 font-sans text-[12px] text-text-muted">
