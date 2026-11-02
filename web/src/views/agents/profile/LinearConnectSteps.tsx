@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
-import { LinearInstallRequest } from '@shared/linear';
-import { defaultLinearAppName, linearAppCreationUrl } from '@shared/linear-setup';
+import { LinearCallbackUrl, LinearInstallRequest } from '@shared/linear';
+import { defaultLinearAppName, linearAppCreationUrl, LinearAppName } from '@shared/linear-setup';
 import { fetchLinearSetup } from '@/api/linear';
 import LinearWebhookSettings, {
   linearInputClass,
@@ -31,6 +31,9 @@ export function LinearConnectSteps({
   const [clientId, setClientId] = useState('');
   const [secret, setSecret] = useState('');
   const [error, setError] = useState('');
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const validName = LinearAppName.safeParse(name).success;
+  const validCallback = LinearCallbackUrl.safeParse(callback).success;
   let creationUrl = '';
   if (setup.data?.webhookUrl) {
     try {
@@ -75,7 +78,7 @@ export function LinearConnectSteps({
         Could not read machine settings.{' '}
         <button
           type="button"
-          className="min-h-[44px] underline"
+          className="min-h-[44px] underline md:min-h-[32px]"
           onClick={() => void setup.refetch()}
         >
           Retry
@@ -98,7 +101,11 @@ export function LinearConnectSteps({
       {setup.isError && (
         <p role="alert" className="text-sm text-health-error">
           Could not refresh machine settings.{' '}
-          <button type="button" className="min-h-[44px] underline" onClick={() => void setup.refetch()}>
+          <button
+            type="button"
+            className="min-h-[44px] underline md:min-h-[32px]"
+            onClick={() => void setup.refetch()}
+          >
             Retry
           </button>
         </p>
@@ -140,12 +147,15 @@ export function LinearConnectSteps({
             <button
               type="button"
               onClick={() => setEditingSetup(true)}
-              className="mt-1 min-h-[44px] text-[12px] text-accent underline"
+              className="mt-1 min-h-[44px] text-[12px] text-accent underline md:min-h-[32px]"
             >
               Edit machine settings
             </button>
           </div>
-          <details>
+          <details
+            open={optionsOpen || !validName || !validCallback}
+            onToggle={(event) => setOptionsOpen(event.currentTarget.open)}
+          >
             <summary className="cursor-pointer py-2 text-[12px] text-text-muted">
               App name and callback URL
             </summary>
@@ -173,10 +183,15 @@ export function LinearConnectSteps({
               </p>
             </div>
           </details>
-          {!creationUrl && (
+          {!validName && (
             <p role="alert" className="text-[13px] text-health-error">
-              Use a 2–80 character app name without “Linear” or a URL, and an HTTPS or loopback
-              dashboard callback ending in /api/linear/oauth/callback.
+              Use a 2–80 character app name without “Linear” or a URL.
+            </p>
+          )}
+          {!validCallback && (
+            <p role="alert" className="text-[13px] text-health-error">
+              Set an HTTPS or loopback callback ending in /api/linear/oauth/callback. It must return
+              to this dashboard and match the address registered in Linear.
             </p>
           )}
           <div className="flex flex-wrap items-center gap-3">
@@ -193,6 +208,7 @@ export function LinearConnectSteps({
             )}
             <Button
               variant="ghost"
+              className="text-[13px] font-normal"
               disabled={disabled || setup.isError || !creationUrl}
               onClick={() => setStep('credentials')}
             >
@@ -231,7 +247,7 @@ export function LinearConnectSteps({
             />
           </label>
           <p className="text-[12px] text-text-muted">
-            Secrets stay on this machine and are not shown again.
+            The signing secret is stored in your Anima home and is not shown again.
           </p>
           {error && (
             <p role="alert" className="text-[13px] text-health-error">
@@ -259,18 +275,6 @@ export function LinearConnectSteps({
             </Button>
           </div>
         </form>
-      )}
-      {setup.isError && (
-        <p role="alert" className="text-[13px] text-health-error">
-          Machine settings could not be refreshed.{' '}
-          <button
-            type="button"
-            className="min-h-[44px] underline"
-            onClick={() => void setup.refetch()}
-          >
-            Retry
-          </button>
-        </p>
       )}
     </div>
   );

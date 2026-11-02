@@ -258,9 +258,11 @@ it('lets an expired authorization start again without retaining its old link', a
   const client = mount(); await screen.findByText('Not connected'); await openSettings();
   api.status.mockResolvedValue({ ...base, state: 'installing' });
   prepare(); await screen.findByRole('link', { name: 'Authorize in Linear' });
-  api.status.mockResolvedValue({ ...base, state: 'not_configured', lastError: 'Installation expired.' });
+  api.status.mockResolvedValue({ ...base, state: 'not_configured', clientId: 'client-id', lastError: 'Installation expired.' });
   await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
-  const restart = await screen.findByRole('button', { name: 'Start again' });
+  const restart = await screen.findByRole('button', { name: 'Remove connection' });
+  await waitFor(() => expect(document.activeElement).toBe(restart));
+  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
   api.status.mockResolvedValue(base);
   fireEvent.click(restart);
   await screen.findByRole('link', { name: 'Create app in Linear' });
@@ -277,10 +279,24 @@ it('retains entered credentials and explains a failed refresh of machine setting
   api.setup.mockRejectedValueOnce(new Error('private-read-failure'));
   await act(async () => { await client.refetchQueries({ queryKey: ['linear', 'setup'] }); });
   await screen.findByText(/Could not refresh machine settings/);
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
   expect(document.activeElement).toBe(input);
   expect((input as HTMLInputElement).value).toBe('unfinished-client');
   expect((screen.getByRole('button', { name: 'Prepare authorization' }) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByText(/private-read-failure/)).toBeNull();
   expect(api.install).not.toHaveBeenCalled();
   client.clear();
+});
+
+
+it('offers removal after reloading a consumed or expired pending authorization', async () => {
+  api.status.mockResolvedValue({ ...base, clientId: 'expired-client', lastError: 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.' });
+  mount(); await screen.findByText('Not connected'); await openSettings(false);
+  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
+  api.status.mockResolvedValue(base);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove connection' }));
+  await screen.findByRole('link', { name: 'Create app in Linear' });
+  expect(api.remove).toHaveBeenCalledTimes(1);
 });

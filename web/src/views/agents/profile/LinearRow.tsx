@@ -30,15 +30,19 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
   const [error, setError] = useState('');
   const [authorizationUrl, setAuthorizationUrl] = useState('');
   const authorizationLink = useRef<HTMLAnchorElement>(null);
+  const removeButton = useRef<HTMLButtonElement>(null);
   const data = status.data;
+  const expiredAuthorization = data?.state === 'not_configured' && Boolean(data.clientId);
   useEffect(() => {
-    if (open && authorizationUrl && !busy) authorizationLink.current?.focus();
-  }, [open, authorizationUrl, busy]);
+    if (!open || busy) return;
+    if (expiredAuthorization) removeButton.current?.focus();
+    else if (authorizationUrl) authorizationLink.current?.focus();
+  }, [open, authorizationUrl, busy, expiredAuthorization]);
   useEffect(() => {
     if (data?.state === 'connected' || data?.state === 'revoked') refreshAgentData(agentId);
   }, [data?.state, agentId]);
   const connected = data?.state === 'connected';
-  const configured = Boolean(data && data.state !== 'not_configured');
+  const configured = Boolean(data && (data.state !== 'not_configured' || expiredAuthorization));
   const listener = data?.listenerStatus;
   const listenerLabel =
     listener?.state === 'listening'
@@ -90,7 +94,7 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
       ? 'Authorization revoked'
       : data?.state === 'installing'
         ? 'Awaiting authorization'
-        : 'Not connected';
+        : expiredAuthorization ? 'Authorization needs attention' : 'Not connected';
 
   return (
     <>
@@ -128,8 +132,9 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="font-serif text-[15px] text-text">{identityLabel}</p>
               <Button
-                variant="outline"
-                className="min-h-[44px]"
+                ref={removeButton}
+                variant={connected ? 'outline' : 'ghost'}
+                className="min-h-[44px] text-[13px]"
                 onClick={() => void remove()}
                 disabled={busy}
               >
@@ -253,7 +258,7 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
               pending connection and start again.
             </p>
           )}
-          {authorizationUrl && !connected && (
+          {authorizationUrl && !connected && !expiredAuthorization && (
             <div className="mt-4 space-y-2">
               <p className="font-sans text-[12px] text-accent">3. Authorize</p>
               <h3 className="font-serif text-[20px] font-semibold text-text">
@@ -267,7 +272,7 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
                 href={authorizationUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-4 inline-flex min-h-[44px] items-center gap-2 rounded-sm border border-accent px-4 font-sans text-[13px] text-accent"
+                className="mt-4 inline-flex min-h-[44px] items-center gap-2 rounded-sm bg-primary px-4 font-sans text-[13px] text-primary-foreground"
               >
                 Authorize in Linear <ExternalLink className="size-3.5" />
               </a>

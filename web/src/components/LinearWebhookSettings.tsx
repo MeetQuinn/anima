@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 
 export const linearSetupKey = ['linear', 'setup'] as const;
 export const linearInputClass =
-  'h-[44px] w-full min-w-0 rounded-sm border border-border-soft bg-surface px-3 font-mono text-[13px] text-text outline-none focus-visible:border-accent';
+  'h-[44px] w-full min-w-0 rounded-sm border border-border-soft bg-surface px-3 font-mono text-[13px] text-text outline-none focus-visible:border-accent disabled:cursor-not-allowed disabled:bg-surface-elevated disabled:text-text-muted disabled:opacity-60';
 
 export default function LinearWebhookSettings({
   onSaved,
@@ -35,7 +35,7 @@ export default function LinearWebhookSettings({
           Could not read webhook settings.{' '}
           <button
             type="button"
-            className="min-h-[44px] underline"
+            className="min-h-[44px] underline md:min-h-[32px]"
             onClick={() => void query.refetch()}
           >
             Retry
