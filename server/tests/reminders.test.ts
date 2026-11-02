@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Settings } from 'luxon';
 
 import { makeReminderInboxItem } from './helpers/inbox.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -602,6 +603,25 @@ test('windowed interval DST: one wake per local label on spring/fall transition 
     '2026-11-01T05:30:00.000Z',
   );
 });
+
+for (const clock of ['2026-01-15T12:00:00Z', '2026-07-15T12:00:00Z']) {
+  test(`windowed fallback chooses the earlier occurrence with current clock ${clock}`, () => {
+    const originalNow = Settings.now;
+    try {
+      Settings.now = () => Date.parse(clock);
+      Settings.resetCaches();
+      const schedule = buildWindowedIntervalSchedule({
+        repeatRule: 'every:30m', timezone: 'America/New_York', windowRule: 'sun@00:00-04:00',
+      });
+      const fallDay = zonedDateTime(new Date('2026-11-01T12:00:00Z'), schedule.timezone);
+      const repeated = windowedSlotsOnLocalDay(schedule, fallDay).filter((slot) => slot.hour === 1);
+      assert.deepEqual(repeated.map((slot) => slot.toUTC().toISO()), ['2026-11-01T05:00:00.000Z', '2026-11-01T05:30:00.000Z']);
+      assert.equal(nextDueAtForSchedule(schedule, new Date('2026-11-01T05:15:00Z')), '2026-11-01T05:30:00.000Z');
+      // Once the first occurrence passed, do not emit the repeated label again.
+      assert.equal(nextDueAtForSchedule(schedule, new Date('2026-11-01T05:45:00Z')), '2026-11-01T07:00:00.000Z');
+    } finally { Settings.now = originalNow; Settings.resetCaches(); }
+  });
+}
 
 test('windowed interval schedule, snooze, fire resume grid without drift', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-reminder-windowed-'));

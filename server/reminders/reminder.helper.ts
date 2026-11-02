@@ -163,7 +163,7 @@ export function nextDueAtForSchedule(
  * Contract: one wake per valid local grid *label* (HH:mm).
  * - Spring forward: skip nonexistent labels (e.g. 02:00–02:59 on US DST start).
  * - Fall back: do not emit duplicate labels for the repeated hour; resolve each
- *   label once (Luxon default = earlier offset).
+ *   label once, choosing the earlier occurrence explicitly.
  * Built by stepping labels from windowStart, not by UTC/`plus` continuum walks
  * that re-visit fallback labels.
  */
@@ -238,7 +238,11 @@ function resolveLocalGridLabel(
   if (!result.isValid) return null;
   // Spring gap: Luxon may shift into the next valid wall time — reject shifted labels.
   if (result.hour !== hour || result.minute !== minute) return null;
-  return result;
+  // Luxon's default for an ambiguous label depends on the current season's offset.
+  return result.getPossibleOffsets().reduce(
+    (earliest, candidate) => candidate.toMillis() < earliest.toMillis() ? candidate : earliest,
+    result,
+  );
 }
 
 function sameDayWindowSpanMs(windowStart: string, windowEnd: string): number {
