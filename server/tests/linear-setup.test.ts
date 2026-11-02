@@ -34,6 +34,15 @@ test('manifest prefills a private agent app, callback and all three wake event s
   }
 });
 
+test('manifest prefills a public avatar as the app icon and omits anything Linear could not or should not fetch', () => {
+  const manifest = (iconUrl?: string) => JSON.parse(new URL(linearAppCreationUrl({ name: 'Milo', callbackUrl, webhookUrl: 'https://agents.example.com/webhook', iconUrl })).searchParams.get('manifest')!);
+  const avatar = 'https://avatars.slack-edge.com/2026-01-01/123_abc_72.png';
+  assert.deepEqual(manifest(avatar).display, { iconUrl: avatar });
+  for (const iconUrl of [undefined, '', '/api/agents/milo/avatar', 'http://avatars.example.com/a.png', 'https://localhost/a.png', 'https://10.0.0.1/a.png', 'https://user:pw@cdn.example.com/a.png', 'https://cdn.example.com/a.png?token=signed', 'not a url']) {
+    assert.equal(manifest(iconUrl).display, undefined, String(iconUrl));
+  }
+});
+
 test('setup rejects private and unsafe URLs and invalid callbacks before producing a creation link', () => {
   for (const webhookUrl of ['', 'not a URL', 'https://', 'http://agents.example.com/webhook', 'https://user:secret@agents.example.com/webhook', 'https://localhost/webhook', 'https://127.1/webhook', 'https://10.0.0.1/webhook', 'https://[::1]/webhook', 'https://192.168.1.2/webhook', 'https://172.16.0.1/webhook', 'https://linear.app/webhook', 'https://agents.example.com/webhook?token=secret', 'https://agents.example.com/webhook#secret']) {
     assert.equal(PublicUrl.safeParse(webhookUrl).success, false, webhookUrl);

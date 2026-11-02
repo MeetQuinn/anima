@@ -14,9 +14,9 @@ export default function LinearWebhookSettings() {
   const query = useQuery({ queryKey: linearSetupKey, queryFn: fetchLinearSetup, retry: false });
   return (
     <section className="space-y-3" aria-label="Linear listener settings">
-      <h3 className="font-serif text-[17px] font-semibold text-text">Linear listener</h3>
-      <p className="font-sans text-[13px] leading-relaxed text-text-muted">
-        All Linear agents share this local listener. Keep the default address and port unless your forwarding setup needs different values.
+      <p className="max-w-prose font-sans text-[13px] leading-relaxed text-text-muted">
+        All agents receive Linear events on this local address. Keep the defaults unless your forwarding
+        needs a different port.
       </p>
       {query.isPending && (
         <p role="status" className="text-sm text-text-muted">
@@ -89,53 +89,43 @@ function WebhookForm({
   }
   return (
     <form onSubmit={(event) => void save(event)} className="space-y-4">
-      <p className="break-words text-[12px] leading-relaxed text-text-muted">
-        Forward <span className="font-mono">{data.webhookUrl ?? '/webhook'}</span> to{' '}
-        <span className="font-mono">{host.includes(':') ? `[${host}]` : host}:{port}/webhook</span>.
-        {' '}Forward /api/linear/oauth/callback to the loopback dashboard on its configured port. Other dashboard routes can remain private.
-      </p>
-      <details>
-        <summary className="cursor-pointer py-2 font-sans text-[12px] text-text-muted">
-          Advanced listener settings
-        </summary>
-        <div className="mt-2 grid grid-cols-[minmax(0,1fr)_6rem] gap-3">
-          <label>
-            <span className="mb-1 block text-[12px] text-text-muted">Bind address</span>
-            <input
-              required
-              value={host}
-              disabled={busy || data.listenerLocked}
-              onChange={(e) => setHost(e.target.value)}
-              className={linearInputClass}
-            />
-          </label>
-          <label>
-            <span className="mb-1 block text-[12px] text-text-muted">Port</span>
-            <input
-              required
-              type="number"
-              min="1024"
-              max="65535"
-              value={port}
-              disabled={busy || data.listenerLocked}
-              onChange={(e) => setPort(e.target.value)}
-              className={linearInputClass}
-            />
-          </label>
-        </div>
-        {data.listenerLocked && (
-          <p className="mt-2 text-[12px] text-text-muted">
-            An installed app or an authorization in progress uses this listener.
-          </p>
-        )}
-      </details>
+      <div className="grid max-w-md grid-cols-[minmax(0,1fr)_6rem] gap-3">
+        <label>
+          <span className="mb-1 block font-sans text-[12px] text-text-muted">Bind address</span>
+          <input
+            required
+            value={host}
+            disabled={busy || data.listenerLocked}
+            onChange={(e) => setHost(e.target.value)}
+            className={linearInputClass}
+          />
+        </label>
+        <label>
+          <span className="mb-1 block font-sans text-[12px] text-text-muted">Port</span>
+          <input
+            required
+            type="number"
+            min="1024"
+            max="65535"
+            value={port}
+            disabled={busy || data.listenerLocked}
+            onChange={(e) => setPort(e.target.value)}
+            className={linearInputClass}
+          />
+        </label>
+      </div>
+      {data.listenerLocked && (
+        <p className="text-[12px] text-text-muted">
+          An installed app or an authorization in progress uses this listener, so it can’t change now.
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-sm text-health-error">
           {error}
         </p>
       )}
       <div className="flex items-center gap-3">
-        <Button type="submit" className="min-h-[44px]" disabled={busy}>
+        <Button type="submit" className="h-11 px-5 text-[13px] md:h-10" disabled={busy || data.listenerLocked}>
           {busy ? 'Saving…' : 'Save listener settings'}
         </Button>
       </div>

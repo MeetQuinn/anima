@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LinearIdentityService } from '../linear/identity.service.js';
@@ -9,6 +10,32 @@ import { withTempAnimaHome, writeAgentConfigs, defaultAgentConfig } from './help
 import { FakeLinear, install, seedLinear } from './helpers/linear.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { LinearStore } from '../storage/schema/linear.store.js';
+
+type Injected = { statusCode: number; headers: Record<string, unknown>; body: string };
+
+// The completion page returns to a server-chosen same-origin profile with a
+// script the CSP allows by hash and nothing else.
+function assertReturnPage(response: Injected, agentId: string, outcome: string) {
+  assert.equal(response.statusCode, 200);
+  assert.match(String(response.headers['content-type']), /^text\/html/);
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.equal(response.headers['referrer-policy'], 'no-referrer');
+  const csp = String(response.headers['content-security-policy']);
+  assert.match(csp, /default-src 'none'/); assert.match(csp, /frame-ancestors 'none'/); assert.doesNotMatch(csp, /unsafe-inline/);
+  const scripts = [...response.body.matchAll(/<script>([^<]*)<\/script>/g)].map((m) => m[1]!);
+  assert.equal(scripts.length, 1);
+  assert.ok(csp.includes(`'sha256-${createHash('sha256').update(scripts[0]!).digest('base64')}'`), 'CSP allows exactly the inline script');
+  assert.equal(/id="next" href="([^"]+)"/.exec(response.body)?.[1], `/agents/${agentId}/profile?linear=${outcome}`);
+}
+
+// Not tied to an attempt in this session: no agent named, nothing navigates.
+function assertRetryPage(response: Injected, link: boolean) {
+  assert.equal(response.statusCode, 400);
+  assert.match(String(response.headers['content-type']), /^text\/html/);
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.doesNotMatch(response.body, /<script|\/agents\/|\bscout\b|\bother\b/);
+  assert.equal(response.body.includes('href="/"'), link);
+}
 
 test('real dashboard guard protects Linear credentials, install/remove and bound callback', async (t) => withTempAnimaHome(async (home) => {
   await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
@@ -42,9 +69,14 @@ test('real dashboard guard protects Linear credentials, install/remove and bound
     // An authenticated but different dashboard session cannot consume this state.
     const otherCookie = String(secondLogin.headers['set-cookie']).split(';')[0]!;
     const wrong = await app.inject({ method: 'GET', url: `/api/linear/oauth/complete?state=${state}&code=synthetic-code`, headers: { cookie: otherCookie } });
-    assert.notEqual(wrong.statusCode, 200); assert.equal(fake.tokenCalls, 0);
+    assertRetryPage(wrong, true); assert.equal(fake.tokenCalls, 0);
+    assert.equal((await new LinearStore('scout').read()).pending?.id, state, 'A wrong session leaves the attempt in place');
     const completed = await app.inject({ method: 'GET', url: `/api/linear/oauth/complete?state=${state}&code=synthetic-code`, headers: { cookie } });
-    assert.equal(completed.statusCode, 200); assert.equal(fake.tokenCalls, 1);
+    assertReturnPage(completed, 'scout', 'connected'); assert.equal(fake.tokenCalls, 1);
+    // Replays find no attempt: generic pages, no second exchange.
+    assertRetryPage(await app.inject({ url: `/api/linear/oauth/complete?state=${state}&code=synthetic-code`, headers: { cookie } }), true);
+    assertRetryPage(await app.inject({ url: `/api/linear/oauth/callback?state=${state}&code=synthetic-code`, headers: { host: 'agents.example.com' } }), false);
+    assert.equal(fake.tokenCalls, 1);
     const status = await app.inject({ url: '/api/agents/scout/linear', headers: { cookie } });
     assert.equal(status.statusCode, 200); assert.equal(status.json().state, 'connected');
     assert.equal(status.json().workspaceName, 'Synthetic workspace');
@@ -132,9 +164,15 @@ test('private LAN OAuth completion permits only navigation from an allowed peer 
     assert.notEqual((await lan.inject({ remoteAddress, url, headers: { ...headers, cookie: other } })).statusCode, 200);
     assert.equal(fake.tokenCalls, 0);
     const completed = await lan.inject({ remoteAddress, url, headers });
-    assert.equal(completed.statusCode, 200);
+    assertReturnPage(completed, 'scout', 'connected');
     assert.equal(fake.tokenCalls, 1);
     assert.equal((await new LinearIdentityService('scout').status()).state, 'connected');
+    // The page navigates itself, so the profile request is same-origin. The
+    // profile keeps no cross-site exemption, which is why /complete cannot 303.
+    const profile = '/agents/scout/profile?linear=connected';
+    const navigate = { host, cookie, 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' };
+    assert.notEqual((await lan.inject({ remoteAddress, url: profile, headers: { ...navigate, 'sec-fetch-site': 'same-origin' } })).statusCode, 403);
+    assert.equal((await lan.inject({ remoteAddress, url: profile, headers: { ...navigate, 'sec-fetch-site': 'cross-site' } })).statusCode, 403);
   } finally { await local.close(); await lan.close(); }
 }));
 
@@ -149,9 +187,35 @@ test('failed OAuth completion gives a readable return path and retains only safe
     } });
     const state = new URL(prepared.json().authorizationUrl).searchParams.get('state')!;
     const response = await app.inject({ url: `/api/linear/oauth/complete?state=${state}&code=private-code-sentinel` });
-    assert.equal(response.statusCode, 400); assert.match(String(response.headers['content-type']), /text\/plain/);
-    assert.match(response.body, /Return to Anima/); assert.match(response.body, /existing app/); assert.doesNotMatch(response.body, /sentinel/);
+    assertReturnPage(response, 'scout', 'failed'); assert.doesNotMatch(response.body, /sentinel/);
     const status = (await app.inject({ url: '/api/agents/scout/linear' })).json();
     assert.equal(status.state, 'not_configured'); assert.match(status.lastError, /HTTP 503/); assert.doesNotMatch(JSON.stringify(status), /sentinel/);
+  } finally { await app.close(); }
+}));
+
+test('declined and expired OAuth returns stay with their own attempt and never touch another agent', async (t) => withTempAnimaHome(async (home) => {
+  await writeAgentConfigs(home, [defaultAgentConfig('scout'), defaultAgentConfig('other')]);
+  await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com' });
+  const fake = new FakeLinear(); t.mock.method(globalThis, 'fetch', fake.fetch);
+  const app = buildWebApp();
+  const prepare = async (agentId: string, clientId: string) => new URL((await app.inject({ method: 'POST', url: `/api/agents/${agentId}/linear/install`, payload: {
+    clientId, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+  } })).json().authorizationUrl).searchParams.get('state')!;
+  try {
+    const scout = await prepare('scout', install.clientId);
+    const other = await prepare('other', 'other-client-id-0000000000000000');
+    assertReturnPage(await app.inject({ url: `/api/linear/oauth/complete?state=${scout}&error=access_denied` }), 'scout', 'declined');
+    assert.match((await new LinearIdentityService('scout').status()).lastError!, /declined/);
+    assert.equal((await new LinearStore('other').read()).pending?.id, other, 'Another agent keeps its attempt');
+    // Expired: generic page, nothing exchanged, the expired attempt is not cleared by the callback.
+    await new LinearStore('other').update((file) => ({ ...file, pending: { ...file.pending!, expiresAt: Date.now() - 1 } }));
+    assertRetryPage(await app.inject({ url: `/api/linear/oauth/complete?state=${other}&code=synthetic-code` }), true);
+    assertRetryPage(await app.inject({ url: `/api/linear/oauth/callback?state=${other}&code=synthetic-code`, headers: { host: 'agents.example.com' } }), false);
+    assert.equal((await new LinearStore('other').read()).pending?.id, other);
+    // Unknown and malformed states name nobody.
+    assertRetryPage(await app.inject({ url: '/api/linear/oauth/complete?state=unknown-state&code=synthetic-code' }), true);
+    assertRetryPage(await app.inject({ url: '/api/linear/oauth/complete?state=unknown-state' }), true);
+    assertRetryPage(await app.inject({ url: '/api/linear/oauth/callback?state=unknown-state&code=synthetic-code', headers: { host: 'agents.example.com' } }), false);
+    assert.equal(fake.tokenCalls, 0);
   } finally { await app.close(); }
 }));

@@ -151,21 +151,22 @@ The package you pass to `npx` still decides what `start` and `restart` install. 
 ## Public address (`publicUrl`)
 
 `publicUrl` is this Anima home's public HTTPS origin, without a path, query or fragment.
-Set it in **Settings → Server**. Integrations derive their public URLs from it; saving it
-neither creates forwarding nor changes a platform's registered app URLs. See
+Set it in **Settings → Server**, or in the Linear dialog when you connect the first agent.
+Integrations derive their public URLs from it; saving it neither creates forwarding nor
+changes a platform's registered app URLs. See
 [Connect an agent to Linear](guide/connect-linear.md) for the two required forwarding paths.
 
 ## Linear webhook listener (`linearWebhook`)
 
-| Key                  | Type                   | Default         | What it does                                                  |
-| -------------------- | ---------------------- | --------------- | ------------------------------------------------------------- |
-| `linearWebhook.host` | string                 | `"127.0.0.1"`   | Address the Linear webhook listener binds.                    |
-| `linearWebhook.port` | integer, 1024 to 65535 | none (required) | Listener port. The setup dialog refuses the dashboard's port. |
+| Key                  | Type                   | Default         | What it does                                       |
+| -------------------- | ---------------------- | --------------- | -------------------------------------------------- |
+| `linearWebhook.host` | string                 | `"127.0.0.1"`   | Address the Linear webhook listener binds.         |
+| `linearWebhook.port` | integer, 1024 to 65535 | none (required) | Listener port. Anima refuses the dashboard's port. |
 
-The agent's Linear setup dialog writes this key. All Linear agents share one listener. It runs in
-the agent service only while at least one enabled agent has a complete Linear installation, and it
-rebinds on the next check when the host or port changes. While any agent is connected, the setup
-dialog refuses a different host or port. See [Connect Linear](./guide/connect-linear.md).
+**Settings → Server → Linear listener** and authorizing an agent write this key. All Linear
+agents share one listener. It runs in the agent service only while at least one enabled agent
+has a complete Linear installation, and it rebinds on the next check when the host or port changes. While any agent is connected or
+authorizing, a different host or port is refused. See [Connect Linear](./guide/connect-linear.md).
 
 ## Dashboard listener (`dashboardHost`, `dashboardPort`)
 

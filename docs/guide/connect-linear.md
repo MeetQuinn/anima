@@ -18,25 +18,29 @@ leave unrelated data and OAuth authorization events off. Anima
 requests `read`, `write`, `app:assignable` and `app:mentionable` with `actor=app`.
 
 You provide the public HTTPS address and forwarding yourself. Anima does not create a
-tunnel or register a domain. Set one **Anima public address** in **Settings → Server**,
-for example `https://anima.example.com`. It is shared by the integrations and agents
-in this Anima home.
+tunnel or register a domain. Anima has one **public address**, for example
+`https://anima.example.com`, shared by the integrations and agents in this Anima home.
+Set it in **Settings → Server**, or when you connect the first agent.
 
 ## Install from the dashboard
 
-1. Open the agent's **Profile**. In **Setup**, select **Configure Linear**.
-2. If no public address is saved, select **Open Server settings**, save the HTTPS origin
-   without a path, then return. The connection form refreshes when you return to the tab.
-3. Select **Create app in Linear**. Anima prefills the agent's name, both URLs below and
-   the event subscriptions. Review and create the app. For an existing app, select
-   **I already have an app** and make sure its URLs and subscriptions match.
-4. Copy the **Client ID** and **Webhook signing secret** into Anima. Select **Prepare
-   authorization**, then **Authorize in Linear**. Choose all available teams if the agent
-   should work across the workspace. Linear asks which teams the agent can access; workspace
-   admins can change this later in Linear. Do not paste the secret into chat.
-5. Return to Anima. Authorization completes installation. You can mention the agent or
-   delegate an issue to it. If Linear does not show "Received by Anima." after you mention
-   it, check HTTPS forwarding. There is no required test task.
+1. Open the agent's **Profile**. In **Setup**, select **Connect** on the Linear row.
+2. If no public address is saved yet, the dialog asks for it first. Enter the HTTPS origin
+   without a path and select **Save**. It applies to every agent, and the dialog shows the
+   two routes to forward.
+3. Select **Create app in Linear**. Linear opens in a new tab with the agent's name, its
+   avatar when available (see below), both URLs and the event subscriptions filled in.
+   Review and create the app. To reuse an app you already created, select
+   **I already have one** and make sure its URLs and subscriptions match.
+4. Copy the **Client ID** and **Webhook signing secret** into Anima. Do not paste the
+   secret into chat.
+5. Select **Authorize in Linear**. Linear opens in the same tab and asks which teams the
+   agent can access. Choose all available teams if the agent should work across the
+   workspace; workspace admins can change this later in Linear.
+6. After you approve, Linear returns you to the agent's profile with the Linear dialog
+   open. Authorization completes installation; there is no required test task. Mention the
+   agent or delegate an issue to it. If Linear does not show "Received by Anima." after a
+   mention, check the forwarding for `/webhook`.
 
 For `https://anima.example.com`, forward these paths:
 
@@ -56,11 +60,16 @@ exchanging the code. Authorize in the same browser and keep that dashboard reach
 the device you use; a public callback cannot make a private dashboard reachable remotely.
 Do not rewrite redirect destinations to a different dashboard origin.
 
-**App name** lets you adjust the suggested name. Linear app names need 2–80 characters and
-cannot contain “Linear” or a URL. The callback and webhook URLs come from the public address;
-there is no per-agent callback field. Listener host and port are under **Settings → Server →
-Advanced integration settings**. Existing custom listeners are preserved and remain locked
-while an app is installed or authorization is pending.
+Select **Rename** to adjust the suggested app name. Linear app names need 2–80 characters
+and cannot contain “Linear” or a URL. The callback and webhook URLs come from the public
+address; there is no per-agent callback field. Listener host and port are under
+**Settings → Server → Linear listener**. Existing custom listeners are preserved and remain
+locked while an app is installed or authorization is pending.
+
+The new app's icon is prefilled from the agent's avatar only when that avatar is already a
+public HTTPS image, such as a Slack profile photo. Otherwise the app is created without an
+icon and you can set one in Linear. Anima does not publish local files for this, and changing
+the agent's avatar later does not update apps you already created.
 
 Saving the public address does not change existing Linear apps or verify reachability.
 After changing it, update both registered URLs in each app. Existing installed identities
@@ -71,29 +80,36 @@ server `config.json` at the root of the Anima home, not an agent's config. Remov
 before downgrading to a version without it.
 
 Installation uses PKCE and a single-use state bound to the initiating dashboard session,
-valid for ten minutes. A failed exchange or declined authorization clears that attempt and
-shows a retry explanation with a safe connection, HTTP-status or response category;
-raw errors, response bodies and credentials are not recorded. Use your existing app, enter its Client ID and signing secret again, then prepare a new authorization; the failed attempt is not retried
-automatically. Expired attempts, or consumed attempts left by an older version or an interrupted
-process, can be removed using **Remove connection**. Removing an attempt never uninstalls
-the app at Linear. There is no separate CLI installation flow.
+valid for ten minutes. If you decline in Linear or the exchange fails, Linear still returns
+you to the agent's dialog. It names the problem, with a safe connection, HTTP-status or
+response category for failures; raw errors, response bodies and credentials are not
+recorded. The dialog resumes at your existing app: enter its Client ID and signing secret
+again and select **Authorize in Linear**. A failed attempt is not retried automatically.
+An attempt that expired or was left unfinished is replaced by authorizing again.
 
-The row shows the workspace name saved during installation. If an older installation has no
-saved name, it shows “Workspace name unavailable”. Reading settings does not fetch the name
-or refresh credentials. Connection and listener details remain in the settings dialog.
+When a return from Linear cannot be tied to an attempt in this browser session, because it
+expired, was replaced or was started in another browser, Anima shows a page that names no
+agent and asks you to open the agent and authorize again. It never completes or clears
+another agent's attempt. An unfinished or revoked connection can also be cleared with
+**Disconnect from Linear instead**. Disconnecting never uninstalls the app at Linear.
+There is no separate CLI installation flow.
 
-**App installed** records the verified app identity. It does not prove that ingress is reachable.
-**Local listener** separately reports a recent runtime observation: listening locally,
-bind failed or stopped. Bind failures show a coarse reason: port in use, permission denied,
-address unavailable or other. No current observation is shown if the record is missing,
-unreadable, future-dated, 90 seconds old or older, from an exited process or for a different configured
-address. The runtime refreshes this small record during reconciliation. An observation write
+The row shows the workspace name saved during installation, or **Connected** for an older
+installation without a saved name. Reading settings does not fetch the name or refresh
+credentials. Connection and listener details are in the dialog behind **Manage**.
+
+A connection records the verified app identity. It does not prove that ingress is reachable.
+**Local listener** separately reports a recent runtime observation: **Listening**, **Failed**
+or **Stopped**. A failure shows a coarse reason (port in use, permission denied, address
+unavailable or other) with a link to the listener settings. **Not observed yet** is shown if
+the record is missing, unreadable, future-dated, 90 seconds old or older, from an exited
+process or for a different configured address. The runtime refreshes this small record during reconciliation. An observation write
 failure does not stop intake; it can leave an earlier observation visible until it expires.
 These states do not check your public HTTPS ingress. Check your local address and runtime
 logs when binding fails, and check the tunnel or reverse proxy separately.
 
-The setting shows the last verified, signed webhook received and the number of rejected
-signature claims naming this app. The count is saved in a separate small diagnostic file,
+**Last event** shows when the last verified, signed webhook arrived, and the dialog counts
+rejected signature claims naming this app. The count is saved in a separate small diagnostic file,
 at most once a minute and when the listener stops. Unknown app claims are not counted;
 a crash can lose the unsaved batch. These are facts, not a health or availability verdict.
 
@@ -170,9 +186,10 @@ means no messages can be lost. A missing first activity is a reason to check del
 
 ## Removal, revocation and credentials
 
-**Remove connection** stops local intake and authorized writes and clears local credentials.
-It does not uninstall the app in Linear. Revocation in Linear, or a definite API authorization
-failure, marks the local identity revoked; remove and reinstall it to resume.
+**Disconnect**, in the agent's Linear dialog, stops local intake and authorized writes and
+clears local credentials. It does not uninstall the app in Linear. Revocation in Linear, or a
+definite API authorization failure, marks the local identity revoked; authorize again with
+the same app to resume, or disconnect to start over.
 
 Runtime credentials are separate from provider launch environments, prompts and public API
 responses. The credential file uses mode `0600`. This protects it from other OS users, not

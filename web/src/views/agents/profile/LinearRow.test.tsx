@@ -2,95 +2,351 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { LinearStatus } from '@shared/linear';
+import type { LinearSetup } from '@shared/linear-setup';
 import { LinearRow } from './LinearRow';
 
-const api = vi.hoisted(() => ({ status: vi.fn(), install: vi.fn(), remove: vi.fn(), refresh: vi.fn(), setup: vi.fn(), saveSetup: vi.fn() }));
-vi.mock('@/api/linear', () => ({ fetchLinearStatus: api.status, installLinear: api.install, removeLinear: api.remove, fetchLinearSetup: api.setup, saveLinearSetup: api.saveSetup }));
+const api = vi.hoisted(() => ({
+  status: vi.fn(),
+  install: vi.fn(),
+  remove: vi.fn(),
+  refresh: vi.fn(),
+  setup: vi.fn(),
+  saveSetup: vi.fn(),
+  open: vi.fn(),
+  readAddress: vi.fn(),
+  saveAddress: vi.fn(),
+}));
+vi.mock('@/api/linear', () => ({
+  fetchLinearStatus: api.status,
+  installLinear: api.install,
+  removeLinear: api.remove,
+  fetchLinearSetup: api.setup,
+  saveLinearSetup: api.saveSetup,
+  openLinearAuthorization: api.open,
+}));
+vi.mock('@/api/public-url', () => ({
+  publicUrlKey: ['server', 'public-url'],
+  fetchPublicUrl: api.readAddress,
+  savePublicUrl: api.saveAddress,
+}));
 vi.mock('@/api/agents', () => ({ refreshAgentData: api.refresh }));
+
 const base: LinearStatus = { state: 'not_configured', signatureFailures: 0 };
-function mount() {
+const setup: LinearSetup = {
+  publicUrl: 'https://agents.example.com',
+  callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
+  webhookUrl: 'https://agents.example.com/webhook',
+  listener: { host: '127.0.0.1', port: 14185 },
+  listenerLocked: false,
+};
+const authorizationUrl = 'https://linear.app/oauth/authorize?state=synthetic-state';
+const connected: LinearStatus = { ...base, state: 'connected', clientId: 'synthetic-client', workspaceName: 'Demo workspace' };
+
+function mount(props: { initialOpen?: boolean } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><LinearRow agentId="scout" /></QueryClientProvider>);
+  render(
+    <QueryClientProvider client={client}>
+      <LinearRow agentId="scout" agentName="Scout" {...props} />
+    </QueryClientProvider>,
+  );
   return client;
 }
-async function openSettings(advance = true) {
-  const opener = screen.getByRole('button', { name: 'Configure Linear' });
+async function openDialog(action = 'Connect') {
+  const opener = screen.getByRole('button', { name: `${action} Linear` });
   opener.focus();
   fireEvent.click(opener);
-  const dialog = await screen.findByRole('dialog', { name: 'Linear' });
-  if (advance && !screen.queryByText('App installed') && !screen.queryByRole('button', { name: 'Remove connection' }) && !screen.queryByText(/Linear settings could not be read/)) {
-    const next = await screen.findByRole('button', { name: 'I already have an app' });
-    fireEvent.click(next);
-  }
-  return dialog;
+  return screen.findByRole('dialog', { name: 'Linear' });
 }
-function prepare() {
+function fillCredentials() {
   for (const [label, value] of [['Client ID', 'client-id'], ['Webhook signing secret', 'synthetic-signing-sentinel']]) {
     const input = screen.getByLabelText(label) as HTMLInputElement;
     if (!input.value) fireEvent.change(input, { target: { value } });
   }
-  fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
 }
-beforeEach(() => { vi.clearAllMocks(); api.setup.mockResolvedValue({ publicUrl: 'https://agents.example.com', callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', webhookUrl: 'https://agents.example.com/webhook', listener: { host: '127.0.0.1', port: 14185 }, listenerLocked: false }); api.status.mockResolvedValue(base); api.remove.mockResolvedValue({ removed: true }); });
+async function startAuthorizing() {
+  fireEvent.click(await screen.findByRole('button', { name: 'I already have one' }));
+  fillCredentials();
+  fireEvent.click(screen.getByRole('button', { name: /Authorize in Linear/ }));
+}
+const closeButton = () => screen.getByRole('button', { name: 'Close Linear settings' }) as HTMLButtonElement;
+const refetch = (client: QueryClient, queryKey: readonly string[]) =>
+  act(async () => {
+    await client.refetchQueries({ queryKey });
+  });
 
-it('enters credentials once, clears secret and opens the returned app authorization link without browser storage', async () => {
-  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
-  mount(); await screen.findByText('Not connected'); await openSettings();
-  fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'client-id' } });
-  const secret = screen.getByLabelText('Webhook signing secret') as HTMLInputElement;
-  fireEvent.change(secret, { target: { value: 'synthetic-signing-sentinel' } });
-  prepare();
-  const link = await screen.findByRole('link', { name: 'Authorize in Linear' });
-  expect(link.getAttribute('href')).toBe('https://linear.app/oauth/authorize?state=synthetic-state');
-  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ clientId: 'client-id', signingSecret: 'synthetic-signing-sentinel', listener: { host: '127.0.0.1', port: 14185 } }));
-  await waitFor(() => expect(document.activeElement).toBe(link));
-  expect(screen.queryByLabelText('Webhook signing secret')).toBeNull(); expect(JSON.stringify(localStorage)).not.toContain('synthetic-signing-sentinel');
+beforeEach(() => {
+  vi.clearAllMocks();
+  api.setup.mockResolvedValue(setup);
+  api.status.mockResolvedValue(base);
+  api.remove.mockResolvedValue({ removed: true });
+  api.readAddress.mockResolvedValue({});
+});
+
+it('connects in this tab: one click on Authorize goes to the returned Linear link and keeps the dialog busy', async () => {
+  api.install.mockResolvedValue({ authorizationUrl });
+  mount();
+  await screen.findByText('Not connected');
+  await openDialog();
+  expect(await screen.findByRole('heading', { name: 'Connect Scout to Linear' })).toBeTruthy();
+  await startAuthorizing();
+  await waitFor(() => expect(api.open).toHaveBeenCalledWith(authorizationUrl));
+  expect(api.install).toHaveBeenCalledWith('scout', {
+    clientId: 'client-id',
+    signingSecret: 'synthetic-signing-sentinel',
+    callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
+    listener: { host: '127.0.0.1', port: 14185 },
+  });
+  expect((screen.getByRole('button', { name: /Opening Linear/ }) as HTMLButtonElement).disabled).toBe(true);
+  expect(closeButton().disabled).toBe(true);
+  expect((screen.getByLabelText('Webhook signing secret') as HTMLInputElement).value).toBe('');
+  expect(screen.queryByRole('link', { name: /Authorize/ })).toBeNull();
+  expect(JSON.stringify(localStorage)).not.toContain('synthetic-signing-sentinel');
+  expect(api.saveSetup).not.toHaveBeenCalled();
+});
+
+it('coming Back from Linear out of the page cache lets the user act again', async () => {
+  api.install.mockResolvedValue({ authorizationUrl });
+  mount();
+  await screen.findByText('Not connected');
+  await openDialog();
+  await startAuthorizing();
+  await waitFor(() => expect(api.open).toHaveBeenCalledTimes(1));
+  expect(closeButton().disabled).toBe(true);
+  act(() => {
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: false }));
+  });
+  expect(closeButton().disabled).toBe(true);
+  act(() => {
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+  });
+  expect(closeButton().disabled).toBe(false);
 });
 
 it('uses the saved shared listener when connecting another agent', async () => {
-  api.setup.mockResolvedValue({ publicUrl: 'https://agents.example.com', callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', webhookUrl: 'https://agents.example.com/webhook', listener: { host: '::1', port: 15123 }, listenerLocked: true });
-  api.status.mockResolvedValue({ ...base, listener: { host: '::1', port: 15123 } });
-  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
-  mount(); await screen.findByText('Not connected'); await openSettings();
-  prepare();
-  await screen.findByRole('link', { name: 'Authorize in Linear' });
+  api.setup.mockResolvedValue({ ...setup, listener: { host: '::1', port: 15123 }, listenerLocked: true });
+  api.install.mockResolvedValue({ authorizationUrl });
+  mount();
+  await screen.findByText('Not connected');
+  await openDialog();
+  await startAuthorizing();
+  await waitFor(() => expect(api.open).toHaveBeenCalledTimes(1));
   expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '::1', port: 15123 } }));
   expect(api.saveSetup).not.toHaveBeenCalled();
 });
 
-it('shows factual timestamp and signature errors without claiming availability', async () => {
-  api.status.mockResolvedValue({ ...base, state: 'connected', clientId: 'synthetic-client', lastSignedWebhookAt: '2026-10-10T06:00:00Z', signatureFailures: 2, listener: { host: '127.0.0.1', port: 14175 } });
-  mount(); await screen.findByText('Workspace name unavailable'); await openSettings();
-  expect(screen.getByText('Last signed webhook received')).toBeTruthy();
-  expect(screen.getByText('127.0.0.1:14175/webhook')).toBeTruthy();
-  expect(screen.getByText(/failed signature verification/)).toBeTruthy();
-  expect(screen.queryByText(/healthy|online/i)).toBeNull(); expect(screen.queryByLabelText('Webhook signing secret')).toBeNull();
+for (const reason of [
+  'Use a separate Linear app for each agent.',
+  'Set the Anima public URL in Server settings and refresh the connection form.',
+  'private-input-sentinel',
+]) {
+  it(`shows only allowlisted reasons when authorization cannot start: ${reason}`, async () => {
+    api.install.mockRejectedValueOnce(new Error(reason));
+    mount();
+    await screen.findByText('Not connected');
+    await openDialog();
+    await startAuthorizing();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain(reason === 'private-input-sentinel' ? 'Authorization could not start.' : reason);
+    expect(alert.textContent).not.toContain('private-input-sentinel');
+    expect(api.open).not.toHaveBeenCalled();
+    expect(closeButton().disabled).toBe(false);
+    expect((screen.getByLabelText('Webhook signing secret') as HTMLInputElement).value).toBe('');
+  });
+}
+
+it.each(['install', 'remove'] as const)('cannot dismiss a pending %s or lose its failure', async (operation) => {
+  let reject!: (reason: Error) => void;
+  api[operation].mockReturnValue(new Promise((_, no) => (reject = no)));
+  if (operation === 'remove') api.status.mockResolvedValue(connected);
+  mount();
+  await screen.findByText(operation === 'remove' ? 'Demo workspace' : 'Not connected');
+  const dialog = await openDialog(operation === 'remove' ? 'Manage' : 'Connect');
+  if (operation === 'remove') {
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+  } else await startAuthorizing();
+  await waitFor(() => expect(closeButton().disabled).toBe(true));
+  fireEvent.keyDown(dialog, { key: 'Escape' });
+  fireEvent.click(dialog.parentElement!);
+  expect(screen.getByRole('dialog')).toBe(dialog);
+  await act(async () => reject(new Error('private-failure-sentinel')));
+  await screen.findByText(operation === 'remove' ? /Could not disconnect/ : /Authorization could not start/);
+  expect(screen.queryByText(/private-failure-sentinel/)).toBeNull();
+  fireEvent.keyDown(dialog, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
 });
 
-it('revoked identity can be removed before starting a separate install', async () => {
-  api.status.mockResolvedValue({ ...base, state: 'revoked', lastError: 'Authorization revoked; reinstall.' });
-  const client = mount(); await screen.findByText('Authorization revoked'); await openSettings();
-  api.status.mockResolvedValue(base); fireEvent.click(screen.getByRole('button', { name: 'Remove connection' }));
-  await waitFor(() => expect(api.remove).toHaveBeenCalledWith('scout'));
-  await screen.findByRole('link', { name: 'Create app in Linear' }); client.clear();
-});
-
-it('installation and read errors stay visible without echoing server credential text', async () => {
-  api.install.mockRejectedValue(new Error('synthetic-private-error-sentinel'));
-  mount(); await screen.findByText('Not connected'); await openSettings();
-  prepare();
-  await screen.findByText(/Authorization could not start/); expect(screen.queryByText(/private-error-sentinel/)).toBeNull();
-});
-
-it('unreadable settings cannot start an installation', async () => {
-  api.status.mockRejectedValue(new Error('unavailable'));
-  mount(); await screen.findByText('Settings unavailable');
-  expect(screen.queryByText('Not connected')).toBeNull();
-  expect(screen.getByText('Unknown')).toBeTruthy();
-  await openSettings();
-  await screen.findByText(/Linear settings could not be read/);
-  expect(screen.queryByRole('button', { name: 'Prepare authorization' })).toBeNull();
+it('keeps setup behind the row and contains and restores keyboard focus on dismissal', async () => {
+  mount();
+  await screen.findByText('Not connected');
+  expect(screen.queryByRole('dialog')).toBeNull();
+  const opener = screen.getByRole('button', { name: 'Connect Linear' });
+  expect(opener.getAttribute('aria-haspopup')).toBe('dialog');
+  for (const dismiss of ['escape', 'button', 'backdrop']) {
+    const dialog = await openDialog();
+    expect(document.activeElement).toBe(dialog);
+    await screen.findByRole('link', { name: 'Create app in Linear' });
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(document.activeElement).toBe(closeButton());
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Change public address' }));
+    fireEvent.click(screen.getByRole('button', { name: 'I already have one' }));
+    fireEvent.change(screen.getByLabelText('Webhook signing secret'), { target: { value: 'discarded-secret' } });
+    if (dismiss === 'escape') fireEvent.keyDown(dialog, { key: 'Escape' });
+    if (dismiss === 'button') fireEvent.click(closeButton());
+    if (dismiss === 'backdrop') fireEvent.click(dialog.parentElement!);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  }
+  await openDialog();
+  fireEvent.click(await screen.findByRole('button', { name: 'I already have one' }));
+  expect((screen.getByLabelText('Webhook signing secret') as HTMLInputElement).value).toBe('');
   expect(api.install).not.toHaveBeenCalled();
+  expect(api.remove).not.toHaveBeenCalled();
+});
+
+it('opens straight into the dialog when returning from Linear', async () => {
+  api.status.mockResolvedValue(connected);
+  mount({ initialOpen: true });
+  const dialog = await screen.findByRole('dialog', { name: 'Linear' });
+  expect(await within(dialog).findByRole('heading', { name: 'Connected to Demo workspace' })).toBeTruthy();
+});
+
+it.each([
+  {
+    name: 'declined',
+    status: { lastError: 'Linear authorization was declined. Prepare authorization again when ready.' },
+    title: 'Authorization was declined in Linear',
+    body: 'Authorize again whenever you’re ready.',
+    removable: false,
+  },
+  {
+    name: 'exchange failure',
+    status: {
+      lastError:
+        'Linear authorization could not be exchanged (HTTP 400). Check the Client ID, registered redirect URL and network, then prepare authorization again.',
+    },
+    title: 'Linear couldn’t confirm the app',
+    body: 'callback URL in Linear still uses your public address. Then authorize again. Details: HTTP 400.',
+    removable: false,
+  },
+  {
+    name: 'identity failure',
+    status: {
+      lastError:
+        'Linear app identity could not be verified (connection failed). Check the app configuration and network, then prepare authorization again.',
+    },
+    title: 'Linear couldn’t verify the app',
+    body: 'Details: connection failed.',
+    removable: false,
+  },
+  {
+    name: 'expired',
+    status: {
+      clientId: 'client-id',
+      lastError: 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.',
+    },
+    title: 'The last authorization expired',
+    body: 'Authorize again with your existing app.',
+    removable: false,
+  },
+  {
+    name: 'unfinished',
+    status: { state: 'installing', clientId: 'client-id' },
+    title: 'Authorization wasn’t finished',
+    body: 'Authorize again with your existing app.',
+    removable: true,
+  },
+  {
+    name: 'revoked',
+    status: { state: 'revoked', clientId: 'client-id', lastError: 'Authorization revoked; reinstall.' },
+    title: 'Linear access was revoked',
+    body: 'Authorize again with your existing app to reconnect.',
+    removable: true,
+  },
+] as const)('$name: names the problem on the row, focuses it in the dialog and resumes at the existing app', async (c) => {
+  api.status.mockResolvedValue({ ...base, ...c.status });
+  mount();
+  await screen.findByText(c.title);
+  const dialog = await openDialog('Review');
+  const notice = (await within(dialog).findByText(c.title)).closest('[role="alert"]') as HTMLElement;
+  expect(notice.textContent).toContain(c.body);
+  await waitFor(() => expect(document.activeElement).toBe(notice));
+  expect(screen.getByText('Using an app you already created.')).toBeTruthy();
+  expect(screen.getByLabelText('Client ID')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
+  expect(dialog.textContent).not.toMatch(/prepare (authorization )?again|reinstall/i);
+  expect(Boolean(screen.queryByRole('button', { name: 'Disconnect from Linear instead' }))).toBe(c.removable);
+  expect(api.remove).not.toHaveBeenCalled();
+});
+
+it('a revoked identity can be disconnected before starting over', async () => {
+  api.status.mockResolvedValue({ ...base, state: 'revoked', clientId: 'client-id' });
+  mount();
+  await screen.findByText('Linear access was revoked');
+  await openDialog('Review');
+  api.status.mockResolvedValue(base);
+  fireEvent.click(await screen.findByRole('button', { name: 'Disconnect from Linear instead' }));
+  await waitFor(() => expect(api.remove).toHaveBeenCalledWith('scout'));
+  await screen.findByRole('link', { name: 'Create app in Linear' });
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('asks for the public address in place when it is missing, then continues to the steps', async () => {
+  api.setup.mockResolvedValue({ listener: { host: '127.0.0.1', port: 14185 }, listenerLocked: false });
+  mount();
+  await screen.findByText('Not connected');
+  const dialog = await openDialog();
+  expect(await within(dialog).findByRole('heading', { name: 'Give Anima a public address' })).toBeTruthy();
+  const input = screen.getByLabelText('Public address');
+  expect(document.activeElement).toBe(input);
+  expect(within(dialog).getByText('/webhook')).toBeTruthy();
+  expect(within(dialog).getByText('/api/linear/oauth/callback')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
+  api.saveAddress.mockResolvedValue({ publicUrl: 'https://agents.example.com' });
+  api.setup.mockResolvedValue(setup);
+  fireEvent.change(input, { target: { value: 'https://agents.example.com/' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await within(dialog).findByRole('heading', { name: 'Connect Scout to Linear' });
+  expect(api.saveAddress).toHaveBeenCalledWith('https://agents.example.com');
+  expect(screen.getByRole('link', { name: 'Create app in Linear' })).toBeTruthy();
+  expect(api.install).not.toHaveBeenCalled();
+});
+
+it('connected: OAuth success is done, with facts, no delivery-test gate, and a confirmed disconnect', async () => {
+  const lastEvent = new Date(Date.now() - 12 * 60_000).toISOString();
+  api.status.mockResolvedValue({
+    ...connected,
+    lastSignedWebhookAt: lastEvent,
+    signatureFailures: 2,
+    listenerStatus: { state: 'listening', observedAt: lastEvent },
+  });
+  mount();
+  await screen.findByText('Demo workspace');
+  expect(screen.queryByText('Listening')).toBeNull();
+  await waitFor(() => expect(api.refresh).toHaveBeenCalledWith('scout'));
+  const dialog = await openDialog('Manage');
+  expect(within(dialog).getByRole('heading', { name: 'Connected to Demo workspace' })).toBeTruthy();
+  expect(within(dialog).getByText('Mention Scout in Linear or delegate an issue to it.')).toBeTruthy();
+  const fact = (label: string) => within(dialog).getByText(label).nextElementSibling!;
+  expect(fact('Local listener').textContent).toBe('Listening');
+  expect(fact('Last event').textContent).not.toBe('None yet');
+  expect(fact('Last event').getAttribute('title')).toBeTruthy();
+  expect(fact('Client ID').textContent).toBe('synthetic-client');
+  expect(within(dialog).getByText(/2 requests claiming this app failed/)).toBeTruthy();
+  expect(dialog.textContent).not.toMatch(/pending verification|send a test|verify connection|healthy|online/i);
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByLabelText('Webhook signing secret')).toBeNull();
+
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
+  expect(within(dialog).getByText('Stop Linear here? The app stays in Linear.')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Keep' }));
+  expect(api.remove).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
+  api.status.mockResolvedValue(base);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
+  await waitFor(() => expect(api.remove).toHaveBeenCalledTimes(1));
+  await within(dialog).findByRole('link', { name: 'Create app in Linear' });
 });
 
 it.each([
@@ -98,245 +354,79 @@ it.each([
   ['permission_denied', 'Permission to bind was denied.'],
   ['address_unavailable', 'The bind address is unavailable.'],
   ['other', 'The listener could not bind.'],
-] as const)('keeps app identity while prominently showing bind failure %s', async (reason, message) => {
-  api.status.mockResolvedValue({ ...base, state: 'connected', clientId: 'synthetic-client', listener: { host: '127.0.0.1', port: 14175 },
-    listenerStatus: { state: 'failed', reason, observedAt: '2026-10-11T00:00:00Z' } });
-  mount(); await screen.findByText('Workspace name unavailable'); await openSettings();
-  const alert = screen.getByRole('alert');
-  expect(alert.textContent).toContain('Local webhook listener failed'); expect(alert.textContent).toContain(message);
-  expect(alert.compareDocumentPosition(screen.getByText('Client ID')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(screen.getByText('Bind failed')).toBeTruthy(); expect(screen.getByText('127.0.0.1:14175/webhook')).toBeTruthy();
-  expect(screen.queryByText(/sentinel/)).toBeNull();
+] as const)('a detected listener failure (%s) is named, with a way to fix it', async (reason, message) => {
+  api.status.mockResolvedValue({
+    ...connected,
+    listenerStatus: { state: 'failed', reason, observedAt: '2026-10-11T00:00:00Z' },
+  });
+  mount();
+  await screen.findByText('Not receiving events');
+  const dialog = await openDialog('Manage');
+  const alert = within(dialog).getByRole('alert');
+  expect(alert.textContent).toContain('Anima can’t receive Linear events');
+  expect(alert.textContent).toContain(message);
+  expect(within(alert).getByRole('link', { name: 'Listener settings' }).getAttribute('href')).toBe(
+    '/settings/server#linear-listener',
+  );
+  expect(within(dialog).getByText('Local listener').nextElementSibling!.textContent).toBe('Failed');
 });
 
 it.each([
-  [{ state: 'unknown' }, 'Not observed'],
-  [undefined, 'Not observed'],
-  [{ state: 'listening', observedAt: '2026-10-11T00:00:00Z' }, 'Listening locally'],
+  [{ state: 'unknown' }, 'Not observed yet'],
+  [undefined, 'Not observed yet'],
   [{ state: 'stopped', observedAt: '2026-10-11T00:00:00Z' }, 'Stopped'],
-])('shows local listener facts with no public reachability verdict: %s', async (listenerStatus, label) => {
-  api.status.mockResolvedValue({ ...base, state: 'connected', clientId: 'synthetic-client', listenerStatus });
-  mount(); await screen.findByText('Workspace name unavailable'); const dialog = await openSettings();
-  await within(dialog).findByText(label);
-  expect(screen.getByText(/does not verify your public HTTPS ingress/)).toBeTruthy(); expect(screen.queryByRole('alert')).toBeNull();
-  if (!listenerStatus || listenerStatus.state === 'unknown') {
-    expect(screen.getByText(/No current observation/)).toBeTruthy(); expect(screen.queryByText(/Observed \d/)).toBeNull();
-  }
+] as const)('without a detected failure, nothing blames the port: %s', async (listenerStatus, label) => {
+  api.status.mockResolvedValue({ ...connected, listenerStatus });
+  mount();
+  await screen.findByText('Demo workspace');
+  expect(screen.queryByText('Not receiving events')).toBeNull();
+  const dialog = await openDialog('Manage');
+  expect(within(dialog).getByText('Local listener').nextElementSibling!.textContent).toBe(label);
+  expect(within(dialog).getByText('Last event').nextElementSibling!.textContent).toBe('None yet');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(dialog.textContent).not.toMatch(/\bport\b/i);
+  expect(dialog.textContent).toContain('Check the forwarding for /webhook on your public address.');
 });
 
-
-it('keeps configuration behind the row and contains/restores keyboard focus on dismissal', async () => {
-  mount(); await screen.findByText('Not connected');
-  expect(screen.queryByRole('dialog')).toBeNull();
-  expect(screen.queryByLabelText('Client ID')).toBeNull();
-  const opener = screen.getByRole('button', { name: 'Configure Linear' });
-  for (const dismiss of ['escape', 'button', 'backdrop']) {
-    const dialog = await openSettings();
-    expect(document.activeElement).toBe(dialog);
-    fireEvent.keyDown(dialog, { key: 'Tab' });
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close Linear settings' }));
-    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Prepare authorization' }));
-    fireEvent.change(screen.getByLabelText('Webhook signing secret'), { target: { value: 'discarded-secret' } });
-    if (dismiss === 'escape') fireEvent.keyDown(dialog, { key: 'Escape' });
-    if (dismiss === 'button') fireEvent.click(screen.getByRole('button', { name: 'Close Linear settings' }));
-    if (dismiss === 'backdrop') fireEvent.click(dialog.parentElement!);
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(document.activeElement).toBe(opener);
-  }
-  await openSettings();
-  expect((screen.getByLabelText('Webhook signing secret') as HTMLInputElement).value).toBe('');
-  expect(api.install).not.toHaveBeenCalled(); expect(api.remove).not.toHaveBeenCalled();
+it('an unreadable status cannot start an installation and recovers on retry', async () => {
+  api.status.mockRejectedValue(new Error('unavailable'));
+  mount();
+  await screen.findByText('Status unavailable');
+  expect(screen.getByText('Unavailable')).toBeTruthy();
+  expect(screen.queryByText('Not connected')).toBeNull();
+  const dialog = await openDialog();
+  await within(dialog).findByText(/Could not read Linear status/);
+  expect(screen.queryByRole('button', { name: /Authorize in Linear/ })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
+  api.status.mockResolvedValue(base);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }));
+  await within(dialog).findByRole('heading', { name: 'Connect Scout to Linear' });
+  expect(api.install).not.toHaveBeenCalled();
 });
 
-it('keeps a pending authorization link when the settings are closed and reopened', async () => {
-  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
-  mount(); await screen.findByText('Not connected'); await openSettings();
-  api.status.mockResolvedValue({ ...base, state: 'installing', clientId: 'client-id' });
-  prepare();
-  await screen.findByRole('link', { name: 'Authorize in Linear' });
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Close Linear settings' }) as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(screen.getByRole('button', { name: 'Close Linear settings' }));
-  await openSettings();
-  expect(screen.getByRole('link', { name: 'Authorize in Linear' }).getAttribute('href')).toContain('synthetic-state');
-  expect(api.install).toHaveBeenCalledTimes(1);
-});
-
-it.each(['install', 'remove'] as const)('cannot dismiss a pending %s or lose its failure', async (operation) => {
-  let reject!: (reason: Error) => void;
-  api[operation].mockReturnValue(new Promise((_, no) => { reject = no; }));
-  if (operation === 'remove') api.status.mockResolvedValue({ ...base, state: 'connected' });
-  mount(); await screen.findByText(operation === 'remove' ? 'Workspace name unavailable' : 'Not connected');
-  const dialog = await openSettings();
-  if (operation === 'remove') fireEvent.click(screen.getByRole('button', { name: 'Remove connection' }));
-  else prepare();
-  fireEvent.keyDown(dialog, { key: 'Escape' });
-  expect(screen.queryByRole('dialog')).toBe(dialog);
-  fireEvent.click(dialog.parentElement!);
-  expect(screen.queryByRole('dialog')).toBe(dialog);
-  fireEvent.click(screen.getByRole('button', { name: 'Close Linear settings' }));
-  expect(screen.getByRole('dialog')).toBe(dialog);
-  await act(async () => reject(new Error('private-failure-sentinel')));
-  await screen.findByText(operation === 'remove' ? /Removal failed/ : /Authorization could not start/);
-  expect(screen.queryByText(/private-failure-sentinel/)).toBeNull();
-  fireEvent.keyDown(dialog, { key: 'Escape' });
-  expect(screen.queryByRole('dialog')).toBeNull();
-});
-
-
-it('retains the cached installation form and focused input after a background read failure', async () => {
-  const client = mount(); await screen.findByText('Not connected'); await openSettings();
-  const input = screen.getByLabelText('Client ID');
-  fireEvent.change(input, { target: { value: 'unfinished-client' } }); input.focus();
-  api.status.mockRejectedValueOnce(new Error('transient-read-error'));
-  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
-  await screen.findByText(/Linear settings could not be read/);
+it.each([
+  ['status', ['agent', 'scout', 'linear'], 'Could not refresh Linear status.'],
+  ['machine settings', ['linear', 'setup'], 'Could not refresh machine settings.'],
+] as const)('a failed background refresh of %s keeps typed input and focus but pauses Authorize', async (_, key, message) => {
+  const client = mount();
+  await screen.findByText('Not connected');
+  await openDialog();
+  fireEvent.click(await screen.findByRole('button', { name: 'I already have one' }));
+  fillCredentials();
+  const input = screen.getByLabelText('Client ID') as HTMLInputElement;
+  input.focus();
+  const failing = key[0] === 'agent' ? api.status : api.setup;
+  failing.mockRejectedValueOnce(new Error('private-read-failure'));
+  await refetch(client, key);
+  expect((await screen.findByRole('alert')).textContent).toContain(message);
   expect(screen.getByLabelText('Client ID')).toBe(input);
   expect(document.activeElement).toBe(input);
-  expect((input as HTMLInputElement).value).toBe('unfinished-client');
-  api.status.mockResolvedValue(base);
-  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
-  expect(document.activeElement).toBe(input); client.clear();
-});
-
-
-it('shows the workspace identity beside a labeled icon button, with listener details only in the dialog', async () => {
-  api.status.mockResolvedValue({ ...base, state: 'connected', workspaceName: 'A very long test workspace name', listenerStatus: { state: 'listening' } });
-  mount(); await screen.findByText('A very long test workspace name');
-  const configure = screen.getByRole('button', { name: 'Configure Linear' });
-  expect(configure.textContent).toBe(''); expect(configure.querySelector('svg')).toBeTruthy();
-  expect(screen.queryByText('App installed')).toBeNull();
-  expect(screen.queryByText('Listening locally')).toBeNull();
-  await openSettings();
-  expect(screen.getByText('App installed')).toBeTruthy();
-  expect(screen.getByText('Listening locally')).toBeTruthy();
-});
-
-it('opens a prefilled app with the machine URL and advances to just two credential fields', async () => {
-  mount(); await screen.findByText('Not connected'); await openSettings(false);
-  const link = await screen.findByRole('link', { name: 'Create app in Linear' });
-  const manifest = JSON.parse(new URL(link.getAttribute('href')!).searchParams.get('manifest')!);
-  expect(manifest.oauth.client_name).toBe('scout');
-  expect(manifest.webhook.url).toBe('https://agents.example.com/webhook');
-  expect(manifest.webhook.resourceTypes).toEqual(['AgentSessionEvent', 'AppUserNotification', 'PermissionChange']);
-  expect(manifest.oauth.redirect_uris).toEqual(['https://agents.example.com/api/linear/oauth/callback']);
-  fireEvent.click(link);
-  expect(screen.getAllByRole('textbox')).toHaveLength(1);
-  expect(screen.getByLabelText('Webhook signing secret')).toBeTruthy();
-  expect(screen.queryByLabelText('Port')).toBeNull();
-  expect(api.install).not.toHaveBeenCalled();
-});
-
-it('finishes on OAuth success and only suggests mentioning or delegating, without a delivery-test gate', async () => {
-  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
-  const client = mount(); await screen.findByText('Not connected'); await openSettings();
-  prepare(); await screen.findByRole('link', { name: 'Authorize in Linear' });
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Close Linear settings' }) as HTMLButtonElement).disabled).toBe(false));
-  api.status.mockResolvedValue({ ...base, state: 'connected', workspaceName: 'Demo workspace' });
-  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
-  expect(await screen.findByText(/Connected. You can now mention this agent/)).toBeTruthy();
-  expect(screen.getByText(/If Linear does not show/).textContent).toContain('check the HTTPS forwarding to this machine');
-  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
-  expect(screen.queryByText(/pending verification|send a test|verify connection/i)).toBeNull();
-  expect(api.install).toHaveBeenCalledTimes(1);
-  expect(api.saveSetup).not.toHaveBeenCalled();
-});
-
-it('directs missing public address to global settings without an inline Linear URL form', async () => {
-  api.setup.mockResolvedValue({ listener: { host: '127.0.0.1', port: 15123 }, listenerLocked: false });
-  mount(); await screen.findByText('Not connected'); await openSettings(false);
-  const link = await screen.findByRole('link', { name: 'Open Server settings' });
-  expect(link.getAttribute('href')).toBe('/settings/server#public-url');
-  expect(screen.queryByLabelText('Public webhook URL')).toBeNull();
-  expect(api.install).not.toHaveBeenCalled();
-});
-
-it('lets an expired authorization start again without retaining its old link', async () => {
-  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=expired-state' });
-  const client = mount(); await screen.findByText('Not connected'); await openSettings();
-  api.status.mockResolvedValue({ ...base, state: 'installing' });
-  prepare(); await screen.findByRole('link', { name: 'Authorize in Linear' });
-  api.status.mockResolvedValue({ ...base, state: 'not_configured', clientId: 'client-id', lastError: 'Installation expired.' });
-  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
-  const restart = await screen.findByRole('button', { name: 'Remove connection' });
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByText('Authorization needs attention')));
-  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
-  api.status.mockResolvedValue(base);
-  fireEvent.click(restart);
-  await screen.findByRole('link', { name: 'Create app in Linear' });
-  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
-  expect(api.remove).toHaveBeenCalledTimes(1);
-  expect(api.install).toHaveBeenCalledTimes(1);
-});
-
-
-it('retains entered credentials and explains a failed refresh of machine settings', async () => {
-  const client = mount(); await screen.findByText('Not connected'); await openSettings();
-  const input = screen.getByLabelText('Client ID');
-  fireEvent.change(input, { target: { value: 'unfinished-client' } }); input.focus();
-  api.setup.mockRejectedValueOnce(new Error('private-read-failure'));
-  await act(async () => { await client.refetchQueries({ queryKey: ['linear', 'setup'] }); });
-  await screen.findByText(/Could not refresh machine settings/);
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-  expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
-  expect(document.activeElement).toBe(input);
-  expect((input as HTMLInputElement).value).toBe('unfinished-client');
-  expect((screen.getByRole('button', { name: 'Prepare authorization' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(input.value).toBe('client-id');
+  expect((screen.getByRole('button', { name: /Authorize in Linear/ }) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByText(/private-read-failure/)).toBeNull();
+  await refetch(client, key);
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect((screen.getByRole('button', { name: /Authorize in Linear/ }) as HTMLButtonElement).disabled).toBe(false);
   expect(api.install).not.toHaveBeenCalled();
   client.clear();
 });
-
-
-it('offers removal after reloading a consumed or expired pending authorization', async () => {
-  api.status.mockResolvedValue({ ...base, clientId: 'expired-client', lastError: 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.' });
-  mount(); await screen.findByText('Not connected'); await openSettings(false);
-  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
-  expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
-  api.status.mockResolvedValue(base);
-  fireEvent.click(screen.getByRole('button', { name: 'Remove connection' }));
-  await screen.findByRole('link', { name: 'Create app in Linear' });
-  expect(api.remove).toHaveBeenCalledTimes(1);
-});
-
-
-it('keeps exchange-status focus away from Remove when authorization completes', async () => {
-  api.status.mockResolvedValue({ ...base, clientId: 'consumed-client' });
-  const client = mount(); await screen.findByText('Not connected'); await openSettings(false);
-  const summary = screen.getByText('Authorization needs attention');
-  await waitFor(() => expect(document.activeElement).toBe(summary));
-  api.status.mockResolvedValue({ ...base, state: 'connected', clientId: 'consumed-client' });
-  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
-  expect(document.activeElement).toBe(summary);
-  expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Remove connection' }));
-  expect(api.remove).not.toHaveBeenCalled();
-  client.clear();
-});
-
-for (const reason of ['Linear authorization could not be exchanged.', 'Linear authorization was declined.']) it(`returns to existing app setup and keeps focus after ${reason}`, async () => {
-  api.status.mockResolvedValue(base);
-  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=consumed' });
-  const client = mount(); await screen.findByText('Not connected'); await openSettings(); prepare();
-  await screen.findByRole('link', { name: 'Authorize in Linear' });
-  api.status.mockResolvedValue({ ...base, lastError: reason });
-  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
-  await screen.findByLabelText('Client ID');
-  expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
-  expect(screen.getByText(/Use your existing Linear app/)).toBeTruthy();
-  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
-  expect(screen.getByRole('alert').textContent).toContain(reason);
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('alert')));
-  fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-  await screen.findByRole('link', { name: 'Create app in Linear' });
-  expect(api.remove).not.toHaveBeenCalled();
-});
-
-for (const reason of ['Use a separate Linear app for each agent.', 'Set the Anima public URL in Server settings and refresh the connection form.', 'private-input-sentinel']) {
-  it(`shows only allowlisted installation start errors: ${reason}`, async () => {
-    api.install.mockRejectedValueOnce(new Error(reason));
-    mount(); await screen.findByText('Not connected'); await openSettings(); prepare();
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain(reason === 'private-input-sentinel' ? 'Authorization could not start.' : reason);
-    expect(alert.textContent).not.toContain('private-input-sentinel');
-  });
-}

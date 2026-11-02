@@ -17,20 +17,36 @@ const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.lit
   applicationInfo: z.object({ clientId: z.string() }),
 });
 
+export type LinearCallbackOutcome = 'connected' | 'declined' | 'failed';
+
+/**
+ * The callback could not be tied to a pending attempt in this dashboard
+ * session (unknown, removed, expired, replayed or another session's state).
+ * Callers must not attribute it to any agent.
+ */
+export class LinearCallbackRejected extends Error {}
+
 export class LinearIdentityService {
   readonly store: LinearStore;
   constructor(readonly agentId: string, readonly client = new LinearClient(), store = new LinearStore(agentId)) {
     this.store = store;
   }
 
-  static async finishCallback(state: string, code: string | undefined, binding: string): Promise<void> {
+  // Returns the agent only once finish() has checked the session binding; a
+  // failure after that point (exchange, verification, storage) stays attributed
+  // to that agent so the dashboard can open it and show the recorded reason.
+  static async finishCallback(state: string, code: string | undefined, binding: string): Promise<{ agentId: string; outcome: LinearCallbackOutcome }> {
     for (const agent of await defaultAgentRegistryService.listAgentConfigs()) {
       if ((await new LinearStore(agent.id).read()).pending?.id === state) {
-        await new LinearIdentityService(agent.id).finish(state, code, binding);
-        return;
+        try {
+          return { agentId: agent.id, outcome: await new LinearIdentityService(agent.id).finish(state, code, binding) };
+        } catch (error) {
+          if (error instanceof LinearCallbackRejected) throw error;
+          return { agentId: agent.id, outcome: 'failed' };
+        }
       }
     }
-    throw new Error('Linear installation expired or was removed.');
+    throw new LinearCallbackRejected('Linear installation expired or was removed.');
   }
 
   // The public callback only relays to the dashboard that started this attempt.
@@ -116,18 +132,18 @@ export class LinearIdentityService {
     return { authorizationUrl: url.toString() };
   }
 
-  async finish(state: string, code: string | undefined, binding: string): Promise<void> {
+  async finish(state: string, code: string | undefined, binding: string): Promise<'connected' | 'declined'> {
     const file = await this.store.read();
     const pending = file.pending;
-    if (!pending || pending.id !== state || pending.binding !== binding || pending.expiresAt <= Date.now()) throw new Error('Linear installation expired or does not belong to this dashboard session.');
+    if (!pending || pending.id !== state || pending.binding !== binding || pending.expiresAt <= Date.now()) throw new LinearCallbackRejected('Linear installation expired or does not belong to this dashboard session.');
     if (!code) {
       await this.store.update((current) => current.pending?.id === state && current.pending.expiresAt > Date.now()
         ? { ...current, pending: undefined, lastError: 'Linear authorization was declined. Prepare authorization again when ready.' } : current);
-      return;
+      return 'declined';
     }
     // Consume before exchange. Removal/replacement changes this nonce; completion cannot restore it.
     await this.store.update((current) => {
-      if (current.pending?.id !== state || current.pending.expiresAt <= Date.now()) throw new Error('Linear installation changed.');
+      if (current.pending?.id !== state || current.pending.expiresAt <= Date.now()) throw new LinearCallbackRejected('Linear installation changed.');
       return { ...current, pending: { ...pending, expiresAt: 0 } };
     });
     let stage: 'token' | 'identity' = 'token';
@@ -150,6 +166,7 @@ export class LinearIdentityService {
         } }));
         return { ...current, installation, pending: undefined, receipts: {}, operations: {}, sessionStarts: {}, lastError: undefined, lastSignedWebhookAt: undefined };
       });
+      return 'connected';
     } catch (error) {
       const reason = error instanceof LinearApiError && error.failure
         ? error.failure === 'http' ? `HTTP ${error.status}` : error.failure === 'network' ? 'connection failed' : 'invalid or rejected response'
