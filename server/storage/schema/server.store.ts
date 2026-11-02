@@ -1,4 +1,4 @@
-import { LinearWebhookUrl } from '../../../shared/linear-setup.js';
+import { PublicUrl } from '../../../shared/public-url.js';
 import { LinearListenerConfig } from '../../../shared/linear.js';
 // Disk schema for ANIMA_HOME/config.json.
 // This is server-level configuration shared by all agents in one Anima home.
@@ -37,7 +37,7 @@ const ServerConfigFields = z
     doNotContact: z.record(z.string().regex(/^T[A-Z0-9]+$/), z.array(z.string().regex(/^U[A-Z0-9]+$/))).optional(),
     memoryCoherence: MemoryCoherenceConfig.optional(),
     linearWebhook: LinearListenerConfig.optional(),
-    linearWebhookUrl: LinearWebhookUrl.optional(),
+    publicUrl: PublicUrl.optional(),
     providerContextLimits: ProviderContextLimitsConfig.optional(),
     providerArgs: ProviderRuntimeArgsConfig.optional(),
     providerCommands: ProviderRuntimeCommandsConfig.optional(),
@@ -54,8 +54,9 @@ const ServerConfigFields = z
 
 export const ServerConfig = z.preprocess((value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  if (!Object.prototype.hasOwnProperty.call(value, 'providerAccounts')) return value;
-  const { providerAccounts: _ignored, ...rest } = value as Record<string, unknown>;
+  // A webhook-only URL cannot establish a public OAuth callback. Preserve the
+  // listener and installed identities, but require an explicit public origin.
+  const { providerAccounts: _ignored, linearWebhookUrl: _oldWebhookUrl, ...rest } = value as Record<string, unknown>;
   return rest;
 }, ServerConfigFields);
 

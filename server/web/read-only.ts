@@ -85,8 +85,8 @@ export interface GovernedRoute {
  * removal clears linear.json and the agent's Linear fields. Both stay inside
  * ANIMA_HOME. The app the OAuth authorizes is workspace state at Linear, not state of
  * this machine, and the listener port is bound by this home's own runtime, as its
- * dashboard port is. `PUT /api/linear/setup` likewise only saves the shared webhook
- * URL and listener configuration in ANIMA_HOME/config.json.
+ * dashboard port is. `PUT /api/linear/setup` saves the listener; `PUT /api/settings/public-url`
+ * saves the shared public origin. Both only write ANIMA_HOME/config.json.
  *
  * Still the *proven* set, not the *complete* one, and the difference is the whole
  * point of the mode.

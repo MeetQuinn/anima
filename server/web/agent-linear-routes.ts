@@ -5,9 +5,9 @@ import { LinearSetupRequest } from '../../shared/linear-setup.js';
 import { LinearInstallRequest } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSetupService } from '../linear/setup.service.js';
-import { cookieValue, DASHBOARD_AUTH_COOKIE } from '../settings/dashboard-auth.service.js';
+import { defaultDashboardAuthService, cookieValue, DASHBOARD_AUTH_COOKIE } from '../settings/dashboard-auth.service.js';
 
-const Callback = z.object({ state: z.string().min(1).max(256), code: z.string().min(1).max(4096) });
+const Callback = z.object({ state: z.string().min(1).max(256), code: z.string().min(1).max(4096).optional(), error: z.string().min(1).max(256).optional() }).refine((v) => Boolean(v.code) !== Boolean(v.error));
 const bindingFor = (cookie: string | undefined) => createHash('sha256').update(cookie ?? 'local-dashboard').digest('hex');
 
 export function registerAgentLinearRoutes(app: FastifyInstance): void {
@@ -25,18 +25,49 @@ export function registerAgentLinearRoutes(app: FastifyInstance): void {
   });
   app.post<{ Params: { agentId: string } }>('/api/agents/:agentId/linear/install', async (request, reply) => {
     reply.header('cache-control', 'no-store');
-    return new LinearIdentityService(request.params.agentId).begin(LinearInstallRequest.parse(request.body),
-      bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)));
+    const input = LinearInstallRequest.parse(request.body);
+    const setup = await new LinearSetupService().read();
+    if (!setup.callbackUrl || input.callbackUrl !== setup.callbackUrl) throw new Error('Set the Anima public URL in Server settings and refresh the connection form.');
+    // Origin belongs to the already-authenticated, same-origin POST. Never use a
+    // return address from the OAuth query string or a forwarded host header.
+    const origin = new URL(request.headers.origin ?? `${request.protocol}://${request.headers.host}`);
+    if (!['https:', 'http:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('Invalid dashboard origin.');
+    return new LinearIdentityService(request.params.agentId).begin(input,
+      bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)), new URL('/api/linear/oauth/complete', origin).href);
   });
   app.delete<{ Params: { agentId: string } }>('/api/agents/:agentId/linear', async (request) => {
     await new LinearIdentityService(request.params.agentId).remove();
     return { removed: true };
   });
   app.get('/api/linear/oauth/callback', async (request, reply) => {
-    reply.header('cache-control', 'no-store');
+    reply.header('cache-control', 'no-store').header('referrer-policy', 'no-referrer');
     const callback = Callback.parse(request.query);
+    const returnUrl = await LinearIdentityService.callbackReturnUrl(callback.state);
+    if (returnUrl) {
+      const target = new URL(returnUrl);
+      target.searchParams.set('state', callback.state);
+      if (callback.code) target.searchParams.set('code', callback.code);
+      else target.searchParams.set('error', 'access_denied');
+      return reply.redirect(target.href, 303);
+    }
+    // Pending attempts created before the public callback relay still require
+    // their original dashboard cookie. Remove and prepare again if it expired.
+    if (!(await defaultDashboardAuthService.isRequestAuthenticated(request.headers))) return reply.code(401).send({ error: 'authentication_required' });
     await LinearIdentityService.finishCallback(callback.state, callback.code,
       bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)));
-    return reply.type('text/plain').send('Linear app installed. Close this tab and return to Anima.');
+    return reply.type('text/plain').send(callback.code ? 'Linear app installed. Close this tab and return to Anima.' : 'Authorization was declined. Return to Anima to try again.');
+  });
+  app.get('/api/linear/oauth/complete', async (request, reply) => {
+    reply.header('cache-control', 'no-store').header('referrer-policy', 'no-referrer');
+    const callback = Callback.parse(request.query);
+    try {
+      await LinearIdentityService.finishCallback(callback.state, callback.code,
+        bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)));
+    } catch {
+      return reply.code(400).type('text/plain').send('Authorization could not finish. Return to Anima to see the error and prepare authorization again using your existing app.');
+    }
+    return reply.type('text/plain').send(callback.code
+      ? 'Linear app installed. Close this tab and return to Anima.'
+      : 'Authorization was declined. Close this tab and return to Anima to try again.');
   });
 }

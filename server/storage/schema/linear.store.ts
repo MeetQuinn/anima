@@ -15,7 +15,7 @@ const Installation = z.object({
 export type LinearInstallation = z.infer<typeof Installation>;
 const PendingOAuth = z.object({
   id: z.string(), clientId: z.string(), signingSecret: z.string(),
-  callbackUrl: z.string(), verifier: z.string(), binding: z.string(), expiresAt: z.number(),
+  callbackUrl: z.string(), returnUrl: z.string().url().optional(), verifier: z.string(), binding: z.string(), expiresAt: z.number(),
 });
 const Receipt = z.object({
   item: LinearInboxItem.optional(),

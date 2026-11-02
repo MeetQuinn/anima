@@ -42,6 +42,14 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..'
 const ANIMACTL_SCRIPT = join(PROJECT_ROOT, 'dist/server/cli/animactl.js');
 
 export function registerSystemRoutes(fastify: FastifyInstance): void {
+  fastify.get('/api/settings/public-url', async (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return defaultServerSettingsService.getPublicUrl();
+  });
+  fastify.put('/api/settings/public-url', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return defaultServerSettingsService.setPublicUrl(request.body);
+  });
   fastify.get('/api/health', async () => ({ ok: true }));
   fastify.get('/api/provider-availability', async () => defaultSystemService.providerAvailability());
   fastify.get('/api/provider-usage', async (request) => defaultProviderUsageService.list({

@@ -17,11 +17,17 @@ export function registerWebListenerAccess(fastify: FastifyInstance, access: WebL
     const host = request.headers.host;
     const origin = request.headers.origin;
     const site = request.headers['sec-fetch-site'];
+    // OAuth returns through a public relay. Only this top-level navigation may
+    // cross sites; peer/host access and the route's session/state checks remain.
+    const oauthNavigation = request.method === 'GET'
+      && request.url.split('?')[0] === '/api/linear/oauth/complete'
+      && request.headers['sec-fetch-mode'] === 'navigate'
+      && request.headers['sec-fetch-dest'] === 'document';
     if (
       !peers.has(request.raw.socket.remoteAddress ?? '') ||
       !host || !hosts.has(host) ||
       (origin !== undefined && origin !== `http://${host}`) ||
-      (site !== undefined && site !== 'none' && site !== 'same-origin')
+      (!oauthNavigation && site !== undefined && site !== 'none' && site !== 'same-origin')
     ) {
       return reply.code(403).header('cache-control', 'no-store').send({ error: 'network_access_denied' });
     }

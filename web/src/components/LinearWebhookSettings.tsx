@@ -9,21 +9,14 @@ export const linearSetupKey = ['linear', 'setup'] as const;
 export const linearInputClass =
   'h-[44px] w-full min-w-0 rounded-sm border border-border-soft bg-surface px-3 font-mono text-[13px] text-text outline-none focus-visible:border-accent disabled:cursor-not-allowed disabled:bg-surface-elevated disabled:text-text-muted disabled:opacity-60';
 
-export default function LinearWebhookSettings({
-  onSaved,
-  onBusy,
-}: {
-  onSaved?: () => void;
-  onBusy?: (busy: boolean) => void;
-}) {
+export default function LinearWebhookSettings() {
   const [saved, setSaved] = useState(false);
   const query = useQuery({ queryKey: linearSetupKey, queryFn: fetchLinearSetup, retry: false });
   return (
-    <section className="space-y-3" aria-label="Linear webhook settings">
-      <h3 className="font-serif text-[17px] font-semibold text-text">Linear webhook</h3>
+    <section className="space-y-3" aria-label="Linear listener settings">
+      <h3 className="font-serif text-[17px] font-semibold text-text">Linear listener</h3>
       <p className="font-sans text-[13px] leading-relaxed text-text-muted">
-        Set up a public HTTPS address once for this machine. Every agent uses it to receive requests
-        from Linear. Anima does not create the tunnel or reverse proxy.
+        All Linear agents share this local listener. Keep the default address and port unless your forwarding setup needs different values.
       </p>
       {query.isPending && (
         <p role="status" className="text-sm text-text-muted">
@@ -46,16 +39,12 @@ export default function LinearWebhookSettings({
         <WebhookForm
           key={JSON.stringify(query.data)}
           data={query.data}
-          onSaved={() => {
-            setSaved(true);
-            onSaved?.();
-          }}
-          onBusy={onBusy}
+          onSaved={() => setSaved(true)}
         />
       )}
       {saved && (
         <p role="status" className="text-sm text-text-muted">
-          Webhook settings saved.
+          Listener settings saved.
         </p>
       )}
     </section>
@@ -65,14 +54,11 @@ export default function LinearWebhookSettings({
 function WebhookForm({
   data,
   onSaved,
-  onBusy,
 }: {
   data: LinearSetup;
-  onSaved?: () => void;
-  onBusy?: (busy: boolean) => void;
+  onSaved: () => void;
 }) {
   const client = useQueryClient();
-  const [url, setUrl] = useState(data.webhookUrl ?? '');
   const [host, setHost] = useState(data.listener.host);
   const [port, setPort] = useState(String(data.listener.port));
   const [busy, setBusy] = useState(false);
@@ -80,7 +66,6 @@ function WebhookForm({
   async function save(event: FormEvent) {
     event.preventDefault();
     const parsed = LinearSetupRequest.safeParse({
-      webhookUrl: url,
       listener: { host, port: Number(port) },
     });
     if (!parsed.success) {
@@ -88,46 +73,26 @@ function WebhookForm({
       return;
     }
     setBusy(true);
-    onBusy?.(true);
     setError('');
     try {
       const result = await saveLinearSetup(parsed.data);
       client.setQueryData(linearSetupKey, result);
       void client.invalidateQueries({ queryKey: ['agent'] });
-      onSaved?.();
+      onSaved();
     } catch {
       setError(
-        'Could not save. Check the HTTPS address and use a port other than the dashboard port. An installed app or an authorization in progress must keep its current listener.',
+        'Could not save. Check the bind address and use a port other than the dashboard port. An installed app or an authorization in progress must keep its current listener.',
       );
     } finally {
       setBusy(false);
-      onBusy?.(false);
     }
   }
   return (
     <form onSubmit={(event) => void save(event)} className="space-y-4">
-      <label className="block">
-        <span className="mb-1 block font-sans text-[12px] text-text-muted">Public webhook URL</span>
-        <input
-          required
-          type="url"
-          placeholder="https://anima.example.com/webhook"
-          value={url}
-          onChange={(e) => {
-            setUrl(e.target.value);
-          }}
-          disabled={busy}
-          className={linearInputClass}
-        />
-      </label>
-      <p className="break-words font-sans text-[12px] leading-relaxed text-text-muted">
-        Forward this address to{' '}
-        <span className="font-mono">
-          {host.includes(':') ? `[${host}]` : host}:{port}/webhook
-        </span>{' '}
-        on this machine.
-        {(data.listenerLocked || data.webhookUrl) &&
-          ' Keep this address consistent with the webhook URL in existing Linear apps. If you change it, update those apps too.'}
+      <p className="break-words text-[12px] leading-relaxed text-text-muted">
+        Forward <span className="font-mono">{data.webhookUrl ?? '/webhook'}</span> to{' '}
+        <span className="font-mono">{host.includes(':') ? `[${host}]` : host}:{port}/webhook</span>.
+        {' '}Forward /api/linear/oauth/callback to the loopback dashboard on its configured port. Other dashboard routes can remain private.
       </p>
       <details>
         <summary className="cursor-pointer py-2 font-sans text-[12px] text-text-muted">
@@ -171,7 +136,7 @@ function WebhookForm({
       )}
       <div className="flex items-center gap-3">
         <Button type="submit" className="min-h-[44px]" disabled={busy}>
-          {busy ? 'Saving…' : 'Save webhook settings'}
+          {busy ? 'Saving…' : 'Save listener settings'}
         </Button>
       </div>
     </form>

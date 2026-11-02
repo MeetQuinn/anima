@@ -28,16 +28,20 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [authorizationUrl, setAuthorizationUrl] = useState('');
+  const [preparedUrl, setAuthorizationUrl] = useState('');
   const authorizationLink = useRef<HTMLAnchorElement>(null);
+  const failureSummary = useRef<HTMLParagraphElement>(null);
   const identitySummary = useRef<HTMLParagraphElement>(null);
   const data = status.data;
+  const failedAttempt = data?.state === 'not_configured' && !data.clientId && Boolean(data.lastError);
+  const authorizationUrl = failedAttempt && !busy ? '' : preparedUrl;
   const expiredAuthorization = data?.state === 'not_configured' && Boolean(data.clientId);
   useEffect(() => {
     if (!open || busy) return;
     if (expiredAuthorization) identitySummary.current?.focus();
+    else if (failedAttempt) failureSummary.current?.focus();
     else if (authorizationUrl) authorizationLink.current?.focus();
-  }, [open, authorizationUrl, busy, expiredAuthorization]);
+  }, [open, authorizationUrl, busy, expiredAuthorization, failedAttempt]);
   useEffect(() => {
     if (data?.state === 'connected' || data?.state === 'revoked') refreshAgentData(agentId);
   }, [data?.state, agentId]);
@@ -61,10 +65,18 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
       const result = await installLinear(agentId, input);
       setAuthorizationUrl(result.authorizationUrl);
       await status.refetch();
-    } catch {
-      setError(
-        'Installation could not start. Check the client ID, callback URL, signing secret and listener settings.',
-      );
+    } catch (error) {
+      // Only fixed installation reasons are safe to display; schema/storage errors
+      // can contain user input or local paths.
+      const known = new Set([
+        'Set the Anima public URL in Server settings and refresh the connection form.',
+        'Use a separate Linear app for each agent.',
+        'Webhook port must differ from the dashboard port.',
+        'An installed app or an authorization in progress uses this listener. Keep its existing host and port.',
+        'Remove the installed identity before replacing it.',
+      ]);
+      setError(error instanceof Error && known.has(error.message) ? error.message
+        : 'Authorization could not start. Check the Client ID and Webhook signing secret. If the public address changed, refresh this form.');
     } finally {
       setBusy(false);
     }
@@ -235,7 +247,7 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
             </details>
           )}
           {data?.lastError && (
-            <p role="alert" className="mt-3 font-sans text-[13px] text-health-error">
+            <p ref={failureSummary} tabIndex={-1} role="alert" className="mt-3 mb-4 font-sans text-[13px] text-health-error">
               {data.lastError}
             </p>
           )}
@@ -251,7 +263,7 @@ export function LinearRow({ agentId, agentName = agentId }: { agentId: string; a
               agentName={agentName}
               busy={busy}
               disabled={status.isError}
-              onBusy={setBusy}
+              retrying={failedAttempt}
               onInstall={install}
             />
           )}

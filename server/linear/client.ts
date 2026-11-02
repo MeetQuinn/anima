@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export class LinearApiError extends Error {
-  constructor(message: string, readonly revoked = false, readonly status?: number) { super(message); }
+  constructor(message: string, readonly revoked = false, readonly status?: number, readonly failure?: 'network' | 'http' | 'response') { super(message); }
 }
 const Tokens = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() });
 type LinearTokens = z.infer<typeof Tokens>;
@@ -15,10 +15,10 @@ export class LinearClient {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(form), signal: AbortSignal.timeout(10_000), redirect: 'error',
       });
-    } catch { throw new LinearApiError('Linear token request failed; retry installation or inspect the connection.'); }
-    if (!response.ok) throw new LinearApiError('Linear token request was rejected.', response.status === 400 || response.status === 401);
+    } catch { throw new LinearApiError('Linear token request failed; retry installation or inspect the connection.', false, undefined, 'network'); }
+    if (!response.ok) throw new LinearApiError('Linear token request was rejected.', response.status === 400 || response.status === 401, response.status, 'http');
     try { return Tokens.parse(await response.json()); }
-    catch { throw new LinearApiError('Linear returned an invalid token response.'); }
+    catch { throw new LinearApiError('Linear returned an invalid token response.', false, undefined, 'response'); }
   }
 
   async graphql<T>(token: string, query: string, variables: Record<string, unknown>, schema: z.ZodType<T>, operationName?: string): Promise<T> {
@@ -28,13 +28,13 @@ export class LinearClient {
         method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ query, variables, ...(operationName ? { operationName } : {}) }), signal: AbortSignal.timeout(10_000), redirect: 'error',
       });
-    } catch { throw new LinearApiError('Linear request failed. If this request included a write, inspect its result before retrying; it may have succeeded.'); }
-    if (response.status === 401) throw new LinearApiError('Linear request was unauthorized.', true, 401);
-    if (!response.ok) throw new LinearApiError('Linear request failed.');
+    } catch { throw new LinearApiError('Linear request failed. If this request included a write, inspect its result before retrying; it may have succeeded.', false, undefined, 'network'); }
+    if (response.status === 401) throw new LinearApiError('Linear request was unauthorized.', true, 401, 'http');
+    if (!response.ok) throw new LinearApiError('Linear request failed.', false, response.status, 'http');
     try {
       const body = z.object({ data: z.unknown(), errors: z.array(z.unknown()).optional() }).parse(await response.json());
       if (body.errors?.length) throw new Error('GraphQL error');
       return schema.parse(body.data);
-    } catch { throw new LinearApiError('Linear returned an invalid or rejected result.'); }
+    } catch { throw new LinearApiError('Linear returned an invalid or rejected result.', false, undefined, 'response'); }
   }
 }

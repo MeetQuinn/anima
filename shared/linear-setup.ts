@@ -1,59 +1,22 @@
 import { z } from 'zod';
+import { PublicHttpsUrl } from './public-url.js';
 import { LinearCallbackUrl, LinearListenerConfig } from './linear.js';
 
-// This validates the URL's syntax, not DNS or whether a tunnel is reachable.
-export const LinearWebhookUrl = z
-  .string()
-  .trim()
-  .url()
-  .max(2048)
-  .refine((value) => {
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      return false;
-    }
-    const host = url.hostname.toLowerCase().replace(/\.$/, '');
-    const octets = host.split('.').map(Number);
-    const privateV4 =
-      octets.length === 4 &&
-      octets.every(Number.isInteger) &&
-      (octets[0] === 0 ||
-        octets[0] === 10 ||
-        octets[0] === 127 ||
-        octets[0]! >= 224 ||
-        (octets[0] === 172 && octets[1]! >= 16 && octets[1]! <= 31) ||
-        (octets[0] === 192 && octets[1] === 168) ||
-        (octets[0] === 169 && octets[1] === 254) ||
-        (octets[0] === 100 && octets[1]! >= 64 && octets[1]! <= 127));
-    // Public DNS names are supported; literal IPv6 addresses need a public hostname.
-    return (
-      url.protocol === 'https:' &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash &&
-      host.includes('.') &&
-      !host.includes(':') &&
-      !privateV4 &&
-      !['localhost', 'local', 'internal', 'test', 'invalid'].some(
-        (suffix) => host === suffix || host.endsWith(`.${suffix}`),
-      ) &&
-      host !== 'linear.app' &&
-      !host.endsWith('.linear.app')
-    );
-  }, 'Use a public HTTPS webhook URL without credentials, query parameters or a fragment.');
+export const LinearWebhookUrl = PublicHttpsUrl.pipe(z.string().refine((value) => {
+  const host = new URL(value).hostname;
+  return host !== 'linear.app' && !host.endsWith('.linear.app');
+}, 'Use your Anima address, not linear.app.'));
 
 export const LinearSetupRequest = z
   .object({
-    webhookUrl: LinearWebhookUrl,
     listener: LinearListenerConfig,
   })
   .strict();
 export type LinearSetupRequest = z.infer<typeof LinearSetupRequest>;
 export interface LinearSetup {
+  publicUrl?: string;
   webhookUrl?: string;
+  callbackUrl?: string;
   listener: z.infer<typeof LinearListenerConfig>;
   listenerLocked: boolean;
 }

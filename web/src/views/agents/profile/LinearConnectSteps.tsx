@@ -1,39 +1,34 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
-import { LinearCallbackUrl, LinearInstallRequest } from '@shared/linear';
+import { LinearInstallRequest } from '@shared/linear';
 import { defaultLinearAppName, linearAppCreationUrl, LinearAppName } from '@shared/linear-setup';
 import { fetchLinearSetup } from '@/api/linear';
-import LinearWebhookSettings, {
-  linearInputClass,
-  linearSetupKey,
-} from '@/components/LinearWebhookSettings';
+import { linearInputClass, linearSetupKey } from '@/components/LinearWebhookSettings';
 import { Button } from '@/components/ui/button';
 
 export function LinearConnectSteps({
   agentName,
   busy,
   disabled,
-  onBusy,
   onInstall,
+  retrying = false,
 }: {
   agentName: string;
   busy: boolean;
   disabled: boolean;
-  onBusy: (busy: boolean) => void;
+  retrying?: boolean;
   onInstall: (input: LinearInstallRequest) => Promise<void>;
 }) {
   const setup = useQuery({ queryKey: linearSetupKey, queryFn: fetchLinearSetup, retry: false });
-  const [step, setStep] = useState<'create' | 'credentials'>('create');
-  const [editingSetup, setEditingSetup] = useState(false);
+  const [step, setStep] = useState<'create' | 'credentials'>(retrying ? 'credentials' : 'create');
   const [name, setName] = useState(() => defaultLinearAppName(agentName));
-  const [callback, setCallback] = useState(`${window.location.origin}/api/linear/oauth/callback`);
+  const callback = setup.data?.callbackUrl ?? '';
   const [clientId, setClientId] = useState('');
   const [secret, setSecret] = useState('');
   const [error, setError] = useState('');
   const [optionsOpen, setOptionsOpen] = useState(false);
   const validName = LinearAppName.safeParse(name).success;
-  const validCallback = LinearCallbackUrl.safeParse(callback).success;
   let creationUrl = '';
   if (setup.data?.webhookUrl) {
     try {
@@ -56,7 +51,7 @@ export function LinearConnectSteps({
       listener: setup.data.listener,
     });
     if (!parsed.success) {
-      setError('Check the client ID, signing secret and callback URL.');
+      setError('Check the Client ID and Webhook signing secret.');
       return;
     }
     setError('');
@@ -85,15 +80,27 @@ export function LinearConnectSteps({
         </button>
       </p>
     );
-  if (!setup.data.webhookUrl || editingSetup)
+  if (!setup.data.publicUrl || !setup.data.callbackUrl)
     return (
       <div className="space-y-4">
-        <LinearWebhookSettings onSaved={() => setEditingSetup(false)} onBusy={onBusy} />
-        {setup.data.webhookUrl && (
-          <Button variant="ghost" disabled={busy} onClick={() => setEditingSetup(false)}>
-            Back to connection
-          </Button>
-        )}
+        <h3 className="font-serif text-[20px] font-semibold text-text">
+          Set your Anima public address first
+        </h3>
+        <p className="text-[13px] leading-relaxed text-text-muted">
+          Linear needs an HTTPS address to send requests and return after authorization. Set it once
+          in Server settings, then come back here. Every agent can use it.
+        </p>
+        <a
+          href="/settings/server#public-url"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex min-h-[44px] items-center rounded-sm bg-primary px-4 text-[13px] text-primary-foreground"
+        >
+          Open Server settings
+        </a>
+        <Button variant="ghost" className="text-[13px] font-normal" onClick={() => void setup.refetch()}>
+          Refresh settings
+        </Button>
       </div>
     );
   return (
@@ -140,25 +147,33 @@ export function LinearConnectSteps({
             </p>
           </div>
           <div className="rounded-sm border border-border-soft px-3 py-3">
-            <p className="text-[12px] text-text-muted">Shared webhook</p>
-            <p className="mt-1 break-all font-mono text-[12px] text-text">
-              {setup.data.webhookUrl}
-            </p>
-            <button
-              type="button"
-              onClick={() => setEditingSetup(true)}
-              className="mt-1 min-h-[44px] text-[12px] text-accent underline md:min-h-[32px]"
+            <p className="text-[12px] text-text-muted">Anima public address</p>
+            <p className="mt-1 break-all font-mono text-[12px] text-text">{setup.data.publicUrl}</p>
+            <a
+              href="/settings/server#public-url"
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex min-h-[44px] items-center text-[12px] text-accent underline md:min-h-[32px]"
             >
-              Edit machine settings
-            </button>
+              Edit in Server settings
+            </a>
+            <dl className="mt-3 space-y-1 break-all text-[12px] text-text-muted">
+              <dt>Webhook URL</dt>
+              <dd className="font-mono">{setup.data.webhookUrl}</dd>
+              <dt>OAuth callback URL</dt>
+              <dd className="font-mono">{callback}</dd>
+            </dl>
+            <p className="mt-3 break-words text-[12px] leading-relaxed text-text-muted">
+              Forward /webhook to {setup.data.listener.host.includes(':') ? `[${setup.data.listener.host}]` : setup.data.listener.host}:{setup.data.listener.port}/webhook.
+              {' '}Forward /api/linear/oauth/callback to the dashboard’s loopback listener on its configured port.
+              Other dashboard routes can remain private.
+            </p>
           </div>
           <details
-            open={optionsOpen || !validName || !validCallback}
+            open={optionsOpen || !validName}
             onToggle={(event) => setOptionsOpen(event.currentTarget.open)}
           >
-            <summary className="cursor-pointer py-2 text-[12px] text-text-muted">
-              App name and callback URL
-            </summary>
+            <summary className="cursor-pointer py-2 text-[12px] text-text-muted">App name</summary>
             <div className="mt-2 space-y-3">
               <label className="block">
                 <span className="mb-1 block text-[12px] text-text-muted">App name</span>
@@ -168,30 +183,11 @@ export function LinearConnectSteps({
                   className={linearInputClass}
                 />
               </label>
-              <label className="block">
-                <span className="mb-1 block text-[12px] text-text-muted">OAuth callback URL</span>
-                <input
-                  type="url"
-                  value={callback}
-                  onChange={(e) => setCallback(e.target.value)}
-                  className={linearInputClass}
-                />
-              </label>
-              <p className="text-[12px] text-text-muted">
-                The callback returns to this dashboard. Keep the same address when authorizing the
-                app.
-              </p>
             </div>
           </details>
           {!validName && (
             <p role="alert" className="text-[13px] text-health-error">
               Use a 2–80 character app name without “Linear” or a URL.
-            </p>
-          )}
-          {!validCallback && (
-            <p role="alert" className="text-[13px] text-health-error">
-              Set an HTTPS or loopback callback ending in /api/linear/oauth/callback. It must return
-              to this dashboard and match the address registered in Linear.
             </p>
           )}
           <div className="flex flex-wrap items-center gap-3">
@@ -219,9 +215,11 @@ export function LinearConnectSteps({
       ) : (
         <form onSubmit={(event) => void install(event)} className="space-y-4">
           <h3 className="font-serif text-[20px] font-semibold text-text">Connect your app</h3>
+          {retrying && <p className="text-[13px] leading-relaxed text-text-muted">Use your existing Linear app. Enter its Client ID and signing secret again, then prepare a new authorization.</p>}
           <p className="text-[13px] leading-relaxed text-text-muted">
             In the Linear app settings, copy the Client ID and Webhook signing secret below. You’ll
-            then authorize workspace and team access.
+            then authorize access in Linear. To work across the workspace, choose all available
+            teams there. Linear asks which teams the agent can access. Workspace admins can change this later in Linear.
           </p>
           <label className="block">
             <span className="mb-1 block text-[12px] text-text-muted">Client ID</span>

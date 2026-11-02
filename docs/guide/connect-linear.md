@@ -17,49 +17,66 @@ one app per agent. Select **Agent session events**, **Inbox notifications** and
 leave unrelated data and OAuth authorization events off. Anima
 requests `read`, `write`, `app:assignable` and `app:mentionable` with `actor=app`.
 
-You provide the public HTTPS ingress yourself. Anima does not create a tunnel, relay or
-public domain. Forward only the public webhook URL to the configured local listener's
-`/webhook` path. Do not forward dashboard routes through that listener.
+You provide the public HTTPS address and forwarding yourself. Anima does not create a
+tunnel or register a domain. Set one **Anima public address** in **Settings → Server**,
+for example `https://anima.example.com`. It is shared by the integrations and agents
+in this Anima home.
 
 ## Install from the dashboard
 
 1. Open the agent's **Profile**. In **Setup**, select **Configure Linear**.
-2. The first time, save this machine's **Public webhook URL**. Forward it through your
-   tunnel or reverse proxy to the local listener's `/webhook` path. Keep the raw request
-   body and `Linear-Signature` header unchanged. New listeners default to
-   `127.0.0.1:14185`; **Advanced listener settings** lets you choose another free port.
-   Existing listener addresses are preserved. All agents in this Anima home reuse these
-   settings; you can also edit them under **Settings → Server → Linear webhook**.
-3. Select **Create app in Linear**. Anima opens Linear's creation page with this agent's
-   name, callback URL, shared webhook URL and event subscriptions filled in. Review and
-   create the app. If you already created a separate app for this agent, select
+2. If no public address is saved, select **Open Server settings**, save the HTTPS origin
+   without a path, then return. The connection form refreshes when you return to the tab.
+3. Select **Create app in Linear**. Anima prefills the agent's name, both URLs below and
+   the event subscriptions. Review and create the app. For an existing app, select
    **I already have an app** and make sure its URLs and subscriptions match.
-4. Copy the **Client ID** and **Webhook signing secret** from the app settings into Anima.
-   Select **Prepare authorization**, then **Authorize in Linear** and approve access to
-   your workspace and teams. Do not paste the secret into chat.
-5. Return to Anima. Authorization completes the installation; you can now mention the
-   agent in Linear or delegate an issue to it. If Linear does not show "Received by Anima."
-   after you mention it, check the HTTPS forwarding to this machine. There is no required test task.
+4. Copy the **Client ID** and **Webhook signing secret** into Anima. Select **Prepare
+   authorization**, then **Authorize in Linear**. Choose all available teams if the agent
+   should work across the workspace. Linear asks which teams the agent can access; workspace
+   admins can change this later in Linear. Do not paste the secret into chat.
+5. Return to Anima. Authorization completes installation. You can mention the agent or
+   delegate an issue to it. If Linear does not show "Received by Anima." after you mention
+   it, check HTTPS forwarding. There is no required test task.
 
-**App name and callback URL** contains the less common creation options. The callback
-returns to the dashboard address open in your browser, not the webhook listener. It must
-use HTTPS or loopback HTTP and end in `/api/linear/oauth/callback`. An HTTP hostname such
-as `anima-host` is not supported. Keep it identical in the app and in Anima. Linear app
-names must have 2–80 characters and cannot contain “Linear” or a URL; Anima adjusts the
-suggested name when needed, and you can edit it before creating the app.
+For `https://anima.example.com`, forward these paths:
 
-Saving a public URL does not create a tunnel or change existing apps at Linear. If you
-change it later, update each existing app's webhook URL too. The bind address and port
-cannot change while an app is installed or authorization is pending. Old installations
-continue working without a saved public URL. The new `linearWebhookUrl` setting is stored
-in the server `config.json` at the root of the Anima home, not an agent's configuration.
-Remove that key before downgrading to a version without it.
+| Public path                  | Local destination                                          |
+| ---------------------------- | ---------------------------------------------------------- |
+| `/webhook`                   | The Linear listener, by default `127.0.0.1:14185/webhook`  |
+| `/api/linear/oauth/callback` | The loopback dashboard's same path, on its configured port |
 
-Installation uses PKCE and a state tied to the current dashboard session. It expires after
-10 minutes and can be used once. If authorization fails or expires, remove the pending
-connection and prepare a new one. A failed authorization can keep its pending record and
-reserve the shared listener until you remove that connection. Other installed apps still
-keep the listener locked. There is no separate CLI installation flow.
+Forward the public callback to the loopback dashboard listener, not the restricted LAN or
+tailnet listener. The browser may return to a LAN/tailnet dashboard, but it must still
+match that listener's allowed peer and host lists.
+
+Keep the webhook's raw body and `Linear-Signature` unchanged. The dashboard and other API
+routes can remain private. The public callback only returns the browser to the dashboard
+that started authorization. That dashboard checks the original login session before
+exchanging the code. Authorize in the same browser and keep that dashboard reachable from
+the device you use; a public callback cannot make a private dashboard reachable remotely.
+Do not rewrite redirect destinations to a different dashboard origin.
+
+**App name** lets you adjust the suggested name. Linear app names need 2–80 characters and
+cannot contain “Linear” or a URL. The callback and webhook URLs come from the public address;
+there is no per-agent callback field. Listener host and port are under **Settings → Server →
+Advanced integration settings**. Existing custom listeners are preserved and remain locked
+while an app is installed or authorization is pending.
+
+Saving the public address does not change existing Linear apps or verify reachability.
+After changing it, update both registered URLs in each app. Existing installed identities
+continue working without the new setting. A previous `linearWebhookUrl` is discarded when
+reading config, rather than guessing that its origin also forwards OAuth callbacks. Set the
+public address explicitly before another installation. The setting is `publicUrl` in the
+server `config.json` at the root of the Anima home, not an agent's config. Remove that key
+before downgrading to a version without it.
+
+Installation uses PKCE and a single-use state bound to the initiating dashboard session,
+valid for ten minutes. A failed exchange or declined authorization clears that attempt and
+shows a retry explanation with a safe connection, HTTP-status or response category;
+raw errors, response bodies and credentials are not recorded. Use your existing app, enter its Client ID and signing secret again, then prepare a new authorization; the failed attempt is not retried
+automatically. Expired attempts, or consumed attempts left by an older version or an interrupted
+process, can be removed using **Remove connection**. Removing an attempt never uninstalls
+the app at Linear. There is no separate CLI installation flow.
 
 The row shows the workspace name saved during installation. If an older installation has no
 saved name, it shows “Workspace name unavailable”. Reading settings does not fetch the name

@@ -31,7 +31,7 @@ function prepare() {
   }
   fireEvent.submit(screen.getByRole('button', { name: 'Prepare authorization' }).closest('form')!);
 }
-beforeEach(() => { vi.clearAllMocks(); api.setup.mockResolvedValue({ webhookUrl: 'https://agents.example.com/webhook', listener: { host: '127.0.0.1', port: 14185 }, listenerLocked: false }); api.status.mockResolvedValue(base); api.remove.mockResolvedValue({ removed: true }); });
+beforeEach(() => { vi.clearAllMocks(); api.setup.mockResolvedValue({ publicUrl: 'https://agents.example.com', callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', webhookUrl: 'https://agents.example.com/webhook', listener: { host: '127.0.0.1', port: 14185 }, listenerLocked: false }); api.status.mockResolvedValue(base); api.remove.mockResolvedValue({ removed: true }); });
 
 it('enters credentials once, clears secret and opens the returned app authorization link without browser storage', async () => {
   api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
@@ -48,7 +48,7 @@ it('enters credentials once, clears secret and opens the returned app authorizat
 });
 
 it('uses the saved shared listener when connecting another agent', async () => {
-  api.setup.mockResolvedValue({ webhookUrl: 'https://agents.example.com/webhook', listener: { host: '::1', port: 15123 }, listenerLocked: true });
+  api.setup.mockResolvedValue({ publicUrl: 'https://agents.example.com', callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', webhookUrl: 'https://agents.example.com/webhook', listener: { host: '::1', port: 15123 }, listenerLocked: true });
   api.status.mockResolvedValue({ ...base, listener: { host: '::1', port: 15123 } });
   api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=synthetic-state' });
   mount(); await screen.findByText('Not connected'); await openSettings();
@@ -79,7 +79,7 @@ it('installation and read errors stay visible without echoing server credential 
   api.install.mockRejectedValue(new Error('synthetic-private-error-sentinel'));
   mount(); await screen.findByText('Not connected'); await openSettings();
   prepare();
-  await screen.findByText(/Installation could not start/); expect(screen.queryByText(/private-error-sentinel/)).toBeNull();
+  await screen.findByText(/Authorization could not start/); expect(screen.queryByText(/private-error-sentinel/)).toBeNull();
 });
 
 it('unreadable settings cannot start an installation', async () => {
@@ -177,7 +177,7 @@ it.each(['install', 'remove'] as const)('cannot dismiss a pending %s or lose its
   fireEvent.click(screen.getByRole('button', { name: 'Close Linear settings' }));
   expect(screen.getByRole('dialog')).toBe(dialog);
   await act(async () => reject(new Error('private-failure-sentinel')));
-  await screen.findByText(operation === 'remove' ? /Removal failed/ : /Installation could not start/);
+  await screen.findByText(operation === 'remove' ? /Removal failed/ : /Authorization could not start/);
   expect(screen.queryByText(/private-failure-sentinel/)).toBeNull();
   fireEvent.keyDown(dialog, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBeNull();
@@ -219,7 +219,7 @@ it('opens a prefilled app with the machine URL and advances to just two credenti
   expect(manifest.oauth.client_name).toBe('scout');
   expect(manifest.webhook.url).toBe('https://agents.example.com/webhook');
   expect(manifest.webhook.resourceTypes).toEqual(['AgentSessionEvent', 'AppUserNotification', 'PermissionChange']);
-  expect(manifest.oauth.redirect_uris).toEqual([`${window.location.origin}/api/linear/oauth/callback`]);
+  expect(manifest.oauth.redirect_uris).toEqual(['https://agents.example.com/api/linear/oauth/callback']);
   fireEvent.click(link);
   expect(screen.getAllByRole('textbox')).toHaveLength(1);
   expect(screen.getByLabelText('Webhook signing secret')).toBeTruthy();
@@ -242,15 +242,12 @@ it('finishes on OAuth success and only suggests mentioning or delegating, withou
   expect(api.saveSetup).not.toHaveBeenCalled();
 });
 
-it('shows a one-time machine setup only when an ingress has not been saved', async () => {
+it('directs missing public address to global settings without an inline Linear URL form', async () => {
   api.setup.mockResolvedValue({ listener: { host: '127.0.0.1', port: 15123 }, listenerLocked: false });
-  api.saveSetup.mockImplementation(async (input) => ({ ...input, listenerLocked: false }));
   mount(); await screen.findByText('Not connected'); await openSettings(false);
-  fireEvent.change(await screen.findByLabelText('Public webhook URL'), { target: { value: 'https://agents.example.com/webhook' } });
-  fireEvent.submit(screen.getByRole('button', { name: 'Save webhook settings' }).closest('form')!);
-  const link = await screen.findByRole('link', { name: 'Create app in Linear' });
-  expect(link.getAttribute('href')).toContain('manifest=');
-  expect(api.saveSetup).toHaveBeenCalledWith({ webhookUrl: 'https://agents.example.com/webhook', listener: { host: '127.0.0.1', port: 15123 } });
+  const link = await screen.findByRole('link', { name: 'Open Server settings' });
+  expect(link.getAttribute('href')).toBe('/settings/server#public-url');
+  expect(screen.queryByLabelText('Public webhook URL')).toBeNull();
   expect(api.install).not.toHaveBeenCalled();
 });
 
@@ -315,3 +312,31 @@ it('keeps exchange-status focus away from Remove when authorization completes', 
   expect(api.remove).not.toHaveBeenCalled();
   client.clear();
 });
+
+for (const reason of ['Linear authorization could not be exchanged.', 'Linear authorization was declined.']) it(`returns to existing app setup and keeps focus after ${reason}`, async () => {
+  api.status.mockResolvedValue(base);
+  api.install.mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize?state=consumed' });
+  const client = mount(); await screen.findByText('Not connected'); await openSettings(); prepare();
+  await screen.findByRole('link', { name: 'Authorize in Linear' });
+  api.status.mockResolvedValue({ ...base, lastError: reason });
+  await act(async () => { await client.refetchQueries({ queryKey: ['agent', 'scout', 'linear'] }); });
+  await screen.findByLabelText('Client ID');
+  expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
+  expect(screen.getByText(/Use your existing Linear app/)).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Authorize in Linear' })).toBeNull();
+  expect(screen.getByRole('alert').textContent).toContain(reason);
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('alert')));
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+  await screen.findByRole('link', { name: 'Create app in Linear' });
+  expect(api.remove).not.toHaveBeenCalled();
+});
+
+for (const reason of ['Use a separate Linear app for each agent.', 'Set the Anima public URL in Server settings and refresh the connection form.', 'private-input-sentinel']) {
+  it(`shows only allowlisted installation start errors: ${reason}`, async () => {
+    api.install.mockRejectedValueOnce(new Error(reason));
+    mount(); await screen.findByText('Not connected'); await openSettings(); prepare();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain(reason === 'private-input-sentinel' ? 'Authorization could not start.' : reason);
+    expect(alert.textContent).not.toContain('private-input-sentinel');
+  });
+}
