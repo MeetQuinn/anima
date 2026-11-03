@@ -398,7 +398,7 @@ test('an agent can read paginated session context through the documented API, th
   stdin = markdown; await run('reply', '--to', `session:${sessionId}`); await run('respond', '--session', sessionId);
   assert.equal(fake.posts.length, 1); assert.equal(fake.posts[0]!.content.body, markdown);
   assert.match(output.at(-2)!, /Linear accepted activity/);
-  assert.equal((await store.read()).receipts[item!.id]!.answered, true);
+  assert.equal((await store.read()).receipts[item!.id]!.state, 'answered');
   const outbox = (await messageServiceForAgent('scout').list()).entries;
   assert.ok(outbox.some((m) => m.direction === 'out' && m.text === markdown && m.channelId === sessionId));
 

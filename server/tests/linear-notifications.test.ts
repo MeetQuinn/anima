@@ -23,6 +23,7 @@ import { linearQueryErrors } from './helpers/linear-schema.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { isClaimableQueuedInboxItem, isHeldInboxItem } from '../../shared/inbox.js';
 import { listRestartBlockers } from '../services/restart-gate.js';
+import { isStopped } from '../linear/receipt-state.js';
 
 const issueId = randomUUID(), humanId = randomUUID();
 function notification(type = 'issueNewComment'): Extract<LinearWebhook, { type: 'AppUserNotification' }> {
@@ -183,7 +184,7 @@ test('ordinary notifications share the Slack primary session and may finish sile
     assert.equal(f.fake.posts.length, 0); assert.deepEqual((await f.store.read()).receipts, {});
     // A work session the agent leaves unanswered gets only its receipt from the runtime.
     await f.service.receive(created(), install);
-    await waitFor(async () => Object.values((await f.store.read()).receipts).some((r) => r.settled));
+    await waitFor(async () => Object.values((await f.store.read()).receipts).some((r) => r.state === 'awaiting'));
     await f.service.tick();
     assert.deepEqual(f.fake.posts.map((p) => p.content.body), ['Received by Anima.']);
   } finally { await runner.stop(); }
@@ -313,7 +314,8 @@ for (const stopCarriesComment of [false, true]) test(`a Stop before the session 
   assert.equal((await queue.list()).length, 0, 'The stopped request is not delivered');
   assert.equal(await queue.has(commentItemId), true);
   const receipts = Object.values((await f.store.read()).receipts);
-  assert.ok(receipts.every((r) => r.stopped && !r.itemId));
+  assert.ok(receipts.every((r) => isStopped(r) && !r.itemId));
+  assert.deepEqual(receipts.map((r) => r.kind).sort(), ['comment', 'stop']);
   assert.ok(receipts.some((r) => r.commentItemId === commentItemId));
   const mention = notification('issueCommentMention');
   mention.notification = { ...mention.notification, commentId: ordinary.notification.commentId, comment: ordinary.notification.comment! };
@@ -357,7 +359,10 @@ test('a Stop after a session took over a held comment stops the session request'
   stop.agentSession = { ...stop.agentSession, commentId: ordinary.notification.commentId, issueId };
   await f.service.receive(verified(stop), install);
   assert.equal((await queue.list()).length, 0);
-  assert.ok(Object.values((await f.store.read()).receipts).every((r) => r.stopped && !r.commentItemId));
+  const receipts = Object.values((await f.store.read()).receipts);
+  assert.ok(receipts.every((r) => isStopped(r) && !r.commentItemId));
+  // The notice covers both the stopped request and the Stop itself.
+  assert.deepEqual(receipts.map((r) => `${r.kind}:${r.state}`).sort(), ['request:stopped', 'stop:confirmed']);
   assert.deepEqual(f.fake.posts.filter((p) => p.content.type === 'error').map((p) => p.content.body), ['Stopped the pending request. Check any earlier actions before continuing.']);
 }));
 

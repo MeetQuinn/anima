@@ -7,6 +7,7 @@ import type { LinearInstallation } from '../storage/schema/linear.store.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import type { LinearWebhook } from '../linear/webhook.js';
 import { linearCommentItemId, withLinearCommentLock } from './linear-comment-delivery.js';
+import { isStopped, sessionStopped } from '../linear/receipt-state.js';
 
 const Session = z.object({ appUser: z.object({ id: z.string() }) }).nullable();
 const CommentThread = z.object({ comment: z.object({ id: z.string(), issueId: z.string().nullable(),
@@ -30,7 +31,9 @@ export class LinearNotificationService {
 
   async assertRunnable(item: LinearNotificationInboxItem): Promise<void> {
     await this.identity.authorizedInstallation(item.installationId);
-    if (Object.values((await this.identity.store.read()).receipts).some((r) => (r.commentItemId === item.id || r.heldCommentItemId === item.id) && r.stopped)) {
+    const receipts = Object.values((await this.identity.store.read()).receipts);
+    // The comment carried a stopped request, or a session request replaced it and was then stopped.
+    if (receipts.some((r) => r.commentItemId === item.id && isStopped(r) || r.heldCommentItemId === item.id && sessionStopped(receipts, r.sessionId))) {
       throw new Error('This Linear comment request was stopped.');
     }
   }

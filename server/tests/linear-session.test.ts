@@ -11,6 +11,8 @@ import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearClient } from '../linear/client.js';
 import type { LinearStore } from '../storage/schema/linear.store.js';
 import type { LinearInboxItem } from '../../shared/inbox.js';
+import { isOpenRequest } from '../linear/receipt-state.js';
+import type { LinearReceipt } from '../storage/schema/linear.store.js';
 
 async function firstItem() { return (await new WakeQueueService('scout').list())[0]! as LinearInboxItem; }
 
@@ -71,7 +73,7 @@ for (const failure of ['401', '400', '500', 'network', 'invalid-json', 'partial'
     }
     const accepted = failure === '401' || failure === 'partial';
     assert.equal(fake.posts.length, accepted ? 1 : 0);
-    assert.equal(Boolean((await store.read()).receipts[item.id]!.answered), accepted);
+    assert.equal((await store.read()).receipts[item.id]!.state === 'answered', accepted);
   }));
 }
 
@@ -153,7 +155,7 @@ test('created and consecutive prompts share the primary session, carry only new 
   const result = await service.respond(sessionId, 'elicitation', 'Which version?', first.id);
   const repeat = await service.respond(sessionId, 'elicitation', 'Which version?', first.id); assert.equal(repeat.activityId, result.activityId);
   assert.equal(fake.posts.filter((p) => p.content.type === 'elicitation').length, 1);
-  assert.ok(Object.values((await store.read()).receipts).filter((r) => r.itemId).every((r) => r.answered));
+  assert.ok(Object.values((await store.read()).receipts).filter((r) => r.itemId).every((r) => r.state === 'answered'));
   await assert.rejects(service.respond(randomUUID(), 'response', 'Wrong session', first.id));
 }));
 
@@ -199,9 +201,20 @@ test('heartbeat is truthful and stops on reply; a deferred wake stays active', a
   await stale(); await service.tick(); assert.equal(fake.posts.at(-1)!.content.body, 'This request is queued.');
   const queue = new WakeQueueService('scout'); await queue.takeNextRunnable({ workerId: 'worker', isWorkerAlive: () => true }); await service.markStarted(first, first.id);
   await stale(); await service.tick(); assert.equal(fake.posts.at(-1)!.content.body, 'Executing this request.');
-  await queue.requeue(first.id); await service.markSettled(first); assert.equal((await store.read()).receipts[first.id]!.settled, undefined);
+  await queue.requeue(first.id); await service.markSettled(first); assert.equal((await store.read()).receipts[first.id]!.state, 'running');
   await service.respond(sessionId, 'response', 'Done', first.id); const count = fake.posts.length;
   await stale(); await service.tick(); assert.equal(fake.posts.length, count);
+}));
+
+test('a session created after its Stop gets one pending-request notice, not the background one', async () => withTempAnimaHome(async (home) => {
+  const { service, fake, store } = await seedLinear(home);
+  await service.receive(prompted(sessionId, true), install);
+  assert.equal(fake.posts.length, 0, 'Nothing to confirm before the session request arrives');
+  await service.receive(created(), install);
+  assert.deepEqual(fake.posts.map((p) => p.content.body), ['Stopped the pending request. Check any earlier actions before continuing.']);
+  assert.equal((await new WakeQueueService('scout').list()).length, 0);
+  await service.tick(); assert.equal(fake.posts.length, 1);
+  assert.deepEqual(Object.values((await store.read()).receipts).map((r) => `${r.kind}:${r.state}`).sort(), ['request:stopped', 'stop:confirmed']);
 }));
 
 test('stop settles only its queued session and blocks a stopped input before execution', async () => withTempAnimaHome(async (home) => {
@@ -215,7 +228,7 @@ test('stop settles only its queued session and blocks a stopped input before exe
   assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 1);
   assert.equal(fake.posts[0]!.agentSessionId, sessionId);
   await assert.rejects(service.assertRunnable(first));
-  assert.ok(Object.values((await store.read()).receipts).filter((r) => r.sessionId === otherSession).every((r) => !r.stopped));
+  assert.ok(Object.values((await store.read()).receipts).filter((r) => r.sessionId === otherSession).every((r) => r.state === 'received'));
   await service.receive(prompted(), install); assert.equal((await queue.list()).length, 2);
 }));
 
@@ -259,7 +272,7 @@ test('accepted append ownership and heartbeat survive a slow notification store'
   await store.update((f) => ({ ...f, receipts: { ...f.receipts, [child.id]: { ...f.receipts[child.id]!, acknowledgement: 'accepted', receivedAt: new Date(Date.now() - 11 * 60_000).toISOString() } } }));
   await service.tick(); assert.equal(fake.posts.at(-1)!.content.body, 'Executing this request.');
   await service.respond(sessionId, 'response', 'Accepted followup', root.id);
-  assert.ok((await store.read()).receipts[child.id]!.answered);
+  assert.equal((await store.read()).receipts[child.id]!.state, 'answered');
 }));
 
 test('failed final notice cannot republish settled run inputs; a newer prompt stays independent', async () => withTempAnimaHome(async (home) => {
@@ -267,13 +280,13 @@ test('failed final notice cannot republish settled run inputs; a newer prompt st
   const root = await firstItem(); await service.markStarted(root, root.id);
   await new WakeQueueService('scout').fail(root.id);
   fake.failMutation = true; await assert.rejects(service.finishRun(root.id, 'Failed'));
-  assert.equal((await store.read()).receipts[root.id]!.settled, true);
+  assert.equal((await store.read()).receipts[root.id]!.state, 'awaiting', 'An unsent failure notice leaves the request answerable');
   assert.equal((await store.read()).receipts[root.id]!.item, undefined);
   await service.tick(); assert.equal((await new WakeQueueService('scout').list()).length, 0);
   await assert.rejects(service.assertRunnable(root));
   await service.receive(prompted(), install);
   assert.equal((await new WakeQueueService('scout').list()).length, 1);
-  assert.ok(Object.values((await store.read()).receipts).some((r) => !r.settled && r.item));
+  assert.ok(Object.values((await store.read()).receipts).some((r) => r.state === 'received' && r.item));
 }));
 
 
@@ -288,19 +301,71 @@ test('the status tick locks only sessions with pending work', async (t) => withT
   assert.deepEqual(lock.mock.calls.map((call) => call.arguments[0]), [pending]);
 }));
 
+test('receipts saved with the earlier flags load into explicit states and finish their Stop', async () => withTempAnimaHome(async (home) => {
+  const { service, store, fake } = await seedLinear(home);
+  const stopped = randomUUID();
+  const legacy = (extra: object, session = randomUUID()) => ({ sessionId: session, receivedAt: new Date().toISOString(),
+    acknowledgement: 'accepted', acknowledgementId: randomUUID(), ...extra });
+  const receipts = {
+    received: legacy({ itemId: 'a' }),
+    running: legacy({ itemId: 'b', runItemId: 'run' }),
+    awaiting: legacy({ itemId: 'c', runItemId: 'run', settled: true }),
+    answered: legacy({ itemId: 'd', settled: true, answered: true }),
+    stopping: legacy({ itemId: 'e', stopped: true }, stopped),
+    stopped: legacy({ itemId: 'f', stopped: true, answered: true }),
+    linked: legacy({ commentItemId: 'g' }),
+    linkedStopped: legacy({ commentItemId: 'h', stopped: true }),
+    stopReceived: legacy({ stopped: true, stopSignal: true }, stopped),
+    stopApplied: legacy({ stopped: true, stopSignal: true, settled: true }),
+    stopConfirmed: legacy({ stopped: true, stopSignal: true, answered: true, settled: true }),
+  };
+  await store.update((file) => ({ ...file, receipts: receipts as unknown as typeof file.receipts }));
+  const states = () => store.read().then((file) => Object.fromEntries(Object.entries(file.receipts).map(([key, r]) => [key, `${r.kind}:${r.state}`])));
+  assert.deepEqual(await states(), {
+    received: 'request:received', running: 'request:running', awaiting: 'request:awaiting', answered: 'request:answered',
+    stopping: 'request:stopping', stopped: 'request:stopped', linked: 'comment:linked', linkedStopped: 'comment:stopped',
+    stopReceived: 'stop:received', stopApplied: 'stop:applied', stopConfirmed: 'stop:confirmed',
+  });
+  assert.ok(Object.values((await store.read()).receipts).every((r) => !['stopped', 'stopSignal', 'settled', 'answered'].some((flag) => flag in r)));
+  // A Stop still unprocessed under the earlier flags is finished by the next tick, once.
+  await service.tick(); await service.tick();
+  assert.deepEqual(fake.posts.map((p) => [p.agentSessionId, p.content.type]), [[stopped, 'error']]);
+  const after = await states();
+  assert.equal(after.stopping, 'request:stopped'); assert.equal(after.stopReceived, 'stop:confirmed');
+}));
+
+test('a run ending never reopens a request it already answered or that was stopped', async () => withTempAnimaHome(async (home) => {
+  const { service, fake, store } = await seedLinear(home);
+  const queue = new WakeQueueService('scout');
+  await service.receive(created(), install); const answered = await firstItem(); await service.markStarted(answered, answered.id);
+  await service.respond(sessionId, 'response', 'Done', answered.id);
+  await queue.complete(answered.id); await service.markSettled(answered);
+  assert.equal((await store.read()).receipts[answered.id]!.state, 'answered');
+  // Stop reaches a running request; the run then fails and its notice confirms the Stop.
+  const other = randomUUID(); await service.receive(created(other), install);
+  const stopped = (await queue.list()).find((i) => i.kind === 'linear' && i.sessionId === other) as LinearInboxItem;
+  await queue.takeNextRunnable({ workerId: 'worker', isWorkerAlive: () => true }); await service.markStarted(stopped, stopped.id);
+  await service.receive(prompted(other, true), install);
+  assert.equal((await store.read()).receipts[stopped.id]!.state, 'stopping');
+  await service.finishRun(stopped.id, 'This run was interrupted.');
+  assert.equal((await store.read()).receipts[stopped.id]!.state, 'stopped');
+  assert.deepEqual(fake.posts.filter((p) => p.content.type === 'error').map((p) => p.agentSessionId), [other]);
+}));
+
 test('a webhook drops receipts finished over 30 days ago and the operations of their sessions', async () => withTempAnimaHome(async (home) => {
   const { service, store } = await seedLinear(home);
   const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString();
-  const receipt = (session: string, receivedAt: string, extra: object) => ({ sessionId: session, receivedAt, acknowledgement: 'accepted' as const, acknowledgementId: randomUUID(), itemId: randomUUID(), ...extra });
+  const receipt = (session: string, receivedAt: string, state: LinearReceipt['state'], extra: object = {}) => ({ kind: 'request' as const, state,
+    sessionId: session, receivedAt, acknowledgement: 'accepted' as const, acknowledgementId: randomUUID(), itemId: randomUUID(), ...extra });
   const operation = (session: string) => ({ id: randomUUID(), sessionId: session, kind: 'activity' as const, state: 'accepted' as const, itemIds: [], contentHash: randomUUID() });
   const [expired, recent, active, unfinished, stopped] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   await store.update((file) => ({ ...file,
     receipts: {
-      expired: receipt(expired, daysAgo(31), { answered: true }),
-      recent: receipt(recent, daysAgo(29), { settled: true }),
-      active: receipt(active, daysAgo(40), { answered: true, lastActivityAt: daysAgo(1) }),
-      unfinished: receipt(unfinished, daysAgo(40), {}),
-      stopped: receipt(stopped, daysAgo(31), { stopped: true }),
+      expired: receipt(expired, daysAgo(31), 'answered'),
+      recent: receipt(recent, daysAgo(29), 'awaiting'),
+      active: receipt(active, daysAgo(40), 'answered', { lastActivityAt: daysAgo(1) }),
+      unfinished: receipt(unfinished, daysAgo(40), 'awaiting'),
+      stopped: receipt(stopped, daysAgo(31), 'stopping'),
     },
     operations: { expired: operation(expired), recent: operation(recent), stopped: operation(stopped) },
   }));
@@ -320,7 +385,7 @@ test('progress reconciliation keeps requests open; later turns can answer only d
   fake.loseResponse = false;
   const recovered = new LinearSessionService(identity);
   await recovered.respond(sessionId, 'thought', 'Started', first.id);
-  assert.equal(fake.posts.length, 1); assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
+  assert.equal(fake.posts.length, 1); assert.equal((await store.read()).receipts[first.id]!.state, 'running');
   await assert.rejects(recovered.respond(sessionId, 'response', 'Not this running turn', 'later-run'), /No accepted input/);
   await new WakeQueueService('scout').complete(first.id); await recovered.markSettled(first);
   // A delivered but unanswered background request must survive receipt pruning.
@@ -332,7 +397,7 @@ test('progress reconciliation keeps requests open; later turns can answer only d
   await recovered.respond(sessionId, 'response', 'Finished', 'later-run');
   await assert.rejects(recovered.respond(sessionId, 'response', 'Extra result', 'later-run'), /No accepted input/);
   assert.deepEqual(fake.posts.map((p) => p.content.type), ['thought', 'response']);
-  assert.equal((await store.read()).receipts[first.id]!.answered, true);
+  assert.equal((await store.read()).receipts[first.id]!.state, 'answered');
 }));
 
 test('legacy activity operations without a kind still count as terminal replies', async () => withTempAnimaHome(async (home) => {
@@ -346,7 +411,7 @@ test('legacy activity operations without a kind still count as terminal replies'
     const legacy = { ...op }; delete legacy.activityKind; return [key, legacy];
   })) }));
   await service.respond(sessionId, 'response', 'Legacy accepted', first.id);
-  assert.equal(fake.posts.length, 1); assert.equal((await store.read()).receipts[first.id]!.answered, true);
+  assert.equal(fake.posts.length, 1); assert.equal((await store.read()).receipts[first.id]!.state, 'answered');
 }));
 
 test('a new prompt in a quiet unanswered session clears the count until that request also ends unanswered', async () => withTempAnimaHome(async (home) => {
@@ -373,7 +438,8 @@ test('a new prompt in a quiet unanswered session clears the count until that req
   const crashed = (await queue.list()).find((i) => i.kind === 'linear')!;
   await service.markStarted(crashed, crashed.id);
   await service.finishRun(crashed.id, 'The model run failed.');
-  assert.equal(Object.values((await store.read()).receipts).filter((r) => !r.answered).length, 2);
+  assert.equal((await store.read()).receipts[crashed.id]!.state, 'failed');
+  assert.equal(Object.values((await store.read()).receipts).filter(isOpenRequest).length, 2);
   assert.equal((await identity.status()).unansweredSessions, undefined, 'The error is recent session activity');
   await age(31);
   assert.equal((await identity.status()).unansweredSessions, 1);
@@ -394,7 +460,7 @@ test('a run that ends unanswered gets no runtime notice; the dashboard counts it
   assert.equal((await identity.status()).unansweredSessions, undefined, 'Not quiet for 30 minutes yet');
   await age(31);
   assert.equal((await identity.status()).unansweredSessions, 2);
-  assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
+  assert.equal((await store.read()).receipts[first.id]!.state, 'awaiting');
   // A request that is still queued or running is not one that ended without a reply.
   const third = randomUUID(); await service.receive(created(third), install);
   await store.update((f) => ({ ...f, receipts: Object.fromEntries(Object.entries(f.receipts).map(([id, r]) => [id,
@@ -407,7 +473,7 @@ test('a run that ends unanswered gets no runtime notice; the dashboard counts it
   fake.failMutation = true;
   await service.receive(prompted(other, true), install).catch(() => {});
   fake.failMutation = false;
-  assert.notEqual(Object.values((await store.read()).receipts).find((r) => r.sessionId === other)!.answered, true);
+  assert.equal(Object.values((await store.read()).receipts).find((r) => r.sessionId === other && r.kind === 'request')!.state, 'stopping');
   assert.equal((await identity.status()).unansweredSessions, undefined);
   await age(31);
   assert.equal((await identity.status()).unansweredSessions, 1, 'Without further activity the session is counted again');

@@ -9,6 +9,7 @@ import { linearCommentItemId, withLinearCommentLock } from '../inbox/linear-comm
 import { withFileLock } from '../storage/lock.js';
 import type { LinearInstallation, LinearOperation, LinearReceipt } from '../storage/schema/linear.store.js';
 import { LinearIdentityService, linearRequestNotSent } from './identity.service.js';
+import { awaitsAcknowledgement, claimable, closeReceipt, endRun, isActiveRequest, isOpenRequest, isStopped, startReceipt, stopReceipt } from './receipt-state.js';
 import { LinearApiError } from './client.js';
 import type { LinearWebhook } from './webhook.js';
 import { renderEnvelope } from '../messages/envelope.js';
@@ -54,8 +55,8 @@ function fallbackContext(event: Extract<LinearWebhook, { type: 'AgentSessionEven
 function withoutExpiredReceipts(receipts: Record<string, LinearReceipt>, operations: Record<string, LinearOperation>, now: number) {
   const cutoff = now - FINISHED_RECEIPT_RETENTION_MS;
   const kept = Object.fromEntries(Object.entries(receipts).filter(([, r]) => {
-    // Queue settlement can leave a background request unanswered.
-    if (!r.answered && !r.stopped && !r.commentItemId) return true;
+    // An open request can still be answered, even long after its run ended.
+    if (isOpenRequest(r)) return true;
     const last = Math.max(...[r.receivedAt, r.lastActivityAt, r.lastStatusAttemptAt].map((at) => (at ? Date.parse(at) : 0)));
     return !(last < cutoff);
   }));
@@ -190,31 +191,35 @@ export class LinearSessionService {
       if (current.installation?.id !== install.id || current.installation.revoked) throw new Error('Linear identity changed.');
       const receipts = { ...current.receipts };
       if (!receipts[key]) {
-        const alreadyStopped = event.action === 'created' && Object.values(receipts).some((r) => r.sessionId === session.id && r.stopped);
+        const sessionReceipts = Object.values(receipts).filter((r) => r.sessionId === session.id);
+        const alreadyStopped = event.action === 'created' && sessionReceipts.some(isStopped);
         // A comment still held as context never reached the agent, so an open session delivers
         // the request itself and takes over disposing of the comment. A stopped session keeps the
         // comment as its request, so Stop settles it. After a takeover, a later Stop links nothing.
-        const tookOver = Boolean(commentItemId) && Object.values(receipts).some((r) => r.sessionId === session.id && r.heldCommentItemId === commentItemId);
+        const tookOver = Boolean(commentItemId) && sessionReceipts.some((r) => r.heldCommentItemId === commentItemId);
         const commentDelivered = commentQueued && (heldComment ? alreadyStopped : !tookOver);
-        receipts[key] = { sessionId: session.id, receivedAt, acknowledgement: stopped || alreadyStopped ? 'accepted' : 'pending', acknowledgementId: randomUUID() };
-        if (session.commentId) receipts[key].commentId = session.commentId;
-        if (commentDelivered) receipts[key].commentItemId = commentItemId;
-        if (alreadyStopped) receipts[key].stopped = true;
+        const base = { sessionId: session.id, receivedAt, acknowledgementId: randomUUID(),
+          acknowledgement: stopped || alreadyStopped ? 'accepted' as const : 'pending' as const };
+        let receipt: LinearReceipt;
         if (stopped) {
-          receipts[key].stopped = true;
-          receipts[key].stopSignal = true;
-          for (const [id, r] of Object.entries(receipts)) if (r.sessionId === session.id) receipts[id] = { ...r, stopped: true };
+          // The Stop is an event of its own; it reaches the session's open work.
+          receipt = { ...base, kind: 'stop', state: 'received' };
+          for (const [id, r] of Object.entries(receipts)) if (r.sessionId === session.id) receipts[id] = stopReceipt(r);
+        } else if (commentDelivered) receipt = { ...base, kind: 'comment', state: alreadyStopped ? 'stopped' : 'linked' };
+        else {
+          receipt = { ...base, kind: 'request', state: alreadyStopped ? 'stopping' : 'received', itemId: item.id };
+          if (!alreadyStopped) receipt.item = item;
+          if (heldComment) receipt.heldCommentItemId = commentItemId;
         }
-        else if (!commentDelivered) {
-          receipts[key].itemId = item.id; receipts[key].item = item;
-          if (heldComment) receipts[key].heldCommentItemId = commentItemId;
-        }
-        if (item.issueId) receipts[key].issueId = item.issueId;
+        if (commentDelivered) receipt.commentItemId = commentItemId;
+        if (session.commentId) receipt.commentId = session.commentId;
+        if (item.issueId) receipt.issueId = item.issueId;
+        receipts[key] = receipt;
       }
       return { ...current, ...withoutExpiredReceipts(receipts, current.operations, Date.parse(receivedAt)), lastSignedWebhookAt: receivedAt };
     });
     const receipt = file.receipts[key]!;
-    if (receipt.stopped) { await this.stop(session.id); return; }
+    if (isStopped(receipt)) { await this.stop(session.id); return; }
     await this.publish(receipt);
     // Withdraw only after the session's request is durable. A failure in between leaves duplicate
     // context rather than a lost request; the webhook retry or a Stop finishes the disposal.
@@ -225,7 +230,7 @@ export class LinearSessionService {
     const file = await this.identity.store.read();
     const receipt = file.receipts[item.id];
     if (file.installation?.id !== item.installationId || file.installation.revoked
-      || !receipt || receipt.stopped || receipt.answered || receipt.settled) throw new Error('Linear input was stopped, answered or its identity was removed.');
+      || !receipt || !isActiveRequest(receipt)) throw new Error('Linear input was stopped, answered or its identity was removed.');
   }
 
   async markStarted(item: InboxItem, runItemId: string): Promise<void> {
@@ -234,20 +239,22 @@ export class LinearSessionService {
     this.pendingOwners.set(item.id, owner);
     const startedFile = await this.identity.store.update((file) => {
       const receipt = file.receipts[item.id];
-      if (!receipt || receipt.stopped || file.installation?.id !== item.installationId) return file;
-      return { ...file, receipts: { ...file.receipts, [item.id]: { ...receipt, runItemId } } };
+      if (!receipt || !isActiveRequest(receipt) || file.installation?.id !== item.installationId) return file;
+      return { ...file, receipts: { ...file.receipts, [item.id]: startReceipt(receipt, runItemId) } };
     });
     if (this.pendingOwners.get(item.id) === owner) this.pendingOwners.delete(item.id);
-    if (startedFile.receipts[item.id]?.stopped || startedFile.receipts[item.id]?.runItemId !== runItemId) return;
+    const started = startedFile.receipts[item.id];
+    if (started?.state !== 'running' || started.runItemId !== runItemId) return;
     if (item.issueId && item.humanRequested) {
       const result = await this.identity.graphql(item.installationId,
         'query($id:String!){ issue(id:$id){ id delegate { id } state { type } team { states { nodes { id type position } } } } }', { id: item.issueId }, Issue);
       const issue = result.issue;
       const install = (await this.identity.store.read()).installation;
       if (issue.delegate?.id !== install?.appUserId || ['started', 'completed', 'canceled'].includes(issue.state.type)) return;
-      const started = issue.team.states.nodes.filter((state) => state.type === 'started').sort((a, b) => a.position - b.position)[0];
-      if (started && !(await this.identity.store.read()).receipts[item.id]?.stopped) await this.identity.graphql(item.installationId, 'mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}',
-        { id: item.issueId, input: { stateId: started.id } }, IssueUpdated);
+      const startedState = issue.team.states.nodes.filter((state) => state.type === 'started').sort((a, b) => a.position - b.position)[0];
+      const current = (await this.identity.store.read()).receipts[item.id];
+      if (startedState && !(current && isStopped(current))) await this.identity.graphql(item.installationId, 'mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}',
+        { id: item.issueId, input: { stateId: startedState.id } }, IssueUpdated);
     }
   }
 
@@ -260,7 +267,7 @@ export class LinearSessionService {
     await this.identity.store.update((file) => {
       const receipt = file.receipts[item.id];
       if (!receipt || file.installation?.id !== item.installationId) return file;
-      const settled = { ...receipt, settled: true, item: undefined };
+      const settled = endRun(receipt);
       if (owner?.installationId === item.installationId) settled.runItemId = owner.runItemId;
       return { ...file, receipts: { ...file.receipts, [item.id]: settled } };
     });
@@ -270,28 +277,32 @@ export class LinearSessionService {
   async stop(sessionId: string): Promise<void> {
     const file = await this.identity.store.read();
     const queue = wakeQueueServiceForAgent(this.agentId);
+    const session = Object.values(file.receipts).filter((r) => r.sessionId === sessionId);
     let activeRun = false;
-    for (const receipt of Object.values(file.receipts)) {
-      if (receipt.sessionId !== sessionId || !receipt.stopped) continue;
+    let ranBefore = false;
+    for (const receipt of session) {
       // A held comment the request replaced must not outlive the Stop, even if the takeover failed midway.
       const replaced = receipt.heldCommentItemId ? await queue.find(receipt.heldCommentItemId) : undefined;
       if (replaced?.handling.status === 'queued') await queue.fail(replaced.id);
-      const itemId = receipt.itemId ?? receipt.commentItemId;
-      if (!itemId || receipt.answered) continue;
+      // Stopped work still in the queue or a run: a stopping request, or a comment that carried it.
+      const itemId = receipt.state === 'stopping' ? receipt.itemId
+        : receipt.commentItemId && isStopped(receipt) && receipt.state !== 'confirmed' ? receipt.commentItemId : undefined;
+      if (!itemId) continue;
       const item = await queue.find(itemId);
       const runItemId = receipt.runItemId ?? item?.handling.appendedToItemId ?? item?.id;
       const run = runItemId ? await queue.find(runItemId) : undefined;
       if (run?.handling.status === 'running') { await queue.requestStop(run.id); activeRun = true; }
       else if (item?.handling.status === 'queued') await queue.fail(item.id);
+      // A request whose run already ended may have left provider background work.
+      else if (receipt.state === 'stopping' && receipt.runItemId) ranBefore = true;
     }
-    const pending = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.itemId && r.stopped && !r.answered);
-    const commentStop = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.commentItemId && r.stopped)
-      && Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.stopSignal && !r.answered);
+    const pending = session.some((r) => r.state === 'stopping');
+    const commentStop = session.some((r) => r.commentItemId && isStopped(r))
+      && session.some((r) => r.kind === 'stop' && r.state !== 'confirmed');
     if (commentStop || !activeRun && pending) {
-      const background = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.stopped && r.settled && !r.answered);
       const body = commentStop
         ? 'Stop requested for this comment-thread request. Earlier actions or provider background work may still exist; check the original comment thread before continuing.'
-        : background
+        : ranBefore
         ? 'Stopped accepting replies for this request. Provider background work may still be running; check it before continuing.'
         : 'Stopped the pending request. Check any earlier actions before continuing.';
       await this.respond(sessionId, 'error', body, undefined, 'stopped');
@@ -299,24 +310,27 @@ export class LinearSessionService {
     await this.identity.store.update((latest) => {
       if (latest.installation?.id !== file.installation?.id) return latest;
       const receipts = { ...latest.receipts };
-      for (const [id, r] of Object.entries(receipts)) if (r.sessionId === sessionId && r.stopSignal) receipts[id] = { ...r, settled: true };
+      for (const [id, r] of Object.entries(receipts)) {
+        if (r.sessionId === sessionId && r.kind === 'stop' && r.state === 'received') receipts[id] = { ...r, state: 'applied' };
+      }
       return { ...latest, receipts };
     });
   }
 
   async finishRun(runItemId: string, body: string): Promise<void> {
     const pending = [...this.pendingOwners].filter(([, owner]) => owner.runItemId === runItemId);
-    if (!pending.length && !Object.values((await this.identity.store.read()).receipts).some((r) => r.runItemId === runItemId && !r.answered)) return;
+    const notified = (r: LinearReceipt) => r.runItemId === runItemId && claimable(r, 'failed');
+    if (!pending.length && !Object.values((await this.identity.store.read()).receipts).some(notified)) return;
     const file = await this.identity.store.update((current) => {
       const receipts = { ...current.receipts };
       for (const [id, owner] of pending) {
         if (current.installation?.id === owner.installationId && receipts[id]) receipts[id] = { ...receipts[id], runItemId: owner.runItemId };
       }
-      for (const [id, r] of Object.entries(receipts)) if (r.runItemId === runItemId) receipts[id] = { ...r, settled: true, item: undefined };
+      for (const [id, r] of Object.entries(receipts)) if (r.runItemId === runItemId) receipts[id] = endRun(r);
       return { ...current, receipts };
     });
     for (const [id, owner] of pending) if (this.pendingOwners.get(id) === owner) this.pendingOwners.delete(id);
-    const sessions = new Set(Object.values(file.receipts).filter((r) => r.runItemId === runItemId && !r.answered).map((r) => r.sessionId));
+    const sessions = new Set(Object.values(file.receipts).filter(notified).map((r) => r.sessionId));
     const results = await Promise.allSettled([...sessions].map((session) => this.respond(session, 'error', body, runItemId, 'failed')));
     if (results.some((r) => r.status === 'rejected')) throw new Error('Linear run ended; one or more final notices could not be confirmed.');
   }
@@ -339,18 +353,14 @@ export class LinearSessionService {
     }
     file = await this.identity.store.read();
     const hash = contentHash(kind, body);
-    const candidates = Object.entries(file.receipts).filter(([, r]) => r.sessionId === sessionId
-      // Stop itself needs a terminal receipt even when the work was delivered
-      // as a comment. This does not grant an ordinary session reply obligation.
-      && (r.itemId || terminal === 'stopped' && r.stopSignal) && !r.answered
-      && (terminal === 'stopped' ? r.stopped : terminal === 'failed' || !r.stopped));
+    const candidates = Object.entries(file.receipts).filter(([, r]) => r.sessionId === sessionId && claimable(r, terminal));
     const itemIds: string[] = [];
     for (const [id, receipt] of candidates) {
       const owner = await this.ownerFor(receipt);
       // Once delivered, an unanswered request belongs to the agent's primary
       // session, not just the turn that first handled it. Terminal notices stay
       // scoped to their original run; unstarted inputs cannot be claimed here.
-      if (!runItemId || owner === runItemId || (!terminal && receipt.settled && owner)) itemIds.push(id);
+      if (!runItemId || owner === runItemId || (!terminal && receipt.state === 'awaiting' && owner)) itemIds.push(id);
     }
     itemIds.sort();
     if (!itemIds.length) {
@@ -364,6 +374,7 @@ export class LinearSessionService {
     if (previous?.state === 'accepted') return { activityId: previous.id, bookkeeping: 'recorded' };
     const operation: LinearOperation = { id: randomUUID(), sessionId, kind: 'activity', state: 'sending', itemIds, contentHash: hash, activityKind: kind };
     if (runItemId) operation.ownerRunId = runItemId;
+    if (terminal) operation.terminal = terminal;
     await this.saveOperation(install.id, key, operation);
     try { await this.createActivity(install.id, sessionId, operation.id, kind, body, false); }
     catch (error) { await this.recordWriteFailure(install.id, key, operation, error); throw error; }
@@ -376,10 +387,10 @@ export class LinearSessionService {
     if (!file.installation || file.installation.revoked) return;
     const installId = file.installation.id;
     await Promise.all(Object.entries(file.receipts).map(async ([key, receipt]) => {
-      if (receipt.stopSignal && !receipt.settled) { await this.stop(receipt.sessionId); return; }
+      if (receipt.kind === 'stop' && receipt.state === 'received') { await this.stop(receipt.sessionId); return; }
       await this.publish(receipt);
-      // acknowledge() skips a stopped or answered receipt, but only after taking its lock.
-      if ((receipt.acknowledgement === 'pending' || receipt.acknowledgement === 'sending') && !receipt.stopped && !receipt.answered) {
+      // acknowledge() checks again after taking the session lock.
+      if ((receipt.acknowledgement === 'pending' || receipt.acknowledgement === 'sending') && awaitsAcknowledgement(receipt)) {
         await this.acknowledge(key, installId, receipt);
       }
     }));
@@ -387,7 +398,7 @@ export class LinearSessionService {
     // unanswered, the runtime says nothing more: the dashboard counts the session once it
     // has been quiet for 30 minutes. Lock only sessions that still have such work.
     const current = await this.identity.store.read();
-    const eligible = (r: LinearReceipt) => r.itemId && !r.stopped && !r.answered && !r.settled;
+    const eligible = isActiveRequest;
     const due = (r: LinearReceipt) => Date.now() - Math.max(...[r.lastActivityAt ?? r.receivedAt, r.lastStatusAttemptAt]
       .map((at) => at ? Date.parse(at) : 0)) >= 10 * 60_000;
     const busy = Object.values(current.receipts).filter(eligible);
@@ -416,7 +427,7 @@ export class LinearSessionService {
   }
 
   private async publish(receipt: LinearReceipt): Promise<void> {
-    if (receipt.item && !receipt.stopped && !receipt.settled && !receipt.answered) await wakeQueueServiceForAgent(this.agentId).enqueue(receipt.item);
+    if (receipt.item && receipt.kind === 'request' && receipt.state === 'received') await wakeQueueServiceForAgent(this.agentId).enqueue(receipt.item);
   }
 
   private async ownerFor(receipt: LinearReceipt): Promise<string | undefined> {
@@ -432,13 +443,13 @@ export class LinearSessionService {
     await this.sessionLock(receipt.sessionId, async () => {
       const file = await this.identity.store.read();
       const r = file.receipts[key];
-      if (file.installation?.id !== installId || file.installation.revoked || !r || r.stopped || r.answered) return;
+      if (file.installation?.id !== installId || file.installation.revoked || !r || !awaitsAcknowledgement(r)) return;
       if (r.acknowledgement === 'sending') {
         try { await this.confirmActivity(installId, r.sessionId, r.acknowledgementId); }
         catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
       } else if (r.acknowledgement === 'pending') {
         await this.setAcknowledgement(installId, key, 'sending');
-        const body = r.commentItemId
+        const body = r.kind === 'comment'
           ? 'Received by Anima. This request was already delivered through the original comment thread. Follow that thread for any reply.'
           : 'Received by Anima.';
         try { await this.createActivity(installId, receipt.sessionId, receipt.acknowledgementId, 'thought', body, true); }
@@ -501,8 +512,7 @@ export class LinearSessionService {
         const receipt = receipts[id];
         if (!receipt) continue;
         const next = { ...receipt, lastActivityAt: nowIso() };
-        if (operation.activityKind !== 'thought') { next.answered = true; next.item = undefined; }
-        receipts[id] = next;
+        receipts[id] = operation.activityKind === 'thought' ? next : closeReceipt(next, operation.terminal);
       }
       return { ...file, receipts, operations: { ...file.operations, [key]: { ...operation, state: 'accepted' } } };
     });
@@ -533,11 +543,12 @@ export class LinearSessionService {
     await this.identity.store.update((file) => {
       if (file.installation?.id !== installId || file.installation.revoked) throw new Error('Linear identity changed.');
       // A Stop or prompt can race the creation response. Never replace it.
-      if (Object.values(file.receipts).some((r) => r.sessionId === session.id && r.stopSignal)) throw new Error('This Linear session was stopped.');
+      if (Object.values(file.receipts).some((r) => r.sessionId === session.id && r.kind === 'stop')) throw new Error('This Linear session was stopped.');
       if (Object.values(file.receipts).some((r) => r.sessionId === session.id)) return file;
       const owner = runItemId ?? key;
-      const receipt: LinearReceipt = { sessionId: session.id, receivedAt: nowIso(), itemId: key, runItemId: owner,
-        settled: true, acknowledgement: 'accepted', acknowledgementId: randomUUID() };
+      // Opened by the agent's own turn: no run will start for it, so it already awaits the agent's reply.
+      const receipt: LinearReceipt = { kind: 'request', state: 'awaiting', sessionId: session.id, receivedAt: nowIso(), itemId: key,
+        runItemId: owner, acknowledgement: 'accepted', acknowledgementId: randomUUID() };
       if (session.issue) receipt.issueId = session.issue.id;
       return { ...file, receipts: { ...file.receipts, [key]: receipt } };
     });

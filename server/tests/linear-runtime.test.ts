@@ -19,6 +19,7 @@ import { created, install, seedLinear, sessionId, prompted } from './helpers/lin
 import { makeSlackEvent } from './helpers/slack.js';
 import { LinearStore } from '../storage/schema/linear.store.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { isOpenRequest } from '../linear/receipt-state.js';
 
 // A runtime host with a Linear agent runs the receiver and its maintenance timer. Give
 // each test its own free port instead of the production default.
@@ -84,11 +85,11 @@ test('a completed provider turn without a platform reply leaves the Linear sessi
     homePath: (await agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
   try {
     await service.receive(created(), install);
-    await waitFor(async () => Object.values((await store.read()).receipts)[0]?.settled === true);
+    await waitFor(async () => Object.values((await store.read()).receipts)[0]?.state === 'awaiting');
     await waitFor(async () => (await new WakeQueueService('scout').list()).length === 0);
     await service.tick(); await service.tick();
     const receipt = Object.values((await store.read()).receipts)[0]!;
-    assert.notEqual(receipt.answered, true);
+    assert.equal(receipt.state, 'awaiting');
     assert.ok(receipt.runItemId);
     assert.deepEqual(fake.posts.map((p) => p.content.body), ['Received by Anima.']);
   } finally { await runner.stop(); }
@@ -138,8 +139,9 @@ for (const shared of [false, true]) for (const outcome of ['completed', 'failed'
       if (outcome === 'interrupted') await queue.requestStop(actualRoot); else release();
       // A failed or interrupted run posts one notice. A completed run without a reply posts none.
       const noticed = outcome !== 'completed';
-      if (noticed) await waitFor(async () => Object.values((await store.read()).receipts).every((r) => r.answered), { timeoutMs: 3000 });
-      await waitFor(async () => Object.values((await store.read()).receipts).every((r) => r.settled), { timeoutMs: 3000 });
+      // Only the runtime's failure notice closed it: failed, not answered by the agent.
+      const ended = noticed ? 'failed' : 'awaiting';
+      await waitFor(async () => Object.values((await store.read()).receipts).every((r) => r.state === ended), { timeoutMs: 3000 });
       await service.tick();
       await waitFor(async () => (await queue.list()).length === 0, { timeoutMs: 3000 });
       const receipt = Object.values((await store.read()).receipts)[0]!;
@@ -147,7 +149,7 @@ for (const shared of [false, true]) for (const outcome of ['completed', 'failed'
       assert.equal(injected, fault); assert.equal(runs, 1); assert.equal(appends, shared ? 1 : 0);
       assert.equal(notices.length, noticed ? 1 : 0, 'A crash gets one final notice despite a transient ownership write failure');
       if (noticed) assert.match(notices[0]!.content.body, outcome === 'failed' ? /model run failed/ : /interrupted/);
-      assert.equal(receipt.runItemId, actualRoot); assert.equal(receipt.answered === true, noticed);
+      assert.equal(receipt.runItemId, actualRoot); assert.equal(receipt.state, ended);
       assert.equal(receipt.item, undefined);
       const posts = fake.posts.length;
       await service.receive(created(), install); await service.tick();
@@ -187,10 +189,10 @@ for (const finish of ['late-reply', 'idle', 'stop'] as const) test(`an unanswere
   const runner = await startRunningAgent({ agentId: 'scout', agentRuntime: runtime, animaHome: home, stateDir: home,
     homePath: (await agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
   try {
-    await waitFor(async () => Object.values((await store.read()).receipts)[0]?.settled === true);
+    await waitFor(async () => Object.values((await store.read()).receipts)[0]?.state === 'awaiting');
     await waitFor(async () => (await queue.list()).length === 0);
     assert.equal(runs, 1);
-    assert.notEqual(Object.values((await store.read()).receipts)[0]!.answered, true);
+    assert.equal(Object.values((await store.read()).receipts)[0]!.state, 'awaiting');
     assert.deepEqual(fake.posts.map((p) => p.content.body), ['Received by Anima.', 'Started']);
     // Advance wall time, not timers or a real paid provider call.
     const now = Date.now(); t.mock.method(Date, 'now', () => now + 60 * 60_000);
@@ -264,13 +266,13 @@ for (const failedPublish of [false, true]) for (const stop of [false, true]) tes
     if (failedPublish) {
       assert.deepEqual(host.runningAgentIds(), ['scout'], 'Failed recovery publication must not prevent agent startup');
       await new Promise((resolve) => setTimeout(resolve, 30));
-      assert.notEqual((await store.read()).receipts[original.id]!.answered, true, 'A failed recovery publication leaves the request open');
+      assert.ok(isOpenRequest((await store.read()).receipts[original.id]!), 'A failed recovery publication leaves the request open');
       assert.equal(runs, 0);
       assert.deepEqual(fake.posts.filter((p) => p.content.type !== 'thought').map((p) => p.content.type), []);
       await host.reconcileOnce();
     }
     await waitFor(() => runs === 1);
-    assert.notEqual((await store.read()).receipts[original.id]!.answered, true);
+    assert.ok(isOpenRequest((await store.read()).receipts[original.id]!));
     assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0);
     if (stop) await service.receive(prompted(sessionId, true), install);
     finish();

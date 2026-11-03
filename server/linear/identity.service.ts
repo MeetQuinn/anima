@@ -11,6 +11,7 @@ import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.sto
 import { LinearListenerStore } from '../storage/schema/linear-listener.store.js';
 import { processAlive } from '../runtime/item-state.js';
 import { LinearApiError, LinearClient } from './client.js';
+import { isActiveRequest } from './receipt-state.js';
 
 // Linear can mark a session stale after 30 minutes without activity; use the same quiet period.
 const UNANSWERED_AFTER_MS = 30 * 60_000;
@@ -96,9 +97,8 @@ export class LinearIdentityService {
       const sessions = new Map<string, { unanswered: boolean; open: boolean; lastAt: number }>();
       for (const r of Object.values(file.receipts)) {
         const session = sessions.get(r.sessionId) ?? { unanswered: false, open: false, lastAt: 0 };
-        const pending = Boolean(r.itemId) && !r.answered && !r.stopped;
-        if (pending && r.settled) session.unanswered = true;
-        if (pending && !r.settled) session.open = true;
+        if (r.kind === 'request' && r.state === 'awaiting') session.unanswered = true;
+        if (isActiveRequest(r)) session.open = true;
         for (const at of [r.receivedAt, r.lastActivityAt]) if (at) session.lastAt = Math.max(session.lastAt, Date.parse(at));
         sessions.set(r.sessionId, session);
       }
