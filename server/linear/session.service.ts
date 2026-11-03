@@ -219,9 +219,9 @@ export class LinearSessionService {
         } else if (commentDelivered) receipt = { ...base, kind: 'comment', state: alreadyStopped ? 'stopped' : 'linked' };
         else if (selfDelegated) {
           // The caller is already working. Retain the same reply/Stop contract as
-          // a proactive start, without a queued request or a new Received activity.
+          // a proactive start, while the normal receipt keeps Linear responsive.
           receipt = { ...base, kind: 'request', state: alreadyStopped ? 'stopping' : 'awaiting',
-            itemId: item.id, runItemId: item.id, acknowledgement: 'accepted' };
+            itemId: item.id, runItemId: item.id };
         } else {
           receipt = { ...base, kind: 'request', state: alreadyStopped ? 'stopping' : 'received', itemId: item.id };
           if (!alreadyStopped) receipt.item = item;

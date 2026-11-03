@@ -46,7 +46,7 @@ class Delegations extends FakeLinear {
   }
 }
 
-test('self-delegation stays linked without a wake or receipt activity and the registered reply CLI works', async (t) => withTempAnimaHome(async (home) => {
+test('self-delegation is acknowledged once without a wake and the registered reply CLI works', async (t) => withTempAnimaHome(async (home) => {
   const fake = new Delegations(), { service, identity, store } = await seedLinear(home, fake);
   const event = fake.event(); delete event.agentSession.creatorId;
   await service.receive(event, install);
@@ -54,19 +54,23 @@ test('self-delegation stays linked without a wake or receipt activity and the re
   const receipt = (await store.read()).receipts[key]!;
   assert.equal(receipt.state, 'awaiting'); assert.equal(receipt.issueId, fake.origin.issue.id);
   assert.equal(receipt.commentId, fake.origin.comment.id, 'Linear also creates a session comment for self-delegation');
-  assert.equal(receipt.acknowledgement, 'accepted'); assert.equal(receipt.item, undefined);
+  assert.equal(receipt.acknowledgement, 'pending'); assert.equal(receipt.item, undefined);
   assert.ok((await store.read()).lastSignedWebhookAt);
   const restarted = new LinearSessionService(identity);
-  await restarted.receive(event, install); await restarted.tick();
+  await restarted.receive(event, install);
+  await Promise.all([restarted.tick(), service.tick()]);
+  await new LinearSessionService(identity).receive(event, install); await restarted.tick();
   assert.equal(fake.calls.filter((call) => call.query.includes('activities(last:')).length, 1, 'A durable receipt handles repeat delivery');
   assert.equal((await new WakeQueueService('scout').list()).length, 0);
-  assert.equal(fake.posts.length, 0, 'No Received, queued or executing activity');
+  assert.deepEqual(fake.posts.map((post) => post.content.body), ['Received by Anima.']);
+  assert.equal(fake.posts[0]!.ephemeral, true);
+  assert.equal((await store.read()).receipts[key]!.acknowledgement, 'accepted');
   t.mock.method(globalThis, 'fetch', fake.fetch);
   t.mock.getter(process, 'stdin', () => Readable.from(['Finished the self-delegated work']) as typeof process.stdin);
   t.mock.method(console, 'log', () => {});
   const command = new Command(); registerLinearCommands(command);
   await command.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'reply', '--to', `session:${fake.origin.id}`]);
-  assert.equal(fake.posts.length, 1); assert.equal(fake.posts[0]!.content.type, 'response');
+  assert.equal(fake.posts.length, 2); assert.equal(fake.posts[1]!.content.type, 'response');
   assert.equal((await store.read()).receipts[key]!.state, 'answered');
 }));
 

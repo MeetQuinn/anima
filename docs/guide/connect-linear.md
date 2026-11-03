@@ -198,7 +198,11 @@ An agent can also start work without a mention or delegation: `anima linear star
 opens a session and posts its initial progress from stdin. It can target an existing comment
 with `--comment <uuid>`. The session belongs to the app and shares the agent's current
 working context; a creation webhook matching the recorded session does not wake the agent again.
-If creation was uncertain and no session ID was recorded, the webhook follows normal intake. Human replies do.
+If creation was uncertain and no session ID was recorded, the webhook follows normal intake. Human replies still wake the agent.
+When the initial prompt identifies the app itself as the delegator, Anima sends
+**Received by Anima** and links the session without waking the agent again. Later human
+prompts in that session wake it normally. If the origin cannot be confirmed, the session
+follows normal intake.
 For longer work, the agent can send progress with `anima linear reply --kind thought`
 and send its final response in a later turn, for example after background work finishes.
 
