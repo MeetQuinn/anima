@@ -128,7 +128,7 @@ function failureText(check: PublicUrlCheck): string {
 }
 
 const SET_PASSWORD = (
-  <code className="break-all font-mono text-[11px] text-text-muted">{SET_PASSWORD_COMMAND}</code>
+  <code className="block break-words font-mono text-[11px] text-text-muted">{SET_PASSWORD_COMMAND}</code>
 );
 
 /**
