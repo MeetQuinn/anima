@@ -58,6 +58,7 @@ const groups = {
     'file-lines.test.js',
     'inbox.test.js',
     'linear-identity.test.js',
+    'linear-client-secret.test.js',
     'linear-setup.test.js',
     'linear-actions.test.js',
     'linear-intake.test.js',

@@ -39,11 +39,23 @@ export function defaultLinearAppName(agentName: string): string {
   return name.length >= 2 ? name : `Anima ${name || 'agent'}`;
 }
 
+/**
+ * Linear fetches the app icon itself, so only a public HTTPS image qualifies
+ * (no private hosts, credentials or signed query strings). Anything else is
+ * left out and the app is created without an icon.
+ */
+export function linearAppIconUrl(value: string | undefined): string | undefined {
+  const parsed = value ? PublicHttpsUrl.safeParse(value) : undefined;
+  return parsed?.success ? parsed.data : undefined;
+}
+
 export function linearAppCreationUrl(input: {
   name: string;
   callbackUrl: string;
   webhookUrl: string;
+  iconUrl?: string;
 }): string {
+  const iconUrl = linearAppIconUrl(input.iconUrl);
   const url = new URL('https://linear.app/settings/api/applications/new');
   url.searchParams.set(
     'manifest',
@@ -51,6 +63,7 @@ export function linearAppCreationUrl(input: {
       schemaVersion: '1.0.0',
       distribution: 'private',
       developer: { name: 'Anima' },
+      ...(iconUrl ? { display: { iconUrl } } : {}),
       oauth: {
         client_name: LinearAppName.parse(input.name),
         client_uri: 'https://github.com/MeetQuinn/anima',

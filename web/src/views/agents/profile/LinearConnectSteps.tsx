@@ -1,279 +1,359 @@
-import { useState, type FormEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { ExternalLink } from 'lucide-react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
+import { ArrowRight, Check, ExternalLink, Loader2 } from 'lucide-react';
 import { LinearInstallRequest } from '@shared/linear';
-import { defaultLinearAppName, linearAppCreationUrl, LinearAppName } from '@shared/linear-setup';
-import { fetchLinearSetup } from '@/api/linear';
-import { linearInputClass, linearSetupKey } from '@/components/LinearWebhookSettings';
-import { Button } from '@/components/ui/button';
+import {
+  defaultLinearAppName,
+  linearAppCreationUrl,
+  linearAppIconUrl,
+  LinearAppName,
+  type LinearSetup,
+} from '@shared/linear-setup';
+import { Button, buttonVariants } from '@/components/ui/button';
 
+type StepState = 'done' | 'active' | 'upcoming';
+
+/**
+ * Per-agent Linear connection: create (or reuse) an app, paste its three
+ * credentials, authorize. All three steps stay visible so the whole job is
+ * readable at a glance; later steps unlock as earlier ones finish. Machine
+ * plumbing (public address, forwarding) is not repeated here.
+ */
 export function LinearConnectSteps({
   agentName,
+  avatarUrl,
+  setup,
   busy,
   disabled,
-  onInstall,
   retrying = false,
+  error: serverError = '',
+  onInstall,
 }: {
   agentName: string;
+  /** The agent's avatar; used as the app icon when Linear can fetch it publicly. */
+  avatarUrl?: string;
+  setup: LinearSetup;
   busy: boolean;
   disabled: boolean;
+  /** A previous authorization failed: the app already exists, start at credentials. */
   retrying?: boolean;
+  /** Why the last attempt to start authorization failed, from the parent. */
+  error?: string;
   onInstall: (input: LinearInstallRequest) => Promise<void>;
 }) {
-  const setup = useQuery({ queryKey: linearSetupKey, queryFn: fetchLinearSetup, retry: false });
-  const [step, setStep] = useState<'create' | 'credentials'>(retrying ? 'credentials' : 'create');
+  const [appReady, setAppReady] = useState(retrying);
+  const [reusedApp, setReusedApp] = useState(retrying);
   const [name, setName] = useState(() => defaultLinearAppName(agentName));
-  const callback = setup.data?.callbackUrl ?? '';
+  const [renaming, setRenaming] = useState(false);
   const [clientId, setClientId] = useState('');
-  const [secret, setSecret] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [signingSecret, setSigningSecret] = useState('');
   const [error, setError] = useState('');
-  const [optionsOpen, setOptionsOpen] = useState(false);
+  const ids = useId();
   const validName = LinearAppName.safeParse(name).success;
+  const callback = setup.callbackUrl ?? '';
+  const iconUrl = linearAppIconUrl(avatarUrl);
   let creationUrl = '';
-  if (setup.data?.webhookUrl) {
+  if (setup.webhookUrl && validName) {
     try {
-      creationUrl = linearAppCreationUrl({
-        name,
-        callbackUrl: callback,
-        webhookUrl: setup.data.webhookUrl,
-      });
+      creationUrl = linearAppCreationUrl({ name, callbackUrl: callback, webhookUrl: setup.webhookUrl, iconUrl });
     } catch {
-      /* Editable fields are validated before opening Linear. */
+      /* An invalid name keeps the link hidden; the rename field explains why. */
     }
   }
+  const credentialsReady = Boolean(clientId.trim() && clientSecret.trim() && signingSecret.trim());
+  const clearSecrets = () => {
+    setClientSecret('');
+    setSigningSecret('');
+  };
+
   async function install(event: FormEvent) {
     event.preventDefault();
-    if (!setup.data || setup.isError) return;
     const parsed = LinearInstallRequest.safeParse({
       clientId: clientId.trim(),
-      signingSecret: secret.trim(),
+      clientSecret: clientSecret.trim(),
+      signingSecret: signingSecret.trim(),
       callbackUrl: callback,
-      listener: setup.data.listener,
+      listener: setup.listener,
     });
     if (!parsed.success) {
-      setError('Check the Client ID and Webhook signing secret.');
+      setError('Check the Client ID, Client secret and Webhook signing secret.');
       return;
     }
     setError('');
     try {
       await onInstall(parsed.data);
     } finally {
-      setSecret('');
+      clearSecrets();
     }
   }
-  if (setup.isPending)
-    return (
-      <p role="status" className="text-sm text-text-muted">
-        Loading machine settings…
-      </p>
-    );
-  if (!setup.data)
-    return (
-      <p role="alert" className="text-sm text-health-error">
-        Could not read machine settings.{' '}
-        <button
-          type="button"
-          className="min-h-[44px] underline md:min-h-[32px]"
-          onClick={() => void setup.refetch()}
-        >
-          Retry
-        </button>
-      </p>
-    );
-  if (!setup.data.publicUrl || !setup.data.callbackUrl)
-    return (
-      <div className="space-y-4">
-        <h3 className="font-serif text-[20px] font-semibold text-text">
-          Set your Anima public address first
-        </h3>
-        <p className="text-[13px] leading-relaxed text-text-muted">
-          Linear needs an HTTPS address to send requests and return after authorization. Set it once
-          in Server settings, then come back here. Every agent can use it.
-        </p>
-        <a
-          href="/settings/server#public-url"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex min-h-[44px] items-center rounded-sm bg-primary px-4 text-[13px] text-primary-foreground"
-        >
-          Open Server settings
-        </a>
-        <Button variant="ghost" className="text-[13px] font-normal" onClick={() => void setup.refetch()}>
-          Refresh settings
-        </Button>
-      </div>
-    );
+
+  const step1: StepState = appReady ? 'done' : 'active';
+  const step2: StepState = !appReady ? 'upcoming' : credentialsReady ? 'done' : 'active';
+  const step3: StepState = appReady && credentialsReady ? 'active' : 'upcoming';
+
   return (
-    <div className="space-y-5">
-      {setup.isError && (
-        <p role="alert" className="text-sm text-health-error">
-          Could not refresh machine settings.{' '}
-          <button
-            type="button"
-            className="min-h-[44px] underline md:min-h-[32px]"
-            onClick={() => void setup.refetch()}
-          >
-            Retry
-          </button>
+    <div className="space-y-6">
+      <header className="space-y-1.5">
+        <h3 className="font-serif text-[20px] font-semibold leading-tight text-text">
+          Connect {agentName} to Linear
+        </h3>
+        <p className="font-serif text-[14px] leading-relaxed text-text-muted">
+          {agentName} gets its own Linear app, so your team can mention it or delegate issues to it.
         </p>
-      )}
-      <ol
-        aria-label="Connection steps"
-        className="flex flex-wrap gap-x-5 gap-y-2 border-b border-border-soft pb-4 font-sans text-[12px] text-text-muted"
-      >
-        <li
-          aria-current={step === 'create' ? 'step' : undefined}
-          className={step === 'create' ? 'font-medium text-accent' : ''}
-        >
-          1. Create app
-        </li>
-        <li
-          aria-current={step === 'credentials' ? 'step' : undefined}
-          className={step === 'credentials' ? 'font-medium text-accent' : ''}
-        >
-          2. Connect
-        </li>
-        <li>3. Authorize</li>
-      </ol>
-      {step === 'create' ? (
-        <div className="space-y-4">
-          <div>
-            <h3 className="font-serif text-[20px] font-semibold text-text">
-              Give {agentName} a Linear identity
-            </h3>
-            <p className="mt-2 text-[13px] leading-relaxed text-text-muted">
-              Create a separate app for this agent. Its name, callback address and event
-              subscriptions are already filled in. Review them in Linear, then create the app.
-            </p>
-          </div>
-          <div className="rounded-sm border border-border-soft px-3 py-3">
-            <p className="text-[12px] text-text-muted">Anima public address</p>
-            <p className="mt-1 break-all font-mono text-[12px] text-text">{setup.data.publicUrl}</p>
-            <a
-              href="/settings/server#public-url"
-              target="_blank"
-              rel="noreferrer"
-              className="mt-1 inline-flex min-h-[44px] items-center text-[12px] text-accent underline md:min-h-[32px]"
-            >
-              Edit in Server settings
-            </a>
-            <dl className="mt-3 space-y-1 break-all text-[12px] text-text-muted">
-              <dt>Webhook URL</dt>
-              <dd className="font-mono">{setup.data.webhookUrl}</dd>
-              <dt>OAuth callback URL</dt>
-              <dd className="font-mono">{callback}</dd>
-            </dl>
-            <p className="mt-3 break-words text-[12px] leading-relaxed text-text-muted">
-              Forward /webhook to {setup.data.listener.host.includes(':') ? `[${setup.data.listener.host}]` : setup.data.listener.host}:{setup.data.listener.port}/webhook.
-              {' '}Forward /api/linear/oauth/callback to the dashboard’s loopback listener on its configured port.
-              Other dashboard routes can remain private.
-            </p>
-          </div>
-          <details
-            open={optionsOpen || !validName}
-            onToggle={(event) => setOptionsOpen(event.currentTarget.open)}
-          >
-            <summary className="cursor-pointer py-2 text-[12px] text-text-muted">App name</summary>
-            <div className="mt-2 space-y-3">
-              <label className="block">
-                <span className="mb-1 block text-[12px] text-text-muted">App name</span>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className={linearInputClass}
-                />
-              </label>
-            </div>
-          </details>
-          {!validName && (
-            <p role="alert" className="text-[13px] text-health-error">
-              Use a 2–80 character app name without “Linear” or a URL.
-            </p>
-          )}
-          <div className="flex flex-wrap items-center gap-3">
-            {creationUrl && !setup.isError && !disabled && (
-              <a
-                href={creationUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => setStep('credentials')}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-sm bg-primary px-4 text-[13px] text-primary-foreground"
+      </header>
+
+      <ol aria-label="Connection steps" className="space-y-0">
+        <Step n={1} state={step1} title={reusedApp ? 'Use your Linear app' : 'Create the app in Linear'}>
+          {appReady ? (
+            <p className="font-serif text-[13px] text-text-muted">
+              {reusedApp ? 'Using an app you already created.' : 'Opened in Linear.'}{' '}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setAppReady(false);
+                  setReusedApp(false);
+                  clearSecrets();
+                }}
+                className="inline-flex min-h-11 items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
               >
-                Create app in Linear <ExternalLink className="size-3.5" />
-              </a>
-            )}
-            <Button
-              variant="ghost"
-              className="text-[13px] font-normal"
-              disabled={disabled || setup.isError || !creationUrl}
-              onClick={() => setStep('credentials')}
-            >
-              I already have an app
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <form onSubmit={(event) => void install(event)} className="space-y-4">
-          <h3 className="font-serif text-[20px] font-semibold text-text">Connect your app</h3>
-          {retrying && <p className="text-[13px] leading-relaxed text-text-muted">Use your existing Linear app. Enter its Client ID and signing secret again, then prepare a new authorization.</p>}
-          <p className="text-[13px] leading-relaxed text-text-muted">
-            In the Linear app settings, copy the Client ID and Webhook signing secret below. You’ll
-            then authorize access in Linear. To work across the workspace, choose all available
-            teams there. Linear asks which teams the agent can access. Workspace admins can change this later in Linear.
-          </p>
-          <label className="block">
-            <span className="mb-1 block text-[12px] text-text-muted">Client ID</span>
-            <input
-              required
-              disabled={busy}
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className={linearInputClass}
-              autoComplete="off"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-[12px] text-text-muted">Webhook signing secret</span>
-            <input
-              type="password"
-              required
-              disabled={busy}
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              className={linearInputClass}
-              autoComplete="new-password"
-            />
-          </label>
-          <p className="text-[12px] text-text-muted">
-            The signing secret is stored in your Anima home and is not shown again.
-          </p>
-          {error && (
-            <p role="alert" className="text-[13px] text-health-error">
-              {error}
+                Change
+              </button>
             </p>
+          ) : (
+            <div className="space-y-3">
+              <p className="font-serif text-[13px] leading-relaxed text-text-muted">
+                Linear opens with everything filled in. Check it and click <strong className="font-semibold text-text">Create</strong>.
+              </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {creationUrl && !disabled ? (
+                  <a
+                    href={creationUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => setAppReady(true)}
+                    className={buttonVariants({ className: 'h-11 gap-2 px-4 text-[13px] md:h-10' })}
+                  >
+                    Create app in Linear <ExternalLink className="size-3.5" aria-hidden="true" />
+                  </a>
+                ) : (
+                  <span aria-disabled="true" className={buttonVariants({ className: 'h-11 px-4 text-[13px] opacity-50 md:h-10' })}>
+                    Create app in Linear
+                  </span>
+                )}
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    setReusedApp(true);
+                    setAppReady(true);
+                  }}
+                  className="inline-flex min-h-11 items-center font-sans text-[13px] text-text-muted underline decoration-text-subtle/50 underline-offset-2 hover:text-text disabled:opacity-50 md:min-h-8"
+                >
+                  I already have one
+                </button>
+              </div>
+              {renaming || !validName ? (
+                <div className="max-w-sm space-y-1">
+                  <label htmlFor={`${ids}-name`} className="block font-sans text-[12px] text-text-muted">
+                    App name in Linear
+                  </label>
+                  <input
+                    id={`${ids}-name`}
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    aria-invalid={!validName || undefined}
+                    aria-describedby={!validName ? `${ids}-name-error` : undefined}
+                    className={inputClass}
+                  />
+                  {!validName && (
+                    <p id={`${ids}-name-error`} role="alert" className="font-sans text-[12px] text-health-error">
+                      Use 2–80 characters, without “Linear” or a URL.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="flex flex-wrap items-center gap-x-1.5 font-sans text-[12px] text-text-subtle">
+                  {iconUrl && <img src={iconUrl} alt="" className="size-5 shrink-0 rounded-full object-cover" />}
+                  <span>
+                    Named <span className="text-text-muted">{name}</span> in Linear
+                    {iconUrl ? ', with this avatar.' : '.'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRenaming(true)}
+                    className="inline-flex min-h-11 items-center underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
+                  >
+                    Rename
+                  </button>
+                </p>
+              )}
+            </div>
           )}
-          <div className="flex flex-wrap gap-3">
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => {
-                setSecret('');
-                setStep('create');
-              }}
-            >
-              Back
-            </Button>
-            <Button
-              type="submit"
-              className="min-h-[44px]"
-              disabled={busy || disabled || setup.isError}
-            >
-              {busy ? 'Preparing…' : 'Prepare authorization'}
-            </Button>
-          </div>
+        </Step>
+
+        <form id={`${ids}-form`} onSubmit={(event) => void install(event)} className="contents">
+          <Step n={2} state={step2} title="Copy its credentials">
+            {appReady && (
+              <div className="space-y-3">
+                <p className="font-serif text-[13px] leading-relaxed text-text-muted">
+                  {retrying
+                    ? 'Enter them again from your app’s page in Linear. The secrets are not kept after a failed attempt.'
+                    : 'All three are on the app’s page in Linear, right after you create it.'}
+                </p>
+                <div className="space-y-3">
+                  <div className="min-w-0 space-y-1">
+                    <label htmlFor={`${ids}-client`} className="block font-sans text-[12px] text-text-muted">
+                      Client ID
+                    </label>
+                    <input
+                      id={`${ids}-client`}
+                      required
+                      disabled={busy}
+                      value={clientId}
+                      onChange={(event) => setClientId(event.target.value)}
+                      {...notACredentialField}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-1">
+                    <label htmlFor={`${ids}-client-secret`} className="block font-sans text-[12px] text-text-muted">
+                      Client secret
+                    </label>
+                    <input
+                      id={`${ids}-client-secret`}
+                      required
+                      disabled={busy}
+                      value={clientSecret}
+                      onChange={(event) => setClientSecret(event.target.value)}
+                      {...notACredentialField}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-1">
+                    <label htmlFor={`${ids}-secret`} className="block font-sans text-[12px] text-text-muted">
+                      Webhook signing secret
+                    </label>
+                    <input
+                      id={`${ids}-secret`}
+                      required
+                      disabled={busy}
+                      value={signingSecret}
+                      onChange={(event) => setSigningSecret(event.target.value)}
+                      {...notACredentialField}
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+                <p className="font-sans text-[11px] text-text-subtle">
+                  Both secrets are stored on this machine and never shown again.
+                </p>
+              </div>
+            )}
+          </Step>
+
+          <Step n={3} state={step3} title="Authorize" last>
+            {appReady && (
+              <div className="space-y-3">
+                <p className="font-serif text-[13px] leading-relaxed text-text-muted">
+                  Linear asks which teams {agentName} can access. Choose all available teams for
+                  workspace-wide work; workspace admins can change this later in Linear.
+                </p>
+                {(error || serverError) && (
+                  <p role="alert" className="font-sans text-[12px] leading-relaxed text-health-error">
+                    {error || serverError}
+                  </p>
+                )}
+                <Button
+                  type="submit"
+                  disabled={busy || disabled || !credentialsReady}
+                  className="h-11 gap-2 px-4 text-[13px] md:h-10"
+                >
+                  {busy ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> Opening Linear…
+                    </>
+                  ) : (
+                    <>
+                      Authorize in Linear <ArrowRight className="size-3.5" aria-hidden="true" />
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+          </Step>
         </form>
-      )}
+      </ol>
     </div>
+  );
+}
+
+/**
+ * These values are pasted from Linear, not remembered by the user. A password
+ * input makes browsers offer saved or generated passwords whatever
+ * `autocomplete` says, so secrets are plain text fields (visible while
+ * pasting, cleared on submit) and password-manager extensions are told to
+ * skip them.
+ */
+export const notACredentialField = {
+  type: 'text',
+  autoComplete: 'off',
+  spellCheck: false,
+  'data-1p-ignore': true,
+  'data-lpignore': 'true',
+  'data-bwignore': true,
+  'data-form-type': 'other',
+} as const;
+
+export const inputClass =
+  'h-11 w-full min-w-0 rounded-sm border border-border-soft bg-surface-raised px-3 font-mono text-[13px] text-text outline-none placeholder:font-sans placeholder:text-text-subtle focus-visible:border-accent aria-invalid:border-health-error/60 disabled:cursor-not-allowed disabled:opacity-60 md:h-10';
+
+function Step({
+  n,
+  state,
+  title,
+  last = false,
+  children,
+}: {
+  n: number;
+  state: StepState;
+  title: string;
+  last?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <li
+      aria-current={state === 'active' ? 'step' : undefined}
+      className={`relative grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3.5 ${last ? '' : 'pb-6'}`}
+    >
+      {!last && (
+        <span
+          aria-hidden="true"
+          className={`absolute bottom-0 left-[0.75rem] top-7 w-px -translate-x-1/2 ${state === 'done' ? 'bg-health-ok/40' : 'bg-border-soft'}`}
+        />
+      )}
+      <span
+        aria-hidden="true"
+        className={[
+          'relative mt-px flex size-6 items-center justify-center rounded-full border font-sans text-[11px] font-semibold',
+          state === 'done'
+            ? 'border-health-ok bg-health-ok-soft text-health-ok'
+            : state === 'active'
+              ? 'border-text bg-surface text-text'
+              : 'border-border-soft bg-surface text-text-subtle',
+        ].join(' ')}
+      >
+        {state === 'done' ? <Check className="size-3.5" /> : n}
+      </span>
+      <div className="min-w-0 space-y-2">
+        <h4
+          className={`font-serif text-[15px] font-semibold leading-6 ${state === 'upcoming' ? 'text-text-subtle' : 'text-text'}`}
+        >
+          <span className="sr-only">Step {n}{state === 'done' ? ', done' : ''}: </span>
+          {title}
+        </h4>
+        {children}
+      </div>
+    </li>
   );
 }

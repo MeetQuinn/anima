@@ -25,7 +25,7 @@ async function settledRequest(service: LinearSessionService, session = sessionId
   return item;
 }
 
-for (const kind of ['response', 'link'] as const) for (const failure of ['401', '500', 'network', 'invalid-json', 'partial'] as const) {
+for (const kind of ['response', 'link'] as const) for (const failure of ['401', '400', '500', 'network', 'invalid-json', 'partial'] as const) {
   test(`Linear ${kind} preserves explicit retry only after a confirmed rejection: ${failure}`, async () => withTempAnimaHome(async (home) => {
     const fake = new FakeLinear(), fetch = fake.fetch;
     let attempts = 0;
@@ -42,7 +42,7 @@ for (const kind of ['response', 'link'] as const) for (const failure of ['401', 
           assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${install.accessToken}`);
           await store.update((file) => ({ ...file, installation: { ...file.installation!, expiresAt: 0 } }));
           await setup.identity.credentials();
-          if (failure === '401' || failure === '500') return new Response('{}', { status: Number(failure) });
+          if (failure === '401' || failure === '400' || failure === '500') return new Response('{}', { status: Number(failure) });
           if (failure === 'network') throw new Error('synthetic response lost');
           if (failure === 'invalid-json') return new Response('{');
           const accepted = await fetch(url, init);

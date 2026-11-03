@@ -9,7 +9,7 @@ import type { LinearWebhook } from '../../linear/webhook.js';
 import { linearQueryErrors } from './linear-schema.js';
 
 export const install: LinearInstallation = { id: randomUUID(), clientId: 'a123456789012345678901234567890b5', organizationId: randomUUID(), appUserId: randomUUID(),
-  workspaceName: 'Synthetic workspace', signingSecret: 'synthetic-signing-secret-sentinel', accessToken: 'synthetic-access-sentinel', refreshToken: 'synthetic-refresh-sentinel', expiresAt: Date.now() + 24 * 60 * 60_000, revoked: false };
+  workspaceName: 'Synthetic workspace', signingSecret: 'synthetic-signing-secret-sentinel', clientSecret: 'synthetic-client-secret-sentinel', accessToken: 'synthetic-access-sentinel', refreshToken: 'synthetic-refresh-sentinel', expiresAt: Date.now() + 24 * 60 * 60_000, revoked: false };
 export const sessionId = randomUUID();
 export const created = (session: string = sessionId): Extract<LinearWebhook, { type: 'AgentSessionEvent' }> => ({ type: 'AgentSessionEvent', action: 'created',
   organizationId: install.organizationId, oauthClientId: install.clientId, appUserId: install.appUserId, webhookTimestamp: Date.now(),
@@ -31,10 +31,33 @@ export class FakeLinear {
   issueState = 'unstarted';
   issueDelegate: string | null = install.appUserId;
   tokenGate?: Promise<void>;
+  /** Grant types of token requests and whether each carried a client secret / PKCE verifier. */
+  tokenRequests: Array<{ grant: string | null; clientSecret: boolean; verifier: boolean }> = [];
+  /** Linear's observed behavior (Nov 2026): a code exchange without the app's secret is invalid_client. */
+  exchangeRequiresSecret = true;
+  /** Unverified for refresh; tests choose. */
+  refreshRequiresSecret = false;
+  /** The app's real secret; any other value is invalid_client. */
+  clientSecret = install.clientSecret!;
+  /** Forces the next refresh outcome. */
+  refreshFailure?: 'invalid_grant' | 'server_error' | 'unreadable' | 'network';
   fetch: typeof fetch = async (url, init) => {
     if (String(url).endsWith('/oauth/token')) {
       this.tokenCalls++;
       await this.tokenGate;
+      const form = new URLSearchParams(init?.body as URLSearchParams);
+      const grant = form.get('grant_type'), secret = form.get('client_secret');
+      this.tokenRequests.push({ grant, clientSecret: secret !== null, verifier: form.has('code_verifier') });
+      const oauthError = (error: string) => new Response(JSON.stringify({ error, error_description: 'private-description-sentinel' }), { status: 400 });
+      const required = grant === 'refresh_token' ? this.refreshRequiresSecret : this.exchangeRequiresSecret;
+      if ((secret === null && required) || (secret !== null && secret !== this.clientSecret)) return oauthError('invalid_client');
+      if (grant === 'refresh_token' && this.refreshFailure) {
+        const failure = this.refreshFailure;
+        if (failure === 'network') throw new TypeError('fetch failed');
+        if (failure === 'invalid_grant') return oauthError('invalid_grant');
+        if (failure === 'server_error') return new Response('private-upstream-sentinel', { status: 503 });
+        return new Response('not json', { status: 200 });
+      }
       return new Response(JSON.stringify({ access_token: 'new-access-sentinel', refresh_token: 'new-refresh-sentinel', expires_in: 86400 }), { status: 200 });
     }
     const { query, variables } = JSON.parse(String(init?.body));

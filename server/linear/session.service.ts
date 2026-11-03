@@ -7,7 +7,7 @@ import { nowIso } from '../ids.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { withFileLock } from '../storage/lock.js';
 import type { LinearInstallation, LinearOperation, LinearReceipt } from '../storage/schema/linear.store.js';
-import { LinearIdentityService } from './identity.service.js';
+import { LinearIdentityService, linearRequestNotSent } from './identity.service.js';
 import { LinearApiError } from './client.js';
 import type { LinearWebhook } from './webhook.js';
 
@@ -499,12 +499,13 @@ export class LinearSessionService {
   }
 
   private async recordWriteFailure(installId: string, key: string, operation: LinearOperation, error: unknown): Promise<void> {
-    if (!(error instanceof LinearApiError) || error.status !== 401) {
+    // The write was never sent (its credential could not be obtained), or Linear
+    // answered HTTP 401: it was not applied. Release its intent for a later
+    // explicit retry. Network, 5xx and partial GraphQL results remain unknown.
+    if (!linearRequestNotSent(error) && !(error instanceof LinearApiError && error.status === 401)) {
       await this.saveOperation(installId, key, { ...operation, state: 'unknown' });
       return;
     }
-    // HTTP 401 confirms this write was not applied. Release its intent for a
-    // later explicit retry; network/5xx/partial GraphQL results remain unknown.
     await this.identity.store.update((file) => {
       if (file.installation?.id !== installId || file.operations[key]?.id !== operation.id
         || file.operations[key]?.state === 'accepted') return file;

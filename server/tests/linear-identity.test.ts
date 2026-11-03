@@ -12,7 +12,7 @@ import { LinearStore } from '../storage/schema/linear.store.js';
 import { withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
 import { FakeLinear, install, seedLinear } from './helpers/linear.js';
 
-const request = { clientId: install.clientId, signingSecret: install.signingSecret, callbackUrl: 'http://localhost:14174/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14175 } };
+const request = { clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'http://localhost:14174/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14175 } };
 
 test('Linear dashboard OAuth uses app actor, single-use PKCE state and private atomic credentials', async () => withTempAnimaHome(async (home) => {
   await writeAgentConfigs(home, [{ id: 'scout' } as any]);

@@ -8,13 +8,17 @@ import { AGENT_ID } from './agent.store.js';
 
 const Installation = z.object({
   id: z.string(), clientId: z.string(), signingSecret: z.string(),
+  // Optional: installations made before Linear required it have none.
+  clientSecret: z.string().optional(),
+  // Linear answered invalid_client on refresh; tokens are kept.
+  clientRejected: z.boolean().optional(),
   organizationId: z.string(), appUserId: z.string(), accessToken: z.string(),
   workspaceName: z.string().trim().min(1).max(256).optional(),
   refreshToken: z.string(), expiresAt: z.number(), revoked: z.boolean(),
 });
 export type LinearInstallation = z.infer<typeof Installation>;
 const PendingOAuth = z.object({
-  id: z.string(), clientId: z.string(), signingSecret: z.string(),
+  id: z.string(), clientId: z.string(), signingSecret: z.string(), clientSecret: z.string().optional(),
   callbackUrl: z.string(), returnUrl: z.string().url().optional(), verifier: z.string(), binding: z.string(), expiresAt: z.number(),
 });
 const Receipt = z.object({

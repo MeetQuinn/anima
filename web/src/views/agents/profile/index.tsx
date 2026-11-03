@@ -19,8 +19,9 @@ import { useNow } from '@/hooks/useNow';
 import { providerCatalogForAvailability } from '@/lib/provider-availability';
 
 import { providerCatalog } from '@shared/provider-catalog';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { formatRelative, shortIso } from '@/lib/format';
+import { agentAvatarUrl } from '@/lib/agent-avatar';
 import { EditAffordance, Field, ReadonlyValue, Section } from './Primitives';
 import { HomeRow, TeamRow } from './AgentFields';
 import { RuntimeRow } from './RuntimeField';
@@ -53,6 +54,7 @@ function FeishuMeta({ label, value }: { label: string; value?: string }) {
 export default function Profile() {
   const containerRef = useRef<HTMLDivElement>(null);
   const { agentId } = useParams<{ agentId: string }>();
+  const linearReturn = useLinearReturn(agentId);
 
   useEffect(() => {
     containerRef.current?.scrollTo(0, 0);
@@ -443,7 +445,13 @@ export default function Profile() {
                 )}
               </Field>
             )}
-            <LinearRow key={agentId} agentId={agentId} agentName={agent.profile.displayName || agentId} />
+            <LinearRow
+              key={agentId}
+              agentId={agentId}
+              agentName={agent.profile.displayName || agentId}
+              avatarUrl={agentAvatarUrl(agent)}
+              initialOpen={linearReturn}
+            />
           </div>
           {slackConnected && (
             <div className="mt-4">
@@ -534,4 +542,21 @@ export default function Profile() {
       </div>
     </div>
   );
+}
+
+/**
+ * Anima's Linear completion page lands on `?linear=<outcome>`. The param only
+ * opens the Linear dialog; what it shows is always read from the server.
+ */
+function useLinearReturn(agentId: string | undefined): boolean {
+  const [params, setParams] = useSearchParams();
+  // Remember which agent the return was for, so switching agents doesn't reopen it.
+  const [returnedFor] = useState(() => (params.has('linear') ? agentId : undefined));
+  useEffect(() => {
+    if (!params.has('linear')) return;
+    const next = new URLSearchParams(params);
+    next.delete('linear');
+    setParams(next, { replace: true });
+  }, [params, setParams]);
+  return returnedFor !== undefined && returnedFor === agentId;
 }

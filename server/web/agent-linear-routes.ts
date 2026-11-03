@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { LinearSetupRequest } from '../../shared/linear-setup.js';
-import { LinearInstallRequest } from '../../shared/linear.js';
+import { LinearClientSecretRequest, LinearInstallRequest } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSetupService } from '../linear/setup.service.js';
 import { defaultDashboardAuthService, cookieValue, DASHBOARD_AUTH_COOKIE } from '../settings/dashboard-auth.service.js';
+import { sendLinearCompletionPage, sendLinearRetryPage } from './linear-completion-page.js';
 
 const Callback = z.object({ state: z.string().min(1).max(256), code: z.string().min(1).max(4096).optional(), error: z.string().min(1).max(256).optional() }).refine((v) => Boolean(v.code) !== Boolean(v.error));
 const bindingFor = (cookie: string | undefined) => createHash('sha256').update(cookie ?? 'local-dashboard').digest('hex');
@@ -35,14 +36,30 @@ export function registerAgentLinearRoutes(app: FastifyInstance): void {
     return new LinearIdentityService(request.params.agentId).begin(input,
       bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)), new URL('/api/linear/oauth/complete', origin).href);
   });
+  // Authenticated and same-origin like every dashboard write (cross-site write
+  // guard). Bound to the installation the dialog showed; nothing else is taken
+  // from the client.
+  app.post<{ Params: { agentId: string } }>('/api/agents/:agentId/linear/client-secret', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const input = LinearClientSecretRequest.parse(request.body);
+    return { result: await new LinearIdentityService(request.params.agentId).saveClientSecret(input.installationId, input.clientSecret) };
+  });
   app.delete<{ Params: { agentId: string } }>('/api/agents/:agentId/linear', async (request) => {
     await new LinearIdentityService(request.params.agentId).remove();
     return { removed: true };
   });
   app.get('/api/linear/oauth/callback', async (request, reply) => {
     reply.header('cache-control', 'no-store').header('referrer-policy', 'no-referrer');
-    const callback = Callback.parse(request.query);
-    const returnUrl = await LinearIdentityService.callbackReturnUrl(callback.state);
+    const parsed = Callback.safeParse(request.query);
+    if (!parsed.success) return sendLinearRetryPage(reply, false);
+    const callback = parsed.data;
+    let returnUrl: string | undefined;
+    try {
+      returnUrl = await LinearIdentityService.callbackReturnUrl(callback.state);
+    } catch {
+      // Unknown, removed or expired state: the public relay names nothing.
+      return sendLinearRetryPage(reply, false);
+    }
     if (returnUrl) {
       const target = new URL(returnUrl);
       target.searchParams.set('state', callback.state);
@@ -53,21 +70,22 @@ export function registerAgentLinearRoutes(app: FastifyInstance): void {
     // Pending attempts created before the public callback relay still require
     // their original dashboard cookie. Remove and prepare again if it expired.
     if (!(await defaultDashboardAuthService.isRequestAuthenticated(request.headers))) return reply.code(401).send({ error: 'authentication_required' });
-    await LinearIdentityService.finishCallback(callback.state, callback.code,
-      bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)));
-    return reply.type('text/plain').send(callback.code ? 'Linear app installed. Close this tab and return to Anima.' : 'Authorization was declined. Return to Anima to try again.');
+    return finishAndReturn(reply, callback, cookieValue(request.headers, DASHBOARD_AUTH_COOKIE));
   });
   app.get('/api/linear/oauth/complete', async (request, reply) => {
     reply.header('cache-control', 'no-store').header('referrer-policy', 'no-referrer');
-    const callback = Callback.parse(request.query);
-    try {
-      await LinearIdentityService.finishCallback(callback.state, callback.code,
-        bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)));
-    } catch {
-      return reply.code(400).type('text/plain').send('Authorization could not finish. Return to Anima to see the error and prepare authorization again using your existing app.');
-    }
-    return reply.type('text/plain').send(callback.code
-      ? 'Linear app installed. Close this tab and return to Anima.'
-      : 'Authorization was declined. Close this tab and return to Anima to try again.');
+    const parsed = Callback.safeParse(request.query);
+    if (!parsed.success) return sendLinearRetryPage(reply, true);
+    return finishAndReturn(reply, parsed.data, cookieValue(request.headers, DASHBOARD_AUTH_COOKIE));
   });
+}
+
+async function finishAndReturn(reply: FastifyReply, callback: z.infer<typeof Callback>, cookie: string | undefined) {
+  try {
+    const { agentId, outcome } = await LinearIdentityService.finishCallback(callback.state, callback.code, bindingFor(cookie));
+    return sendLinearCompletionPage(reply, agentId, outcome);
+  } catch {
+    // Not tied to an attempt in this session: never guess an agent.
+    return sendLinearRetryPage(reply, true);
+  }
 }
