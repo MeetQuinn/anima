@@ -205,8 +205,10 @@ dialog asks for the secret. Select **Add** (or **Replace** for a stored secret t
 no longer accepts), paste the **Client secret** from the app's page in Linear and select
 **Save**. Anima checks it by renewing access with Linear and stores the secret only together
 with the renewed tokens. A secret Linear rejects, an unreachable or failing Linear, or a
-renewal whose result could not be stored leaves everything as it was, and the dialog says
-which happened. If Linear answers `invalid_grant`, authorize again.
+renewal whose result could not be stored leaves the stored connection unchanged, and the
+dialog says which happened. If a renewal could not be stored, Linear may already have
+replaced the old tokens: try again, and authorize again if Linear has ended the
+authorization. If Linear answers `invalid_grant`, authorize again.
 
 Runtime credentials are separate from provider launch environments, prompts and public API
 responses. The credential file uses mode `0600`. This protects it from other OS users, not

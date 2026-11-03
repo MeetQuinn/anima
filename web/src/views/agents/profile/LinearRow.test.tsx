@@ -504,9 +504,12 @@ it.each([
   ['rejected', 'Linear didn’t accept this Client secret. Check that it belongs to the app with this Client ID.'],
   ['expired', 'Linear no longer accepts this authorization. Authorize again to reconnect.'],
   ['unavailable', 'Couldn’t check it with Linear. Nothing was saved; try again later.'],
-  ['unsaved', 'Saving didn’t finish, so nothing was stored. Try again; if Linear then asks, authorize again.'],
+  [
+    'unsaved',
+    'Anima couldn’t store Linear’s answer, so nothing was saved. Try again. If Linear has ended this authorization, you’ll be asked to authorize again.',
+  ],
   ['changed', 'This connection changed meanwhile, so nothing was saved.'],
-  ['request failed', 'Couldn’t save it. Nothing was stored; try again.'],
+  ['request failed', 'Couldn’t save it. Try again.'],
 ] as const)('a secret that was not saved (%s) says why and keeps nothing typed', async (result, message) => {
   api.status.mockResolvedValue({ ...connected, clientSecretSaved: false });
   if (result === 'request failed') api.saveSecret.mockRejectedValue(new Error('private-failure-sentinel'));
@@ -517,9 +520,12 @@ it.each([
   fireEvent.click(within(dialog).getByRole('button', { name: 'Add Client secret' }));
   const input = within(dialog).getByLabelText('Client secret') as HTMLInputElement;
   fireEvent.change(input, { target: { value: 'synthetic-client-secret-sentinel' } });
+  const reads = api.status.mock.calls.length;
   fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
   const alert = await within(dialog).findByRole('alert');
   expect(alert.textContent).toBe(message);
+  // Every outcome, including a lost answer, re-reads what is actually stored.
+  await waitFor(() => expect(api.status.mock.calls.length).toBeGreaterThan(reads));
   // Only Linear's invalid_client answer may call the secret wrong.
   if (result !== 'rejected') expect(alert.textContent).not.toMatch(/accept this Client secret|wrong|incorrect|invalid/i);
   expect(input.value).toBe('');
@@ -560,4 +566,48 @@ it.each([
   expect(alert.textContent).not.toMatch(/disconnected|broken|revoked/i);
   expect(within(dialog).getByRole('button', { name: `${action} Client secret` })).toBeTruthy();
   expect(within(dialog).getByRole('heading', { name: 'Connected to Demo workspace' })).toBeTruthy();
+  // The header must not promise work the alert says can't happen.
+  const header = within(dialog).getByRole('heading', { name: 'Connected to Demo workspace' }).closest('header')!;
+  expect(header.textContent).toContain('Scout can’t work in Linear until Linear accepts this app’s credentials.');
+  expect(header.textContent).not.toContain('Mention');
+  expect(header.querySelector('.text-health-ok')).toBeNull();
+  expect(header.querySelector('.text-health-error svg')).toBeTruthy();
+});
+
+it('a lost answer for a secret Linear still rejects asks to try again', async () => {
+  api.status.mockResolvedValue({ ...connected, clientRejected: true });
+  api.saveSecret.mockRejectedValue(new Error('private-failure-sentinel'));
+  mount();
+  await screen.findByText('Credentials not accepted');
+  const dialog = await openDialog('Manage');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Replace Client secret' }));
+  fireEvent.change(within(dialog).getByLabelText('Client secret'), { target: { value: 'synthetic-client-secret-sentinel' } });
+  const reads = api.status.mock.calls.length;
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  expect(await within(dialog).findByText('Couldn’t save it. Try again.')).toBeTruthy();
+  expect(api.status.mock.calls.length).toBeGreaterThan(reads);
+  expect((within(dialog).getByLabelText('Client secret') as HTMLInputElement).value).toBe('');
+  expect(dialog.textContent).not.toContain('private-failure-sentinel');
+});
+
+it('a save whose answer is lost shows what was actually stored', async () => {
+  api.status.mockResolvedValue({ ...connected, clientSecretSaved: false });
+  api.saveSecret.mockImplementation(async () => {
+    // The server stored the secret, but its answer never arrived.
+    api.status.mockResolvedValue({ ...connected, clientSecretSaved: true });
+    throw new Error('private-failure-sentinel');
+  });
+  mount();
+  await screen.findByText('Demo workspace');
+  const dialog = await openDialog('Manage');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add Client secret' }));
+  fireEvent.change(within(dialog).getByLabelText('Client secret'), { target: { value: 'synthetic-client-secret-sentinel' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  const fact = within(dialog).getByText('Client secret', { selector: 'dt' }).nextElementSibling!;
+  // Stored and accepted: nothing to try again, and no claim that it failed.
+  await waitFor(() => expect(fact.textContent).toBe('Stored on this machine'));
+  expect(within(dialog).queryByLabelText('Client secret')).toBeNull();
+  expect(within(dialog).queryByRole('alert')).toBeNull();
+  expect(dialog.textContent).not.toMatch(/Couldn’t save|Nothing was (stored|saved)/);
+  expect(dialog.textContent).not.toContain('private-failure-sentinel');
 });

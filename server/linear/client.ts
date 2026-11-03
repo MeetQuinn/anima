@@ -22,10 +22,13 @@ export class LinearClient {
       });
     } catch { throw new LinearApiError('Linear token request failed; retry installation or inspect the connection.', false, undefined, 'network'); }
     if (!response.ok) {
-      const parsed = OAuthErrorCode.safeParse(((await response.json().catch(() => undefined)) as { error?: unknown } | undefined)?.error);
-      const oauthError = parsed.success ? parsed.data : undefined;
-      // Only an explicit invalid_grant means the grant is gone. invalid_client,
-      // other codes, 5xx and unreadable bodies keep the installation and tokens.
+      // A token rejection is HTTP 400, or 401 for client authentication (RFC 6749
+      // section 5.2). Only then is its error code read; 5xx and any other status
+      // keep the installation and tokens whatever the body says.
+      const rejection = response.status === 400 || response.status === 401;
+      const parsed = rejection ? OAuthErrorCode.safeParse(((await response.json().catch(() => undefined)) as { error?: unknown } | undefined)?.error) : undefined;
+      const oauthError = parsed?.success ? parsed.data : undefined;
+      // Of those, only an explicit invalid_grant means the grant is gone.
       throw new LinearApiError('Linear token request was rejected.', oauthError === 'invalid_grant', response.status, 'http', oauthError);
     }
     try { return Tokens.parse(await response.json()); }

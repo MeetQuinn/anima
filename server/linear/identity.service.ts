@@ -317,7 +317,9 @@ export class LinearIdentityService {
   }
 
   async graphql<T>(installationId: string, query: string, variables: Record<string, unknown>, schema: z.ZodType<T>, operationName?: string): Promise<T> {
-    const { accessToken } = await this.credentials(installationId);
+    let accessToken: string;
+    try { ({ accessToken } = await this.credentials(installationId)); }
+    catch (error) { markNotSent(error); throw error; }
     try {
       return await this.client.graphql(accessToken, query, variables, schema, operationName);
     } catch (error) {
@@ -328,6 +330,12 @@ export class LinearIdentityService {
     }
   }
 }
+
+// Errors raised while getting a request's credential, before anything was sent to
+// Linear. The error itself is passed on unchanged.
+const notSent = new WeakSet<object>();
+function markNotSent(error: unknown): void { if (typeof error === 'object' && error !== null) notSent.add(error); }
+export function linearRequestNotSent(error: unknown): boolean { return typeof error === 'object' && error !== null && notSent.has(error); }
 
 export interface LinearCredentials {
   installationId: string;

@@ -11,7 +11,8 @@ import { redactAgentConfig } from '../agents/agent-config-ops.js';
 import { buildWebApp } from '../web/app.js';
 import { defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
 import { withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
-import { FakeLinear, install, seedLinear } from './helpers/linear.js';
+import { FakeLinear, created, install, seedLinear, sessionId } from './helpers/linear.js';
+import { WakeQueueService } from '../inbox/wake-queue.service.js';
 
 const request = { clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'http://localhost:14174/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14175 } };
 // Values that must never leave the private Linear store: the app secret and
@@ -130,6 +131,11 @@ const unknownRefreshFailures = {
   'unknown 401': (fake: FakeLinear) => wrapRefresh(fake, () => new Response('private-upstream-sentinel', { status: 401 })),
   'unlisted code': (fake: FakeLinear) => wrapRefresh(fake, () => new Response(JSON.stringify({ error: 'private-description-sentinel' }), { status: 400 })),
   invalid_request: (fake: FakeLinear) => wrapRefresh(fake, () => new Response(JSON.stringify({ error: 'invalid_request', error_description: 'private-description-sentinel' }), { status: 400 })),
+  // A code is read only from a token rejection (400/401), never from a 5xx or other status.
+  '503 invalid_grant': (fake: FakeLinear) => wrapRefresh(fake, () => new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'private-description-sentinel' }), { status: 503 })),
+  '500 invalid_grant': (fake: FakeLinear) => wrapRefresh(fake, () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 500 })),
+  '403 invalid_grant': (fake: FakeLinear) => wrapRefresh(fake, () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 403 })),
+  '503 invalid_client': (fake: FakeLinear) => wrapRefresh(fake, () => new Response(JSON.stringify({ error: 'invalid_client', error_description: 'private-description-sentinel' }), { status: 503 })),
 };
 function wrapRefresh(fake: FakeLinear, respond: () => Response) {
   const fetch = fake.fetch;
@@ -159,9 +165,11 @@ for (const [failure, arrange] of Object.entries(unknownRefreshFailures)) {
   }));
 }
 
-for (const via of ['refresh', 'save'] as const) {
-  test(`only an explicit invalid_grant clears the credentials, including the client secret (${via})`, async () => withTempAnimaHome(async (home) => {
-    const fake = new FakeLinear(); fake.refreshFailure = 'invalid_grant';
+for (const [via, status] of [['refresh', 400], ['save', 400], ['refresh', 401], ['save', 401]] as const) {
+  test(`only an explicit invalid_grant clears the credentials, including the client secret (${via}, HTTP ${status})`, async () => withTempAnimaHome(async (home) => {
+    const fake = new FakeLinear();
+    if (status === 400) fake.refreshFailure = 'invalid_grant';
+    else wrapRefresh(fake, () => new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'private-description-sentinel' }), { status }));
     const { identity, store, agentStore } = await seedLinear(home, fake);
     await store.update((file) => ({ ...file, installation: { ...file.installation!, expiresAt: 0 } }));
     if (via === 'refresh') await assert.rejects(identity.accessToken(install.id), /revoked/);
@@ -173,6 +181,37 @@ for (const via of ['refresh', 'save'] as const) {
     assert.equal((await identity.status()).state, 'revoked');
     assertNoPrivate(await readFile(join(home, 'agents/scout/linear.json'), 'utf8'));
     assert.equal(fake.tokenCalls, 1);
+  }));
+}
+
+// A write whose credential cannot be obtained never reaches Linear, so its intent
+// is released: once the secret is added, an explicit retry sends it exactly once.
+for (const kind of ['response', 'link'] as const) {
+  test(`a ${kind} stopped by a rejected refresh is never sent and can be retried once the secret is added`, async () => withTempAnimaHome(async (home) => {
+    const fake = new FakeLinear(); fake.refreshRequiresSecret = true;
+    const { identity, service, store } = await seedLinear(home, fake);
+    await service.receive(created(), install);
+    const queue = new WakeQueueService('scout'); const item = (await queue.list())[0]!;
+    await service.markStarted(item, item.id); await queue.complete(item.id); await service.markSettled(item);
+    await store.update((file) => ({ ...file, installation: { ...file.installation!, clientSecret: undefined, expiresAt: 0 } }));
+    const mutation = kind === 'response' ? 'agentActivityCreate' : 'agentSessionUpdate';
+    const sent = () => fake.calls.filter((call) => call.query.includes(mutation) && !call.variables.input?.ephemeral).length;
+    const send = () => kind === 'response'
+      ? service.respond(sessionId, 'response', 'Synthetic complete', item.id)
+      : service.attach(sessionId, 'https://example.com/synthetic', item.id);
+    const before = sent();
+
+    await assert.rejects(send(), (error: LinearApiError) => error.oauthError === 'invalid_client');
+    assert.equal(sent(), before, 'nothing reached Linear');
+    assert.deepEqual((await store.read()).operations, {}, 'the unsent intent is released');
+    assert.equal((await identity.status()).clientRejected, true);
+
+    assert.equal(await identity.saveClientSecret(install.id, install.clientSecret!), 'saved');
+    await send();
+    await send();
+    assert.equal(sent(), before + 1, 'one explicit retry sends it once; the accepted write is not resent');
+    assert.deepEqual(Object.values((await store.read()).operations).map((op) => op.state), ['accepted']);
+    assert.equal(kind === 'response' ? fake.posts.filter((p) => !p.ephemeral).length : fake.links.length, 1);
   }));
 }
 

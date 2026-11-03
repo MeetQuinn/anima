@@ -272,7 +272,7 @@ function LinearDialogBody({
         error={error}
         onRemove={onRemove}
         onClose={onClose}
-        onChanged={() => void status.refetch()}
+        onChanged={async () => (await status.refetch()).data}
       />
     );
   if (!setup.data) return <ReadError what="machine settings" onRetry={() => void setup.refetch()} />;
@@ -387,7 +387,7 @@ function ConnectedView({
   error: string;
   onRemove: () => Promise<void>;
   onClose: () => void;
-  onChanged: () => void;
+  onChanged: () => Promise<LinearStatus | undefined>;
 }) {
   const [confirming, setConfirming] = useState(false);
   const now = useNow();
@@ -405,15 +405,23 @@ function ConnectedView({
   return (
     <div className="space-y-5">
       <header className="flex items-start gap-3.5">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-health-ok-soft text-health-ok">
-          <Check className="size-5" aria-hidden="true" />
-        </span>
+        {data.clientRejected ? (
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-health-error-soft text-health-error">
+            <AlertTriangle className="size-5" aria-hidden="true" />
+          </span>
+        ) : (
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-health-ok-soft text-health-ok">
+            <Check className="size-5" aria-hidden="true" />
+          </span>
+        )}
         <div className="min-w-0 space-y-1">
           <h3 className="break-words font-serif text-[20px] font-semibold leading-tight text-text">
             Connected to {data.workspaceName ?? 'Linear'}
           </h3>
           <p className="font-serif text-[14px] leading-relaxed text-text-muted">
-            Mention {agentName} in Linear or delegate an issue to it.
+            {data.clientRejected
+              ? `${agentName} can’t work in Linear until Linear accepts this app’s credentials.`
+              : `Mention ${agentName} in Linear or delegate an issue to it.`}
           </p>
         </div>
       </header>
@@ -525,7 +533,7 @@ const clientSecretResults: Record<Exclude<LinearClientSecretResult, 'saved'>, st
   rejected: 'Linear didn’t accept this Client secret. Check that it belongs to the app with this Client ID.',
   expired: 'Linear no longer accepts this authorization. Authorize again to reconnect.',
   unavailable: 'Couldn’t check it with Linear. Nothing was saved; try again later.',
-  unsaved: 'Saving didn’t finish, so nothing was stored. Try again; if Linear then asks, authorize again.',
+  unsaved: 'Anima couldn’t store Linear’s answer, so nothing was saved. Try again. If Linear has ended this authorization, you’ll be asked to authorize again.',
   changed: 'This connection changed meanwhile, so nothing was saved.',
 };
 
@@ -542,7 +550,7 @@ function ClientSecretFact({
   agentId: string;
   data: LinearStatus;
   disabled: boolean;
-  onChanged: () => void;
+  onChanged: () => Promise<LinearStatus | undefined>;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState('');
@@ -565,9 +573,13 @@ function ClientSecretFact({
       const { result } = await saveLinearClientSecret(agentId, parsed.data);
       if (result === 'saved') setEditing(false);
       setMessage(result === 'saved' ? { ok: true, text: 'Client secret saved.' } : { ok: false, text: clientSecretResults[result] });
-      onChanged();
+      void onChanged();
     } catch {
-      setMessage({ ok: false, text: 'Couldn’t save it. Nothing was stored; try again.' });
+      // The answer was lost, not necessarily the save. Re-read what is stored:
+      // a stored secret Linear accepts leaves nothing to try again.
+      const now = await onChanged().catch(() => undefined);
+      if (now?.clientSecretSaved && !now.clientRejected) setEditing(false);
+      else setMessage({ ok: false, text: 'Couldn’t save it. Try again.' });
     } finally {
       setValue('');
       setSaving(false);
