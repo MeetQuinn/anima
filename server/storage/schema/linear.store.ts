@@ -24,6 +24,10 @@ const PendingOAuth = z.object({
 const Receipt = z.object({
   item: LinearInboxItem.optional(),
   sessionId: z.string(), issueId: z.string().optional(), receivedAt: z.string(),
+  commentId: z.string().optional(),
+  // A comment notification already delivered this request before its session
+  // arrived. Keep the association for Stop, without a second reply obligation.
+  commentItemId: z.string().optional(),
   itemId: z.string().optional(), stopped: z.boolean().optional(), stopSignal: z.boolean().optional(),
   runItemId: z.string().optional(), settled: z.boolean().optional(),
   answered: z.boolean().optional(),

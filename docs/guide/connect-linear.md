@@ -39,8 +39,8 @@ Set it in **Settings → Server**, or when you connect the first agent.
    workspace; workspace admins can change this later in Linear.
 6. After you approve, Linear returns you to the agent's profile with the Linear dialog
    open. Authorization completes installation; there is no required test task. Mention the
-   agent or delegate an issue to it. If Linear does not show "Received by Anima." after a
-   mention, check the forwarding for `/webhook` on your public address, and the app's
+   agent or delegate an issue to it. If Linear does not show "Received by Anima." after you
+   mention it, check the forwarding for `/webhook` on your public address, and the app's
    webhook URL and event subscriptions in Linear.
 
 For `https://anima.example.com`, forward these paths:
@@ -122,9 +122,18 @@ a crash can lose the unsaved batch. These are facts, not a health or availabilit
 Ordinary comments and issue changes addressed to the app arrive through
 inbox notifications. They share the agent's main context and do not require a
 delegation or an open work session. The agent can reply with an ordinary comment
-or decide that no response is needed. Mentions, assignments and replies in the
-app's work-session thread use session events; Anima filters the overlapping
-notifications, self-authored activity and delivery retries. Permission-change
+or decide that no response is needed. A direct comment mention can also wake the
+agent when Anima cannot yet match it to a work session, including mentions from another
+app. The agent replies in the original comment thread. When Anima can match the mention
+to a work session before delivery, it uses that session instead. A comment delivered
+before its session arrives is not delivered again. The late session gets one receipt
+pointing to the original thread, and its Stop still reaches the comment's queued or
+running work. That receipt does not claim completion; subsequent replies stay in the
+comment thread, without automatic session progress or a second reply obligation.
+A Stop gets an end notice confirming the stop request, without claiming that earlier
+actions or provider background work have been undone.
+Anima filters overlapping notifications, self-authored activity
+and delivery retries. Permission-change
 notifications tell the agent to check current team access. Reactions do not wake
 the agent.
 

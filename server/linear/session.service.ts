@@ -5,6 +5,7 @@ import type { LinearActivityKind } from '../../shared/linear.js';
 import type { LinearInboxItem, InboxItem } from '../../shared/inbox.js';
 import { nowIso } from '../ids.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
+import { linearCommentItemId, withLinearCommentLock } from '../inbox/linear-comment-delivery.js';
 import { withFileLock } from '../storage/lock.js';
 import type { LinearInstallation, LinearOperation, LinearReceipt } from '../storage/schema/linear.store.js';
 import { LinearIdentityService, linearRequestNotSent } from './identity.service.js';
@@ -39,7 +40,7 @@ function withoutExpiredReceipts(receipts: Record<string, LinearReceipt>, operati
   const cutoff = now - FINISHED_RECEIPT_RETENTION_MS;
   const kept = Object.fromEntries(Object.entries(receipts).filter(([, r]) => {
     // Queue settlement can leave a background request unanswered.
-    if (!r.answered && !r.stopped) return true;
+    if (!r.answered && !r.stopped && !r.commentItemId) return true;
     const last = Math.max(...[r.receivedAt, r.lastActivityAt, r.lastStatusAttemptAt].map((at) => (at ? Date.parse(at) : 0)));
     return !(last < cutoff);
   }));
@@ -102,6 +103,12 @@ export class LinearSessionService {
   }
 
   async receive(event: Extract<LinearWebhook, { type: 'OAuthApp' | 'AgentSessionEvent' }>, install: LinearInstallation): Promise<void> {
+    const commentId = event.type === 'AgentSessionEvent' && event.agentSession.commentId;
+    if (commentId) return withLinearCommentLock(this.identity, commentId, () => this.receiveLocked(event, install));
+    return this.receiveLocked(event, install);
+  }
+
+  private async receiveLocked(event: Extract<LinearWebhook, { type: 'OAuthApp' | 'AgentSessionEvent' }>, install: LinearInstallation): Promise<void> {
     if (event.type === 'OAuthApp') {
       await this.identity.store.update((file) => file.installation?.id === install.id ? { ...file, lastSignedWebhookAt: nowIso() } : file);
       await this.identity.revoke(install.id); return;
@@ -143,22 +150,32 @@ export class LinearSessionService {
     if (session.issueId) item.issueId = session.issueId;
     if (session.issue?.url) item.issueUrl = session.issue.url;
     if (session.creator?.name) item.actorName = session.creator.name;
+    // A notification can win delivery before Linear creates/reports a session.
+    // Associate the late session with that comment so Stop still reaches it,
+    // without enqueueing a second request or inventing a session reply obligation.
+    const commentItemId = session.commentId && (event.action === 'created' || stopped)
+      ? linearCommentItemId(install.id, session.commentId) : undefined;
+    const commentDelivered = commentItemId && await wakeQueueServiceForAgent(this.agentId).has(commentItemId);
     const file = await this.identity.store.update((current) => {
       if (current.installation?.id !== install.id || current.installation.revoked) throw new Error('Linear identity changed.');
       const receipts = { ...current.receipts };
       if (!receipts[key]) {
-        receipts[key] = { sessionId: session.id, receivedAt, acknowledgement: stopped ? 'accepted' : 'pending', acknowledgementId: randomUUID() };
+        const alreadyStopped = event.action === 'created' && Object.values(receipts).some((r) => r.sessionId === session.id && r.stopped);
+        receipts[key] = { sessionId: session.id, receivedAt, acknowledgement: stopped || alreadyStopped ? 'accepted' : 'pending', acknowledgementId: randomUUID() };
+        if (session.commentId) receipts[key].commentId = session.commentId;
+        if (commentDelivered) receipts[key].commentItemId = commentItemId;
+        if (alreadyStopped) receipts[key].stopped = true;
         if (stopped) {
           receipts[key].stopped = true;
           receipts[key].stopSignal = true;
           for (const [id, r] of Object.entries(receipts)) if (r.sessionId === session.id) receipts[id] = { ...r, stopped: true };
         }
-        else { receipts[key].itemId = item.id; receipts[key].item = item; }
+        else if (!commentDelivered) { receipts[key].itemId = item.id; receipts[key].item = item; }
         if (item.issueId) receipts[key].issueId = item.issueId;
       }
       return { ...current, ...withoutExpiredReceipts(receipts, current.operations, Date.parse(receivedAt)), lastSignedWebhookAt: receivedAt };
     });
-    if (stopped) { await this.stop(session.id); return; }
+    if (file.receipts[key]!.stopped) { await this.stop(session.id); return; }
     await this.publish(file.receipts[key]!);
   }
 
@@ -213,17 +230,22 @@ export class LinearSessionService {
     const queue = wakeQueueServiceForAgent(this.agentId);
     let activeRun = false;
     for (const receipt of Object.values(file.receipts)) {
-      if (receipt.sessionId !== sessionId || !receipt.stopped || !receipt.itemId || receipt.answered) continue;
-      const item = await queue.find(receipt.itemId);
+      const itemId = receipt.itemId ?? receipt.commentItemId;
+      if (receipt.sessionId !== sessionId || !receipt.stopped || !itemId || receipt.answered) continue;
+      const item = await queue.find(itemId);
       const runItemId = receipt.runItemId ?? item?.handling.appendedToItemId ?? item?.id;
       const run = runItemId ? await queue.find(runItemId) : undefined;
       if (run?.handling.status === 'running') { await queue.requestStop(run.id); activeRun = true; }
       else if (item?.handling.status === 'queued') await queue.fail(item.id);
     }
     const pending = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.itemId && r.stopped && !r.answered);
-    if (!activeRun && pending) {
+    const commentStop = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.commentItemId && r.stopped)
+      && Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.stopSignal && !r.answered);
+    if (commentStop || !activeRun && pending) {
       const background = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.stopped && r.settled && !r.answered);
-      const body = background
+      const body = commentStop
+        ? 'Stop requested for this comment-thread request. Earlier actions or provider background work may still exist; check the original comment thread before continuing.'
+        : background
         ? 'Stopped accepting replies for this request. Provider background work may still be running; check it before continuing.'
         : 'Stopped the pending request. Check any earlier actions before continuing.';
       await this.respond(sessionId, 'error', body, undefined, 'stopped');
@@ -326,7 +348,10 @@ export class LinearSessionService {
     file = await this.identity.store.read();
     const hash = contentHash(kind, body);
     const candidates = Object.entries(file.receipts).filter(([, r]) => r.sessionId === sessionId
-      && r.itemId && !r.answered && (terminal === 'stopped' ? r.stopped : terminal === 'failed' || !r.stopped));
+      // Stop itself needs a terminal receipt even when the work was delivered
+      // as a comment. This does not grant an ordinary session reply obligation.
+      && (r.itemId || terminal === 'stopped' && r.stopSignal) && !r.answered
+      && (terminal === 'stopped' ? r.stopped : terminal === 'failed' || !r.stopped));
     const itemIds: string[] = [];
     for (const [id, receipt] of candidates) {
       const owner = await this.ownerFor(receipt);
@@ -463,7 +488,10 @@ export class LinearSessionService {
         catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
       } else if (r.acknowledgement === 'pending') {
         await this.setAcknowledgement(installId, key, 'sending');
-        try { await this.createActivity(installId, receipt.sessionId, receipt.acknowledgementId, 'thought', 'Received by Anima.', true); }
+        const body = r.commentItemId
+          ? 'Received by Anima. This request was already delivered through the original comment thread. Follow that thread for any reply.'
+          : 'Received by Anima.';
+        try { await this.createActivity(installId, receipt.sessionId, receipt.acknowledgementId, 'thought', body, true); }
         catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
       } else return;
       await this.setAcknowledgement(installId, key, 'accepted');

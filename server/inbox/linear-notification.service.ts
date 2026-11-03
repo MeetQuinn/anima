@@ -6,17 +6,32 @@ import { nowIso } from '../ids.js';
 import type { LinearInstallation } from '../storage/schema/linear.store.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import type { LinearWebhook } from '../linear/webhook.js';
+import { linearCommentItemId, withLinearCommentLock } from './linear-comment-delivery.js';
 
 const Session = z.object({ appUser: z.object({ id: z.string() }) }).nullable();
 const CommentThread = z.object({ comment: z.object({ id: z.string(), issueId: z.string().nullable(),
   agentSession: Session, parent: z.object({ agentSession: Session }).nullable(),
 }) });
-const WAKE_TYPES = new Set(['issueNewComment', 'issueUnassignedFromYou', 'issueStatusChanged']);
+const COMMENT_TYPES = new Set(['issueNewComment', 'issueCommentMention']);
+const WAKE_TYPES = new Set([...COMMENT_TYPES, 'issueUnassignedFromYou', 'issueStatusChanged']);
 
 export class LinearNotificationService {
   constructor(private readonly identity: LinearIdentityService) {}
 
   async receive(event: Extract<LinearWebhook, { type: 'AppUserNotification' | 'PermissionChange' }>, install: LinearInstallation): Promise<void> {
+    const commentId = event.type === 'AppUserNotification' && COMMENT_TYPES.has(event.notification.type) && event.notification.commentId;
+    if (commentId) return withLinearCommentLock(this.identity, commentId, () => this.receiveLocked(event, install));
+    return this.receiveLocked(event, install);
+  }
+
+  async assertRunnable(item: LinearNotificationInboxItem): Promise<void> {
+    await this.identity.authorizedInstallation(item.installationId);
+    if (Object.values((await this.identity.store.read()).receipts).some((r) => r.commentItemId === item.id && r.stopped)) {
+      throw new Error('This Linear comment request was stopped.');
+    }
+  }
+
+  private async receiveLocked(event: Extract<LinearWebhook, { type: 'AppUserNotification' | 'PermissionChange' }>, install: LinearInstallation): Promise<void> {
     const receivedAt = nowIso();
     await this.identity.store.update((file) => {
       if (file.installation?.id !== install.id || file.installation.revoked) throw new Error('Linear identity changed.');
@@ -39,14 +54,18 @@ export class LinearNotificationService {
         'Use anima linear teams to check current access before continuing affected work.'].join('\n');
     } else {
       const n = event.notification;
-      // Mentions and assignment already arrive through AgentSessionEvent. Ordinary
-      // notifications must not create a second task or answer our own comments.
-      if (!WAKE_TYPES.has(n.type) || n.archivedAt || n.actorId === install.appUserId || n.comment?.userId === install.appUserId && n.type === 'issueNewComment') return;
+      // App-origin mentions may have no AgentSessionEvent. Accept their comment
+      // notifications too, but never answer our own comments or duplicate a session.
+      if (!WAKE_TYPES.has(n.type) || n.archivedAt || n.actorId === install.appUserId || n.comment?.userId === install.appUserId && COMMENT_TYPES.has(n.type)) return;
       if (!n.issue) return;
       key = `linear:${install.id}:notification:${n.id}:${n.commentId ?? n.updatedAt}`;
       const queue = wakeQueueServiceForAgent(this.identity.agentId);
+      // Preserve dedupe for notifications queued by earlier versions.
       if (await queue.has(key)) return;
-      if (n.type === 'issueNewComment' && n.commentId) {
+      if (COMMENT_TYPES.has(n.type) && n.commentId) {
+        key = linearCommentItemId(install.id, n.commentId);
+        if (await queue.has(key)) return;
+        if (Object.values((await this.identity.store.read()).receipts).some((r) => r.commentId === n.commentId)) return;
         // Replies in this app's work session arrive as immutable AgentActivity
         // prompts. Query the thread before enqueueing the ordinary notification;
         // a failed lookup rejects delivery so Linear can retry it.

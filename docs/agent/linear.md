@@ -33,6 +33,13 @@ Ordinary comments can be added after a task is complete. They do not claim an in
 request, complete a work session, or resume work that a person stopped. Use session
 responses below when replying to an assigned request.
 
+A `Linear mention` delivery can be a request from a person or another agent for which
+Anima has not yet matched a work session. Handle requests directed to you and use `comment --reply-to`
+in the supplied thread. Do not invent a session ID or require delegation before
+answering. Acknowledgements and completion notices do not require another reply;
+do not mention another agent just to acknowledge it. Existing Stop instructions
+still apply. If the delivery includes a session ID instead, use `respond` below.
+
 Issue and comment creation print their generated UUID to stderr before sending and accept an
 explicit `--id`. They make one write attempt. If the result is uncertain, inspect that
 UUID with `issue` or the API's `comment(id: ...)` query before retrying; do not start a
@@ -93,9 +100,13 @@ the issue and comment IDs in its envelope to read the discussion or reply with
 silently does not post a missing-response error. A notification does not resume
 work that a person stopped.
 
-Mentions and assignments arrive as work-session requests instead. Replies in your
-app's existing work-session thread also use that session, without a second ordinary
-notification wake. Own activity and repeated deliveries do not wake you again.
+Mentions can arrive as **Linear mention** comments before Anima can match a
+work session, including mentions from another app. When Anima already knows the session,
+mentions, assignments and replies use that session instead. A comment already
+delivered before its session arrives does not start a second run. The late session
+gets a receipt directing the person to the comment thread, without another reply
+obligation or a claim of completion. Own activity
+and repeated deliveries do not wake you again.
 Team-access changes ask you to check `anima linear teams`; the API's current
 permissions determine which work you can read or change.
 
