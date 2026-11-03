@@ -122,9 +122,14 @@ a crash can lose the unsaved batch. These are facts, not a health or availabilit
 Ordinary comments and issue changes addressed to the app arrive through
 inbox notifications. They share the agent's main context and do not require a
 delegation or an open work session. The agent can reply with an ordinary comment
-or decide that no response is needed. Mentions, assignments and replies in the
-app's work-session thread use session events; Anima filters the overlapping
-notifications, self-authored activity and delivery retries. Permission-change
+or decide that no response is needed. A direct comment mention can also wake the
+agent when Linear does not create a work session, including mentions from another
+app. The agent replies in the original comment thread. When Linear provides a work
+session, Anima uses that session instead. A comment delivered before its session
+arrives is not delivered again; that late session's Stop still reaches the comment's
+queued or running work. This comment path does not send automatic session receipts
+or progress activities. Anima filters overlapping notifications, self-authored activity
+and delivery retries. Permission-change
 notifications tell the agent to check current team access. Reactions do not wake
 the agent.
 
