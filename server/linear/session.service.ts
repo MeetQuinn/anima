@@ -22,6 +22,13 @@ const Issue = z.object({ issue: z.object({ id: z.string(), delegate: z.object({ 
 const IssueUpdated = z.object({ issueUpdate: z.object({ success: z.literal(true) }) });
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
 const sessionFields = 'id appUser{id} creator{id} issue{id} comment{id} status url';
+const SessionOrigin = z.object({ agentSession: z.object({
+  id: z.string().uuid(), appUser: z.object({ id: z.string() }), creator: z.object({ id: z.string() }).nullable(),
+  issue: z.object({ id: z.string() }).nullable(), createdAt: z.string().datetime({ offset: true }),
+  activities: z.object({ nodes: z.array(z.object({ createdAt: z.string().datetime({ offset: true }),
+    promptAuthor: z.object({ id: z.string() }).nullable(), content: z.object({ type: z.string().optional() }),
+  })).max(1) }),
+}) });
 const SessionDetails = z.object({ id: z.string().uuid(), appUser: z.object({ id: z.string() }),
   creator: z.object({ id: z.string() }).nullable(), issue: z.object({ id: z.string() }).nullable(),
   comment: z.object({ id: z.string() }).nullable(), status: z.string(), url: z.string().url().nullable(),
@@ -131,8 +138,11 @@ export class LinearSessionService {
     }
     const receivedAt = nowIso();
     const session = event.agentSession;
-    // Null creators also describe automation and other agents. Only an exact
-    // result from our own create operation identifies an already-running caller.
+    const eventId = event.action === 'created' ? session.id : event.agentActivity!.id;
+    const key = `linear:${install.id}:${event.action}:${eventId}`;
+    let selfDelegated = false;
+    // A missing creator also describes automation and other agents. First check
+    // exact results from our own proactive creation, including a racing response.
     if (event.action === 'created' && !session.creatorId) {
       const home = this.identity.store.animaHome;
       const starts = (await this.identity.store.read()).sessionStarts;
@@ -152,9 +162,10 @@ export class LinearSessionService {
         });
         return;
       }
+      if (!file.receipts[key] && session.issueId) {
+        selfDelegated = await this.isSelfDelegated(install, session.id, session.issueId);
+      }
     }
-    const eventId = event.action === 'created' ? session.id : event.agentActivity!.id;
-    const key = `linear:${install.id}:${event.action}:${eventId}`;
     const stopped = event.agentActivity?.signal === 'stop';
     const hasPromptContext = Boolean(event.promptContext?.trim());
     const text = event.action === 'prompted' ? event.agentActivity!.body ?? event.agentActivity!.content?.body ?? ''
@@ -206,7 +217,12 @@ export class LinearSessionService {
           receipt = { ...base, kind: 'stop', state: 'received' };
           for (const [id, r] of Object.entries(receipts)) if (r.sessionId === session.id) receipts[id] = stopReceipt(r);
         } else if (commentDelivered) receipt = { ...base, kind: 'comment', state: alreadyStopped ? 'stopped' : 'linked' };
-        else {
+        else if (selfDelegated) {
+          // The caller is already working. Retain the same reply/Stop contract as
+          // a proactive start, without a queued request or a new Received activity.
+          receipt = { ...base, kind: 'request', state: alreadyStopped ? 'stopping' : 'awaiting',
+            itemId: item.id, runItemId: item.id, acknowledgement: 'accepted' };
+        } else {
           receipt = { ...base, kind: 'request', state: alreadyStopped ? 'stopping' : 'received', itemId: item.id };
           if (!alreadyStopped) receipt.item = item;
           if (heldComment) receipt.heldCommentItemId = commentItemId;
@@ -528,6 +544,19 @@ export class LinearSessionService {
     const created = await this.identity.graphql(installId, 'mutation($input:AgentActivityCreateInput!){agentActivityCreate(input:$input){success agentActivity{id}}}',
       { input: { id, agentSessionId: sessionId, content: { type: kind, body }, ephemeral } }, Created);
     if (created.agentActivityCreate.agentActivity.id !== id) throw new Error('Linear returned a different activity id; inspect the session.');
+  }
+
+  private async isSelfDelegated(install: LinearInstallation, sessionId: string, issueId: string): Promise<boolean> {
+    // The initial prompt names the actual delegator even when creator is null.
+    // Require creation-time evidence: a later own prompt cannot prove who opened it.
+    const result = await this.identity.graphql(install.id,
+      'query($id:String!){agentSession(id:$id){id appUser{id} creator{id} issue{id} createdAt activities(last:1,orderBy:createdAt){nodes{createdAt promptAuthor{id} content{... on AgentActivityPromptContent{type}}}}}}',
+      { id: sessionId }, SessionOrigin).catch(() => undefined);
+    if (!result) return false; // An unavailable origin must never discard new work.
+    const session = result.agentSession, first = session.activities.nodes[0];
+    return session.id === sessionId && session.appUser.id === install.appUserId && !session.creator
+      && session.issue?.id === issueId && first?.content.type === 'prompt'
+      && first.promptAuthor?.id === install.appUserId && Date.parse(first.createdAt) === Date.parse(session.createdAt);
   }
 
   private async sessionDetails(install: LinearInstallation, sessionId: string): Promise<z.infer<typeof SessionDetails>> {
