@@ -156,16 +156,26 @@ function OpenDashboardWarning() {
   );
 }
 
-/** What protects the dashboard at a reachable address that did not open it. */
+/** Sign-in gateways redirect, ask for credentials or refuse. */
+const asksFirst = (status: number) => (status >= 300 && status < 400) || status === 401 || status === 403;
+
+/**
+ * What the check saw at a reachable address that did not open the dashboard. Only
+ * a sign-in answer is reported as something asking first; any other answer, such
+ * as an error or an unexpected page, leaves the question open.
+ */
 function protection(check: PublicUrlCheck) {
   if (check.passwordSet) return 'A dashboard password is set. The dashboard asks for it wherever it opens.';
-  if (check.dashboard)
-    return `No dashboard password is set, but Anima couldn’t open the dashboard through this address without signing in (HTTP ${check.dashboard.status}). Keep what is in front of it.`;
+  const status = check.dashboard?.status;
+  if (status !== undefined && asksFirst(status))
+    return `No dashboard password is set. When Anima opened the dashboard through this address without signing in, something in front of it asked for sign-in or refused (HTTP ${status}).`;
   return (
     <>
-      No dashboard password is set. If the whole address is forwarded here, anyone who opens it gets the
-      dashboard unless a sign-in gateway in front of it asks first. To have the dashboard ask too, set a
-      password on this machine: {SET_PASSWORD}
+      No dashboard password is set.{' '}
+      {status !== undefined &&
+        `The dashboard check got HTTP ${status}, which doesn’t show whether the dashboard is open at this address. `}
+      If the whole address is forwarded here, anyone who opens it gets the dashboard unless a sign-in gateway
+      in front of it asks first. To have the dashboard ask too, set a password on this machine: {SET_PASSWORD}
     </>
   );
 }
