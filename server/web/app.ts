@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { registerAgentIdGuard, registerAgentRoutes } from './agent-routes.js';
 import { registerClientErrorRoutes } from './client-error-routes.js';
-import { registerDashboardAuthGuard, registerDashboardAuthRoutes, registerPublicAddressGuard } from './dashboard-auth.js';
+import { registerDashboardAuthGuard, registerDashboardAuthRoutes } from './dashboard-auth.js';
 import { registerErrorHandler } from './http.js';
 import { registerReadOnlyGuard } from './read-only.js';
 import { registerStaticRoutes } from './static.js';
@@ -20,7 +20,6 @@ export function buildWebApp(access?: WebListenerAccess): FastifyInstance {
   const fastify: FastifyInstance = Fastify({ logger: false });
 
   if (access) registerWebListenerAccess(fastify, access);
-  registerPublicAddressGuard(fastify);
   registerCrossSiteWriteGuard(fastify);
   registerErrorHandler(fastify);
   registerDashboardAuthRoutes(fastify);

@@ -77,14 +77,14 @@ through without sign-in, for example with a Cloudflare Access application for th
 and a **Bypass** policy. Linear cannot sign in. The OAuth callback is opened by your own
 browser, so it can stay behind the gateway.
 
-Without a dashboard password, the public address serves only Linear's paths (`/webhooks/`,
-the legacy `/webhook` and the OAuth callback); every other request through it gets `403`. Anima recognizes requests through
-the public address by their `Host` or `X-Forwarded-Host` header naming its host.
-cloudflared keeps the original `Host` by default. If your proxy replaces both, the check
-warns that the dashboard is open there. To use the dashboard itself through the public
-address, set a password with `dashboard-auth set` (see
-[Configuration](../configuration.md#dashboard-password-dashboardauth)); it then asks for
-that password there. Requests to the dashboard's local address are unaffected.
+Forwarding the whole address puts the whole dashboard on it. Anima serves requests
+through the public address like any other, so whatever forwards the address decides who
+reaches the dashboard. Protect it with a sign-in gateway, or set a dashboard password with
+`dashboard-auth set` (see
+[Configuration](../configuration.md#dashboard-password-dashboardauth)); the dashboard then
+asks for it at every address, including its local one. If you only need Linear, forward
+just `/webhooks/` and `/api/linear/oauth/callback`, plus `/webhook` for older apps, instead
+of the whole address.
 
 The OAuth callback only returns the browser to the dashboard that started authorization.
 That dashboard checks the original login session before exchanging the code. Authorize in

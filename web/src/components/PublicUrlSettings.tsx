@@ -102,7 +102,8 @@ export function PublicAddressGuidance() {
   return (
     <p className="max-w-prose font-serif text-[13px] leading-relaxed text-text-muted">
       Forward the whole address to this dashboard, for example with a Cloudflare Tunnel to the address you
-      open it at on this machine. If a sign-in gateway such as Cloudflare Access protects it, let{' '}
+      open it at on this machine. Anyone who can open the address then reaches the dashboard, so put a
+      sign-in gateway such as Cloudflare Access in front of it or set a dashboard password. With a gateway, let{' '}
       <span className="font-mono text-[12px] text-text">/webhooks/</span> through: Linear can’t sign in. Linear
       apps created before this version post to <span className="font-mono text-[12px] text-text">/webhook</span>;
       let that through too, or change their webhook URL.
@@ -163,22 +164,6 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
     );
   }
   const result = check.data;
-  if (result.reachable && result.hostRecognized === false && !result.passwordSet) {
-    return (
-      <div role="alert" className="flex gap-2.5 rounded-sm border border-health-error/25 bg-health-error-soft/50 px-3 py-2.5">
-        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-health-error" aria-hidden="true" />
-        <div className="min-w-0 space-y-0.5 font-sans text-[12px] leading-relaxed">
-          <p className="font-medium text-health-error">Reachable, and the dashboard is open there</p>
-          <p className="text-text-muted">
-            Your forwarding replaces the address in the Host header, so Anima can’t tell requests through it
-            from requests on this machine. Set a dashboard password now:{' '}
-            <code className="break-all font-mono text-[11px]">{SET_PASSWORD_COMMAND}</code>. Or keep the
-            original Host header in the tunnel. {again}
-          </p>
-        </div>
-      </div>
-    );
-  }
   if (!result.reachable) {
     return (
       <div role="alert" className="flex gap-2.5 rounded-sm border border-health-error/25 bg-health-error-soft/50 px-3 py-2.5">
@@ -199,11 +184,12 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
         <span className="text-text-subtle">{again}</span>
       </p>
       {result.passwordSet ? (
-        <p className="text-text-subtle">The dashboard asks for its password at this address.</p>
+        <p className="text-text-subtle">A dashboard password is set. The dashboard asks for it wherever it opens.</p>
       ) : (
         <p className="max-w-prose text-text-subtle">
-          The dashboard has no password, so this address only accepts Linear events. To open the dashboard
-          here too, set a password on this machine:{' '}
+          No dashboard password is set. If the whole address is forwarded here, anyone who opens it gets the
+          dashboard unless a sign-in gateway in front of it asks first. To have the dashboard ask too, set a
+          password on this machine:{' '}
           <code className="break-all font-mono text-[11px] text-text-muted">{SET_PASSWORD_COMMAND}</code>
         </p>
       )}

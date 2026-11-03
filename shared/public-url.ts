@@ -70,13 +70,10 @@ export interface PublicUrlCheck {
   failure?: PublicUrlCheckFailure;
   /** HTTP status of the answer, when there was one. */
   status?: number;
-  /** Without a dashboard password the public address serves Linear only. */
-  passwordSet: boolean;
   /**
-   * With a reachable address: whether requests through it still name its host.
-   * When false, Anima cannot tell them from local requests, so only a dashboard
-   * password protects the dashboard there.
+   * Whether the dashboard asks for a password. Without one, the dashboard is open
+   * through the public address unless something in front of it asks first.
    */
-  hostRecognized?: boolean;
+  passwordSet: boolean;
   checkedAt: string;
 }
