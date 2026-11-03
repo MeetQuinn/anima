@@ -39,7 +39,8 @@ function isPersonMessage(message: AgentMessageRecord): boolean {
   );
 }
 
-// Inbound author byline (Slack only in v1; other kinds degrade to a label).
+// Inbound author byline. Slack fills the actor fields; Linear records carry the
+// sender's name as `actor` only.
 export function inboundAuthorName(message: AgentMessageRecord): string {
   if (message.kind === 'choice_response') {
     return (
@@ -50,6 +51,9 @@ export function inboundAuthorName(message: AgentMessageRecord): string {
   if (message.kind === 'onboarding') return 'Onboarding';
   if (message.platform === 'feishu') {
     return message.actorDisplayName || message.actorUserId || 'Feishu user';
+  }
+  if (message.platform === 'linear') {
+    return message.actorDisplayName || message.actor || 'Linear user';
   }
   return (
     message.actorDisplayName ||
