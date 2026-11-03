@@ -188,8 +188,11 @@ You can also include the PR link in your Markdown `respond` body.
 
 An incoming notification (`wake=issueNewComment`, `issueStatusChanged` or
 `issueUnassignedFromYou`) is context, not a new work assignment. It can
-report a new comment, status change or removal of your assignment. Reactions do
-not wake the agent. Use
+report a new comment, status change or removal of your assignment. Only a reply
+in a comment thread you started or replied in wakes you. Other comments, status
+changes, unassignment and team-access changes arrive during work already in progress or
+with your next wake, so they may be older than the request you are handling.
+Reactions do not wake the agent. Use
 the issue and comment IDs in its envelope to read the discussion or reply with
 `anima linear comment`. No automatic reply is required, and finishing the turn
 silently does not post a missing-response error. A notification does not resume

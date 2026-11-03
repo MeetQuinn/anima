@@ -1,6 +1,6 @@
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { wakeQueueServiceForAgent, type InboxItem } from '../inbox/wake-queue.service.js';
-import { isAppendedRunningInboxItem } from '../../shared/inbox.js';
+import { isAppendedRunningInboxItem, isHeldInboxItem } from '../../shared/inbox.js';
 import { clearRestartDrain, requestRestartDrain } from './restart-drain.js';
 import { defaultAgentHealthStore, type AgentHealthStore } from '../runtime/agent-health.store.js';
 import { interruptedBackgroundWork } from '../runtime/background-interrupted.js';
@@ -134,6 +134,8 @@ export async function listRestartBlockers(options: {
     for (const item of await wakeQueueServiceForAgent(agentId).list()) {
       if (!statuses.has(item.handling.status)) continue;
       if (isAppendedRunningInboxItem(item)) continue;
+      // Held context is durable and waits for a future run; it never needs draining.
+      if (isHeldInboxItem(item)) continue;
       blockers.push({ agentId, item });
     }
   }

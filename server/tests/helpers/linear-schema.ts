@@ -34,7 +34,11 @@ const schema = buildSchema(`
   type IssueSearchPayload { nodes: [Issue!]!, pageInfo: PageInfo! }
   type IssuePayload { success: Boolean!, issue: Issue }
   type CommentPayload { success: Boolean!, comment: Comment }
-  type Comment { id: ID!, issueId: String, agentSession: AgentSession, body: String!, url: String!, createdAt: String!, issue: Issue, parent: Comment, user: User }
+  type Comment { id: ID!, issueId: String, agentSession: AgentSession, body: String!, url: String!, createdAt: String!, issue: Issue, parent: Comment, user: User, children(first: Int, after: String, filter: CommentFilter): CommentConnection! }
+  input CommentFilter { user: UserFilter, parent: NullableCommentFilter }
+  input NullableCommentFilter { id: IDComparator }
+  input UserFilter { id: IDComparator }
+  input IDComparator { eq: ID }
   type CommentConnection { nodes: [Comment!]!, pageInfo: PageInfo! }
   type TeamConnection { nodes: [Team!]!, pageInfo: PageInfo! }
   input IssueCreateInput { id: String, teamId: String!, title: String!, description: String }

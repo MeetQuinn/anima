@@ -21,6 +21,8 @@ import { withTempAnimaHome, waitFor } from './helpers/harness.js';
 import { created, prompted, install, seedLinear } from './helpers/linear.js';
 import { linearQueryErrors } from './helpers/linear-schema.js';
 import { makeSlackEvent } from './helpers/slack.js';
+import { isClaimableQueuedInboxItem, isHeldInboxItem } from '../../shared/inbox.js';
+import { listRestartBlockers } from '../services/restart-gate.js';
 
 const issueId = randomUUID(), humanId = randomUUID();
 function notification(type = 'issueNewComment'): Extract<LinearWebhook, { type: 'AppUserNotification' }> {
@@ -41,6 +43,9 @@ function verified<T extends LinearWebhook>(event: T): T {
 async function fixture(home: string) {
   const seeded = await seedLinear(home);
   let app: string | null = null, fail = false;
+  // The thread root's author and whether this app has replied in that thread.
+  // null: a top-level comment with no thread above it.
+  let thread: { rootAuthor: string | null; replied: boolean } | null = { rootAuthor: humanId, replied: false };
   const calls: string[] = [];
   const fetcher: typeof fetch = async (url, init) => {
     const { query, variables } = JSON.parse(String(init?.body));
@@ -48,14 +53,17 @@ async function fixture(home: string) {
     calls.push(query);
     if (query.includes('comment(id:')) {
       if (fail) throw new Error('Synthetic unavailable');
-      return Response.json({ data: { comment: { id: variables.id, issueId, agentSession: null,
-        parent: { agentSession: app ? { appUser: { id: app } } : null } } } });
+      assert.equal(variables.app, install.appUserId);
+      const parent = thread || app ? { agentSession: app ? { appUser: { id: app } } : null,
+        user: thread?.rootAuthor ? { id: thread.rootAuthor } : null, children: { nodes: thread?.replied ? [{ id: randomUUID() }] : [] } } : null;
+      return Response.json({ data: { comment: { id: variables.id, issueId, agentSession: null, parent } } });
     }
     return seeded.fake.fetch(url, init);
   };
   const identity = new LinearIdentityService('scout', new LinearClient(fetcher), seeded.store);
   return { ...seeded, identity, notifications: new LinearNotificationService(identity), calls, fetcher,
-    setSession: (id: string | null) => { app = id; }, setFailure: (value: boolean) => { fail = value; } };
+    setSession: (id: string | null) => { app = id; }, setFailure: (value: boolean) => { fail = value; },
+    setThread: (value: typeof thread) => { thread = value; } };
 }
 
 test('app notifications authenticate resources and enqueue once across retries, settlement and service recreation', async (t) => withTempAnimaHome(async (home) => {
@@ -162,6 +170,8 @@ test('ordinary notifications share the Slack primary session and may finish sile
     homePath: (await f.agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
   try {
     await waitFor(async () => (await queue.list()).length === 0);
+    // A reply in a thread this agent started wakes it.
+    f.setThread({ rootAuthor: install.appUserId, replied: false });
     const event = notification(); await f.notifications.receive(verified(event), install);
     await waitFor(() => calls.length === 2); await waitFor(async () => (await queue.list()).length === 0);
     assert.equal(calls[1]!.providerSession?.id, 'same-primary-session');
@@ -175,6 +185,198 @@ test('ordinary notifications share the Slack primary session and may finish sile
     await f.service.receive(created(), install); await waitFor(() => f.fake.posts.some((p) => p.content.type === 'error'));
     assert.equal(f.fake.posts.filter((p) => p.content.type === 'error').length, 1);
   } finally { await runner.stop(); }
+}));
+
+function permissionChange(): Extract<LinearWebhook, { type: 'PermissionChange' }> {
+  return { type: 'PermissionChange', action: 'teamAccessChanged', organizationId: install.organizationId, oauthClientId: install.clientId,
+    appUserId: install.appUserId, webhookTimestamp: Date.now(), createdAt: new Date().toISOString(), canAccessAllPublicTeams: false,
+    addedTeamIds: [randomUUID()], removedTeamIds: [] };
+}
+
+test('only requests addressed to the agent wake it; other Linear events wait for its next run', async (t) => withTempAnimaHome(async (home) => {
+  const f = await fixture(home); t.mock.method(globalThis, 'fetch', f.fetcher);
+  const prompts: string[] = [];
+  const runtime = { kind: 'synthetic', async run(input: AgentRuntimeInput) { prompts.push(input.prompt); return { text: 'Noted' }; },
+    async appendToActiveRun() { return { accepted: false }; }, async close() {} };
+  const queue = new WakeQueueService('scout');
+  const runner = await startRunningAgent({ agentId: 'scout', agentRuntime: runtime, animaHome: home, stateDir: home,
+    homePath: (await f.agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
+  try {
+    f.setThread(null); const topLevel = notification();
+    await f.notifications.receive(verified(topLevel), install);
+    f.setThread({ rootAuthor: humanId, replied: false }); const otherThread = notification();
+    await f.notifications.receive(verified(otherThread), install);
+    for (const type of ['issueStatusChanged', 'issueUnassignedFromYou']) await f.notifications.receive(verified(notification(type)), install);
+    await f.notifications.receive(verified(permissionChange()), install);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(prompts.length, 0, 'Events not addressed to the agent must not wake it');
+    const held = await queue.list();
+    assert.equal(held.length, 5); assert.ok(held.every(isHeldInboxItem));
+    assert.equal(await runner.hasPendingItems(), false, 'Held context is not pending work');
+    assert.deepEqual(await listRestartBlockers(), [], 'Held context must not block a restart');
+
+    // A reply in a thread the agent joined wakes it, and the held context follows in that work.
+    f.setThread({ rootAuthor: humanId, replied: true }); const joined = notification();
+    await f.notifications.receive(verified(joined), install);
+    await waitFor(async () => (await queue.list()).length === 0);
+    assert.equal(prompts.length, 6);
+    assert.match(prompts[0]!, new RegExp(`comment_id=${joined.notification.commentId}`));
+    for (const event of [topLevel, otherThread]) assert.ok(prompts.some((p) => p.includes(`comment_id=${event.notification.commentId}`)));
+    for (const wake of ['issueStatusChanged', 'issueUnassignedFromYou', 'teamAccessChanged']) assert.ok(prompts.some((p) => p.includes(`wake=${wake}`)));
+  } finally { await runner.stop(); }
+}));
+
+test('context arriving during a run joins it instead of waiting, and a claim releases held context', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  await f.notifications.receive(verified(notification('issueStatusChanged')), install);
+  const [early] = await queue.list(); assert.ok(early && isHeldInboxItem(early));
+  assert.equal(await queue.takeNextRunnable({ workerId: 'w1', isWorkerAlive: () => true }), undefined, 'Held context never starts a run');
+  // A scheduled memory pass is not the agent waking for work.
+  const at = new Date().toISOString();
+  await queue.enqueue({ id: 'memory-coherence:scout:synthetic', kind: 'memory_coherence', receivedAt: at, scheduledSlotAt: at,
+    scheduledSlotLabel: '05:02 agent-local', handling: { createdAt: at, queuedAt: at, status: 'queued', updatedAt: at } });
+  const pass = await queue.takeNextRunnable({ workerId: 'w0', isWorkerAlive: () => true });
+  assert.equal(pass?.kind, 'memory_coherence'); assert.ok(isHeldInboxItem((await queue.find(early!.id))!));
+  await f.notifications.receive(verified(notification('issueStatusChanged')), install);
+  assert.equal((await queue.list()).filter(isHeldInboxItem).length, 2, 'Context during a memory pass still waits');
+  await queue.complete(pass!.id);
+  await queue.enqueue(makeSlackEvent({ eventId: 'slack-wake', channelId: 'D-synthetic', userId: 'U-synthetic', ts: '1770000030.000001', text: 'Hi', teamId: 'T-synthetic' }));
+  const claimed = await queue.takeNextRunnable({ workerId: 'w1', isWorkerAlive: () => true });
+  assert.equal(claimed?.kind, 'slack');
+  const released = await queue.find(early!.id);
+  assert.equal(isHeldInboxItem(released!), false); assert.equal(isClaimableQueuedInboxItem(released!), true);
+  await f.notifications.receive(verified(notification('issueUnassignedFromYou')), install);
+  const during = (await queue.list()).find((item) => item.kind === 'linear_notification' && (item as { notificationType?: string }).notificationType === 'issueUnassignedFromYou');
+  assert.ok(during); assert.equal(isHeldInboxItem(during!), false, 'A running agent takes new context as a follow-up');
+  const followups = await queue.takeFollowupBatch({ activeItemId: claimed!.id, limit: 16, workerId: 'w1' });
+  assert.equal(followups.length, 3, 'Both held items and the new context join the run');
+  assert.ok(followups.some((item) => item.id === early!.id) && followups.some((item) => item.id === during!.id));
+}));
+
+test('a late mention of a held comment delivers the request as it now reads', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const ordinary = notification(); ordinary.notification.comment!.body = 'OLD_FYI_NO_REQUEST';
+  await f.notifications.receive(verified(ordinary), install);
+  const [held] = await queue.list(); assert.ok(held && isHeldInboxItem(held));
+  const later = new Date(Date.now() + 60_000).toISOString();
+  const mention = notification('issueCommentMention');
+  mention.notification = { ...mention.notification, commentId: ordinary.notification.commentId, updatedAt: later,
+    comment: { ...ordinary.notification.comment!, body: '@scout NEW_REQUEST_FIX_THIS' } };
+  await f.notifications.receive(verified(mention), install);
+  const [item] = await queue.list();
+  assert.equal((await queue.list()).length, 1); assert.equal(item!.id, held!.id);
+  assert.equal(isClaimableQueuedInboxItem(item!), true);
+  assert.equal(item!.handling.queuedAt, held!.handling.queuedAt, 'The request keeps its queue position');
+  assert.ok(item!.kind === 'linear_notification');
+  assert.equal(item!.notificationType, 'issueCommentMention'); assert.equal(item!.sourceTime, later);
+  const prompt = buildCodeAgentDeliveryPrompt(item!);
+  assert.match(prompt, /NEW_REQUEST_FIX_THIS/); assert.doesNotMatch(prompt, /OLD_FYI_NO_REQUEST/);
+  assert.match(prompt, /wake=issueCommentMention/);
+  // Once delivered, the comment stays deduplicated.
+  await queue.complete(item!.id);
+  await f.notifications.receive(verified({ ...mention, notification: { ...mention.notification, id: randomUUID() } }), install);
+  assert.equal((await queue.list()).length, 0);
+}));
+
+for (const failFirst of [false, true]) test(`a session on a held comment delivers its own request, failFirst=${failFirst}`, async (t) => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const ordinary = notification();
+  await f.notifications.receive(verified(ordinary), install);
+  const [held] = await queue.list(); assert.ok(held && isHeldInboxItem(held));
+  const session = verified(sessionFor(ordinary));
+  if (failFirst) {
+    const enqueue = t.mock.method(WakeQueueService.prototype, 'enqueue', async () => { throw new Error('Synthetic disk unavailable'); });
+    await assert.rejects(f.service.receive(session, install));
+    enqueue.mock.restore();
+    assert.ok(isHeldInboxItem((await queue.find(held!.id))!), 'The comment is kept until the session request is durable');
+  }
+  await f.service.receive(session, install);
+  const items = await queue.list();
+  assert.deepEqual(items.map((item) => item.kind), ['linear'], 'The session request replaces the undelivered comment');
+  const receipt = Object.values((await f.store.read()).receipts)[0]!;
+  assert.equal(receipt.itemId, items[0]!.id); assert.equal(receipt.commentItemId, undefined);
+  await f.notifications.receive(verified({ ...ordinary, notification: { ...ordinary.notification, id: randomUUID() } }), install);
+  assert.equal((await queue.list()).length, 1, 'Retries of the comment do not deliver it again');
+}));
+
+for (const stopCarriesComment of [false, true]) test(`a Stop before the session settles its held comment for good, stopCarriesComment=${stopCarriesComment}`, async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const ordinary = notification();
+  await f.notifications.receive(verified(ordinary), install);
+  const commentItemId = linearCommentItemId(install.id, ordinary.notification.commentId!);
+  const session = sessionFor(ordinary), stop = prompted(session.agentSession.id, true);
+  if (stopCarriesComment) stop.agentSession = { ...stop.agentSession, commentId: ordinary.notification.commentId, issueId };
+  await f.service.receive(verified(stop), install);
+  await f.service.receive(verified(session), install);
+  assert.equal((await queue.list()).length, 0, 'The stopped request is not delivered');
+  assert.equal(await queue.has(commentItemId), true);
+  const receipts = Object.values((await f.store.read()).receipts);
+  assert.ok(receipts.every((r) => r.stopped && !r.itemId));
+  assert.ok(receipts.some((r) => r.commentItemId === commentItemId));
+  const mention = notification('issueCommentMention');
+  mention.notification = { ...mention.notification, commentId: ordinary.notification.commentId, comment: ordinary.notification.comment! };
+  await f.notifications.receive(verified(mention), install);
+  assert.equal((await queue.list()).length, 0, 'A late mention cannot wake a stopped request');
+}));
+
+for (const failAt of ['enqueue', 'withdrawHeld'] as const) for (const stopCarriesComment of [false, true]) test(`a Stop after a takeover fails midway still settles the held comment, failAt=${failAt}, stopCarriesComment=${stopCarriesComment}`, async (t) => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const ordinary = notification();
+  await f.notifications.receive(verified(ordinary), install);
+  const commentItemId = linearCommentItemId(install.id, ordinary.notification.commentId!);
+  const session = sessionFor(ordinary);
+  const fault = t.mock.method(WakeQueueService.prototype, failAt, async () => { throw new Error('Synthetic persistence fault'); });
+  await assert.rejects(f.service.receive(verified(session), install), /Synthetic persistence fault/);
+  fault.mock.restore();
+  const replaced = (await queue.find(commentItemId))!;
+  assert.ok(isHeldInboxItem(replaced));
+  const stop = prompted(session.agentSession.id, true);
+  if (stopCarriesComment) stop.agentSession = { ...stop.agentSession, commentId: ordinary.notification.commentId, issueId };
+  await f.service.receive(verified(stop), install);
+  await f.service.receive(verified(session), install);
+  assert.equal((await queue.list()).length, 0, 'Neither the session request nor the replaced comment survives the Stop');
+  assert.equal(await queue.has(commentItemId), true);
+  assert.ok(replaced.kind === 'linear_notification');
+  await assert.rejects(f.notifications.assertRunnable(replaced), /stopped/, 'A copy already in a run cannot start either');
+  const mention = notification('issueCommentMention');
+  mention.notification = { ...mention.notification, commentId: ordinary.notification.commentId, comment: ordinary.notification.comment! };
+  await f.notifications.receive(verified(mention), install);
+  assert.equal(await queue.takeNextRunnable({ workerId: 'w0', isWorkerAlive: () => true }), undefined, 'A late mention cannot wake a stopped request');
+}));
+
+test('a Stop after a session took over a held comment stops the session request', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const ordinary = notification();
+  await f.notifications.receive(verified(ordinary), install);
+  const session = sessionFor(ordinary);
+  await f.service.receive(verified(session), install);
+  assert.deepEqual((await queue.list()).map((item) => item.kind), ['linear']);
+  const stop = prompted(session.agentSession.id, true);
+  stop.agentSession = { ...stop.agentSession, commentId: ordinary.notification.commentId, issueId };
+  await f.service.receive(verified(stop), install);
+  assert.equal((await queue.list()).length, 0);
+  assert.ok(Object.values((await f.store.read()).receipts).every((r) => r.stopped && !r.commentItemId));
+  assert.deepEqual(f.fake.posts.filter((p) => p.content.type === 'error').map((p) => p.content.body), ['Stopped the pending request. Check any earlier actions before continuing.']);
+}));
+
+test('real work joining a memory pass releases held context and takes new context', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  await f.notifications.receive(verified(notification('issueStatusChanged')), install);
+  const [early] = await queue.list(); assert.ok(early && isHeldInboxItem(early));
+  const at = new Date().toISOString();
+  await queue.enqueue({ id: 'memory-coherence:scout:synthetic', kind: 'memory_coherence', receivedAt: at, scheduledSlotAt: at,
+    scheduledSlotLabel: '05:02 agent-local', handling: { createdAt: at, queuedAt: at, status: 'queued', updatedAt: at } });
+  const pass = await queue.takeNextRunnable({ workerId: 'w0', isWorkerAlive: () => true });
+  assert.equal(pass?.kind, 'memory_coherence');
+  await queue.enqueue(makeSlackEvent({ eventId: 'slack-real', channelId: 'D-synthetic', userId: 'U-synthetic', ts: '1770000040.000001', text: 'Real request', teamId: 'T-synthetic' }));
+  const real = await queue.takeFollowupBatch({ activeItemId: pass!.id, limit: 16, workerId: 'w0' });
+  assert.deepEqual(real.map((item) => item.kind), ['slack']);
+  assert.equal(isClaimableQueuedInboxItem((await queue.find(early!.id))!), true, 'Real work releases held context');
+  await queue.markAppended({ itemId: real[0]!.id, parentItemId: pass!.id, workerId: 'w0' });
+  await f.notifications.receive(verified(notification('issueUnassignedFromYou')), install);
+  assert.equal((await queue.list()).filter(isHeldInboxItem).length, 0, 'Context during real work is not held');
+  const context = await queue.takeFollowupBatch({ activeItemId: pass!.id, limit: 16, workerId: 'w0' });
+  assert.deepEqual(context.map((item) => item.kind), ['linear_notification', 'linear_notification']);
 }));
 
 function sessionFor(event: ReturnType<typeof notification>) {
@@ -202,7 +404,7 @@ for (const mentionFirst of [false, true]) test(`comment mentions share one durab
   assert.match(prompt, new RegExp(`comment_id=${mention.notification.commentId}`));
   assert.match(prompt, new RegExp(`user_id=${humanId}`));
   assert.doesNotMatch(prompt, /session_id=/);
-  assert.match(prompt, new RegExp(`wake=${first.action}`));
+  assert.match(prompt, /wake=issueCommentMention/, 'A mention of a held comment delivers it as a mention');
   await queue.complete(item!.id);
   await f.notifications.receive(verified(second), install);
   assert.equal((await queue.list()).length, 0);

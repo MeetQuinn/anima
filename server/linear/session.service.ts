@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { LinearActivityKind } from '../../shared/linear.js';
-import type { LinearInboxItem, InboxItem } from '../../shared/inbox.js';
+import { isHeldInboxItem, type LinearInboxItem, type InboxItem } from '../../shared/inbox.js';
 import { nowIso } from '../ids.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { linearCommentItemId, withLinearCommentLock } from '../inbox/linear-comment-delivery.js';
@@ -182,12 +182,20 @@ export class LinearSessionService {
     // without enqueueing a second request or inventing a session reply obligation.
     const commentItemId = session.commentId && (event.action === 'created' || stopped)
       ? linearCommentItemId(install.id, session.commentId) : undefined;
-    const commentDelivered = commentItemId && await wakeQueueServiceForAgent(this.agentId).has(commentItemId);
+    const queue = wakeQueueServiceForAgent(this.agentId);
+    const existing = commentItemId ? await queue.find(commentItemId) : undefined;
+    const heldComment = event.action === 'created' && !stopped && existing !== undefined && isHeldInboxItem(existing);
+    const commentQueued = commentItemId && await queue.has(commentItemId);
     const file = await this.identity.store.update((current) => {
       if (current.installation?.id !== install.id || current.installation.revoked) throw new Error('Linear identity changed.');
       const receipts = { ...current.receipts };
       if (!receipts[key]) {
         const alreadyStopped = event.action === 'created' && Object.values(receipts).some((r) => r.sessionId === session.id && r.stopped);
+        // A comment still held as context never reached the agent, so an open session delivers
+        // the request itself and takes over disposing of the comment. A stopped session keeps the
+        // comment as its request, so Stop settles it. After a takeover, a later Stop links nothing.
+        const tookOver = Boolean(commentItemId) && Object.values(receipts).some((r) => r.sessionId === session.id && r.heldCommentItemId === commentItemId);
+        const commentDelivered = commentQueued && (heldComment ? alreadyStopped : !tookOver);
         receipts[key] = { sessionId: session.id, receivedAt, acknowledgement: stopped || alreadyStopped ? 'accepted' : 'pending', acknowledgementId: randomUUID() };
         if (session.commentId) receipts[key].commentId = session.commentId;
         if (commentDelivered) receipts[key].commentItemId = commentItemId;
@@ -197,13 +205,20 @@ export class LinearSessionService {
           receipts[key].stopSignal = true;
           for (const [id, r] of Object.entries(receipts)) if (r.sessionId === session.id) receipts[id] = { ...r, stopped: true };
         }
-        else if (!commentDelivered) { receipts[key].itemId = item.id; receipts[key].item = item; }
+        else if (!commentDelivered) {
+          receipts[key].itemId = item.id; receipts[key].item = item;
+          if (heldComment) receipts[key].heldCommentItemId = commentItemId;
+        }
         if (item.issueId) receipts[key].issueId = item.issueId;
       }
       return { ...current, ...withoutExpiredReceipts(receipts, current.operations, Date.parse(receivedAt)), lastSignedWebhookAt: receivedAt };
     });
-    if (file.receipts[key]!.stopped) { await this.stop(session.id); return; }
-    await this.publish(file.receipts[key]!);
+    const receipt = file.receipts[key]!;
+    if (receipt.stopped) { await this.stop(session.id); return; }
+    await this.publish(receipt);
+    // Withdraw only after the session's request is durable. A failure in between leaves duplicate
+    // context rather than a lost request; the webhook retry or a Stop finishes the disposal.
+    if (receipt.heldCommentItemId) await queue.withdrawHeld(receipt.heldCommentItemId);
   }
 
   async assertRunnable(item: LinearInboxItem): Promise<void> {
@@ -257,8 +272,12 @@ export class LinearSessionService {
     const queue = wakeQueueServiceForAgent(this.agentId);
     let activeRun = false;
     for (const receipt of Object.values(file.receipts)) {
+      if (receipt.sessionId !== sessionId || !receipt.stopped) continue;
+      // A held comment the request replaced must not outlive the Stop, even if the takeover failed midway.
+      const replaced = receipt.heldCommentItemId ? await queue.find(receipt.heldCommentItemId) : undefined;
+      if (replaced?.handling.status === 'queued') await queue.fail(replaced.id);
       const itemId = receipt.itemId ?? receipt.commentItemId;
-      if (receipt.sessionId !== sessionId || !receipt.stopped || !itemId || receipt.answered) continue;
+      if (!itemId || receipt.answered) continue;
       const item = await queue.find(itemId);
       const runItemId = receipt.runItemId ?? item?.handling.appendedToItemId ?? item?.id;
       const run = runItemId ? await queue.find(runItemId) : undefined;

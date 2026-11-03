@@ -28,6 +28,9 @@ const Receipt = z.object({
   // A comment notification already delivered this request before its session
   // arrived. Keep the association for Stop, without a second reply obligation.
   commentItemId: z.string().optional(),
+  // A held comment notification this session request replaced. The receipt keeps the
+  // duty to dispose of it: withdrawn once the request is published, settled by Stop.
+  heldCommentItemId: z.string().optional(),
   itemId: z.string().optional(), stopped: z.boolean().optional(), stopSignal: z.boolean().optional(),
   runItemId: z.string().optional(), settled: z.boolean().optional(),
   answered: z.boolean().optional(),

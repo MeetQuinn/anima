@@ -15,6 +15,8 @@ export interface WakeQueueEnqueueResult {
   duplicate: boolean;
   item: InboxItem;
   queued: boolean;
+  /** True when the item waits for the agent's next run instead of waking it. */
+  held?: boolean;
   /** True when the item is durable but not yet claimable (preflight publish path). */
   staged?: boolean;
 }
@@ -49,8 +51,8 @@ export class WakeQueueService {
    * existed are only known to the ledger, so a ledger hit withdraws the
    * just-queued item (or, if a worker already claimed it, lets it run once).
    */
-  async enqueue(event: InboxItem): Promise<WakeQueueEnqueueResult> {
-    const result = await this.store.insertIfAbsent(event);
+  async enqueue(event: InboxItem, options: { holdUntilRun?: boolean } = {}): Promise<WakeQueueEnqueueResult> {
+    const result = await this.store.insertIfAbsent(event, options);
     if (!result.inserted) {
       await this.recordMessage(event);
       return { duplicate: true, item: result.item, queued: false };
@@ -60,8 +62,24 @@ export class WakeQueueService {
       const withdrawn = await this.store.withdrawQueued(event.id);
       if (withdrawn) return { duplicate: true, item: withdrawn, queued: false };
     }
+    if (result.item.handling.heldAt) return { duplicate: false, held: true, item: result.item, queued: true };
     signalWake(this.agentId);
     return { duplicate: false, item: result.item, queued: true };
+  }
+
+  /**
+   * Let held context wake the agent when a later event addresses it. `replacement`
+   * carries that event's newer content. No-op once the item was released or delivered.
+   */
+  async releaseHeld(itemId: string, replacement?: InboxItem): Promise<boolean> {
+    const released = await this.store.releaseHeld(itemId, replacement);
+    if (released) signalWake(this.agentId);
+    return released;
+  }
+
+  /** Drop held context that another delivery supersedes; undefined when not held. */
+  withdrawHeld(itemId: string): Promise<InboxItem | undefined> {
+    return this.store.withdrawHeld(itemId);
   }
 
   /**

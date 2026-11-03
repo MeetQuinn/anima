@@ -6,7 +6,7 @@ import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import type {
   AgentConfig,
 } from '../../shared/agent-config.js';
-import { isDeferredQueuedInboxItem, type InboxItem } from '../../shared/inbox.js';
+import { isDeferredQueuedInboxItem, isHeldInboxItem, type InboxItem } from '../../shared/inbox.js';
 import type {
   AgentStatusSummary,
   DeferredWakeSummary,
@@ -102,7 +102,7 @@ export class RuntimeService {
       ...(currentItemStartedAt ? { currentItemStartedAt } : {}),
       ...(deferredWakes.length > 0 ? { deferredWakes } : {}),
       ...(health ? { health } : {}),
-      queueDepth: items.filter((item) => item.handling.status === 'queued').length,
+      queueDepth: items.filter((item) => item.handling.status === 'queued' && !isHeldInboxItem(item)).length,
       itemCount: items.length,
     };
   }

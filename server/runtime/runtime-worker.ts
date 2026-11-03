@@ -18,7 +18,7 @@ import type {
   RuntimeWorkerConfig,
   RuntimeItemContext,
 } from './types.js';
-import type { InboxItem } from '../../shared/inbox.js';
+import { isHeldInboxItem, type InboxItem } from '../../shared/inbox.js';
 import { AgentRuntimeBridge } from './runtime-bridge.js';
 import { runtimeContextForItemId } from './context.js';
 import { clearActiveRuntimeItem, setActiveRuntimeItem } from './active-item.js';
@@ -193,7 +193,7 @@ export class AgentRuntimeWorker {
 
   async hasPendingItems(): Promise<boolean> {
     const items = await this.queue.list();
-    return items.some((item) => item.handling.status === 'queued' || item.handling.status === 'running');
+    return items.some((item) => (item.handling.status === 'queued' && !isHeldInboxItem(item)) || item.handling.status === 'running');
   }
 
   isProviderQuiescent(): boolean | undefined {

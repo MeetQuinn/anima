@@ -8,6 +8,7 @@ import { JsonStore } from '../json-store.js';
 import {
   isClaimableQueuedInboxItem,
   isDeferredQueuedInboxItem,
+  isHeldInboxItem,
   isPrimaryRunningInboxItem,
   InboxItemSchema,
   type InboxItem,
@@ -151,24 +152,64 @@ export class WakeQueueStore {
     return Boolean(file.items[itemId] ?? file.seen[itemId]);
   }
 
-  async insertIfAbsent(event: InboxItem): Promise<{ inserted: boolean; item: InboxItem }> {
-    const item = activeInboxItem(event);
+  /**
+   * `holdUntilRun` inserts context that must not wake the agent. It is held only
+   * while the agent is doing no work, decided in the same update; during work it is
+   * queued normally so that run takes it.
+   */
+  async insertIfAbsent(event: InboxItem, options: { holdUntilRun?: boolean } = {}): Promise<{ inserted: boolean; item: InboxItem }> {
+    const parsed = activeInboxItem(event);
     let result: { inserted: boolean; item: InboxItem } | undefined;
     await this.update((current) => {
-      const existing = current.items[item.id];
+      const existing = current.items[parsed.id];
       if (existing) {
         result = { inserted: false, item: existing };
         return current;
       }
-      if (current.seen[item.id]) {
-        result = { inserted: false, item };
+      if (current.seen[parsed.id]) {
+        result = { inserted: false, item: parsed };
         return current;
       }
+      const hold = options.holdUntilRun && !hasRunningAgentWork(current.items);
+      const item = hold ? { ...parsed, handling: { ...parsed.handling, heldAt: nowIso() } } : parsed;
       result = { inserted: true, item };
       return { items: { ...current.items, [item.id]: item }, seen: current.seen };
     });
-    if (!result) throw new Error(`Wake queue insert failed: ${item.id}`);
+    if (!result) throw new Error(`Wake queue insert failed: ${parsed.id}`);
     return result;
+  }
+
+  /**
+   * Release held context so it can wake the agent. `replacement` (same id and kind)
+   * replaces the held content in the same update, keeping its queue position.
+   * Returns false, changing nothing, when the item is no longer held.
+   */
+  async releaseHeld(itemId: string, replacement?: InboxItem): Promise<boolean> {
+    const update = replacement ? activeInboxItem(replacement) : undefined;
+    let released = false;
+    await this.update((current) => {
+      const item = current.items[itemId];
+      if (!item || !isHeldInboxItem(item)) return current;
+      if (update && (update.id !== itemId || update.kind !== item.kind)) throw new Error(`Held item replacement mismatch: ${itemId}`);
+      released = true;
+      const source = update ? { ...update, handling: item.handling } as InboxItem : item;
+      return { items: { ...current.items, [itemId]: releasedItem(source, nowIso()) }, seen: current.seen };
+    });
+    return released;
+  }
+
+  /** Settle held context to seen without delivering it. Undefined when it is not held. */
+  async withdrawHeld(itemId: string): Promise<InboxItem | undefined> {
+    let withdrawn: InboxItem | undefined;
+    await this.update((current) => {
+      const item = current.items[itemId];
+      if (!item || !isHeldInboxItem(item)) return current;
+      withdrawn = item;
+      const items = { ...current.items };
+      delete items[itemId];
+      return { items, seen: withSeenMarker(current.seen, item, nowIso()) };
+    });
+    return withdrawn;
   }
 
   /**
@@ -324,6 +365,8 @@ export class WakeQueueStore {
       // Claim always publishes: stagedAt must not survive onto a running item.
       if (claimed.handling.stagedAt) delete claimed.handling.stagedAt;
       next[item.id] = claimed;
+      // The agent is starting work, so held context joins it as ordinary follow-ups.
+      if (isAgentWork(item)) releaseAllHeld(next, nowText);
       result = { item: claimed, recovered };
       return { items: next, seen: current.seen };
     });
@@ -415,6 +458,8 @@ export class WakeQueueStore {
       }, now));
       const items = { ...current.items };
       for (const item of claimed) items[item.id] = item;
+      // Real work joining a run (e.g. a memory pass) wakes the agent like a claim does.
+      if (claimed.some(isAgentWork)) releaseAllHeld(items, now);
       return { items, seen: current.seen };
     });
     return claimed;
@@ -684,6 +729,25 @@ export type SwapDeferredForRetryResult =
   | { kind: 'not_deferred' }
   | { kind: 'not_found' }
   | { kind: 'race' };
+
+// Memory maintenance passes run on a schedule; they are not the agent waking for work.
+function isAgentWork(item: InboxItem): boolean {
+  return item.kind !== 'memory_coherence';
+}
+
+function hasRunningAgentWork(items: Record<string, InboxItem>): boolean {
+  return Object.values(items).some((item) => item.handling.status === 'running' && isAgentWork(item));
+}
+
+function releaseAllHeld(items: Record<string, InboxItem>, now: string): void {
+  for (const [id, item] of Object.entries(items)) if (isHeldInboxItem(item)) items[id] = releasedItem(item, now);
+}
+
+function releasedItem(item: InboxItem, now: string): InboxItem {
+  const handling = { ...item.handling, updatedAt: now };
+  delete handling.heldAt;
+  return { ...item, handling };
+}
 
 function requeuedItem(
   item: InboxItem,
