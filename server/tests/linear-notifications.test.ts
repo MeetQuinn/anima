@@ -242,7 +242,10 @@ for (const order of ['session-first', 'notification-first', 'concurrent'] as con
   if (item!.kind === 'linear_notification') {
     assert.equal(receipt.commentItemId, item!.id); assert.equal(receipt.itemId, undefined);
     await f.service.tick(); await f.service.completeIdleRuns(async () => true);
-    assert.equal(f.fake.posts.length, 0, 'A late session must not create a second reply obligation');
+    assert.equal(f.fake.posts.length, 1, 'A late session gets a receipt, not a second reply obligation');
+    assert.equal(f.fake.posts[0]!.content.type, 'thought');
+    assert.match(f.fake.posts[0]!.content.body, /Received by Anima\. .*original comment thread/);
+    await f.service.tick(); assert.equal(f.fake.posts.length, 1);
   } else { assert.equal(item!.kind, 'linear'); assert.equal(receipt.itemId, item!.id); }
   await queue.complete(item!.id);
   await new LinearSessionService(f.identity).receive(verified(session), install);
@@ -328,4 +331,20 @@ test('a session racing a slow comment lookup cannot publish a second request', a
     assert.equal(sessionFinished, false);
   } finally { release(); await Promise.all([incoming, other]); }
   assert.equal((await queue.list()).length, 1);
+}));
+
+test('late-session receipt is attempted once even if its response is lost', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const mention = notification('issueCommentMention'), session = sessionFor(mention);
+  await f.notifications.receive(verified(mention), install);
+  await queue.complete((await queue.list())[0]!.id);
+  await f.service.receive(verified(session), install);
+  f.fake.loseResponse = true;
+  await f.service.tick(); await f.service.tick();
+  assert.equal(f.fake.posts.length, 1);
+  assert.equal(f.fake.posts[0]!.content.type, 'thought');
+  assert.equal(Object.values((await f.store.read()).receipts)[0]!.acknowledgement, 'unknown');
+  assert.equal((await queue.list()).length, 0);
+  await f.service.completeIdleRuns(async () => true);
+  assert.equal(f.fake.posts.length, 1);
 }));

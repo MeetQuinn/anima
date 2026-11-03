@@ -33,8 +33,8 @@ Ordinary comments can be added after a task is complete. They do not claim an in
 request, complete a work session, or resume work that a person stopped. Use session
 responses below when replying to an assigned request.
 
-A `Linear mention` delivery can be a request from a person or another agent, without
-a Linear work session. Handle requests directed to you and use `comment --reply-to`
+A `Linear mention` delivery can be a request from a person or another agent for which
+Anima has not yet matched a work session. Handle requests directed to you and use `comment --reply-to`
 in the supplied thread. Do not invent a session ID or require delegation before
 answering. Acknowledgements and completion notices do not require another reply;
 do not mention another agent just to acknowledge it. Existing Stop instructions
@@ -100,10 +100,12 @@ the issue and comment IDs in its envelope to read the discussion or reply with
 silently does not post a missing-response error. A notification does not resume
 work that a person stopped.
 
-Mentions can arrive as **Linear mention** comments when Linear does not create a
-work session, including mentions from another app. When a work session exists,
+Mentions can arrive as **Linear mention** comments before Anima can match a
+work session, including mentions from another app. When Anima already knows the session,
 mentions, assignments and replies use that session instead. A comment already
-delivered before its session arrives does not start a second run. Own activity
+delivered before its session arrives does not start a second run. The late session
+gets a receipt directing the person to the comment thread, without another reply
+obligation or a claim of completion. Own activity
 and repeated deliveries do not wake you again.
 Team-access changes ask you to check `anima linear teams`; the API's current
 permissions determine which work you can read or change.

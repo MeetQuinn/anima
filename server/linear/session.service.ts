@@ -161,7 +161,7 @@ export class LinearSessionService {
       const receipts = { ...current.receipts };
       if (!receipts[key]) {
         const alreadyStopped = event.action === 'created' && Object.values(receipts).some((r) => r.sessionId === session.id && r.stopped);
-        receipts[key] = { sessionId: session.id, receivedAt, acknowledgement: stopped || alreadyStopped || commentDelivered ? 'accepted' : 'pending', acknowledgementId: randomUUID() };
+        receipts[key] = { sessionId: session.id, receivedAt, acknowledgement: stopped || alreadyStopped ? 'accepted' : 'pending', acknowledgementId: randomUUID() };
         if (session.commentId) receipts[key].commentId = session.commentId;
         if (commentDelivered) receipts[key].commentItemId = commentItemId;
         if (alreadyStopped) receipts[key].stopped = true;
@@ -481,7 +481,10 @@ export class LinearSessionService {
         catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
       } else if (r.acknowledgement === 'pending') {
         await this.setAcknowledgement(installId, key, 'sending');
-        try { await this.createActivity(installId, receipt.sessionId, receipt.acknowledgementId, 'thought', 'Received by Anima.', true); }
+        const body = r.commentItemId
+          ? 'Received by Anima. This request was already delivered through the original comment thread. Follow that thread for any reply.'
+          : 'Received by Anima.';
+        try { await this.createActivity(installId, receipt.sessionId, receipt.acknowledgementId, 'thought', body, true); }
         catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
       } else return;
       await this.setAcknowledgement(installId, key, 'accepted');
