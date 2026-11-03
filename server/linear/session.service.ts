@@ -239,9 +239,13 @@ export class LinearSessionService {
       else if (item?.handling.status === 'queued') await queue.fail(item.id);
     }
     const pending = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.itemId && r.stopped && !r.answered);
-    if (!activeRun && pending) {
+    const commentStop = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.commentItemId && r.stopped)
+      && Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.stopSignal && !r.answered);
+    if (commentStop || !activeRun && pending) {
       const background = Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.stopped && r.settled && !r.answered);
-      const body = background
+      const body = commentStop
+        ? 'Stop requested for this comment-thread request. Earlier actions or provider background work may still exist; check the original comment thread before continuing.'
+        : background
         ? 'Stopped accepting replies for this request. Provider background work may still be running; check it before continuing.'
         : 'Stopped the pending request. Check any earlier actions before continuing.';
       await this.respond(sessionId, 'error', body, undefined, 'stopped');
@@ -344,7 +348,10 @@ export class LinearSessionService {
     file = await this.identity.store.read();
     const hash = contentHash(kind, body);
     const candidates = Object.entries(file.receipts).filter(([, r]) => r.sessionId === sessionId
-      && r.itemId && !r.answered && (terminal === 'stopped' ? r.stopped : terminal === 'failed' || !r.stopped));
+      // Stop itself needs a terminal receipt even when the work was delivered
+      // as a comment. This does not grant an ordinary session reply obligation.
+      && (r.itemId || terminal === 'stopped' && r.stopSignal) && !r.answered
+      && (terminal === 'stopped' ? r.stopped : terminal === 'failed' || !r.stopped));
     const itemIds: string[] = [];
     for (const [id, receipt] of candidates) {
       const owner = await this.ownerFor(receipt);

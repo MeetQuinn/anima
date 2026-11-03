@@ -130,6 +130,8 @@ before its session arrives is not delivered again. The late session gets one rec
 pointing to the original thread, and its Stop still reaches the comment's queued or
 running work. That receipt does not claim completion; subsequent replies stay in the
 comment thread, without automatic session progress or a second reply obligation.
+A Stop gets an end notice confirming the stop request, without claiming that earlier
+actions or provider background work have been undone.
 Anima filters overlapping notifications, self-authored activity
 and delivery retries. Permission-change
 notifications tell the agent to check current team access. Reactions do not wake

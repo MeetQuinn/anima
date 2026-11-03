@@ -256,7 +256,7 @@ for (const order of ['session-first', 'notification-first', 'concurrent'] as con
   assert.equal((await queue.list()).length, 1);
 }));
 
-for (const running of [false, true]) for (const stopFirst of [false, true]) test(`late session Stop reaches the comment delivery, running=${running}, stopFirst=${stopFirst}`, async () => withTempAnimaHome(async (home) => {
+for (const running of [false, true]) for (const stopFirst of [false, true]) for (const acknowledged of [false, true]) test(`late session Stop reaches the comment delivery, running=${running}, stopFirst=${stopFirst}, acknowledged=${acknowledged}`, async () => withTempAnimaHome(async (home) => {
   const f = await fixture(home), queue = new WakeQueueService('scout');
   const mention = notification('issueCommentMention'), session = sessionFor(mention);
   await f.notifications.receive(verified(mention), install);
@@ -264,6 +264,7 @@ for (const running of [false, true]) for (const stopFirst of [false, true]) test
   if (running) await queue.takeNextRunnable({ workerId: 'synthetic', isWorkerAlive: () => true });
   const stop = prompted(session.agentSession.id, true); stop.agentSession.commentId = mention.notification.commentId;
   if (!stopFirst) await f.service.receive(verified(session), install);
+  if (acknowledged && !stopFirst) await f.service.tick();
   await f.service.receive(verified(stop), install);
   if (stopFirst) await f.service.receive(verified(session), install);
   if (running) assert.ok((await queue.find(item!.id))!.handling.stopRequestedAt);
@@ -271,7 +272,13 @@ for (const running of [false, true]) for (const stopFirst of [false, true]) test
   await assert.rejects(f.notifications.assertRunnable(item as Parameters<typeof f.notifications.assertRunnable>[0]), /stopped/);
   await f.notifications.receive(verified(mention), install); await f.service.receive(verified(session), install);
   assert.equal((await queue.list()).length, running ? 1 : 0);
-  await f.service.tick(); assert.equal(f.fake.posts.length, 0);
+  await f.service.tick();
+  const ends = f.fake.posts.filter((p) => p.content.type === 'error');
+  assert.equal(ends.length, 1);
+  assert.match(ends[0]!.content.body, /Stop requested.*background work may still exist/);
+  assert.equal(f.fake.posts.length, acknowledged && !stopFirst ? 2 : 1);
+  await f.service.finishRun(item!.id, 'Interrupted'); await f.service.completeIdleRuns(async () => true);
+  assert.equal(f.fake.posts.filter((p) => p.content.type === 'error').length, 1);
 }));
 
 test('a failed notification enqueue leaves session intake able to deliver once', async (t) => withTempAnimaHome(async (home) => {
@@ -296,6 +303,7 @@ test('Stop without a comment hint still stops a notification when its creation a
   assert.equal((await queue.list()).length, 0);
   await f.notifications.receive(verified(mention), install);
   assert.equal((await queue.list()).length, 0);
+  assert.equal(f.fake.posts.length, 1); assert.equal(f.fake.posts[0]!.content.type, 'error');
 }));
 
 test('legacy notification IDs still suppress a redelivery after upgrade', async () => withTempAnimaHome(async (home) => {
@@ -347,4 +355,20 @@ test('late-session receipt is attempted once even if its response is lost', asyn
   assert.equal((await queue.list()).length, 0);
   await f.service.completeIdleRuns(async () => true);
   assert.equal(f.fake.posts.length, 1);
+}));
+
+test('late-session Stop with a lost response reconciles its one write instead of repeating it', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const mention = notification('issueCommentMention'), session = sessionFor(mention);
+  await f.notifications.receive(verified(mention), install);
+  await f.service.receive(verified(session), install);
+  const stop = prompted(session.agentSession.id, true);
+  f.fake.loseResponse = true;
+  await assert.rejects(f.service.receive(verified(stop), install));
+  assert.equal(f.fake.posts.length, 1); assert.equal(f.fake.posts[0]!.content.type, 'error');
+  assert.equal(Object.values((await f.store.read()).operations)[0]!.state, 'unknown');
+  f.fake.loseResponse = false;
+  await f.service.tick(); await f.service.receive(verified(stop), install); await f.service.tick();
+  assert.equal(f.fake.posts.length, 1); assert.equal((await queue.list()).length, 0);
+  assert.equal(Object.values((await f.store.read()).operations)[0]!.state, 'accepted');
 }));
