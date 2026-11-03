@@ -352,6 +352,30 @@ test('a run ending never reopens a request it already answered or that was stopp
   assert.deepEqual(fake.posts.filter((p) => p.content.type === 'error').map((p) => p.agentSessionId), [other]);
 }));
 
+test('a Stop waiting on its run is recorded as applied and the tick does not process it again', async (t) => withTempAnimaHome(async (home) => {
+  const { service, fake, store } = await seedLinear(home);
+  await service.receive(created(), install); const item = await firstItem();
+  await new WakeQueueService('scout').takeNextRunnable({ workerId: 'worker', isWorkerAlive: () => true }); await service.markStarted(item, item.id);
+  await service.receive(prompted(sessionId, true), install);
+  assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0, 'The run reports the Stop when it ends');
+  assert.deepEqual(Object.values((await store.read()).receipts).map((r) => `${r.kind}:${r.state}`).sort(), ['request:stopping', 'stop:applied']);
+  const stop = t.mock.method(service, 'stop');
+  await service.tick();
+  assert.equal(stop.mock.callCount(), 0);
+}));
+
+test('the tick republishes a request only until its run starts', async (t) => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  await service.receive(created(), install); const item = await firstItem();
+  const enqueue = t.mock.method(WakeQueueService.prototype, 'enqueue');
+  await service.tick();
+  assert.equal(enqueue.mock.callCount(), 1, 'A received request is republished in case its first enqueue was lost');
+  await new WakeQueueService('scout').takeNextRunnable({ workerId: 'worker', isWorkerAlive: () => true }); await service.markStarted(item, item.id);
+  const before = enqueue.mock.callCount();
+  await service.tick();
+  assert.equal(enqueue.mock.callCount(), before);
+}));
+
 test('a webhook drops receipts finished over 30 days ago and the operations of their sessions', async () => withTempAnimaHome(async (home) => {
   const { service, store } = await seedLinear(home);
   const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString();
