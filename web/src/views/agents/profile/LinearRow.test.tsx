@@ -151,6 +151,15 @@ it('shows whether Linear can reach the public address while connecting', async (
   expect(api.check).toHaveBeenCalledTimes(2);
 });
 
+it('warns in the Linear dialog too when the dashboard opens at the public address', async () => {
+  api.check.mockResolvedValueOnce({ publicUrl: setup.publicUrl, reachable: true, status: 200, passwordSet: false, dashboard: { open: true, status: 200 }, checkedAt: '2026-11-03T00:00:00Z' });
+  mount();
+  await screen.findByText('Not connected');
+  const dialog = await openDialog();
+  const alert = await within(dialog).findByRole('alert');
+  expect(alert.textContent).toContain('Anyone can open the dashboard at this address');
+});
+
 for (const reason of [
   'Use a separate Linear app for each agent.',
   'Set the Anima public URL in Server settings and refresh the connection form.',

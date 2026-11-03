@@ -86,7 +86,7 @@ If the dashboard is reachable beyond its intended operators:
 - treat the dashboard as access to agent configuration, activity, knowledge bases, and operational controls;
 - verify that proxies do not bypass authentication or cache private responses.
 
-The [public address](./configuration.md#public-address-publicurl) is a declaration: saving it exposes nothing. The tunnel or proxy that forwards it does, and it decides who reaches the dashboard. Anima serves requests through it like any other request. If you forward the whole address, protect it with a sign-in gateway or a dashboard password. To expose only what Linear calls, forward just `/webhooks/`, the legacy `/webhook` and `/api/linear/oauth/callback`.
+The [public address](./configuration.md#public-address-publicurl) is a declaration: saving it exposes nothing. The tunnel or proxy that forwards it does, and it decides who reaches the dashboard. Anima serves requests through it like any other request. If you forward the whole address, protect it with a sign-in gateway or a dashboard password. To expose only what Linear calls, forward just `/webhooks/`, the legacy `/webhook` and `/api/linear/oauth/callback`. The dashboard's public address check warns when it can open the dashboard through the address without signing in; it blocks nothing.
 
 The dashboard refuses writes that a browser marks as coming from another site, so a page open in the operator's browser cannot change agents or restart services through it. Clients that are not browsers, such as `curl`, are not affected. Reads are not covered by this check, and it is not a substitute for authentication.
 

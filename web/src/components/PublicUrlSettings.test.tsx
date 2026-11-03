@@ -71,12 +71,81 @@ it('a saved address is checked: one forwarding target, and what to update after 
   expect(save().disabled).toBe(true);
 });
 
-it('without a dashboard password the check says a forwarded address is open unless a gateway asks first, and how to set one', async () => {
+it('without a dashboard password and no answer for the dashboard path, the check says a forwarded address is open unless a gateway asks first', async () => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false }));
   mount();
   await screen.findByText(/No dashboard password is set\. If the whole address is forwarded here, anyone who opens it gets the\s+dashboard unless a sign-in gateway/);
   expect(screen.getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
+});
+
+const WARNING = 'Anyone can open the dashboard at this address';
+
+it('warns prominently when Anima opened the dashboard through the address without signing in', async () => {
+  api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
+  api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false, dashboard: { open: true, status: 200 } }));
+  mount();
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain(WARNING);
+  expect(alert.textContent).toContain('Anima opened it through this address without signing in.');
+  expect(alert.textContent).toContain('let /webhooks/ through');
+  expect(within(alert).getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
+  // Still reachable, and no line beside it says what protects the dashboard.
+  const status = screen.getByRole('status');
+  expect(status.textContent).toContain('Reachable. Requests to this address arrive at this Anima.');
+  expect(status.textContent).not.toMatch(/password|gateway|couldn’t open/);
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+});
+
+const UNCONFIRMED = /If the whole address is forwarded here, anyone who opens it gets the\s+dashboard unless a sign-in gateway/;
+
+it.each([
+  [{ passwordSet: true, dashboard: { open: false, status: 401 } }, 'A dashboard password is set. The dashboard asks for it wherever it opens.'],
+  [{ passwordSet: true, dashboard: { open: false, status: 502 } }, 'A dashboard password is set. The dashboard asks for it wherever it opens.'],
+  [{ passwordSet: false, dashboard: { open: false, status: 401 } }, 'something in front of it asked for sign-in or refused (HTTP 401).'],
+  [{ passwordSet: false, dashboard: { open: false, status: 403 } }, 'something in front of it asked for sign-in or refused (HTTP 403).'],
+])('no warning, and what asked first, when the dashboard did not open at the address: %o', async (result, message) => {
+  api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
+  api.check.mockResolvedValue(checked({ reachable: true, status: 200, ...result }));
+  mount();
+  await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
+  const status = screen.getByRole('status');
+  expect(status.textContent).toContain(message);
+  expect(status.textContent).not.toMatch(UNCONFIRMED);
+  expect(status.textContent).not.toMatch(/Keep|doesn’t show/);
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+// A redirect, a tunnel error, an unexpected page or a 404 is not the dashboard, but
+// it is no evidence that anything asks for sign-in either: say so, and keep the advice.
+it.each([
+  [301, 'was redirected (HTTP 301)'],
+  [302, 'was redirected (HTTP 302)'],
+  [308, 'was redirected (HTTP 308)'],
+  [502, 'got HTTP 502'],
+  [530, 'got HTTP 530'],
+  [200, 'got HTTP 200'],
+  [404, 'got HTTP 404'],
+])('a dashboard check answered with HTTP %i is not a security conclusion', async (code, seen) => {
+  api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
+  api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false, dashboard: { open: false, status: code } }));
+  mount();
+  await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
+  const status = screen.getByRole('status');
+  expect(status.textContent).toContain(`The dashboard check ${seen}, which doesn’t show whether the dashboard is open at this address.`);
+  expect(status.textContent).toMatch(UNCONFIRMED);
+  expect(within(status).getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
+  expect(status.textContent).not.toMatch(/asked for sign-in|Keep/);
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('warns even when Linear’s path is blocked, next to what is in the way', async () => {
+  api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
+  api.check.mockResolvedValue(checked({ reachable: false, failure: 'gateway', status: 403, passwordSet: false, dashboard: { open: true, status: 200 } }));
+  mount();
+  await screen.findByText('Not reachable yet');
+  const alerts = screen.getAllByRole('alert');
+  expect(alerts.map((alert) => alert.textContent?.includes(WARNING))).toEqual([false, true]);
 });
 
 it.each([

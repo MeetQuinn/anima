@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
-import { checkPublicUrl } from '../settings/public-url-check.js';
+import { answerProbe, checkPublicUrl, DASHBOARD_PROBE_PATH } from '../settings/public-url-check.js';
 import { defaultSystemService } from '../services/system.service.js';
 import { defaultProviderUsageService } from '../provider-usage/provider-usage.service.js';
 import { defaultProviderCliService } from '../provider-cli/provider-cli.service.js';
@@ -54,6 +54,15 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
   fastify.post('/api/settings/public-url/check', async (_request, reply) => {
     reply.header('cache-control', 'no-store');
     return checkPublicUrl();
+  });
+  // Answers the check's own request only while it runs. Not a public path: with a
+  // dashboard password it answers 401, so an echo through the public address means
+  // the dashboard is open there.
+  fastify.get(`${DASHBOARD_PROBE_PATH}/:nonce`, async (request, reply) => {
+    const nonce = (request.params as { nonce?: string }).nonce ?? '';
+    reply.header('cache-control', 'no-store');
+    if (!answerProbe(nonce, 'dashboard')) return reply.code(404).send({ error: 'unknown_probe' });
+    return { probe: nonce };
   });
   fastify.get('/api/health', async () => ({ ok: true }));
   fastify.get('/api/provider-availability', async () => defaultSystemService.providerAvailability());

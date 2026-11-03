@@ -154,7 +154,8 @@ The package you pass to `npx` still decides what `start` and `restart` install. 
 Forward the whole address to the dashboard. Set it in **Settings → Server**, or in the
 Linear dialog when you connect the first agent. Integrations derive their public URLs from
 it; saving it neither creates forwarding nor changes a platform's registered app URLs.
-The dashboard checks that the address reaches this Anima. Forwarding the whole address
+The dashboard checks that the address reaches this Anima, and warns when the dashboard
+opens there without signing in. Forwarding the whole address
 exposes the whole dashboard there: protect it with a sign-in gateway or a
 [dashboard password](#dashboard-password-dashboardauth). See
 [Connect an agent to Linear](guide/connect-linear.md#public-address).
