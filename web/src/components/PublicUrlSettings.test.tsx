@@ -64,18 +64,18 @@ it('a saved address is checked: one forwarding target, and what to update after 
   mount();
   await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
   expect(api.check).toHaveBeenCalledTimes(1);
-  expect(screen.getByText('The dashboard asks for its password at this address.')).toBeTruthy();
+  expect(screen.getByText('A dashboard password is set. The dashboard asks for it wherever it opens.')).toBeTruthy();
   expect(screen.getByText(/Forward the whole address to this dashboard/)).toBeTruthy();
   expect(screen.queryByText('/api/linear/oauth/callback')).toBeNull();
   expect(screen.getByText(/also update the webhook and callback URLs/)).toBeTruthy();
   expect(save().disabled).toBe(true);
 });
 
-it('without a dashboard password the check says the dashboard is open unless a gateway asks first, and how to set one', async () => {
+it('without a dashboard password the check says a forwarded address is open unless a gateway asks first, and how to set one', async () => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false }));
   mount();
-  await screen.findByText(/anyone who opens this address gets the dashboard unless a\s+sign-in gateway/);
+  await screen.findByText(/No dashboard password is set\. If the whole address is forwarded here, anyone who opens it gets the\s+dashboard unless a sign-in gateway/);
   expect(screen.getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
 });
 

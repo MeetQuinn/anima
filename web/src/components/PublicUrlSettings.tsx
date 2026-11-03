@@ -184,12 +184,12 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
         <span className="text-text-subtle">{again}</span>
       </p>
       {result.passwordSet ? (
-        <p className="text-text-subtle">The dashboard asks for its password at this address.</p>
+        <p className="text-text-subtle">A dashboard password is set. The dashboard asks for it wherever it opens.</p>
       ) : (
         <p className="max-w-prose text-text-subtle">
-          The dashboard has no password, so anyone who opens this address gets the dashboard unless a
-          sign-in gateway in front of it asks first. To have the dashboard ask too, set a password on this
-          machine:{' '}
+          No dashboard password is set. If the whole address is forwarded here, anyone who opens it gets the
+          dashboard unless a sign-in gateway in front of it asks first. To have the dashboard ask too, set a
+          password on this machine:{' '}
           <code className="break-all font-mono text-[11px] text-text-muted">{SET_PASSWORD_COMMAND}</code>
         </p>
       )}
