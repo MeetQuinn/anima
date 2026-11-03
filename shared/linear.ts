@@ -22,13 +22,34 @@ export const LinearCallbackUrl = z.string().url().max(2048).refine((value) => {
       && (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)));
 }, 'Use an HTTPS or loopback callback ending in /api/linear/oauth/callback');
 
+const LinearClientSecret = z.string().min(8).max(1024).regex(/^\S+$/);
+
 export const LinearInstallRequest = z.object({
   clientId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
+  // Linear's token endpoint requires it even with PKCE (Nov 2026, invalid_client without it).
+  clientSecret: LinearClientSecret,
   signingSecret: z.string().min(16).max(1024),
   callbackUrl: LinearCallbackUrl,
   listener: LinearListenerConfig,
 }).strict();
 export type LinearInstallRequest = z.infer<typeof LinearInstallRequest>;
+
+/** Adds the client secret to an installation made before Anima stored it. */
+export const LinearClientSecretRequest = z.object({
+  installationId: z.string().min(1).max(256),
+  clientSecret: LinearClientSecret,
+}).strict();
+export type LinearClientSecretRequest = z.infer<typeof LinearClientSecretRequest>;
+
+/**
+ * saved: the secret and Linear's refreshed tokens were stored together.
+ * rejected: Linear answered invalid_client. expired: invalid_grant, the
+ * authorization is gone. unavailable: no usable answer from Linear (network,
+ * 5xx, other errors); nothing changed. unsaved: Linear may have issued new
+ * tokens but Anima could not store them. changed: the installation was
+ * removed, revoked or replaced meanwhile.
+ */
+export type LinearClientSecretResult = 'saved' | 'rejected' | 'expired' | 'unavailable' | 'unsaved' | 'changed';
 
 export const LinearListenerFailure = z.enum(['address_in_use', 'permission_denied', 'address_unavailable', 'other']);
 export type LinearListenerFailure = z.infer<typeof LinearListenerFailure>;
@@ -42,6 +63,12 @@ export interface LinearListenerStatus {
 export interface LinearStatus {
   state: 'not_configured' | 'installing' | 'connected' | 'revoked';
   clientId?: string;
+  /** Present with an installation; binds a client secret save to it. */
+  installationId?: string;
+  /** False for installations made before Anima stored the client secret. */
+  clientSecretSaved?: boolean;
+  /** Linear answered invalid_client when refreshing this installation's token. */
+  clientRejected?: boolean;
   organizationId?: string;
   appUserId?: string;
   workspaceName?: string;

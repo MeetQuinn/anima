@@ -55,7 +55,7 @@ it('explains an invalid app name and withholds the creation link until it is fix
   expect(manifestOf(screen.getByRole('link', { name: 'Create app in Linear' })).oauth.client_name).toBe('Milo Reviewer');
 });
 
-it('reveals credentials after the app step, enables Authorize only with both values and clears the secret after submitting', async () => {
+it('reveals credentials after the app step, enables Authorize only with all three values and clears both secrets after submitting', async () => {
   const onInstall = mount();
   expect(step(1).getAttribute('aria-current')).toBe('step');
   expect(screen.queryByLabelText('Client ID')).toBeNull();
@@ -68,13 +68,23 @@ it('reveals credentials after the app step, enables Authorize only with both val
   expect(authorize.disabled).toBe(true);
   fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: ' client-id ' } });
   expect(authorize.disabled).toBe(true);
+  const clientSecret = screen.getByLabelText('Client secret') as HTMLInputElement;
   const secret = screen.getByLabelText('Webhook signing secret') as HTMLInputElement;
+  // Linear's order: Client ID, Client secret, then the webhook's signing secret.
+  expect([...document.querySelectorAll('input')].map((input) => input.id)).toEqual(
+    [screen.getByLabelText('Client ID'), clientSecret, secret].map((input) => input.id),
+  );
   // Pasted, not remembered: no password input, so browsers offer no saved or generated passwords.
-  expect(secret.type).toBe('text');
-  expect(secret.getAttribute('autocomplete')).toBe('off');
+  for (const input of [clientSecret, secret]) {
+    expect(input.type).toBe('text');
+    expect(input.getAttribute('autocomplete')).toBe('off');
+    expect(input.hasAttribute('data-1p-ignore')).toBe(true);
+  }
   expect(screen.getByLabelText('Client ID').getAttribute('autocomplete')).toBe('off');
   expect(document.querySelector('input[type="password"]')).toBeNull();
   fireEvent.change(secret, { target: { value: 'synthetic-signing-sentinel' } });
+  expect(authorize.disabled).toBe(true);
+  fireEvent.change(clientSecret, { target: { value: ' synthetic-client-secret-sentinel ' } });
   expect(authorize.disabled).toBe(false);
   expect(step(3).getAttribute('aria-current')).toBe('step');
 
@@ -82,12 +92,15 @@ it('reveals credentials after the app step, enables Authorize only with both val
   await waitFor(() => expect(onInstall).toHaveBeenCalledTimes(1));
   expect(onInstall).toHaveBeenCalledWith({
     clientId: 'client-id',
+    clientSecret: 'synthetic-client-secret-sentinel',
     signingSecret: 'synthetic-signing-sentinel',
     callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
     listener: { host: '127.0.0.1', port: 14185 },
   });
   await waitFor(() => expect(secret.value).toBe(''));
+  expect(clientSecret.value).toBe('');
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-signing-sentinel');
+  expect(JSON.stringify(localStorage)).not.toContain('synthetic-client-secret-sentinel');
 });
 
 it('clicking Create marks the app step done so the credentials come next', () => {

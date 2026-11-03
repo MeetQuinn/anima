@@ -65,7 +65,7 @@ test('machine setup reads without writes, persists once and is reused across age
   assert.deepEqual(await new LinearSetupService().read(), { ...custom, publicUrl: undefined, webhookUrl: undefined, callbackUrl: undefined, listenerLocked: false });
   assert.equal((await serverConfigStore.read()).dashboardPort, 14174);
   for (const agentId of ['scout', 'milo']) {
-    const auth = await new LinearIdentityService(agentId).begin({ clientId: `${agentId}-client`, signingSecret: install.signingSecret, callbackUrl, listener: custom.listener }, 'binding');
+    const auth = await new LinearIdentityService(agentId).begin({ clientId: `${agentId}-client`, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: custom.listener }, 'binding');
     assert.equal(new URL(auth.authorizationUrl).searchParams.get('redirect_uri'), callbackUrl);
     assert.deepEqual((await new LinearIdentityService(agentId).status()).listener, custom.listener);
   }
@@ -78,12 +78,12 @@ test('machine setup and direct OAuth preparation cannot move a listener reserved
   await service.save(setup);
   const fake = new FakeLinear();
   const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch));
-  const auth = new URL((await identity.begin({ clientId: install.clientId, signingSecret: install.signingSecret, callbackUrl, listener: setup.listener }, 'binding')).authorizationUrl);
+  const auth = new URL((await identity.begin({ clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: setup.listener }, 'binding')).authorizationUrl);
   const changed = { ...setup, listener: { ...setup.listener, port: 15123 } };
   for (const phase of ['pending', 'installed']) {
     assert.equal((await service.read()).listenerLocked, true, phase);
     await assert.rejects(service.save(changed), /An installed app or an authorization in progress uses this listener/);
-    await assert.rejects(new LinearIdentityService('milo').begin({ clientId: 'milo-client', signingSecret: install.signingSecret, callbackUrl, listener: changed.listener }, 'binding'), /An installed app or an authorization in progress/);
+    await assert.rejects(new LinearIdentityService('milo').begin({ clientId: 'milo-client', clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: changed.listener }, 'binding'), /An installed app or an authorization in progress/);
     assert.deepEqual((await serverConfigStore.read()).linearWebhook, setup.listener);
     if (phase === 'pending') await identity.finish(auth.searchParams.get('state')!, 'synthetic-code', 'binding');
   }
@@ -118,14 +118,14 @@ test('the shared listener stays reserved while an OAuth code exchange is in flig
   let release!: () => void;
   fake.tokenGate = new Promise<void>((resolve) => { release = resolve; });
   const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch));
-  const auth = new URL((await identity.begin({ clientId: install.clientId, signingSecret: install.signingSecret, callbackUrl, listener: setup.listener }, 'binding')).authorizationUrl);
+  const auth = new URL((await identity.begin({ clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: setup.listener }, 'binding')).authorizationUrl);
   const finishing = identity.finish(auth.searchParams.get('state')!, 'synthetic-code', 'binding');
   try {
     for (let tries = 0; !fake.tokenCalls && tries < 100; tries++) await delay(10);
     assert.equal(fake.tokenCalls, 1);
     assert.equal((await setupService.read()).listenerLocked, true);
     await assert.rejects(setupService.save({ ...setup, listener: { ...setup.listener, port: 15123 } }), /An installed app or an authorization in progress uses this listener/);
-    await assert.rejects(new LinearIdentityService('milo').begin({ clientId: 'milo-client', signingSecret: install.signingSecret, callbackUrl, listener: { ...setup.listener, port: 15123 } }, 'binding'), /An installed app or an authorization in progress/);
+    await assert.rejects(new LinearIdentityService('milo').begin({ clientId: 'milo-client', clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: { ...setup.listener, port: 15123 } }, 'binding'), /An installed app or an authorization in progress/);
   } finally { release(); await finishing; }
   assert.equal((await identity.status()).state, 'connected');
   assert.deepEqual((await setupService.read()).listener, setup.listener);

@@ -32,8 +32,8 @@ Set it in **Settings → Server**, or when you connect the first agent.
    avatar when available (see below), both URLs and the event subscriptions filled in.
    Review and create the app. To reuse an app you already created, select
    **I already have one** and make sure its URLs and subscriptions match.
-4. Copy the **Client ID** and **Webhook signing secret** into Anima. Do not paste the
-   secret into chat.
+4. Copy the **Client ID**, **Client secret** and **Webhook signing secret** into Anima.
+   Do not paste the secrets into chat.
 5. Select **Authorize in Linear**. Linear opens in the same tab and asks which teams the
    agent can access. Choose all available teams if the agent should work across the
    workspace; workspace admins can change this later in Linear.
@@ -81,11 +81,14 @@ server `config.json` at the root of the Anima home, not an agent's config. Remov
 before downgrading to a version without it.
 
 Installation uses PKCE and a single-use state bound to the initiating dashboard session,
-valid for ten minutes. If you decline in Linear or the exchange fails, Linear still returns
+valid for ten minutes. The code exchange sends the app's client secret together with the
+PKCE verifier. If you decline in Linear or the exchange fails, Linear still returns
 you to the agent's dialog. It names the problem, with a safe connection, HTTP-status or
-response category for failures; raw errors, response bodies and credentials are not
-recorded. The dialog resumes at your existing app: enter its Client ID and signing secret
-again and select **Authorize in Linear**. A failed attempt is not retried automatically.
+response category for failures, plus a standard OAuth error code such as `invalid_client`
+when Linear gives one; raw errors, response bodies and credentials are not recorded.
+`invalid_client` means Linear did not accept the Client ID and Client secret. The dialog
+resumes at your existing app: enter its Client ID and both secrets again and select
+**Authorize in Linear**. A failed attempt is not retried automatically.
 An attempt that expired or was left unfinished is replaced by authorizing again.
 
 When a return from Linear cannot be tied to an attempt in this browser session, because it
@@ -188,9 +191,22 @@ means no messages can be lost. A missing first activity is a reason to check del
 ## Removal, revocation and credentials
 
 **Disconnect**, in the agent's Linear dialog, stops local intake and authorized writes and
-clears local credentials. It does not uninstall the app in Linear. Revocation in Linear, or a
-definite API authorization failure, marks the local identity revoked; authorize again with
-the same app to resume, or disconnect to start over.
+clears local credentials. It does not uninstall the app in Linear. Revocation in Linear, a
+definite API authorization failure, or a token renewal that Linear answers with
+`invalid_grant` marks the local identity revoked; authorize again with the same app to
+resume, or disconnect to start over. Other renewal failures, including `invalid_client`,
+other or unreadable error responses, server errors and network failures, keep the
+installation and its tokens. Writes that failed are not resent automatically.
+
+Installations made before Anima stored the client secret show **Client secret: Not stored**
+under **Manage** and keep renewing access without it while Linear allows that. If Linear
+answers a renewal with `invalid_client`, the row shows **Credentials not accepted** and the
+dialog asks for the secret. Select **Add** (or **Replace** for a stored secret that Linear
+no longer accepts), paste the **Client secret** from the app's page in Linear and select
+**Save**. Anima checks it by renewing access with Linear and stores the secret only together
+with the renewed tokens. A secret Linear rejects, an unreachable or failing Linear, or a
+renewal whose result could not be stored leaves everything as it was, and the dialog says
+which happened. If Linear answers `invalid_grant`, authorize again.
 
 Runtime credentials are separate from provider launch environments, prompts and public API
 responses. The credential file uses mode `0600`. This protects it from other OS users, not

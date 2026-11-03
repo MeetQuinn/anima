@@ -1,7 +1,12 @@
 import { z } from 'zod';
 
+// Only these standard OAuth codes are read from a token error; the
+// description is never kept, logged or shown.
+const OAuthErrorCode = z.enum(['invalid_request', 'invalid_client', 'invalid_grant', 'unauthorized_client', 'unsupported_grant_type', 'invalid_scope']);
+export type LinearOAuthError = z.infer<typeof OAuthErrorCode>;
+
 export class LinearApiError extends Error {
-  constructor(message: string, readonly revoked = false, readonly status?: number, readonly failure?: 'network' | 'http' | 'response') { super(message); }
+  constructor(message: string, readonly revoked = false, readonly status?: number, readonly failure?: 'network' | 'http' | 'response', readonly oauthError?: LinearOAuthError) { super(message); }
 }
 const Tokens = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() });
 type LinearTokens = z.infer<typeof Tokens>;
@@ -16,7 +21,13 @@ export class LinearClient {
         body: new URLSearchParams(form), signal: AbortSignal.timeout(10_000), redirect: 'error',
       });
     } catch { throw new LinearApiError('Linear token request failed; retry installation or inspect the connection.', false, undefined, 'network'); }
-    if (!response.ok) throw new LinearApiError('Linear token request was rejected.', response.status === 400 || response.status === 401, response.status, 'http');
+    if (!response.ok) {
+      const parsed = OAuthErrorCode.safeParse(((await response.json().catch(() => undefined)) as { error?: unknown } | undefined)?.error);
+      const oauthError = parsed.success ? parsed.data : undefined;
+      // Only an explicit invalid_grant means the grant is gone. invalid_client,
+      // other codes, 5xx and unreadable bodies keep the installation and tokens.
+      throw new LinearApiError('Linear token request was rejected.', oauthError === 'invalid_grant', response.status, 'http', oauthError);
+    }
     try { return Tokens.parse(await response.json()); }
     catch { throw new LinearApiError('Linear returned an invalid token response.', false, undefined, 'response'); }
   }

@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   open: vi.fn(),
   readAddress: vi.fn(),
   saveAddress: vi.fn(),
+  saveSecret: vi.fn(),
 }));
 vi.mock('@/api/linear', () => ({
   fetchLinearStatus: api.status,
@@ -23,6 +24,7 @@ vi.mock('@/api/linear', () => ({
   fetchLinearSetup: api.setup,
   saveLinearSetup: api.saveSetup,
   openLinearAuthorization: api.open,
+  saveLinearClientSecret: api.saveSecret,
 }));
 vi.mock('@/api/public-url', () => ({
   publicUrlKey: ['server', 'public-url'],
@@ -40,7 +42,14 @@ const setup: LinearSetup = {
   listenerLocked: false,
 };
 const authorizationUrl = 'https://linear.app/oauth/authorize?state=synthetic-state';
-const connected: LinearStatus = { ...base, state: 'connected', clientId: 'synthetic-client', workspaceName: 'Demo workspace' };
+const connected: LinearStatus = {
+  ...base,
+  state: 'connected',
+  clientId: 'synthetic-client',
+  installationId: 'installation-1',
+  clientSecretSaved: true,
+  workspaceName: 'Demo workspace',
+};
 
 function mount(props: { initialOpen?: boolean } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -58,7 +67,11 @@ async function openDialog(action = 'Connect') {
   return screen.findByRole('dialog', { name: 'Linear' });
 }
 function fillCredentials() {
-  for (const [label, value] of [['Client ID', 'client-id'], ['Webhook signing secret', 'synthetic-signing-sentinel']]) {
+  for (const [label, value] of [
+    ['Client ID', 'client-id'],
+    ['Client secret', 'synthetic-client-secret-sentinel'],
+    ['Webhook signing secret', 'synthetic-signing-sentinel'],
+  ]) {
     const input = screen.getByLabelText(label) as HTMLInputElement;
     if (!input.value) fireEvent.change(input, { target: { value } });
   }
@@ -92,6 +105,7 @@ it('connects in this tab: one click on Authorize goes to the returned Linear lin
   await waitFor(() => expect(api.open).toHaveBeenCalledWith(authorizationUrl));
   expect(api.install).toHaveBeenCalledWith('scout', {
     clientId: 'client-id',
+    clientSecret: 'synthetic-client-secret-sentinel',
     signingSecret: 'synthetic-signing-sentinel',
     callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
     listener: { host: '127.0.0.1', port: 14185 },
@@ -99,8 +113,10 @@ it('connects in this tab: one click on Authorize goes to the returned Linear lin
   expect((screen.getByRole('button', { name: /Opening Linear/ }) as HTMLButtonElement).disabled).toBe(true);
   expect(closeButton().disabled).toBe(true);
   expect((screen.getByLabelText('Webhook signing secret') as HTMLInputElement).value).toBe('');
+  expect((screen.getByLabelText('Client secret') as HTMLInputElement).value).toBe('');
   expect(screen.queryByRole('link', { name: /Authorize/ })).toBeNull();
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-signing-sentinel');
+  expect(JSON.stringify(localStorage)).not.toContain('synthetic-client-secret-sentinel');
   expect(api.saveSetup).not.toHaveBeenCalled();
 });
 
@@ -151,6 +167,7 @@ for (const reason of [
     expect(api.open).not.toHaveBeenCalled();
     expect(closeButton().disabled).toBe(false);
     expect((screen.getByLabelText('Webhook signing secret') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Client secret') as HTMLInputElement).value).toBe('');
   });
 }
 
@@ -191,6 +208,7 @@ it('keeps setup behind the row and contains and restores keyboard focus on dismi
     fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
     expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Change public address' }));
     fireEvent.click(screen.getByRole('button', { name: 'I already have one' }));
+    fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: 'discarded-client-secret' } });
     fireEvent.change(screen.getByLabelText('Webhook signing secret'), { target: { value: 'discarded-secret' } });
     if (dismiss === 'escape') fireEvent.keyDown(dialog, { key: 'Escape' });
     if (dismiss === 'button') fireEvent.click(closeButton());
@@ -201,6 +219,7 @@ it('keeps setup behind the row and contains and restores keyboard focus on dismi
   await openDialog();
   fireEvent.click(await screen.findByRole('button', { name: 'I already have one' }));
   expect((screen.getByLabelText('Webhook signing secret') as HTMLInputElement).value).toBe('');
+  expect((screen.getByLabelText('Client secret') as HTMLInputElement).value).toBe('');
   expect(api.install).not.toHaveBeenCalled();
   expect(api.remove).not.toHaveBeenCalled();
 });
@@ -227,7 +246,17 @@ it.each([
         'Linear authorization could not be exchanged (HTTP 400). Check the Client ID, registered redirect URL and network, then prepare authorization again.',
     },
     title: 'Authorization couldn’t be completed',
-    body: 'uses your public address, and this machine’s network. Then authorize again. Details: HTTP 400.',
+    body: 'Check the Client ID and Client secret, that the app’s callback URL in Linear uses your public address, and this machine’s network. Then authorize again. Details: HTTP 400.',
+    removable: false,
+  },
+  {
+    name: 'exchange rejected the app credentials',
+    status: {
+      lastError:
+        'Linear authorization could not be exchanged (HTTP 400 invalid_client). Check the Client ID, client secret, registered redirect URL and network, then prepare authorization again.',
+    },
+    title: 'Authorization couldn’t be completed',
+    body: 'Linear didn’t accept the Client ID and Client secret. Copy both again from the app’s page in Linear, then authorize again. Details: HTTP 400 invalid_client.',
     removable: false,
   },
   {
@@ -333,6 +362,9 @@ it('connected: OAuth success is done, with facts, no delivery-test gate, and a c
   expect(fact('Last event').textContent).not.toBe('None yet');
   expect(fact('Last event').getAttribute('title')).toBeTruthy();
   expect(fact('Client ID').textContent).toBe('synthetic-client');
+  // Stored and accepted: nothing to do, so no action is offered.
+  expect(fact('Client secret').textContent).toBe('Stored on this machine');
+  expect(within(dialog).queryByRole('button', { name: /Client secret/ })).toBeNull();
   expect(within(dialog).getByText(/2 requests claiming this app failed/)).toBeTruthy();
   expect(dialog.textContent).not.toMatch(/pending verification|send a test|verify connection|healthy|online/i);
   expect(screen.queryByRole('alert')).toBeNull();
@@ -431,4 +463,101 @@ it.each([
   expect((screen.getByRole('button', { name: /Authorize in Linear/ }) as HTMLButtonElement).disabled).toBe(false);
   expect(api.install).not.toHaveBeenCalled();
   client.clear();
+});
+
+it('an installation made before secrets were kept offers a quiet Add, checked by Linear before it is stored', async () => {
+  api.status.mockResolvedValue({ ...connected, clientSecretSaved: false });
+  api.saveSecret.mockResolvedValue({ result: 'saved' });
+  mount();
+  await screen.findByText('Demo workspace');
+  // Not stored is not a failure: nothing on the row and no alert in the dialog.
+  expect(screen.queryByText('Credentials not accepted')).toBeNull();
+  const dialog = await openDialog('Manage');
+  expect(within(dialog).queryByRole('alert')).toBeNull();
+  const fact = within(dialog).getByText('Client secret', { selector: 'dt' }).nextElementSibling as HTMLElement;
+  expect(fact.textContent).toBe('Not storedAdd');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add Client secret' }));
+  const input = within(dialog).getByLabelText('Client secret') as HTMLInputElement;
+  expect(input.type).toBe('text');
+  expect(input.getAttribute('autocomplete')).toBe('off');
+  expect(input.hasAttribute('data-1p-ignore')).toBe(true);
+  const save = within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+  expect(save.disabled).toBe(true);
+  fireEvent.change(input, { target: { value: ' synthetic-client-secret-sentinel ' } });
+  api.status.mockResolvedValue(connected);
+  const reads = api.status.mock.calls.length;
+  fireEvent.click(save);
+  await within(dialog).findByText('Client secret saved.');
+  expect(api.saveSecret).toHaveBeenCalledWith('scout', {
+    installationId: 'installation-1',
+    clientSecret: 'synthetic-client-secret-sentinel',
+  });
+  expect(within(dialog).queryByLabelText('Client secret')).toBeNull();
+  await waitFor(() => expect(api.status.mock.calls.length).toBeGreaterThan(reads));
+  await waitFor(() => expect(fact.textContent).toBe('Stored on this machineClient secret saved.'));
+  expect(within(dialog).queryByRole('button', { name: /Client secret/ })).toBeNull();
+  expect(JSON.stringify(localStorage)).not.toContain('synthetic-client-secret-sentinel');
+  expect(dialog.textContent).not.toContain('synthetic-client-secret-sentinel');
+});
+
+it.each([
+  ['rejected', 'Linear didn’t accept this Client secret. Check that it belongs to the app with this Client ID.'],
+  ['expired', 'Linear no longer accepts this authorization. Authorize again to reconnect.'],
+  ['unavailable', 'Couldn’t check it with Linear. Nothing was saved; try again later.'],
+  ['unsaved', 'Saving didn’t finish, so nothing was stored. Try again; if Linear then asks, authorize again.'],
+  ['changed', 'This connection changed meanwhile, so nothing was saved.'],
+  ['request failed', 'Couldn’t save it. Nothing was stored; try again.'],
+] as const)('a secret that was not saved (%s) says why and keeps nothing typed', async (result, message) => {
+  api.status.mockResolvedValue({ ...connected, clientSecretSaved: false });
+  if (result === 'request failed') api.saveSecret.mockRejectedValue(new Error('private-failure-sentinel'));
+  else api.saveSecret.mockResolvedValue({ result });
+  mount();
+  await screen.findByText('Demo workspace');
+  const dialog = await openDialog('Manage');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add Client secret' }));
+  const input = within(dialog).getByLabelText('Client secret') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'synthetic-client-secret-sentinel' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  const alert = await within(dialog).findByRole('alert');
+  expect(alert.textContent).toBe(message);
+  // Only Linear's invalid_client answer may call the secret wrong.
+  if (result !== 'rejected') expect(alert.textContent).not.toMatch(/accept this Client secret|wrong|incorrect|invalid/i);
+  expect(input.value).toBe('');
+  expect(within(dialog).getByText('Client secret', { selector: 'dt' }).nextElementSibling!.textContent).toContain('Not stored');
+  expect(dialog.textContent).not.toContain('private-failure-sentinel');
+});
+
+it('a secret that does not match Linear’s rules is not sent', async () => {
+  api.status.mockResolvedValue({ ...connected, clientSecretSaved: false });
+  mount();
+  await screen.findByText('Demo workspace');
+  const dialog = await openDialog('Manage');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add Client secret' }));
+  fireEvent.change(within(dialog).getByLabelText('Client secret'), { target: { value: 'has a space' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  expect((await within(dialog).findByRole('alert')).textContent).toBe('Paste the Client secret exactly as Linear shows it.');
+  expect(api.saveSecret).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(within(dialog).queryByLabelText('Client secret')).toBeNull();
+  expect(within(dialog).queryByRole('alert')).toBeNull();
+});
+
+it.each([
+  [false, 'Add', 'Access couldn’t be renewed. Add the app’s Client secret below, from its page in Linear.'],
+  [
+    true,
+    'Replace',
+    'Access couldn’t be renewed. Check the Client ID and Client secret on the app’s page in Linear, and replace the secret below if it changed.',
+  ],
+] as const)('only an invalid_client answer from Linear raises an alert (secret stored: %s)', async (saved, action, body) => {
+  api.status.mockResolvedValue({ ...connected, clientSecretSaved: saved, clientRejected: true });
+  mount();
+  await screen.findByText('Credentials not accepted');
+  expect(screen.getByText('Demo workspace')).toBeTruthy();
+  const dialog = await openDialog('Manage');
+  const alert = within(dialog).getByRole('alert');
+  expect(alert.textContent).toBe(`Linear didn’t accept this app’s credentials${body}`);
+  expect(alert.textContent).not.toMatch(/disconnected|broken|revoked/i);
+  expect(within(dialog).getByRole('button', { name: `${action} Client secret` })).toBeTruthy();
+  expect(within(dialog).getByRole('heading', { name: 'Connected to Demo workspace' })).toBeTruthy();
 });

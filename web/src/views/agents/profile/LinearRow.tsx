@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { AlertTriangle, Check, X } from 'lucide-react';
-import { fetchLinearSetup, fetchLinearStatus, installLinear, openLinearAuthorization, removeLinear } from '@/api/linear';
+import {
+  fetchLinearSetup,
+  fetchLinearStatus,
+  installLinear,
+  openLinearAuthorization,
+  removeLinear,
+  saveLinearClientSecret,
+} from '@/api/linear';
 import { refreshAgentData } from '@/api/agents';
 import { Button } from '@/components/ui/button';
 import { linearSetupKey } from '@/components/LinearWebhookSettings';
@@ -12,9 +19,9 @@ import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import { formatRelativeShort, shortIso } from '@/lib/format';
 import { Field } from './Primitives';
-import type { LinearInstallRequest, LinearStatus } from '@shared/linear';
+import { LinearClientSecretRequest, type LinearClientSecretResult, type LinearInstallRequest, type LinearStatus } from '@shared/linear';
 import type { LinearSetup } from '@shared/linear-setup';
-import { LinearConnectSteps } from './LinearConnectSteps';
+import { inputClass, LinearConnectSteps, notACredentialField } from './LinearConnectSteps';
 
 const listenerFailures = {
   address_in_use: 'The port is already in use. Free it or choose a different listener port.',
@@ -46,7 +53,9 @@ function failureNotice(lastError: string): Notice {
     return {
       title: 'Authorization couldn’t be completed',
       body: withDetail(
-        'Check the Client ID, that the app’s callback URL in Linear uses your public address, and this machine’s network. Then authorize again.',
+        detail?.endsWith('invalid_client')
+          ? 'Linear didn’t accept the Client ID and Client secret. Copy both again from the app’s page in Linear, then authorize again.'
+          : 'Check the Client ID and Client secret, that the app’s callback URL in Linear uses your public address, and this machine’s network. Then authorize again.',
       ),
     };
   if (lastError.startsWith('Linear app identity could not be verified'))
@@ -94,8 +103,13 @@ export function LinearRow({
   const data = status.data;
   const connected = data?.state === 'connected';
   const notice = noticeFor(data);
+  const clientRejected = connected && Boolean(data.clientRejected);
   const attention =
-    status.isError || data?.state === 'revoked' || data?.listenerStatus?.state === 'failed' || Boolean(notice && !connected);
+    status.isError ||
+    data?.state === 'revoked' ||
+    data?.listenerStatus?.state === 'failed' ||
+    clientRejected ||
+    Boolean(notice && !connected);
 
   useEffect(() => {
     if (data?.state === 'connected' || data?.state === 'revoked') refreshAgentData(agentId);
@@ -121,7 +135,7 @@ export function LinearRow({
       setError(
         err instanceof Error && knownInstallErrors.has(err.message)
           ? err.message
-          : 'Authorization could not start. Check the Client ID and Webhook signing secret. If the public address changed, refresh this form.',
+          : 'Authorization could not start. Check the Client ID, Client secret and Webhook signing secret. If the public address changed, refresh this form.',
       );
       setBusy(false);
     }
@@ -167,7 +181,9 @@ export function LinearRow({
                   ? 'Status unavailable'
                   : data?.listenerStatus?.state === 'failed'
                     ? 'Not receiving events'
-                    : (notice?.title ?? 'Needs attention')}
+                    : clientRejected
+                      ? 'Credentials not accepted'
+                      : (notice?.title ?? 'Needs attention')}
               </p>
             )}
           </div>
@@ -256,6 +272,7 @@ function LinearDialogBody({
         error={error}
         onRemove={onRemove}
         onClose={onClose}
+        onChanged={() => void status.refetch()}
       />
     );
   if (!setup.data) return <ReadError what="machine settings" onRetry={() => void setup.refetch()} />;
@@ -354,12 +371,14 @@ function PublicAddressStep({
 }
 
 function ConnectedView({
+  agentId,
   agentName,
   data,
   busy,
   error,
   onRemove,
   onClose,
+  onChanged,
 }: {
   agentId: string;
   agentName: string;
@@ -368,6 +387,7 @@ function ConnectedView({
   error: string;
   onRemove: () => Promise<void>;
   onClose: () => void;
+  onChanged: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const now = useNow();
@@ -413,6 +433,20 @@ function ConnectedView({
         </div>
       )}
 
+      {data.clientRejected && (
+        <div role="alert" className="flex gap-3 rounded-sm border border-health-error/25 bg-health-error-soft/50 px-3.5 py-3">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-health-error" aria-hidden="true" />
+          <div className="min-w-0 space-y-0.5">
+            <p className="font-sans text-[13px] font-medium text-health-error">Linear didn’t accept this app’s credentials</p>
+            <p className="font-sans text-[12px] leading-relaxed text-text-muted">
+              {data.clientSecretSaved
+                ? 'Access couldn’t be renewed. Check the Client ID and Client secret on the app’s page in Linear, and replace the secret below if it changed.'
+                : 'Access couldn’t be renewed. Add the app’s Client secret below, from its page in Linear.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       <dl className="grid grid-cols-2 overflow-hidden rounded-sm border border-border-soft">
         <Fact label="Local listener" value={events} tone={listener?.state === 'failed' ? 'error' : undefined} />
         <Fact
@@ -421,6 +455,7 @@ function ConnectedView({
           title={data.lastSignedWebhookAt ? shortIso(data.lastSignedWebhookAt) : undefined}
         />
         <Fact label="Client ID" value={data.clientId ?? '—'} mono wide />
+        <ClientSecretFact agentId={agentId} data={data} disabled={busy} onChanged={onChanged} />
       </dl>
 
       {data.signatureFailures ? (
@@ -480,6 +515,136 @@ function ConnectedView({
           </Button>
         )}
       </footer>
+    </div>
+  );
+}
+
+// Only invalid_client says the secret is wrong; every other outcome left
+// nothing stored and says so.
+const clientSecretResults: Record<Exclude<LinearClientSecretResult, 'saved'>, string> = {
+  rejected: 'Linear didn’t accept this Client secret. Check that it belongs to the app with this Client ID.',
+  expired: 'Linear no longer accepts this authorization. Authorize again to reconnect.',
+  unavailable: 'Couldn’t check it with Linear. Nothing was saved; try again later.',
+  unsaved: 'Saving didn’t finish, so nothing was stored. Try again; if Linear then asks, authorize again.',
+  changed: 'This connection changed meanwhile, so nothing was saved.',
+};
+
+/**
+ * Installations made before Anima kept the client secret can add it here.
+ * Linear checks it before anything is stored, so a typo changes nothing.
+ */
+function ClientSecretFact({
+  agentId,
+  data,
+  disabled,
+  onChanged,
+}: {
+  agentId: string;
+  data: LinearStatus;
+  disabled: boolean;
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const ids = useId();
+  const saved = Boolean(data.clientSecretSaved);
+  const action = !saved ? 'Add' : data.clientRejected ? 'Replace' : '';
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const parsed = LinearClientSecretRequest.safeParse({ installationId: data.installationId, clientSecret: value.trim() });
+    if (!parsed.success) {
+      setMessage({ ok: false, text: 'Paste the Client secret exactly as Linear shows it.' });
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const { result } = await saveLinearClientSecret(agentId, parsed.data);
+      if (result === 'saved') setEditing(false);
+      setMessage(result === 'saved' ? { ok: true, text: 'Client secret saved.' } : { ok: false, text: clientSecretResults[result] });
+      onChanged();
+    } catch {
+      setMessage({ ok: false, text: 'Couldn’t save it. Nothing was stored; try again.' });
+    } finally {
+      setValue('');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="col-span-2 min-w-0 border-t border-border-soft px-3.5 py-3">
+      <dt className="font-sans text-[11px] tracking-wide text-text-subtle">Client secret</dt>
+      <dd className="mt-1 min-w-0 space-y-2">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <span className={`font-serif text-[14px] ${saved ? 'text-text' : 'text-text-muted'}`}>
+            {saved ? 'Stored on this machine' : 'Not stored'}
+          </span>
+          {action && !editing && (
+            <button
+              type="button"
+              disabled={disabled}
+              aria-label={`${action} Client secret`}
+              onClick={() => {
+                setMessage(null);
+                setEditing(true);
+              }}
+              className="inline-flex min-h-11 shrink-0 items-center font-sans text-[12px] text-text-muted underline decoration-text-subtle/50 underline-offset-2 hover:text-text disabled:opacity-50 md:min-h-0"
+            >
+              {action}
+            </button>
+          )}
+        </div>
+        {editing && (
+          <form onSubmit={(event) => void submit(event)} className="space-y-2">
+            <label htmlFor={`${ids}-client-secret`} className="sr-only">
+              Client secret
+            </label>
+            <input
+              id={`${ids}-client-secret`}
+              autoFocus
+              required
+              disabled={saving}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              aria-describedby={`${ids}-client-secret-help`}
+              {...notACredentialField}
+              className={inputClass}
+            />
+            <p id={`${ids}-client-secret-help`} className="font-sans text-[11px] leading-relaxed text-text-subtle">
+              From the app’s page in Linear. Linear checks it before Anima stores it on this machine.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="submit" disabled={saving || disabled || !value.trim()} className="h-11 px-4 text-[13px] md:h-9">
+                {saving ? 'Checking…' : 'Save'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={saving}
+                onClick={() => {
+                  setEditing(false);
+                  setValue('');
+                  setMessage(null);
+                }}
+                className="h-11 px-3 text-[13px] font-normal md:h-9"
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+        {message && (
+          <p
+            role={message.ok ? 'status' : 'alert'}
+            className={`font-sans text-[12px] leading-relaxed ${message.ok ? 'text-health-ok' : 'text-health-error'}`}
+          >
+            {message.text}
+          </p>
+        )}
+      </dd>
     </div>
   );
 }

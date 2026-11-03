@@ -13,7 +13,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 type StepState = 'done' | 'active' | 'upcoming';
 
 /**
- * Per-agent Linear connection: create (or reuse) an app, paste its two
+ * Per-agent Linear connection: create (or reuse) an app, paste its three
  * credentials, authorize. All three steps stay visible so the whole job is
  * readable at a glance; later steps unlock as earlier ones finish. Machine
  * plumbing (public address, forwarding) is not repeated here.
@@ -45,7 +45,8 @@ export function LinearConnectSteps({
   const [name, setName] = useState(() => defaultLinearAppName(agentName));
   const [renaming, setRenaming] = useState(false);
   const [clientId, setClientId] = useState('');
-  const [secret, setSecret] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [signingSecret, setSigningSecret] = useState('');
   const [error, setError] = useState('');
   const ids = useId();
   const validName = LinearAppName.safeParse(name).success;
@@ -59,25 +60,30 @@ export function LinearConnectSteps({
       /* An invalid name keeps the link hidden; the rename field explains why. */
     }
   }
-  const credentialsReady = Boolean(clientId.trim() && secret.trim());
+  const credentialsReady = Boolean(clientId.trim() && clientSecret.trim() && signingSecret.trim());
+  const clearSecrets = () => {
+    setClientSecret('');
+    setSigningSecret('');
+  };
 
   async function install(event: FormEvent) {
     event.preventDefault();
     const parsed = LinearInstallRequest.safeParse({
       clientId: clientId.trim(),
-      signingSecret: secret.trim(),
+      clientSecret: clientSecret.trim(),
+      signingSecret: signingSecret.trim(),
       callbackUrl: callback,
       listener: setup.listener,
     });
     if (!parsed.success) {
-      setError('Check the Client ID and Webhook signing secret.');
+      setError('Check the Client ID, Client secret and Webhook signing secret.');
       return;
     }
     setError('');
     try {
       await onInstall(parsed.data);
     } finally {
-      setSecret('');
+      clearSecrets();
     }
   }
 
@@ -107,7 +113,7 @@ export function LinearConnectSteps({
                 onClick={() => {
                   setAppReady(false);
                   setReusedApp(false);
-                  setSecret('');
+                  clearSecrets();
                 }}
                 className="inline-flex min-h-11 items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
               >
@@ -192,8 +198,8 @@ export function LinearConnectSteps({
               <div className="space-y-3">
                 <p className="font-serif text-[13px] leading-relaxed text-text-muted">
                   {retrying
-                    ? 'Enter them again from your app’s page in Linear. The signing secret is not kept after a failed attempt.'
-                    : 'Both are on the app’s page in Linear, right after you create it.'}
+                    ? 'Enter them again from your app’s page in Linear. The secrets are not kept after a failed attempt.'
+                    : 'All three are on the app’s page in Linear, right after you create it.'}
                 </p>
                 <div className="space-y-3">
                   <div className="min-w-0 space-y-1">
@@ -211,6 +217,20 @@ export function LinearConnectSteps({
                     />
                   </div>
                   <div className="min-w-0 space-y-1">
+                    <label htmlFor={`${ids}-client-secret`} className="block font-sans text-[12px] text-text-muted">
+                      Client secret
+                    </label>
+                    <input
+                      id={`${ids}-client-secret`}
+                      required
+                      disabled={busy}
+                      value={clientSecret}
+                      onChange={(event) => setClientSecret(event.target.value)}
+                      {...notACredentialField}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-1">
                     <label htmlFor={`${ids}-secret`} className="block font-sans text-[12px] text-text-muted">
                       Webhook signing secret
                     </label>
@@ -218,15 +238,15 @@ export function LinearConnectSteps({
                       id={`${ids}-secret`}
                       required
                       disabled={busy}
-                      value={secret}
-                      onChange={(event) => setSecret(event.target.value)}
+                      value={signingSecret}
+                      onChange={(event) => setSigningSecret(event.target.value)}
                       {...notACredentialField}
                       className={inputClass}
                     />
                   </div>
                 </div>
                 <p className="font-sans text-[11px] text-text-subtle">
-                  The signing secret is stored on this machine and never shown again.
+                  Both secrets are stored on this machine and never shown again.
                 </p>
               </div>
             )}
@@ -269,13 +289,13 @@ export function LinearConnectSteps({
 }
 
 /**
- * Both values are pasted from Linear, not remembered by the user. A password
+ * These values are pasted from Linear, not remembered by the user. A password
  * input makes browsers offer saved or generated passwords whatever
- * `autocomplete` says, so the secret is a plain text field (visible while
+ * `autocomplete` says, so secrets are plain text fields (visible while
  * pasting, cleared on submit) and password-manager extensions are told to
- * skip both fields.
+ * skip them.
  */
-const notACredentialField = {
+export const notACredentialField = {
   type: 'text',
   autoComplete: 'off',
   spellCheck: false,

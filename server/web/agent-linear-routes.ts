@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { LinearSetupRequest } from '../../shared/linear-setup.js';
-import { LinearInstallRequest } from '../../shared/linear.js';
+import { LinearClientSecretRequest, LinearInstallRequest } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSetupService } from '../linear/setup.service.js';
 import { defaultDashboardAuthService, cookieValue, DASHBOARD_AUTH_COOKIE } from '../settings/dashboard-auth.service.js';
@@ -35,6 +35,14 @@ export function registerAgentLinearRoutes(app: FastifyInstance): void {
     if (!['https:', 'http:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('Invalid dashboard origin.');
     return new LinearIdentityService(request.params.agentId).begin(input,
       bindingFor(cookieValue(request.headers, DASHBOARD_AUTH_COOKIE)), new URL('/api/linear/oauth/complete', origin).href);
+  });
+  // Authenticated and same-origin like every dashboard write (cross-site write
+  // guard). Bound to the installation the dialog showed; nothing else is taken
+  // from the client.
+  app.post<{ Params: { agentId: string } }>('/api/agents/:agentId/linear/client-secret', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const input = LinearClientSecretRequest.parse(request.body);
+    return { result: await new LinearIdentityService(request.params.agentId).saveClientSecret(input.installationId, input.clientSecret) };
   });
   app.delete<{ Params: { agentId: string } }>('/api/agents/:agentId/linear', async (request) => {
     await new LinearIdentityService(request.params.agentId).remove();
