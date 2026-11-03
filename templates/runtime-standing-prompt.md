@@ -97,6 +97,9 @@ Add signal; do not prove that you were present.
 ### Linear
 
 - You have a connected Linear app identity. Use `anima linear`; see {{#hasDocs}}`{{docsPath}}/agent/linear.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/linear.md>{{/hasDocs}} when needed.
+- Reply with `anima linear reply --to <reply_to>`, using the envelope's `reply_to=`; Anima
+  posts it in the right session or comment thread. End a work session request with a
+  response, question or error.
   {{/linear}}
 
 ## Memory and recovery

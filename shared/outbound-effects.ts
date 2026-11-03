@@ -22,7 +22,7 @@ export type OutboundEffectClassification =
   | { kind: 'file' }
   | { kind: 'reaction' };
 
-const MESSAGE_TOOLS = new Set(['anima.message.send', 'anima.message.update', 'anima.linear.respond', 'anima.linear.comment', 'anima.linear.create', 'anima.linear.start']);
+const MESSAGE_TOOLS = new Set(['anima.message.send', 'anima.message.update', 'anima.linear.reply', 'anima.linear.respond', 'anima.linear.comment', 'anima.linear.create', 'anima.linear.start']);
 const MESSAGE_EFFECTS = new Set([
   'linear.activity.create',
   'linear.comment.create',

@@ -157,6 +157,7 @@ test('registered CLI starts a session with progress and records its session surf
   await command.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'start', '--issue', issueId]);
   const result = JSON.parse(output.at(-1)!);
   assert.equal(fake.starts.length, 1); assert.equal(fake.posts[0]!.content.type, 'thought');
+  assert.equal(result.replyTo, `session:${result.session.id}`, 'Later replies use the same target form as an envelope');
   assert.ok(diagnostics.some((line) => line.includes(result.requestId))); assert.ok(diagnostics.some((line) => line.includes(result.session.id)));
   const messages = (await messageServiceForAgent('scout').list()).entries;
   assert.ok(messages.some((m) => m.platform === 'linear' && m.channelKind === 'linear_session' && m.threadTs === result.session.id && m.text === 'Started voluntarily'));

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
-import { LinearInboxItem } from '../../shared/inbox.js';
+import { LinearInboxItem, LinearNotificationInboxItem } from '../../shared/inbox.js';
+import { parseLinearReplyTarget } from '../linear/reply-target.js';
 import { verifyLinearWebhook, type LinearWebhook } from '../linear/webhook.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
@@ -34,6 +35,7 @@ test('a follow-up identifies its actual author and source time instead of attrib
   item.handling.startedAt = '2026-10-04T05:06:07.890Z';
   const prompt = buildCodeAgentDeliveryPrompt(item);
   assert.match(prompt, /wake=followup/);
+  assert.match(prompt, new RegExp(`reply_to=session:${sessionId}`));
   assert.match(prompt, new RegExp(`session_id=${sessionId}`));
   assert.match(prompt, new RegExp(`activity_id=${event.agentActivity!.id}`));
   assert.match(prompt, new RegExp(`user_id=${event.agentActivity!.userId}`));
@@ -106,6 +108,28 @@ test('a supplied full context stays intact and old queued inputs recover their e
   assert.doesNotMatch(buildCodeAgentDeliveryPrompt(old), /Requested by|context=snapshot|Legacy requester/);
 }));
 
+test('every Linear envelope names one reply target: the session, the thread root, or the issue', () => {
+  const at = '2026-10-03T01:02:03Z', issueId = randomUUID(), root = randomUUID(), reply = randomUUID();
+  const render = (extra: Record<string, unknown>) => buildCodeAgentDeliveryPrompt(LinearNotificationInboxItem.parse({
+    id: `linear-notification:${randomUUID()}`, kind: 'linear_notification', installationId: install.id, organizationId: install.organizationId,
+    notificationType: 'issueNewComment', text: 'Context', receivedAt: at, handling: { status: 'queued', createdAt: at, updatedAt: at }, ...extra }));
+  const target = (prompt: string) => parseLinearReplyTarget(/reply_to=(\S+)/.exec(prompt)![1]!);
+  // A reply inside a thread is answered in that thread, at its root.
+  assert.deepEqual(target(render({ issueId, commentId: reply, parentCommentId: root })), { kind: 'comment', id: root });
+  assert.deepEqual(target(render({ issueId, commentId: root, notificationType: 'issueCommentMention' })), { kind: 'comment', id: root });
+  assert.deepEqual(target(render({ issueId, notificationType: 'issueStatusChanged' })), { kind: 'issue', id: issueId });
+  assert.doesNotMatch(render({ notificationType: 'permissionChange' }), /reply_to=/);
+});
+
+test('reply targets parse only in the envelope form', () => {
+  const id = randomUUID();
+  assert.deepEqual(parseLinearReplyTarget(`session:${id}`), { kind: 'session', id });
+  assert.deepEqual(parseLinearReplyTarget(' issue:SYN-1 '), { kind: 'issue', id: 'SYN-1' });
+  for (const bad of [id, `session:SYN-1`, `comment:${id}x`, `thread:${id}`, `reply_to=session:${id}`, 'issue:', '']) {
+    assert.throws(() => parseLinearReplyTarget(bad), /reply_to value from the Linear envelope/, bad);
+  }
+});
+
 test('a follow-up with no author never inherits the responsible human from its session', async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
   const event = prompted(); event.agentSession.creator = { name: 'Not the known speaker' };
@@ -132,7 +156,8 @@ for (const connected of [undefined, false, true]) test(`runtime injects the Line
     assert.ok(standing);
     assert.equal(standing.includes('### Linear'), connected === true);
     assert.equal(standing.includes('anima linear'), connected === true);
-    assert.doesNotMatch(standing, /LINEAR_ACCESS_TOKEN|linear respond|linear start/);
+    assert.doesNotMatch(standing, /LINEAR_ACCESS_TOKEN|linear respond|linear comment|linear start/);
+    assert.equal(standing.includes('anima linear reply --to <reply_to>'), connected === true);
   } finally { await runner.stop(); }
 }));
 
