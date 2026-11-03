@@ -48,7 +48,8 @@ const schema = buildSchema(`
   type Team { id: ID!, key: String!, name: String!, states: StateConnection! }
   type StateConnection { nodes: [State!]! }
   input IssueUpdateInput { stateId: String }
-  type AgentSession { id: ID!, appUser: User!, creator: User, issue: Issue, comment: Comment, status: String!, url: String, activities(first: Int, after: String): ActivityConnection!, externalLinks: [ExternalLink!]! }
+  enum PaginationOrderBy { createdAt updatedAt }
+  type AgentSession { createdAt: String!, id: ID!, appUser: User!, creator: User, issue: Issue, comment: Comment, status: String!, url: String, activities(first: Int, after: String, last: Int, orderBy: PaginationOrderBy): ActivityConnection!, externalLinks: [ExternalLink!]! }
   type SessionPayload { success: Boolean!, agentSession: AgentSession! }
   input AgentSessionCreateOnIssue { issueId: String! }
   input AgentSessionCreateOnComment { commentId: String! }
