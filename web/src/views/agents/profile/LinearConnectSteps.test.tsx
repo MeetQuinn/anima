@@ -69,7 +69,11 @@ it('reveals credentials after the app step, enables Authorize only with both val
   fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: ' client-id ' } });
   expect(authorize.disabled).toBe(true);
   const secret = screen.getByLabelText('Webhook signing secret') as HTMLInputElement;
-  expect(secret.type).toBe('password');
+  // Pasted, not remembered: no password input, so browsers offer no saved or generated passwords.
+  expect(secret.type).toBe('text');
+  expect(secret.getAttribute('autocomplete')).toBe('off');
+  expect(screen.getByLabelText('Client ID').getAttribute('autocomplete')).toBe('off');
+  expect(document.querySelector('input[type="password"]')).toBeNull();
   fireEvent.change(secret, { target: { value: 'synthetic-signing-sentinel' } });
   expect(authorize.disabled).toBe(false);
   expect(step(3).getAttribute('aria-current')).toBe('step');

@@ -195,7 +195,7 @@ export function LinearConnectSteps({
                     ? 'Enter them again from your app’s page in Linear. The signing secret is not kept after a failed attempt.'
                     : 'Both are on the app’s page in Linear, right after you create it.'}
                 </p>
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-3">
                   <div className="min-w-0 space-y-1">
                     <label htmlFor={`${ids}-client`} className="block font-sans text-[12px] text-text-muted">
                       Client ID
@@ -206,8 +206,7 @@ export function LinearConnectSteps({
                       disabled={busy}
                       value={clientId}
                       onChange={(event) => setClientId(event.target.value)}
-                      autoComplete="off"
-                      spellCheck={false}
+                      {...notACredentialField}
                       className={inputClass}
                     />
                   </div>
@@ -217,12 +216,11 @@ export function LinearConnectSteps({
                     </label>
                     <input
                       id={`${ids}-secret`}
-                      type="password"
                       required
                       disabled={busy}
                       value={secret}
                       onChange={(event) => setSecret(event.target.value)}
-                      autoComplete="new-password"
+                      {...notACredentialField}
                       className={inputClass}
                     />
                   </div>
@@ -269,6 +267,23 @@ export function LinearConnectSteps({
     </div>
   );
 }
+
+/**
+ * Both values are pasted from Linear, not remembered by the user. A password
+ * input makes browsers offer saved or generated passwords whatever
+ * `autocomplete` says, so the secret is a plain text field (visible while
+ * pasting, cleared on submit) and password-manager extensions are told to
+ * skip both fields.
+ */
+const notACredentialField = {
+  type: 'text',
+  autoComplete: 'off',
+  spellCheck: false,
+  'data-1p-ignore': true,
+  'data-lpignore': 'true',
+  'data-bwignore': true,
+  'data-form-type': 'other',
+} as const;
 
 export const inputClass =
   'h-11 w-full min-w-0 rounded-sm border border-border-soft bg-surface-raised px-3 font-mono text-[13px] text-text outline-none placeholder:font-sans placeholder:text-text-subtle focus-visible:border-accent aria-invalid:border-health-error/60 disabled:cursor-not-allowed disabled:opacity-60 md:h-10';
