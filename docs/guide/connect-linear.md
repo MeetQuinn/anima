@@ -59,22 +59,26 @@ The dashboard passes each event's raw body and `Linear-Signature` unchanged to t
 runtime's Linear receiver on loopback (`127.0.0.1:14185` by default), which verifies it.
 If the runtime is not running, the dashboard answers `503` and Linear retries the delivery.
 Apps created before this layout use `/webhook`; the dashboard accepts that path too, so
-existing apps keep working without changes.
+existing apps keep working without changes. If you put a sign-in gateway in front of the
+address (see below), also let `/webhook` through, or first change each such app's
+webhook URL in Linear to `/webhooks/linear`. Otherwise their events stop at the gateway.
 
 Anima checks the address when it is shown and after you save it: it requests a one-time
 path under `/webhooks/` through the public address and expects this Anima to answer.
 The result names what is in the way: a sign-in page or access rule, a different site, an
 error from the tunnel, or no answer within five seconds. Select **Check again** after
-changing the tunnel. A reachable address means Linear's requests arrive here; it does not
-register or test the app in Linear.
+changing the tunnel. A reachable address means requests through it arrive at this
+dashboard. It does not show that events are accepted: that also needs a connected agent
+and a running runtime, and the app's webhook URL in Linear. A connected agent's **Last
+event** shows that Linear's events arrive.
 
 If a sign-in gateway such as Cloudflare Access protects the address, let `/webhooks/`
 through without sign-in, for example with a Cloudflare Access application for that path
 and a **Bypass** policy. Linear cannot sign in. The OAuth callback is opened by your own
 browser, so it can stay behind the gateway.
 
-Without a dashboard password, the public address serves only `/webhooks/` and the OAuth
-callback; every other request through it gets `403`. Anima recognizes requests through
+Without a dashboard password, the public address serves only Linear's paths (`/webhooks/`,
+the legacy `/webhook` and the OAuth callback); every other request through it gets `403`. Anima recognizes requests through
 the public address by their `Host` or `X-Forwarded-Host` header naming its host.
 cloudflared keeps the original `Host` by default. If your proxy replaces both, the check
 warns that the dashboard is open there. To use the dashboard itself through the public

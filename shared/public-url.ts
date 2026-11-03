@@ -56,7 +56,9 @@ export interface PublicUrlSettings {
 }
 
 /**
- * Why Anima could not reach itself through the public address.
+ * Whether requests through the public address arrive at this dashboard. It
+ * does not cover the runtime's Linear receiver or the apps registered in Linear.
+ * Why Anima could not reach itself through the public address:
  * gateway: a sign-in page or access rule answered (for example Cloudflare Access).
  * elsewhere: something answered, but not this Anima.
  * unreachable: no HTTP answer, or the proxy reported the origin down.

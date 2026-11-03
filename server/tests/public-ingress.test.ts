@@ -151,7 +151,8 @@ test('without a dashboard password the public address serves only what Linear ca
   await serverConfigStore.update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
   const viaPublic = { host: 'agents.example.com' };
   try {
-    for (const headers of [viaPublic, { host: 'AGENTS.example.com:443' }, { host: '127.0.0.1:4174', 'x-forwarded-host': 'agents.example.com' }]) {
+    for (const headers of [viaPublic, { host: 'AGENTS.example.com:443' }, { host: 'agents.example.com.' }, { host: 'AGENTS.EXAMPLE.COM.:443' }, { host: 'agents.example.com..' },
+      { host: '127.0.0.1:4174', 'x-forwarded-host': 'agents.example.com' }, { host: '127.0.0.1:4174', 'x-forwarded-host': 'Agents.Example.Com.' }]) {
       const api = await app.inject({ url: '/api/agents', headers });
       assert.equal(api.statusCode, 403, JSON.stringify(headers));
       assert.deepEqual(api.json(), { error: 'public_address_requires_password' });
@@ -175,10 +176,41 @@ test('without a dashboard password the public address serves only what Linear ca
 
     // On this machine the dashboard stays open as before.
     assert.equal((await app.inject({ url: '/api/settings/public-url', headers: { host: '127.0.0.1:4174' } })).statusCode, 200);
+    // A saved address with a trailing dot names the same host.
+    await serverConfigStore.update((c) => ({ ...c, publicUrl: 'https://agents.example.com.' }));
+    assert.equal((await app.inject({ url: '/api/agents', headers: viaPublic })).statusCode, 403);
+    await serverConfigStore.update((c) => ({ ...c, publicUrl: 'https://agents.example.com' }));
 
     // With a password the public address is the full dashboard, behind its login.
     await defaultDashboardAuthService.setPassword('synthetic-dashboard-password');
     assert.equal((await app.inject({ url: '/api/agents', headers: viaPublic })).statusCode, 401);
     assert.equal((await app.inject({ url: '/', headers: viaPublic })).statusCode, 302);
+  } finally { await app.close(); }
+}));
+
+test('a receiver address on the dashboard\'s own port is refused instead of forwarded again', async () => withTempAnimaHome(async () => {
+  const app = buildWebApp();
+  let ingress = 0;
+  app.addHook('onRequest', async (request) => { if (request.url.startsWith('/webhook')) ingress += 1; });
+  const payload = { method: 'POST' as const, url: '/webhooks/linear', payload: '{}', headers: { 'content-type': 'application/json' } };
+  try {
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const port = (app.server.address() as { port: number }).port;
+    await serverConfigStore.update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
+    const looped = await fetch(`http://127.0.0.1:${port}/webhooks/linear`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
+    assert.equal(looped.status, 503);
+    assert.match(await looped.text(), /linearWebhook/);
+    assert.equal(ingress, 1, 'Refused before connecting to itself');
+
+    // The configured dashboard port is refused too, even when this request came in elsewhere.
+    await serverConfigStore.update((c) => ({ ...c, dashboardPort: 15124, linearWebhook: { host: '127.0.0.1', port: 15124 } }));
+    assert.equal((await app.inject(payload)).statusCode, 503);
+
+    // Any other loop stops at the second hop: a forwarded event is never forwarded again.
+    ingress = 0;
+    const marked = await app.inject({ ...payload, headers: { ...payload.headers, 'x-anima-linear-forwarded': '1' } });
+    assert.equal(marked.statusCode, 503);
+    assert.match(marked.body, /linearWebhook/);
+    assert.equal(ingress, 1);
   } finally { await app.close(); }
 }));

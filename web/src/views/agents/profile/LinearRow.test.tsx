@@ -147,7 +147,7 @@ it('shows whether Linear can reach the public address while connecting', async (
   expect(alert.textContent).toContain('A sign-in page or access rule answered (HTTP 302). Let /webhooks/ through it');
   api.check.mockResolvedValueOnce({ publicUrl: setup.publicUrl, reachable: true, status: 200, passwordSet: true, checkedAt: '2026-11-03T00:00:01Z' });
   fireEvent.click(within(alert).getByRole('button', { name: 'Check again' }));
-  await within(dialog).findByText(/Reachable\. Linear can deliver events here\./);
+  await within(dialog).findByText(/Reachable\. Requests to this address arrive at this Anima\./);
   expect(api.check).toHaveBeenCalledTimes(2);
 });
 

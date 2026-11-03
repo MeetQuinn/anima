@@ -103,7 +103,9 @@ export function PublicAddressGuidance() {
     <p className="max-w-prose font-serif text-[13px] leading-relaxed text-text-muted">
       Forward the whole address to this dashboard, for example with a Cloudflare Tunnel to the address you
       open it at on this machine. If a sign-in gateway such as Cloudflare Access protects it, let{' '}
-      <span className="font-mono text-[12px] text-text">/webhooks/</span> through: Linear can’t sign in.
+      <span className="font-mono text-[12px] text-text">/webhooks/</span> through: Linear can’t sign in. Linear
+      apps created before this version post to <span className="font-mono text-[12px] text-text">/webhook</span>;
+      let that through too, or change their webhook URL.
     </p>
   );
 }
@@ -125,8 +127,9 @@ function failureText(check: PublicUrlCheck): string {
 }
 
 /**
- * Whether the saved address reaches this Anima, the way Linear will reach it.
- * Runs when shown and after every save; the result is never assumed.
+ * Whether requests through the saved address arrive at this dashboard. It does
+ * not cover the runtime's receiver or the app in Linear; "Last event" on a
+ * connected agent is that evidence. Runs when shown and after every save.
  */
 export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
   const check = useQuery({
@@ -148,7 +151,7 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
   if (check.isPending || (check.isFetching && !check.data?.reachable)) {
     return (
       <p role="status" className="flex items-center gap-1.5 font-sans text-[12px] text-text-muted">
-        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> Checking that Linear can reach this address…
+        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> Checking the address…
       </p>
     );
   }
@@ -192,7 +195,7 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
   return (
     <div role="status" className="space-y-1 font-sans text-[12px] leading-relaxed">
       <p className="flex flex-wrap items-center gap-x-1.5 text-health-ok">
-        <Check className="size-3.5" aria-hidden="true" /> Reachable. Linear can deliver events here.
+        <Check className="size-3.5" aria-hidden="true" /> Reachable. Requests to this address arrive at this Anima.
         <span className="text-text-subtle">{again}</span>
       </p>
       {result.passwordSet ? (

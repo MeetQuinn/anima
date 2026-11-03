@@ -62,7 +62,7 @@ it('validates a global origin, saves it normalized, refreshes the Linear setup a
 it('a saved address is checked: one forwarding target, and what to update after changing it', async () => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   mount();
-  await screen.findByText(/Reachable\. Linear can deliver events here\./);
+  await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
   expect(api.check).toHaveBeenCalledTimes(1);
   expect(screen.getByText('The dashboard asks for its password at this address.')).toBeTruthy();
   expect(screen.getByText(/Forward the whole address to this dashboard/)).toBeTruthy();
@@ -102,7 +102,7 @@ it.each([
   expect(alert.textContent).toContain('Not reachable yet');
   expect(alert.textContent).toContain(message);
   fireEvent.click(within(alert).getByRole('button', { name: 'Check again' }));
-  await screen.findByText(/Reachable\. Linear can deliver events here\./);
+  await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
 });
 
 it('a failed read offers a retry instead of an empty form', async () => {

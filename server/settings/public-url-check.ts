@@ -28,25 +28,32 @@ export function answerProbe(nonce: string, headers: IncomingHttpHeaders, now = D
   return true;
 }
 
+/** `AGENTS.example.com.` and `agents.example.com` name the same host. */
+function canonicalHost(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.+$/, '');
+}
+
 /**
  * Tunnels pass the public hostname on as Host (cloudflared does by default) or
  * X-Forwarded-Host. A proxy that replaces both hides the public address.
  */
 export function requestNamesHost(headers: IncomingHttpHeaders, publicHost: string): boolean {
+  const target = canonicalHost(publicHost);
   const forwarded = headers['x-forwarded-host'];
   const candidates = [headers.host, ...(Array.isArray(forwarded) ? forwarded : [forwarded])]
     .flatMap((value) => (value ?? '').split(','));
   return candidates.some((value) => {
     const trimmed = value.trim();
     if (!trimmed) return false;
-    try { return new URL(`http://${trimmed}`).hostname === publicHost; } catch { return false; }
+    try { return canonicalHost(new URL(`http://${trimmed}`).hostname) === target; } catch { return false; }
   });
 }
 
 /**
  * Fetches a one-time probe through the public address. Only this dashboard
- * echoes the nonce, so a success proves the address reaches this Anima the way
- * Linear will, gateways and tunnels included.
+ * echoes the nonce, so a success proves that requests through the address,
+ * gateways and tunnels included, arrive at this dashboard. It says nothing
+ * about the runtime's Linear receiver, which runs only with a connected agent.
  */
 export async function checkPublicUrl(fetcher: typeof fetch = fetch): Promise<PublicUrlCheck> {
   const [{ publicUrl }, auth] = await Promise.all([

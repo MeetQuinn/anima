@@ -33,11 +33,21 @@ const RECEIVER_UNAVAILABLE: ForwardResult = {
   body: JSON.stringify({ error: 'The Linear receiver is not running; retry delivery' }),
   contentType: 'application/json',
 };
+const RECEIVER_IS_DASHBOARD: ForwardResult = {
+  status: 503,
+  body: JSON.stringify({ error: 'The Linear receiver address (linearWebhook) is the dashboard\'s own port; set another port' }),
+  contentType: 'application/json',
+};
+// Marks a forwarded event. The receiver ignores it; a dashboard that receives it
+// was forwarded to itself, so it answers instead of forwarding again.
+const FORWARDED_HEADER = 'x-anima-linear-forwarded';
 
-async function forwardToReceiver(raw: Buffer, contentType: string | undefined, signature: string | undefined): Promise<ForwardResult> {
-  const receiver = (await serverConfigStore.read()).linearWebhook ?? DEFAULT_LINEAR_LISTENER;
+async function forwardToReceiver(raw: Buffer, contentType: string | undefined, signature: string | undefined, arrivedOnPort: number | undefined): Promise<ForwardResult> {
+  const config = await serverConfigStore.read();
+  const receiver = config.linearWebhook ?? DEFAULT_LINEAR_LISTENER;
+  if (receiver.port === arrivedOnPort || receiver.port === (config.dashboardPort ?? 4174)) return RECEIVER_IS_DASHBOARD;
   return new Promise((resolve) => {
-    const headers: Record<string, string | number> = { 'content-length': raw.length };
+    const headers: Record<string, string | number> = { 'content-length': raw.length, [FORWARDED_HEADER]: '1' };
     if (contentType) headers['content-type'] = contentType;
     if (signature) headers['linear-signature'] = signature;
     const forwarded = httpRequest({
@@ -70,7 +80,8 @@ export function registerPublicIngressRoutes(fastify: FastifyInstance): void {
       scope.post(path, async (request, reply) => {
         const raw = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
         const header = request.headers['linear-signature'];
-        const result = await forwardToReceiver(raw, request.headers['content-type'], typeof header === 'string' ? header : undefined);
+        const result = request.headers[FORWARDED_HEADER] !== undefined ? RECEIVER_IS_DASHBOARD
+          : await forwardToReceiver(raw, request.headers['content-type'], typeof header === 'string' ? header : undefined, request.socket.localPort);
         reply.code(result.status).header('cache-control', 'no-store');
         if (result.contentType) reply.header('content-type', result.contentType);
         return reply.send(result.body);

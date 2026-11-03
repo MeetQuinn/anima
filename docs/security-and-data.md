@@ -86,7 +86,7 @@ If the dashboard is reachable beyond its intended operators:
 - treat the dashboard as access to agent configuration, activity, knowledge bases, and operational controls;
 - verify that proxies do not bypass authentication or cache private responses.
 
-The [public address](./configuration.md#public-address-publicurl) points at the dashboard. Until a dashboard password is set, requests whose `Host` or `X-Forwarded-Host` names that address reach only the paths Linear calls (`/webhooks/` and the OAuth callback). A proxy that replaces both headers hides this; the dashboard's public address check reports it.
+The [public address](./configuration.md#public-address-publicurl) points at the dashboard. Until a dashboard password is set, requests whose `Host` or `X-Forwarded-Host` names that address reach only the paths Linear calls (`/webhooks/`, the legacy `/webhook` and the OAuth callback). A proxy that replaces both headers hides this; the dashboard's public address check reports it.
 
 The dashboard refuses writes that a browser marks as coming from another site, so a page open in the operator's browser cannot change agents or restart services through it. Clients that are not browsers, such as `curl`, are not affected. Reads are not covered by this check, and it is not a substitute for authentication.
 
