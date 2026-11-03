@@ -77,7 +77,7 @@ export interface LinearStatus {
   workspaceName?: string;
   lastSignedWebhookAt?: string;
   signatureFailures: number;
-  /** Sessions whose run ended without the agent's reply and that Linear now shows as stale. */
+  /** Sessions with a finished request Anima has no recorded reply for, and no recorded activity for 30 minutes. Local records only; Linear's own session state may differ. */
   unansweredSessions?: number;
   lastError?: string;
   listener?: LinearListenerConfig;

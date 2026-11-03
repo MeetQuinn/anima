@@ -349,7 +349,7 @@ test('legacy activity operations without a kind still count as terminal replies'
   assert.equal(fake.posts.length, 1); assert.equal((await store.read()).receipts[first.id]!.answered, true);
 }));
 
-test('a new prompt in a stale unanswered session clears the count until that request also ends unanswered', async () => withTempAnimaHome(async (home) => {
+test('a new prompt in a quiet unanswered session clears the count until that request also ends unanswered', async () => withTempAnimaHome(async (home) => {
   const { service, identity, store, fake } = await seedLinear(home);
   await settledRequest(service);
   const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -361,7 +361,7 @@ test('a new prompt in a stale unanswered session clears the count until that req
   await service.tick();
   assert.deepEqual(fake.posts.map((p) => p.content.body), ['Received by Anima.']);
   assert.equal((await identity.status()).unansweredSessions, undefined, 'The new prompt and its receipt are fresh session activity');
-  // Even once Linear would show it stale, a request that is still queued has not ended.
+  // Even after 30 quiet minutes, a request that is still queued has not ended.
   await age(45);
   assert.equal((await identity.status()).unansweredSessions, undefined);
   const queue = new WakeQueueService('scout');
@@ -374,12 +374,12 @@ test('a new prompt in a stale unanswered session clears the count until that req
   await service.markStarted(crashed, crashed.id);
   await service.finishRun(crashed.id, 'The model run failed.');
   assert.equal(Object.values((await store.read()).receipts).filter((r) => !r.answered).length, 2);
-  assert.equal((await identity.status()).unansweredSessions, undefined, 'Linear shows the error, not a stale session');
+  assert.equal((await identity.status()).unansweredSessions, undefined, 'The error is recent session activity');
   await age(31);
   assert.equal((await identity.status()).unansweredSessions, 1);
 }));
 
-test('a run that ends unanswered gets no runtime notice; the dashboard counts it once Linear shows it stale', async (t) => withTempAnimaHome(async (home) => {
+test('a run that ends unanswered gets no runtime notice; the dashboard counts it after 30 quiet minutes', async (t) => withTempAnimaHome(async (home) => {
   const { service, identity, store, fake } = await seedLinear(home);
   const first = await settledRequest(service);
   const other = randomUUID(); await settledRequest(service, other);
@@ -391,7 +391,7 @@ test('a run that ends unanswered gets no runtime notice; the dashboard counts it
   for (let tick = 0; tick < 3; tick++) await service.tick();
   assert.equal(fake.posts.length, 0, 'No heartbeat or missing-response error once the run ended');
   assert.equal(lock.mock.callCount(), 0, 'Ended requests take no session lock');
-  assert.equal((await identity.status()).unansweredSessions, undefined, 'Not stale in Linear yet');
+  assert.equal((await identity.status()).unansweredSessions, undefined, 'Not quiet for 30 minutes yet');
   await age(31);
   assert.equal((await identity.status()).unansweredSessions, 2);
   assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
@@ -410,7 +410,7 @@ test('a run that ends unanswered gets no runtime notice; the dashboard counts it
   assert.notEqual(Object.values((await store.read()).receipts).find((r) => r.sessionId === other)!.answered, true);
   assert.equal((await identity.status()).unansweredSessions, undefined);
   await age(31);
-  assert.equal((await identity.status()).unansweredSessions, 1, 'Without further activity the session goes stale again');
+  assert.equal((await identity.status()).unansweredSessions, 1, 'Without further activity the session is counted again');
   await service.respond(sessionId, 'response', 'Finished', 'later-run');
   assert.equal((await identity.status()).unansweredSessions, undefined);
   assert.deepEqual(fake.posts.map((p) => p.content.type), ['thought', 'response']);

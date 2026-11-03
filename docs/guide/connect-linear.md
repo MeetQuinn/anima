@@ -205,10 +205,11 @@ and send its final response in a later turn, for example after background work f
 While a request is queued or its run is executing, the runtime posts a fixed queued/executing
 status after 10 minutes without a successful activity. Failed status sends are attempted at
 most once per 10-minute interval. Once the run ends, the runtime says nothing more: only the
-agent's response, question or error finishes the request. If the agent never replies, Linear
-shows the session as stale after 30 minutes, and the agent's Linear row in the dashboard
-counts it as a session that ended without a reply. Reply in the session to wake the agent
-again, or stop it in Linear. A crashed or interrupted run still gets one error notice.
+agent's response, question or error finishes the request. If Anima has no recorded reply and
+the session has had no recorded activity for 30 minutes, the agent's Linear row in the dashboard
+counts it as a session with no recorded reply. This uses Anima's records, not Linear's session
+state; Linear may show the session as stale. Check the session in Linear: reply there to wake
+the agent again, or stop it. A crashed or interrupted run still gets one error notice.
 
 After a runtime restart, interrupted background work gets a durable recovery wake. The agent
 checks earlier effects before continuing; native background tasks are not automatically

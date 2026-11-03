@@ -577,14 +577,16 @@ it.each([
   expect(header.querySelector('.text-health-error svg')).toBeTruthy();
 });
 
-it('connected: sessions that ended without a reply are flagged on the row and explained in the dialog', async () => {
+it('connected: sessions with no recorded reply are flagged on the row and explained in the dialog', async () => {
   api.status.mockResolvedValue({ ...connected, unansweredSessions: 2 });
   mount();
   await screen.findByText('Demo workspace');
-  expect(screen.getByText('2 sessions ended without a reply')).toBeTruthy();
+  expect(screen.getByText('2 sessions have no recorded reply')).toBeTruthy();
   const dialog = await openDialog('Manage');
-  expect(within(dialog).getByText('2 sessions ended without a reply')).toBeTruthy();
-  expect(within(dialog).getByText(/Scout’s run finished without answering, so Linear shows them as stale/)).toBeTruthy();
+  expect(within(dialog).getByText('2 sessions have no recorded reply')).toBeTruthy();
+  const note = within(dialog).getByText(/Anima still has no reply from Scout recorded/);
+  expect(note.textContent).toMatch(/Check the session in Linear/);
+  expect(note.textContent).not.toMatch(/stale/);
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
@@ -593,8 +595,8 @@ it('connected: no unanswered sessions means no reply warning', async () => {
   mount();
   await screen.findByText('Demo workspace');
   const dialog = await openDialog('Manage');
-  expect(dialog.textContent).not.toMatch(/without a reply/);
-  expect(screen.queryByText(/without a reply/)).toBeNull();
+  expect(dialog.textContent).not.toMatch(/no recorded reply/);
+  expect(screen.queryByText(/no recorded reply/)).toBeNull();
 });
 
 it('a lost answer for a secret Linear still rejects asks to try again', async () => {

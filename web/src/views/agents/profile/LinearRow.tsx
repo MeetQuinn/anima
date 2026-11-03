@@ -64,7 +64,7 @@ function failureNotice(lastError: string): Notice {
 }
 
 function unansweredTitle(count: number): string {
-  return count === 1 ? '1 session ended without a reply' : `${count} sessions ended without a reply`;
+  return count === 1 ? '1 session has no recorded reply' : `${count} sessions have no recorded reply`;
 }
 
 function noticeFor(data: LinearStatus | undefined): Notice | null {
@@ -458,8 +458,8 @@ function ConnectedView({
           <div className="min-w-0 space-y-0.5">
             <p className="font-sans text-[13px] font-medium text-health-warn-ink">{unansweredTitle(data.unansweredSessions)}</p>
             <p className="font-sans text-[12px] leading-relaxed text-text-muted">
-              {agentName}’s run finished without answering, so Linear shows {data.unansweredSessions === 1 ? 'it' : 'them'} as
-              stale. Reply in the session to wake {agentName} again, or stop it in Linear.
+              Anima still has no reply from {agentName} recorded, and no recorded activity for 30 minutes. Check the
+              session in Linear: reply there to wake {agentName} again, or stop it.
             </p>
           </div>
         </div>

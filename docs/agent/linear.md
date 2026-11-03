@@ -256,8 +256,8 @@ Only report what happened; do not expose raw tools, private reasoning or credent
 The runtime sends a receipt, and a queued/executing status only while the request is
 actually queued or its run is executing. A receipt is not a finished task. End every session
 request with a response, question or error. The runtime does not post one for you: when a run
-ends without your reply, the session goes stale in Linear and the operator sees it flagged as
-unanswered. A later turn can still answer a delivered request that is unanswered, including
+ends without your reply, Linear may show the session as stale, and the operator sees it flagged
+as having no recorded reply. A later turn can still answer a delivered request that is unanswered, including
 after background work finishes. Only a crashed or interrupted run gets an automatic error
 notice. After a runtime restart, follow the background-interrupted recovery wake:
 check prior effects and pending work before continuing, and do not repeat completed actions.
