@@ -99,10 +99,12 @@ errors (including partial results). It never retries a request. For a failed mut
 inspect the affected object before attempting another write.
 
 API activity records contain a generated call ID, the agent/run association when
-available, operation type and request outcome. Operation selection follows GraphQL's
+available, operation type, up to five top-level schema field names (such as `issueUpdate`,
+never aliases) and request outcome. When exactly one top-level variable is nothing but an
+issue key such as `ANI-123`, that key is recorded too. Operation selection follows GraphQL's
 `operationName`; unparseable or ambiguous input is recorded as `unknown` and forwarded
-unchanged. Records omit operation/field names, query text, variables, results, error
-bodies and credentials. Request completion does not assert that every mutation
+unchanged. Records omit operation names, aliases, query text, other variables, results,
+error bodies and credentials. Request completion does not assert that every mutation
 succeeded: inspect the returned result. A failed call records an unknown outcome,
 which does not prove that a write had no effect.
 
