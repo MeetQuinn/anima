@@ -26,6 +26,15 @@ import { LinearStore } from '../storage/schema/linear.store.js';
 import { signalWake } from '../inbox/wake-signal.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 
+// A runtime host with a Linear agent runs the receiver and its maintenance timer. Give
+// each test its own free port instead of the production default.
+async function useFreeLinearReceiver(): Promise<void> {
+  const socket = createServer(); await new Promise<void>((resolve) => socket.listen(0, '127.0.0.1', resolve));
+  const port = (socket.address() as { port: number }).port;
+  await new Promise<void>((resolve) => socket.close(() => resolve()));
+  await new ServerConfigStore().update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
+}
+
 for (const queued of [false, true]) test(`Linear-only runtime and registered CLI report through the existing primary session, queued=${queued}`, async (t) => withTempAnimaHome(async (home) => {
   const { service, fake, agentStore } = await seedLinear(home); t.mock.method(globalThis, 'fetch', fake.fetch);
   t.mock.method(console, 'log', () => {});
@@ -290,6 +299,7 @@ for (const failedPublish of [false, true]) for (const stop of [false, true]) tes
   const { service, fake, agentStore, store } = await seedLinear(home);
   t.mock.method(globalThis, 'fetch', fake.fetch);
   t.mock.method(console, 'log', () => {});
+  await useFreeLinearReceiver();
   const queue = new WakeQueueService('scout');
   await service.receive(created(), install);
   const original = (await queue.list())[0]!;
@@ -335,7 +345,8 @@ for (const failedPublish of [false, true]) for (const stop of [false, true]) tes
       assert.deepEqual(host.runningAgentIds(), ['scout'], 'Failed recovery publication must not prevent agent startup');
       await new Promise((resolve) => setTimeout(resolve, 30));
       assert.notEqual((await store.read()).receipts[original.id]!.answered, true, 'An idle worker must await its durable recovery wake before closing Linear');
-      assert.equal(runs, 0); assert.equal(fake.posts.length, 1);
+      assert.equal(runs, 0);
+      assert.deepEqual(fake.posts.filter((p) => p.content.type !== 'thought').map((p) => p.content.type), []);
       await host.reconcileOnce();
     }
     await waitFor(() => runs === 1);
@@ -358,10 +369,7 @@ test('runtime host supplies active, queued and native background work to the Lin
   const queue = new WakeQueueService('scout');
   await service.receive(created(), install); const item = (await queue.list())[0]!;
   await service.markStarted(item, item.id); await queue.complete(item.id); await service.markSettled(item);
-  const socket = createServer(); await new Promise<void>((resolve) => socket.listen(0, '127.0.0.1', resolve));
-  const port = (socket.address() as { port: number }).port;
-  await new Promise<void>((resolve) => socket.close(() => resolve()));
-  await new ServerConfigStore().update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
+  await useFreeLinearReceiver();
   let state: 'background' | 'active' | 'queued' | 'idle' = 'background';
   const host = new RuntimeHost({}, { animaHome: home, logger: { log() {}, error() {} },
     loadAgents: async () => [await agentStore.read()], validateAgent: async () => {},
@@ -395,6 +403,7 @@ test('unreadable recovery notices postpone only Linear idle completion while ord
   const original = (await queue.list())[0]!;
   await service.markStarted(original, original.id);
   await queue.complete(original.id); await service.markSettled(original);
+  await useFreeLinearReceiver();
   await mkdir(join(home, 'run'), { recursive: true });
   const path = join(home, 'run', 'background-interrupted-notices.json');
   await writeFile(path, '{');
