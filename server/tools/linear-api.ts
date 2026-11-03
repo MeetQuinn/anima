@@ -1,20 +1,55 @@
 import { randomUUID } from 'node:crypto';
+import type { SelectionSetNode } from 'graphql';
 import { z } from 'zod';
+import { LINEAR_ISSUE_KEY } from '../../shared/linear-issue-key.js';
 import { activityServiceForAgent, type ActivityService } from '../activities/activity.service.js';
 import type { LinearIdentityService } from '../linear/identity.service.js';
 import { resolveToolItemId } from './tool-context.js';
 
 type ApiInput = { query: string; variables: Record<string, unknown>; operationName?: string };
+type ApiDescription = { operation: 'query' | 'mutation' | 'subscription' | 'unknown'; fields?: string[]; issueKey?: string };
 
-async function operationKind(input: ApiInput): Promise<'query' | 'mutation' | 'subscription' | 'unknown'> {
+const MAX_FIELDS = 5;
+const FIELD_NAME = /^[_A-Za-z][_0-9A-Za-z]{0,63}$/;
+
+/**
+ * The selected operation's type and top-level schema field names (never aliases),
+ * plus an issue key only when the top-level variables hold exactly one distinct whole-value key.
+ */
+async function describeOperation(input: ApiInput): Promise<ApiDescription> {
   try {
-    const { getOperationAST, parse } = await import('graphql');
-    return getOperationAST(parse(input.query), input.operationName)?.operation ?? 'unknown';
+    const { getOperationAST, parse, Kind } = await import('graphql');
+    const document = parse(input.query);
+    const operation = getOperationAST(document, input.operationName);
+    if (!operation) return { operation: 'unknown' };
+    const fragments = new Map<string, SelectionSetNode>();
+    for (const d of document.definitions) if (d.kind === Kind.FRAGMENT_DEFINITION) fragments.set(d.name.value, d.selectionSet);
+    const fields = new Set<string>();
+    const expanded = new Set<string>();
+    const visit = (set: SelectionSetNode): void => {
+      for (const selection of set.selections) {
+        if (fields.size >= MAX_FIELDS) return;
+        if (selection.kind === Kind.FIELD) { if (FIELD_NAME.test(selection.name.value)) fields.add(selection.name.value); }
+        else if (selection.kind === Kind.INLINE_FRAGMENT) visit(selection.selectionSet);
+        else if (!expanded.has(selection.name.value)) {
+          expanded.add(selection.name.value);
+          const fragment = fragments.get(selection.name.value);
+          if (fragment) visit(fragment);
+        }
+      }
+    };
+    visit(operation.selectionSet);
+    const keys = new Set(Object.values(input.variables).filter((v): v is string => typeof v === 'string' && LINEAR_ISSUE_KEY.test(v)));
+    return {
+      operation: operation.operation,
+      ...(fields.size ? { fields: [...fields] } : {}),
+      ...(keys.size === 1 ? { issueKey: [...keys][0] } : {}),
+    };
   }
-  catch { return 'unknown'; }
+  catch { return { operation: 'unknown' }; }
 }
 
-/** GraphQL text, names, variables, results and errors can all contain private data. */
+/** GraphQL text, aliases, variables, results and errors can all contain private data. */
 export async function runLinearApi(identity: LinearIdentityService, input: ApiInput): Promise<unknown> {
   let itemId: string | undefined;
   try { itemId = await resolveToolItemId({ agent: identity.agentId }); }
@@ -24,7 +59,7 @@ export async function runLinearApi(identity: LinearIdentityService, input: ApiIn
   }
   const payload: Record<string, unknown> = {
     tool: 'anima.linear.api', platform: 'linear', callId: randomUUID(),
-    operation: await operationKind(input),
+    ...await describeOperation(input),
   };
   if (itemId) payload.itemId = itemId;
   const activity: ActivityService = activityServiceForAgent(identity.agentId);

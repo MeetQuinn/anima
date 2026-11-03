@@ -212,7 +212,7 @@ test('registered Linear CLI comments proactively, records outbox, and audits API
   assert.ok((await activityServiceForAgent('scout').readAll()).some((r) => r.type === 'external.effect.completed' && r.payload?.text === markdown)); assert.deepEqual((await store.read()).receipts, {});
 }));
 
-test('raw Linear mutations correlate metadata while names, literals, variables and results stay private', async (t) => withTempAnimaHome(async (home) => {
+test('raw Linear mutations correlate metadata while operation names, aliases, literals, variables and results stay private', async (t) => withTempAnimaHome(async (home) => {
   const fake = new FakeLinear();
   const result = { issueDelete: { success: false, privateResult: 'PRIVATE_RESULT_SENTINEL' } };
   let requests = 0;
@@ -240,10 +240,11 @@ test('raw Linear mutations correlate metadata while names, literals, variables a
     assert.equal(row.payload?.operation, 'mutation');
     assert.equal(row.payload?.tool, 'anima.linear.api');
     assert.equal(row.payload?.platform, 'linear');
-    assert.deepEqual(Object.keys(row.payload ?? {}).sort(), ['callId', 'itemId', 'operation', ...(row.type.endsWith('completed') ? ['outcome'] : []), 'platform', 'status', 'tool'].sort());
+    assert.deepEqual(row.payload?.fields, ['issueDelete'], 'the schema field, not its alias');
+    assert.deepEqual(Object.keys(row.payload ?? {}).sort(), ['callId', 'fields', 'itemId', 'operation', ...(row.type.endsWith('completed') ? ['outcome'] : []), 'platform', 'status', 'tool'].sort());
   }
   assert.equal(rows[1]!.payload?.outcome, 'request_completed', 'HTTP success does not claim mutation success:true');
-  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|PrivateOperationName|privateAlias|issueDelete|secret|access-sentinel/);
+  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|PrivateOperationName|privateAlias|secret|access-sentinel/);
   assert.equal((await messageServiceForAgent('scout').list()).entries.length, 0);
 }));
 
@@ -263,7 +264,8 @@ for (const mode of ['network', 'partial', 'invalid-json', 'unauthorized'] as con
   assert.equal(rows[1]!.payload?.outcome, 'unknown');
   assert.equal(rows[1]!.payload?.callId, rows[0]!.payload?.callId);
   assert.equal(requests, 1);
-  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|HiddenName|privateAlias|issueDelete|sentinel/);
+  assert.ok(rows.every((r) => JSON.stringify(r.payload?.fields) === '["issueDelete"]'));
+  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|HiddenName|privateAlias|sentinel/);
   assert.equal((await messageServiceForAgent('scout').list()).entries.length, 0);
 }));
 
@@ -284,7 +286,8 @@ for (const stage of ['started', 'completed', 'failed'] as const) test(`Linear AP
   assert.equal(requests, stage === 'started' ? 0 : 1);
   const rows = await activityServiceForAgent('scout').readAll();
   assert.equal(rows.length, stage === 'started' ? 0 : 1);
-  assert.doesNotMatch(JSON.stringify([rows, warnings]), /PRIVATE_|sentinel|issueDelete/);
+  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|sentinel/);
+  assert.doesNotMatch(JSON.stringify(warnings), /PRIVATE_|sentinel|issueDelete/);
   assert.equal((await messageServiceForAgent('scout').list()).entries.length, 0);
 }));
 
@@ -308,7 +311,41 @@ test('API operation classification follows selection and never changes arbitrary
   assert.deepEqual(calls, cases.map((c) => c.query));
   const rows = await activityServiceForAgent('scout').readAll();
   assert.equal(new Set(rows.map((r) => r.payload?.callId)).size, cases.length);
-  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|literal|issueDelete/);
+  assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_|literal/);
+}));
+
+test('API audit keeps top-level schema field names and an exact issue key, never query text, aliases or other variables', async (t) => withTempAnimaHome(async (home) => {
+  const { identity } = await seedLinear(home);
+  t.mock.method(identity, 'request', async () => ({}));
+  const cases: { query: string; variables?: Record<string, unknown>; operationName?: string; fields?: string[]; issueKey?: string }[] = [
+    { query: 'query PRIVATE_NAME($id:String!) { PRIVATE_ALIAS: issue(id:$id) { PRIVATE_NESTED: title } }', variables: { id: 'ANI-11' }, fields: ['issue'], issueKey: 'ANI-11' },
+    { query: 'mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success } }', variables: { id: 'ANI-11', input: { title: 'PRIVATE_TITLE' } }, fields: ['issueUpdate'], issueKey: 'ANI-11' },
+    // Only a whole top-level variable is an issue key; nothing nested, padded or embedded.
+    { query: 'mutation($input:CommentCreateInput!) { commentCreate(input:$input) { success } }', variables: { input: { issueId: 'ANI-11', body: 'PRIVATE_BODY ANI-12' } }, fields: ['commentCreate'] },
+    ...[' ANI-11', 'ANI-11 ', 'PRIVATE ANI-11', 'ANI-11 PRIVATE', 'ani-11', 'ANI-011', 'ANI-', ['ANI-11'], { id: 'ANI-11' }, 11].map((a) => (
+      { query: 'query($a:String) { issue(id:$a) { id } }', variables: { a }, fields: ['issue'] })),
+    { query: 'query($a:String,$b:String) { issue(id:$a) { id } }', variables: { a: 'ANI-11', b: 'ANI-12' }, fields: ['issue'] },
+    { query: 'query($a:String,$b:String) { issue(id:$a) { id } }', variables: { a: 'ANI-11', b: 'ANI-11' }, fields: ['issue'], issueKey: 'ANI-11' },
+    { query: '{ PRIVATE_A: issue(id:"PRIVATE_LITERAL") { id } PRIVATE_B: issue(id:"PRIVATE_LITERAL_2") { id } }', fields: ['issue'] },
+    { query: '{ a1: viewer { id } teams { nodes { id } } issues { nodes { id } } organization { id } comments { nodes { id } } searchIssues(term:"PRIVATE_TERM") { nodes { id } } issue(id:"x") { id } }', fields: ['viewer', 'teams', 'issues', 'organization', 'comments'] },
+    { query: 'query { ...PRIVATE_FRAGMENT ... on Query { teams { nodes { id } } } } fragment PRIVATE_FRAGMENT on Query { viewer { id } }', fields: ['viewer', 'teams'] },
+    { query: 'query { ...A } fragment A on Query { ...B } fragment B on Query { ...A viewer { id } }', fields: ['viewer'] },
+    { query: `{ PRIVATE_${'x'.repeat(60)} { id } viewer { id } }`, fields: ['viewer'] },
+    { query: 'query Q { viewer { id } } mutation M { issueDelete(id:"x") { success } }', variables: { id: 'ANI-11' } },
+    { query: 'query malformed { PRIVATE_FIELD(', variables: { id: 'ANI-11' } },
+  ];
+  for (const input of cases) {
+    const before = (await activityServiceForAgent('scout').readAll()).length;
+    await runLinearApi(identity, { query: input.query, variables: input.variables ?? {}, operationName: input.operationName });
+    const rows = (await activityServiceForAgent('scout').readAll()).slice(before);
+    assert.equal(rows.length, 2, input.query);
+    for (const row of rows) {
+      assert.deepEqual(row.payload?.fields, input.fields, input.query);
+      assert.equal(row.payload?.issueKey, input.issueKey, input.query);
+      for (const key of Object.keys(row.payload ?? {})) assert.ok(['callId', 'fields', 'issueKey', 'itemId', 'operation', 'outcome', 'platform', 'status', 'tool'].includes(key), key);
+    }
+  }
+  assert.doesNotMatch(JSON.stringify(await activityServiceForAgent('scout').readAll()), /PRIVATE|title|ANI-12|ani-11|ANI-011| ANI-11|ANI-11 /);
 }));
 
 test('API audit keeps the inherited run when the active-item lookup fails without exposing its error', async (t) => withTempAnimaHome(async (home) => {

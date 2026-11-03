@@ -413,13 +413,59 @@ describe('Linear API tool steps', () => {
     expect(feed).toHaveLength(1);
     expect(feed[0]?.kind).toBe('step');
     expect(isNarrativeStep(completed)).toBe(true);
-    expect(activityRow(completed).title).toBe('Linear API request completed');
+    expect(activityRow(completed).title).toBe('Linear API');
+    expect(activityRow(started).title).toBe('Linear API');
     expect(activityRow(completed).target).toBe(operation === 'unknown' ? 'Unknown operation' : operation.charAt(0).toUpperCase() + operation.slice(1));
   });
   it('shows unknown write outcomes without exposing arbitrary payload content', () => {
     const record = activity({ tool: 'anima.linear.api', operation: 'mutation', outcome: 'unknown', error: 'PRIVATE_ERROR', query: 'PRIVATE_QUERY' }, 'tool.call.failed');
     expect(isNarrativeStep(record)).toBe(true);
-    expect(activityRow(record)).toMatchObject({ title: 'Linear API request failed', target: 'Mutation · outcome unknown', kind: 'failure' });
+    expect(activityRow(record)).toMatchObject({ title: 'Linear API failed', target: 'Mutation · outcome unknown', kind: 'failure' });
     expect(JSON.stringify(activityRow(record))).not.toContain('PRIVATE_');
+  });
+
+  const linearApi = (fields: unknown, extra: Record<string, unknown> = {}, type: Activity['type'] = 'tool.call.completed') =>
+    activityRow(activity({ tool: 'anima.linear.api', platform: 'linear', operation: 'mutation', callId: 'api-1', fields, ...extra }, type));
+
+  it.each([
+    [['issueUpdate'], 'mutation', 'Update issue'],
+    [['issueCreate'], 'mutation', 'Create issue'],
+    [['commentCreate'], 'mutation', 'Comment on issue'],
+    [['issue'], 'query', 'Read issue'],
+    [['issues'], 'query', 'List issues'],
+    [['searchIssues'], 'query', 'Search issues'],
+  ])('names the requested action for %j', (fields, operation, target) => {
+    expect(linearApi(fields, { operation })).toMatchObject({ title: 'Linear API', target });
+  });
+
+  it('names the issue only when the request had a single field that acts on it', () => {
+    expect(linearApi(['issueUpdate'], { issueKey: 'ANI-11' }).target).toBe('Update ANI-11');
+    expect(linearApi(['issue'], { issueKey: 'ANI-11' }).target).toBe('Read ANI-11');
+    expect(linearApi(['commentCreate'], { issueKey: 'ANI-11' }).target).toBe('Comment on ANI-11');
+    // A key in a create or list request is a parent or filter, not the subject.
+    expect(linearApi(['issueCreate'], { issueKey: 'ANI-11' }).target).toBe('Create issue');
+    expect(linearApi(['issues'], { issueKey: 'ANI-11' }).target).toBe('List issues');
+    // With several fields the key could belong to any of them.
+    expect(linearApi(['issueUpdate', 'commentCreate'], { issueKey: 'ANI-11' }).target).toBe('Update issue and more');
+    expect(linearApi(['issueUpdate'], { issueKey: 'PRIVATE ANI-11' }).target).toBe('Update issue');
+  });
+
+  it('keeps the label through started and failed rows without claiming the change happened', () => {
+    expect(linearApi(['issueUpdate'], { issueKey: 'ANI-11' }, 'tool.call.started')).toMatchObject({ title: 'Linear API', target: 'Update ANI-11' });
+    expect(linearApi(['issueUpdate'], { issueKey: 'ANI-11', outcome: 'unknown' }, 'tool.call.failed'))
+      .toMatchObject({ title: 'Linear API failed', target: 'Update ANI-11 · outcome unknown', kind: 'failure' });
+  });
+
+  it('falls back to a neutral label for unknown fields and never shows a raw field name', () => {
+    expect(linearApi(['PRIVATE_FIELD'], { operation: 'mutation' }).target).toBe('Change Linear data');
+    expect(linearApi(['PRIVATE_FIELD'], { operation: 'query' }).target).toBe('Read Linear data');
+    expect(linearApi(['PRIVATE_FIELD', 'issue'], { operation: 'query' }).target).toBe('Read issue and more');
+    expect(linearApi(['toString'], { operation: 'query' }).target).toBe('Read Linear data');
+    expect(JSON.stringify([linearApi(['PRIVATE_FIELD']), linearApi(['PRIVATE_FIELD', 'issue'])])).not.toContain('PRIVATE_');
+  });
+
+  it.each([undefined, [], 'issueUpdate', [42]])('keeps the operation label for records without field names: %j', (fields) => {
+    expect(linearApi(fields).target).toBe('Mutation');
+    expect(linearApi(fields, { operation: 'query', issueKey: 'ANI-11' }).target).toBe('Query');
   });
 });

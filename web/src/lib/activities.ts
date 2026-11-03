@@ -5,6 +5,7 @@
 
 import { formatTimeShort, formatTokens } from './format';
 import type { Activity as ActivityRecord } from '@shared/activity';
+import { LINEAR_ISSUE_KEY } from '@shared/linear-issue-key';
 import {
   classifyOutboundEffect,
   heldSendActivityCopy,
@@ -158,13 +159,12 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   const normalized = tool.toLowerCase();
 
   if (normalized === 'anima.linear.api') {
-    const operation = payload['operation'];
-    const label = operation === 'query' ? 'Query' : operation === 'mutation' ? 'Mutation'
-      : operation === 'subscription' ? 'Subscription' : 'Unknown operation';
+    const label = linearApiLabel(payload);
     if (activity.type === 'tool.call.failed') return {
-      title: 'Linear API request failed', target: `${label} · outcome unknown`, color: COLOR_FAILURE, kind: 'failure',
+      title: 'Linear API failed', target: `${label} · outcome unknown`, color: COLOR_FAILURE, kind: 'failure',
     };
-    return tool_(activity.type === 'tool.call.completed' ? 'Linear API request completed' : 'Linear API request started', label);
+    // A short title, like other tool steps, leaves room for the action on a phone.
+    return tool_('Linear API', label);
   }
 
   if (activity.type === 'memory_coherence.outcome') {
@@ -639,6 +639,52 @@ function memoryCoherenceOutcomeRow(payload: Record<string, unknown>): ActivityRo
     color: COLOR_IDLE,
     kind: 'lifecycle',
   };
+}
+
+// Requested actions, phrased as requests: a completed call does not prove the
+// change happened. A label with {key} names the issue when the audit has one.
+const LINEAR_API_ACTIONS: Record<string, string> = {
+  issue: 'Read {key}',
+  issues: 'List issues',
+  searchIssues: 'Search issues',
+  issueCreate: 'Create issue',
+  issueUpdate: 'Update {key}',
+  issueArchive: 'Archive {key}',
+  issueDelete: 'Delete {key}',
+  comment: 'Read comment',
+  comments: 'List comments',
+  commentCreate: 'Comment on {key}',
+  commentUpdate: 'Edit comment',
+  commentDelete: 'Delete comment',
+  attachmentLinkURL: 'Link a URL to {key}',
+  team: 'Read team',
+  teams: 'List teams',
+  viewer: 'Read own profile',
+  agentSession: 'Read work session',
+  agentSessionCreateOnIssue: 'Start work session on {key}',
+  agentSessionCreateOnComment: 'Start work session on comment',
+  agentSessionUpdate: 'Update work session',
+  agentActivityCreate: 'Post session activity',
+};
+
+function linearApiLabel(payload: Record<string, unknown>): string {
+  const operation = payload['operation'];
+  const fields = Array.isArray(payload['fields'])
+    ? payload['fields'].filter((f): f is string => typeof f === 'string')
+    : [];
+  // Records from before field names were kept.
+  if (!fields.length) {
+    return operation === 'query' ? 'Query' : operation === 'mutation' ? 'Mutation'
+      : operation === 'subscription' ? 'Subscription' : 'Unknown operation';
+  }
+  const action = fields.map((f) => (Object.hasOwn(LINEAR_API_ACTIONS, f) ? LINEAR_API_ACTIONS[f] : undefined)).find(Boolean);
+  // A key only names the issue when the request had a single field it could belong to.
+  const key = typeof payload['issueKey'] === 'string' && LINEAR_ISSUE_KEY.test(payload['issueKey']) && fields.length === 1
+    ? payload['issueKey'] : undefined;
+  const first = action
+    ? action.replace('{key}', key ?? 'issue')
+    : operation === 'mutation' ? 'Change Linear data' : 'Read Linear data';
+  return fields.length > 1 ? `${first} and more` : first;
 }
 
 function tool_(title: string, target?: string, targetFull?: string): ActivityRow {
