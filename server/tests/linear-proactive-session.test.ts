@@ -174,7 +174,6 @@ test('automation created events remain eligible, even on the same target during 
   const items = await queue.list();
   assert.equal(items.length, 2);
   assert.deepEqual(items.map((i) => i.kind === 'linear' && i.sessionId).sort(), [automation.agentSession.id, concurrent.agentSession.id].sort());
-  assert.ok(items.every((i) => i.kind === 'linear' && !i.humanRequested));
   // An uncertain create is not a permanent wildcard swallowing automation.
   fake.beforeCreateReturn = undefined; fake.loseCreate = true;
   await assert.rejects(f.service.start('issue', issueId, randomUUID()));

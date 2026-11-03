@@ -358,7 +358,7 @@ async function documentedApiExamples() {
 
 test('every documented Linear API example parses and validates against the schema fixture', async () => {
   const examples = await documentedApiExamples();
-  assert.equal(examples.length, 7);
+  assert.equal(examples.length, 9);
   for (const input of examples) assert.deepEqual(linearQueryErrors(input.query), [], input.query);
   assert.ok(linearQueryErrors('query { agentSession(id:"bad") { activities { nodes { content } } } }').length);
 });

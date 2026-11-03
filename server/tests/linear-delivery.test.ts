@@ -94,6 +94,7 @@ test('a supplied full context stays intact and old queued inputs recover their e
   const old = LinearInboxItem.parse({ id: `linear:${install.id}:prompted:${randomUUID()}`, kind: 'linear', installationId: install.id, organizationId: install.organizationId,
     sessionId, humanRequested: true, actorName: 'Legacy requester', text: 'Legacy request', receivedAt: '2026-10-03T01:02:03Z',
     handling: { status: 'queued', createdAt: '2026-10-03T01:02:03Z', updatedAt: '2026-10-03T01:02:03Z' } });
+  assert.equal('humanRequested' in old, false, 'Legacy inputs still parse after the unused origin flag is removed');
   const rendered = buildCodeAgentDeliveryPrompt(old);
   assert.match(rendered, /wake=followup/); assert.match(rendered, /Unknown author: Legacy request/);
   assert.doesNotMatch(rendered, /Legacy requester|Requested by|context=snapshot|user_id=|\stime=/);
