@@ -87,13 +87,23 @@ export class LinearIdentityService {
       if (file.installation.workspaceName) result.workspaceName = file.installation.workspaceName;
     } else if (file.pending) result.clientId = file.pending.clientId;
     if (file.lastSignedWebhookAt) result.lastSignedWebhookAt = file.lastSignedWebhookAt;
-    // The runtime does not answer for the agent. A request whose run ended unanswered goes
-    // stale in Linear after 30 minutes without activity; count the same sessions here.
+    // The runtime does not answer for the agent. A session whose request ended unanswered goes
+    // stale in Linear after 30 minutes without activity; count the same sessions here. Judge
+    // the whole session: a new prompt or any later activity refreshes it, and a request that
+    // is still queued or running has not ended.
     if (file.installation && !file.installation.revoked) {
+      const sessions = new Map<string, { unanswered: boolean; open: boolean; lastAt: number }>();
+      for (const r of Object.values(file.receipts)) {
+        const session = sessions.get(r.sessionId) ?? { unanswered: false, open: false, lastAt: 0 };
+        const pending = Boolean(r.itemId) && !r.answered && !r.stopped;
+        if (pending && r.settled) session.unanswered = true;
+        if (pending && !r.settled) session.open = true;
+        for (const at of [r.receivedAt, r.lastActivityAt]) if (at) session.lastAt = Math.max(session.lastAt, Date.parse(at));
+        sessions.set(r.sessionId, session);
+      }
       const staleBefore = Date.now() - LINEAR_STALE_AFTER_MS;
-      const unanswered = new Set(Object.values(file.receipts).filter((r) => r.itemId && r.settled && !r.answered && !r.stopped
-        && Date.parse(r.lastActivityAt ?? r.receivedAt) < staleBefore).map((r) => r.sessionId));
-      if (unanswered.size) result.unansweredSessions = unanswered.size;
+      const unanswered = [...sessions.values()].filter((s) => s.unanswered && !s.open && s.lastAt < staleBefore).length;
+      if (unanswered) result.unansweredSessions = unanswered;
     }
     if (file.lastError) result.lastError = file.lastError;
     else if (file.pending && file.pending.expiresAt <= Date.now()) result.lastError = 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.';
