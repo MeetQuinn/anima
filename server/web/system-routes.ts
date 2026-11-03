@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { defaultDashboardAuthService } from '../settings/dashboard-auth.service.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
+import { checkPublicUrl } from '../settings/public-url-check.js';
 import { defaultSystemService } from '../services/system.service.js';
 import { defaultProviderUsageService } from '../provider-usage/provider-usage.service.js';
 import { defaultProviderCliService } from '../provider-cli/provider-cli.service.js';
@@ -49,6 +50,10 @@ export function registerSystemRoutes(fastify: FastifyInstance): void {
   fastify.put('/api/settings/public-url', async (request, reply) => {
     reply.header('cache-control', 'no-store');
     return defaultServerSettingsService.setPublicUrl(request.body);
+  });
+  fastify.post('/api/settings/public-url/check', async (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return checkPublicUrl();
   });
   fastify.get('/api/health', async () => ({ ok: true }));
   fastify.get('/api/provider-availability', async () => defaultSystemService.providerAvailability());

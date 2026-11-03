@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { LinearSetupRequest } from '../../shared/linear-setup.js';
 import { LinearClientSecretRequest, LinearInstallRequest } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSetupService } from '../linear/setup.service.js';
@@ -15,10 +14,6 @@ export function registerAgentLinearRoutes(app: FastifyInstance): void {
   app.get('/api/linear/setup', async (_request, reply) => {
     reply.header('cache-control', 'no-store');
     return new LinearSetupService().read();
-  });
-  app.put('/api/linear/setup', async (request, reply) => {
-    reply.header('cache-control', 'no-store');
-    return new LinearSetupService().save(LinearSetupRequest.parse(request.body));
   });
   app.get<{ Params: { agentId: string } }>('/api/agents/:agentId/linear', async (request, reply) => {
     reply.header('cache-control', 'no-store');

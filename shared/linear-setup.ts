@@ -1,24 +1,16 @@
 import { z } from 'zod';
 import { PublicHttpsUrl } from './public-url.js';
-import { LinearCallbackUrl, LinearListenerConfig } from './linear.js';
+import { LinearCallbackUrl } from './linear.js';
 
 export const LinearWebhookUrl = PublicHttpsUrl.pipe(z.string().refine((value) => {
   const host = new URL(value).hostname;
   return host !== 'linear.app' && !host.endsWith('.linear.app');
 }, 'Use your Anima address, not linear.app.'));
 
-export const LinearSetupRequest = z
-  .object({
-    listener: LinearListenerConfig,
-  })
-  .strict();
-export type LinearSetupRequest = z.infer<typeof LinearSetupRequest>;
 export interface LinearSetup {
   publicUrl?: string;
   webhookUrl?: string;
   callbackUrl?: string;
-  listener: z.infer<typeof LinearListenerConfig>;
-  listenerLocked: boolean;
 }
 
 export const LinearAppName = z

@@ -13,6 +13,10 @@ export const LinearListenerConfig = z.object({
   port: z.number().int().min(1024).max(65535),
 }).strict();
 export type LinearListenerConfig = z.infer<typeof LinearListenerConfig>;
+/** The app's webhook path on the public address, which points at the dashboard. */
+export const LINEAR_WEBHOOK_PATH = '/webhooks/linear';
+/** Where the runtime receives Linear events; the dashboard forwards them here. */
+export const DEFAULT_LINEAR_LISTENER: LinearListenerConfig = { host: '127.0.0.1', port: 14185 };
 
 export const LinearCallbackUrl = z.string().url().max(2048).refine((value) => {
   let url: URL;
@@ -30,7 +34,6 @@ export const LinearInstallRequest = z.object({
   clientSecret: LinearClientSecret,
   signingSecret: z.string().min(16).max(1024),
   callbackUrl: LinearCallbackUrl,
-  listener: LinearListenerConfig,
 }).strict();
 export type LinearInstallRequest = z.infer<typeof LinearInstallRequest>;
 

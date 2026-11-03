@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { setTimeout as delay } from 'node:timers/promises';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PublicUrl } from '../../shared/public-url.js';
@@ -11,10 +10,10 @@ import { LinearIdentityService } from '../linear/identity.service.js';
 import { serverConfigStore } from '../storage/schema/server.store.js';
 import { buildWebApp } from '../web/app.js';
 import { withTempAnimaHome, writeAgentConfigs, defaultAgentConfig } from './helpers/harness.js';
-import { FakeLinear, install } from './helpers/linear.js';
-import { LinearClient } from '../linear/client.js';
+import { install } from './helpers/linear.js';
+import { DEFAULT_LINEAR_LISTENER } from '../../shared/linear.js';
 
-const setup = { listener: { host: '127.0.0.1', port: 14185 } };
+const listener = { host: '127.0.0.1', port: 14185 };
 const callbackUrl = 'http://localhost:14174/api/linear/oauth/callback';
 
 test('manifest prefills a private agent app, callback and all three wake event subscriptions without secrets', () => {
@@ -52,98 +51,50 @@ test('setup rejects private and unsafe URLs and invalid callbacks before produci
   }
 });
 
-test('machine setup reads without writes, persists once and is reused across agents and restarts', async () => withTempAnimaHome(async (home) => {
+test('Linear setup only derives URLs from the public address; installs carry no listener and write none', async () => withTempAnimaHome(async (home) => {
   await writeAgentConfigs(home, [defaultAgentConfig('scout'), defaultAgentConfig('milo')]);
   const service = new LinearSetupService();
   const before = await readFile(join(home, 'config.json'));
-  assert.deepEqual(await service.read(), { publicUrl: undefined, webhookUrl: undefined, callbackUrl: undefined, listener: setup.listener, listenerLocked: false });
+  assert.deepEqual(await service.read(), { publicUrl: undefined, webhookUrl: undefined, callbackUrl: undefined });
   assert.deepEqual(await readFile(join(home, 'config.json')), before);
-  await serverConfigStore.update((c) => ({ ...c, dashboardPort: 14174, linearWebhook: { host: '::1', port: 15123 } }));
-  const custom = { ...setup, listener: (await service.read()).listener };
-  assert.equal(custom.listener.port, 15123);
-  await service.save(custom);
-  assert.deepEqual(await new LinearSetupService().read(), { ...custom, publicUrl: undefined, webhookUrl: undefined, callbackUrl: undefined, listenerLocked: false });
-  assert.equal((await serverConfigStore.read()).dashboardPort, 14174);
   for (const agentId of ['scout', 'milo']) {
-    const auth = await new LinearIdentityService(agentId).begin({ clientId: `${agentId}-client`, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: custom.listener }, 'binding');
+    const auth = await new LinearIdentityService(agentId).begin({ clientId: `${agentId}-client`, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl }, 'binding');
     assert.equal(new URL(auth.authorizationUrl).searchParams.get('redirect_uri'), callbackUrl);
-    assert.deepEqual((await new LinearIdentityService(agentId).status()).listener, custom.listener);
+    assert.deepEqual((await new LinearIdentityService(agentId).status()).listener, DEFAULT_LINEAR_LISTENER);
   }
-  assert.equal((await new LinearSetupService().read()).webhookUrl, undefined);
+  assert.equal((await serverConfigStore.read()).linearWebhook, undefined);
+  // An address saved by an earlier version is still the receiver's address.
+  await serverConfigStore.update((c) => ({ ...c, linearWebhook: { host: '::1', port: 15123 } }));
+  assert.deepEqual((await new LinearIdentityService('scout').status()).listener, { host: '::1', port: 15123 });
 }));
 
-test('machine setup and direct OAuth preparation cannot move a listener reserved by another pending or installed app', async () => withTempAnimaHome(async (home) => {
-  await writeAgentConfigs(home, [defaultAgentConfig('scout'), defaultAgentConfig('milo')]);
-  const service = new LinearSetupService();
-  await service.save(setup);
-  const fake = new FakeLinear();
-  const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch));
-  const auth = new URL((await identity.begin({ clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: setup.listener }, 'binding')).authorizationUrl);
-  const changed = { ...setup, listener: { ...setup.listener, port: 15123 } };
-  for (const phase of ['pending', 'installed']) {
-    assert.equal((await service.read()).listenerLocked, true, phase);
-    await assert.rejects(service.save(changed), /An installed app or an authorization in progress uses this listener/);
-    await assert.rejects(new LinearIdentityService('milo').begin({ clientId: 'milo-client', clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: changed.listener }, 'binding'), /An installed app or an authorization in progress/);
-    assert.deepEqual((await serverConfigStore.read()).linearWebhook, setup.listener);
-    if (phase === 'pending') await identity.finish(auth.searchParams.get('state')!, 'synthetic-code', 'binding');
-  }
-  // Public address changes do not rewrite existing credentials or the bind.
-  await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://new.example.com' });
-  assert.equal((await identity.status()).state, 'connected');
-  await identity.remove();
-  await service.save(changed);
-  assert.equal((await service.read()).listener.port, 15123);
-}));
-
-test('setup API validates before saving, preserves custom settings, and exposes no credential fields', async () => withTempAnimaHome(async (home) => {
+test('setup API is read-only and exposes no credential fields', async () => withTempAnimaHome(async (home) => {
   await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
+  await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com' });
   const app = buildWebApp();
   try {
-    assert.equal((await app.inject({ method: 'PUT', url: '/api/linear/setup', payload: { ...setup, webhookUrl: 'http://localhost' } })).statusCode, 400);
-    assert.notEqual((await app.inject({ method: 'PUT', url: '/api/linear/setup', payload: { ...setup, listener: { ...setup.listener, port: 4174 } } })).statusCode, 200);
-    const result = await app.inject({ method: 'PUT', url: '/api/linear/setup', payload: setup });
-    assert.equal(result.statusCode, 200); assert.equal(result.headers['cache-control'], 'no-store');
+    assert.equal((await app.inject({ method: 'PUT', url: '/api/linear/setup', payload: { listener: { host: '127.0.0.1', port: 15123 } } })).statusCode, 404);
+    assert.equal((await serverConfigStore.read()).linearWebhook, undefined);
     const read = await app.inject({ url: '/api/linear/setup' });
-    assert.deepEqual(read.json(), { ...setup, listenerLocked: false });
+    assert.equal(read.headers['cache-control'], 'no-store');
+    assert.deepEqual(read.json(), { publicUrl: 'https://agents.example.com', webhookUrl: 'https://agents.example.com/webhooks/linear', callbackUrl: 'https://agents.example.com/api/linear/oauth/callback' });
     assert.doesNotMatch(read.body, /secret|token|verifier/);
   } finally { await app.close(); }
 }));
 
-
-test('the shared listener stays reserved while an OAuth code exchange is in flight', async () => withTempAnimaHome(async (home) => {
-  await writeAgentConfigs(home, [defaultAgentConfig('scout'), defaultAgentConfig('milo')]);
-  const setupService = new LinearSetupService();
-  await setupService.save(setup);
-  const fake = new FakeLinear();
-  let release!: () => void;
-  fake.tokenGate = new Promise<void>((resolve) => { release = resolve; });
-  const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch));
-  const auth = new URL((await identity.begin({ clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: setup.listener }, 'binding')).authorizationUrl);
-  const finishing = identity.finish(auth.searchParams.get('state')!, 'synthetic-code', 'binding');
-  try {
-    for (let tries = 0; !fake.tokenCalls && tries < 100; tries++) await delay(10);
-    assert.equal(fake.tokenCalls, 1);
-    assert.equal((await setupService.read()).listenerLocked, true);
-    await assert.rejects(setupService.save({ ...setup, listener: { ...setup.listener, port: 15123 } }), /An installed app or an authorization in progress uses this listener/);
-    await assert.rejects(new LinearIdentityService('milo').begin({ clientId: 'milo-client', clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl, listener: { ...setup.listener, port: 15123 } }, 'binding'), /An installed app or an authorization in progress/);
-  } finally { release(); await finishing; }
-  assert.equal((await identity.status()).state, 'connected');
-  assert.deepEqual((await setupService.read()).listener, setup.listener);
-}));
-
 test('global public URL derives both Linear URLs, persists no credentials and requires explicit migration from a webhook-only address', async () => withTempAnimaHome(async (home) => {
   await writeAgentConfigs(home, [defaultAgentConfig('scout')]);
-  await writeFile(join(home, 'config.json'), JSON.stringify({ dashboardPort: 14174, linearWebhookUrl: 'https://old.example.com/custom/webhook', linearWebhook: setup.listener }));
+  await writeFile(join(home, 'config.json'), JSON.stringify({ dashboardPort: 14174, linearWebhookUrl: 'https://old.example.com/custom/webhook', linearWebhook: listener }));
   const before = await readFile(join(home, 'config.json'));
   assert.equal((await new LinearSetupService().read()).publicUrl, undefined);
   assert.deepEqual(await readFile(join(home, 'config.json')), before);
   await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com/' });
   const current = await new LinearSetupService().read();
   assert.equal(current.publicUrl, 'https://agents.example.com');
-  assert.equal(current.webhookUrl, 'https://agents.example.com/webhook');
+  assert.equal(current.webhookUrl, 'https://agents.example.com/webhooks/linear');
   assert.equal(current.callbackUrl, 'https://agents.example.com/api/linear/oauth/callback');
   const disk = JSON.parse(await readFile(join(home, 'config.json'), 'utf8'));
-  assert.equal(disk.dashboardPort, 14174); assert.deepEqual(disk.linearWebhook, setup.listener);
+  assert.equal(disk.dashboardPort, 14174); assert.deepEqual(disk.linearWebhook, listener);
   assert.equal(disk.linearWebhookUrl, undefined);
   for (const value of ['https://agents.example.com/path', 'https://agents.example.com?x=1', 'http://agents.example.com', 'https://127.0.0.1', 'https://user:secret@agents.example.com']) assert.equal(PublicUrl.safeParse(value).success, false, value);
   const app = buildWebApp();

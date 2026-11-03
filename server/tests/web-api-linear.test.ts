@@ -43,7 +43,7 @@ test('real dashboard guard protects Linear credentials, install/remove and bound
   const fake = new FakeLinear(); t.mock.method(globalThis, 'fetch', fake.fetch);
   const app = buildWebApp();
   try {
-    for (const [method, url] of [['GET', '/api/linear/setup'], ['PUT', '/api/linear/setup'], ['GET', '/api/agents/scout/linear'], ['POST', '/api/agents/scout/linear/install'], ['DELETE', '/api/agents/scout/linear'], ['GET', '/api/linear/oauth/complete?state=synthetic&code=secret'], ['GET', '/api/settings/public-url'], ['PUT', '/api/settings/public-url']] as const) {
+    for (const [method, url] of [['GET', '/api/linear/setup'], ['GET', '/api/agents/scout/linear'], ['POST', '/api/agents/scout/linear/install'], ['DELETE', '/api/agents/scout/linear'], ['GET', '/api/linear/oauth/complete?state=synthetic&code=secret'], ['GET', '/api/settings/public-url'], ['PUT', '/api/settings/public-url'], ['POST', '/api/settings/public-url/check']] as const) {
       assert.equal((await app.inject({ method, url })).statusCode, 401);
     }
     const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { password: 'synthetic-dashboard-password' } });
@@ -51,7 +51,7 @@ test('real dashboard guard protects Linear credentials, install/remove and bound
     const cookie = String(login.headers['set-cookie']).split(';')[0]!;
     await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com' });
     const prepared = await app.inject({ method: 'POST', url: '/api/agents/scout/linear/install', headers: { cookie }, payload: {
-      clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+      clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
     } });
     assert.equal(prepared.statusCode, 200);
     assert.equal(prepared.headers['cache-control'], 'no-store');
@@ -135,7 +135,7 @@ test('private LAN OAuth completion permits only navigation from an allowed peer 
     assert.equal(login.statusCode, 200);
     const cookie = String(login.headers['set-cookie']).split(';')[0]!;
     const prepared = await lan.inject({ remoteAddress, method: 'POST', url: '/api/agents/scout/linear/install', headers: { host, cookie, origin: `http://${host}`, 'sec-fetch-site': 'same-origin' }, payload: {
-      clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+      clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
     } });
     assert.equal(prepared.statusCode, 200);
     const state = new URL(prepared.json().authorizationUrl).searchParams.get('state')!;
@@ -183,7 +183,7 @@ test('failed OAuth completion gives a readable return path and retains only safe
   const app = buildWebApp();
   try {
     const prepared = await app.inject({ method: 'POST', url: '/api/agents/scout/linear/install', payload: {
-      clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+      clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
     } });
     const state = new URL(prepared.json().authorizationUrl).searchParams.get('state')!;
     const response = await app.inject({ url: `/api/linear/oauth/complete?state=${state}&code=private-code-sentinel` });
@@ -199,7 +199,7 @@ test('declined and expired OAuth returns stay with their own attempt and never t
   const fake = new FakeLinear(); t.mock.method(globalThis, 'fetch', fake.fetch);
   const app = buildWebApp();
   const prepare = async (agentId: string, clientId: string) => new URL((await app.inject({ method: 'POST', url: `/api/agents/${agentId}/linear/install`, payload: {
-    clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+    clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
   } })).json().authorizationUrl).searchParams.get('state')!;
   try {
     const scout = await prepare('scout', install.clientId);
@@ -230,7 +230,7 @@ test('a failure before the session check names no agent, even for a known state'
   try {
     const cookie = await login(), other = await login();
     const prepared = await app.inject({ method: 'POST', url: '/api/agents/scout/linear/install', headers: { cookie }, payload: {
-      clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14375 },
+      clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
     } });
     assert.equal(prepared.statusCode, 200);
     const url = `/api/linear/oauth/complete?state=${new URL(prepared.json().authorizationUrl).searchParams.get('state')}&code=synthetic-code`;

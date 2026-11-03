@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({
   remove: vi.fn(),
   refresh: vi.fn(),
   setup: vi.fn(),
-  saveSetup: vi.fn(),
+  check: vi.fn(),
   open: vi.fn(),
   readAddress: vi.fn(),
   saveAddress: vi.fn(),
@@ -22,14 +22,16 @@ vi.mock('@/api/linear', () => ({
   installLinear: api.install,
   removeLinear: api.remove,
   fetchLinearSetup: api.setup,
-  saveLinearSetup: api.saveSetup,
+  linearSetupKey: ['linear', 'setup'],
   openLinearAuthorization: api.open,
   saveLinearClientSecret: api.saveSecret,
 }));
 vi.mock('@/api/public-url', () => ({
   publicUrlKey: ['server', 'public-url'],
+  publicUrlCheckKey: ['server', 'public-url-check'],
   fetchPublicUrl: api.readAddress,
   savePublicUrl: api.saveAddress,
+  checkPublicUrl: api.check,
 }));
 vi.mock('@/api/agents', () => ({ refreshAgentData: api.refresh }));
 
@@ -37,9 +39,7 @@ const base: LinearStatus = { state: 'not_configured', signatureFailures: 0 };
 const setup: LinearSetup = {
   publicUrl: 'https://agents.example.com',
   callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
-  webhookUrl: 'https://agents.example.com/webhook',
-  listener: { host: '127.0.0.1', port: 14185 },
-  listenerLocked: false,
+  webhookUrl: 'https://agents.example.com/webhooks/linear',
 };
 const authorizationUrl = 'https://linear.app/oauth/authorize?state=synthetic-state';
 const connected: LinearStatus = {
@@ -93,6 +93,7 @@ beforeEach(() => {
   api.status.mockResolvedValue(base);
   api.remove.mockResolvedValue({ removed: true });
   api.readAddress.mockResolvedValue({});
+  api.check.mockResolvedValue({ publicUrl: setup.publicUrl, reachable: true, status: 200, passwordSet: true, checkedAt: '2026-11-03T00:00:00Z' });
 });
 
 it('connects in this tab: one click on Authorize goes to the returned Linear link and keeps the dialog busy', async () => {
@@ -108,7 +109,6 @@ it('connects in this tab: one click on Authorize goes to the returned Linear lin
     clientSecret: 'synthetic-client-secret-sentinel',
     signingSecret: 'synthetic-signing-sentinel',
     callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
-    listener: { host: '127.0.0.1', port: 14185 },
   });
   expect((screen.getByRole('button', { name: /Opening Linear/ }) as HTMLButtonElement).disabled).toBe(true);
   expect(closeButton().disabled).toBe(true);
@@ -117,7 +117,6 @@ it('connects in this tab: one click on Authorize goes to the returned Linear lin
   expect(screen.queryByRole('link', { name: /Authorize/ })).toBeNull();
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-signing-sentinel');
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-client-secret-sentinel');
-  expect(api.saveSetup).not.toHaveBeenCalled();
 });
 
 it('coming Back from Linear out of the page cache lets the user act again', async () => {
@@ -138,16 +137,18 @@ it('coming Back from Linear out of the page cache lets the user act again', asyn
   expect(closeButton().disabled).toBe(false);
 });
 
-it('uses the saved shared listener when connecting another agent', async () => {
-  api.setup.mockResolvedValue({ ...setup, listener: { host: '::1', port: 15123 }, listenerLocked: true });
-  api.install.mockResolvedValue({ authorizationUrl });
+it('shows whether Linear can reach the public address while connecting', async () => {
+  api.check.mockResolvedValueOnce({ publicUrl: setup.publicUrl, reachable: false, failure: 'gateway', status: 302, passwordSet: true, checkedAt: '2026-11-03T00:00:00Z' });
   mount();
   await screen.findByText('Not connected');
-  await openDialog();
-  await startAuthorizing();
-  await waitFor(() => expect(api.open).toHaveBeenCalledTimes(1));
-  expect(api.install).toHaveBeenCalledWith('scout', expect.objectContaining({ listener: { host: '::1', port: 15123 } }));
-  expect(api.saveSetup).not.toHaveBeenCalled();
+  const dialog = await openDialog();
+  const alert = await within(dialog).findByRole('alert');
+  expect(alert.textContent).toContain('Not reachable yet');
+  expect(alert.textContent).toContain('A sign-in page or access rule answered (HTTP 302). Let /webhooks/ through it');
+  api.check.mockResolvedValueOnce({ publicUrl: setup.publicUrl, reachable: true, status: 200, passwordSet: true, checkedAt: '2026-11-03T00:00:01Z' });
+  fireEvent.click(within(alert).getByRole('button', { name: 'Check again' }));
+  await within(dialog).findByText(/Reachable\. Linear can deliver events here\./);
+  expect(api.check).toHaveBeenCalledTimes(2);
 });
 
 for (const reason of [
@@ -203,10 +204,12 @@ it('keeps setup behind the row and contains and restores keyboard focus on dismi
     const dialog = await openDialog();
     expect(document.activeElement).toBe(dialog);
     await screen.findByRole('link', { name: 'Create app in Linear' });
+    await within(dialog).findByText(/Reachable\./);
     fireEvent.keyDown(dialog, { key: 'Tab' });
     expect(document.activeElement).toBe(closeButton());
     fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
-    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Change public address' }));
+    // The public address check closes the dialog's content.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Check again' }));
     fireEvent.click(screen.getByRole('button', { name: 'I already have one' }));
     fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: 'discarded-client-secret' } });
     fireEvent.change(screen.getByLabelText('Webhook signing secret'), { target: { value: 'discarded-secret' } });
@@ -322,15 +325,16 @@ it('a revoked identity can be disconnected before starting over', async () => {
 });
 
 it('asks for the public address in place when it is missing, then continues to the steps', async () => {
-  api.setup.mockResolvedValue({ listener: { host: '127.0.0.1', port: 14185 }, listenerLocked: false });
+  api.setup.mockResolvedValue({});
   mount();
   await screen.findByText('Not connected');
   const dialog = await openDialog();
   expect(await within(dialog).findByRole('heading', { name: 'Give Anima a public address' })).toBeTruthy();
   const input = screen.getByLabelText('Public address');
   expect(document.activeElement).toBe(input);
-  expect(within(dialog).getByText('/webhook')).toBeTruthy();
-  expect(within(dialog).getByText('/api/linear/oauth/callback')).toBeTruthy();
+  // One forwarding target; no per-integration routes to copy.
+  expect(within(dialog).getByText(/Forward the whole address to this dashboard/)).toBeTruthy();
+  expect(within(dialog).queryByText('/api/linear/oauth/callback')).toBeNull();
   expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
   api.saveAddress.mockResolvedValue({ publicUrl: 'https://agents.example.com' });
   api.setup.mockResolvedValue(setup);
@@ -382,10 +386,10 @@ it('connected: OAuth success is done, with facts, no delivery-test gate, and a c
 });
 
 it.each([
-  ['address_in_use', 'The port is already in use.'],
-  ['permission_denied', 'Permission to bind was denied.'],
-  ['address_unavailable', 'The bind address is unavailable.'],
-  ['other', 'The listener could not bind.'],
+  ['address_in_use', 'Its local port is already in use. Free it, or set another port in linearWebhook in config.json.'],
+  ['permission_denied', 'Permission to bind its local port was denied.'],
+  ['address_unavailable', 'Its local address is unavailable.'],
+  ['other', 'Its local receiver could not start. Check the runtime logs.'],
 ] as const)('a detected listener failure (%s) is named, with a way to fix it', async (reason, message) => {
   api.status.mockResolvedValue({
     ...connected,
@@ -397,9 +401,7 @@ it.each([
   const alert = within(dialog).getByRole('alert');
   expect(alert.textContent).toContain('Anima can’t receive Linear events');
   expect(alert.textContent).toContain(message);
-  expect(within(alert).getByRole('link', { name: 'Listener settings' }).getAttribute('href')).toBe(
-    '/settings/server#linear-listener',
-  );
+  expect(within(alert).queryByRole('link')).toBeNull();
   expect(within(dialog).getByText('Local listener').nextElementSibling!.textContent).toBe('Failed');
 });
 
@@ -418,8 +420,9 @@ it.each([
   expect(screen.queryByRole('alert')).toBeNull();
   expect(dialog.textContent).not.toMatch(/\bport\b/i);
   expect(dialog.textContent).toContain(
-    'Check the forwarding for /webhook on your public address, and the app’s webhook URL and event subscriptions in Linear.',
+    'Check the public address, and the app’s webhook URL and event subscriptions in Linear.',
   );
+  expect(within(dialog).getByRole('link', { name: 'public address' }).getAttribute('href')).toBe('/settings/server#public-url');
 });
 
 it('an unreadable status cannot start an installation and recovers on retry', async () => {

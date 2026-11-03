@@ -46,24 +46,24 @@ it('refreshes a cached old upgrade card on entry and when the server version cha
   client.clear();
 });
 
-it('opens and scrolls to the Linear listener when an agent dialog links to it', async () => {
+it('scrolls to the public address when an agent dialog links to it', async () => {
   api.info.mockResolvedValue(info('0.1.33'));
   api.upgrade.mockResolvedValue(status('0.1.33', 'current'));
   const scrolled: Element[] = [];
   // jsdom has no scrollIntoView.
   Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
   const mount = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ServerPage /></QueryClientProvider>);
-  const listener = () => document.getElementById('linear-listener') as HTMLDetailsElement;
+  const section = () => document.getElementById('public-url');
   try {
-    window.history.replaceState(null, '', '/settings/server#linear-listener');
+    window.history.replaceState(null, '', '/settings/server#public-url');
     const linked = mount();
-    expect(listener().open).toBe(true);
-    expect(scrolled).toEqual([listener()]);
+    expect(section()).toBeTruthy();
+    expect(scrolled).toEqual([section()]);
     linked.unmount();
 
     window.history.replaceState(null, '', '/settings/server');
     const plain = mount();
-    expect(listener().open).toBe(false);
+    expect(document.getElementById('linear-listener')).toBeNull();
     expect(scrolled).toHaveLength(1);
     plain.unmount();
   } finally {

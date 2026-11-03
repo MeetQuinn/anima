@@ -54,3 +54,27 @@ export const PublicUrlRequest = z.object({ publicUrl: PublicUrl }).strict();
 export interface PublicUrlSettings {
   publicUrl?: string;
 }
+
+/**
+ * Why Anima could not reach itself through the public address.
+ * gateway: a sign-in page or access rule answered (for example Cloudflare Access).
+ * elsewhere: something answered, but not this Anima.
+ * unreachable: no HTTP answer, or the proxy reported the origin down.
+ */
+export type PublicUrlCheckFailure = "not_configured" | "gateway" | "elsewhere" | "unreachable" | "timeout";
+export interface PublicUrlCheck {
+  publicUrl?: string;
+  reachable: boolean;
+  failure?: PublicUrlCheckFailure;
+  /** HTTP status of the answer, when there was one. */
+  status?: number;
+  /** Without a dashboard password the public address serves Linear only. */
+  passwordSet: boolean;
+  /**
+   * With a reachable address: whether requests through it still name its host.
+   * When false, Anima cannot tell them from local requests, so only a dashboard
+   * password protects the dashboard there.
+   */
+  hostRecognized?: boolean;
+  checkedAt: string;
+}

@@ -1,7 +1,7 @@
 import { withAnimaHome } from '../anima-home.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AgentConfig } from '../../shared/agent-config.js';
-import type { LinearListenerConfig, LinearListenerFailure } from '../../shared/linear.js';
+import { DEFAULT_LINEAR_LISTENER, type LinearListenerConfig, type LinearListenerFailure } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { LinearNotificationService } from '../inbox/linear-notification.service.js';
@@ -38,14 +38,17 @@ export class LinearMessageTransport {
     }
     this.services = services;
     for (const agentId of this.rejectedClaims.keys()) if (!services.has(agentId)) this.rejectedClaims.delete(agentId);
-    const config = (await new ServerConfigStore(this.animaHome).read()).linearWebhook;
-    const key = this.services.size && config ? JSON.stringify(config) : undefined;
+    // The dashboard forwards public Linear events to this loopback receiver.
+    const configured = (await new ServerConfigStore(this.animaHome).read()).linearWebhook;
+    const config = configured ?? DEFAULT_LINEAR_LISTENER;
+    const key = this.services.size ? JSON.stringify(config) : undefined;
+    // Homes without Linear agents or a saved address have nothing to report.
     if (key === this.listenerKey) {
-      this.observeListener(this.app?.server.listening ? 'listening' : 'stopped', config);
+      this.observeListener(this.app?.server.listening ? 'listening' : 'stopped', key ? config : configured);
       return;
     }
     await this.stop();
-    if (!key || !config) { this.observeListener('stopped', config); return; }
+    if (!key) { this.observeListener('stopped', configured); return; }
     const app = this.buildApp();
     try { await app.listen({ host: config.host, port: config.port }); }
     catch (error) {

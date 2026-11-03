@@ -1,4 +1,4 @@
-import type { LinearSetup, LinearSetupRequest } from '@shared/linear-setup';
+import type { LinearSetup } from '@shared/linear-setup';
 import type { LinearClientSecretRequest, LinearClientSecretResult, LinearInstallRequest, LinearStatus } from '@shared/linear';
 import { apiRequest, jsonInit } from './client';
 
@@ -13,6 +13,5 @@ export const removeLinear = (id: string): Promise<{ removed: boolean }> => apiRe
 /** Leave for Linear's authorization page in this tab; Anima's completion page brings the user back. */
 export const openLinearAuthorization = (url: string): void => window.location.assign(url);
 
+export const linearSetupKey = ['linear', 'setup'] as const;
 export const fetchLinearSetup = (): Promise<LinearSetup> => apiRequest('/api/linear/setup');
-export const saveLinearSetup = (input: LinearSetupRequest): Promise<LinearSetup> =>
-  apiRequest('/api/linear/setup', jsonInit('PUT', input));

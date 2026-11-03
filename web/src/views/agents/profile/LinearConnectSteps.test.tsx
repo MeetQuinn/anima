@@ -7,9 +7,7 @@ import { LinearConnectSteps } from './LinearConnectSteps';
 const setup: LinearSetup = {
   publicUrl: 'https://agents.example.com',
   callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
-  webhookUrl: 'https://agents.example.com/webhook',
-  listener: { host: '127.0.0.1', port: 14185 },
-  listenerLocked: false,
+  webhookUrl: 'https://agents.example.com/webhooks/linear',
 };
 const avatar = 'https://avatars.slack-edge.com/2026-01-01/123_abc_72.png';
 
@@ -27,7 +25,7 @@ it('prefills the app from the machine address, names it after the agent and uses
   const manifest = manifestOf(link);
   expect(manifest.oauth.client_name).toBe('Milo');
   expect(manifest.oauth.redirect_uris).toEqual(['https://agents.example.com/api/linear/oauth/callback']);
-  expect(manifest.webhook.url).toBe('https://agents.example.com/webhook');
+  expect(manifest.webhook.url).toBe('https://agents.example.com/webhooks/linear');
   expect(manifest.display).toEqual({ iconUrl: avatar });
   expect(screen.getByText(/with this avatar/)).toBeTruthy();
   expect(link.getAttribute('target')).toBe('_blank');
@@ -95,7 +93,6 @@ it('reveals credentials after the app step, enables Authorize only with all thre
     clientSecret: 'synthetic-client-secret-sentinel',
     signingSecret: 'synthetic-signing-sentinel',
     callbackUrl: 'https://agents.example.com/api/linear/oauth/callback',
-    listener: { host: '127.0.0.1', port: 14185 },
   });
   await waitFor(() => expect(secret.value).toBe(''));
   expect(clientSecret.value).toBe('');

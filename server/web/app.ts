@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { registerAgentIdGuard, registerAgentRoutes } from './agent-routes.js';
 import { registerClientErrorRoutes } from './client-error-routes.js';
-import { registerDashboardAuthGuard, registerDashboardAuthRoutes } from './dashboard-auth.js';
+import { registerDashboardAuthGuard, registerDashboardAuthRoutes, registerPublicAddressGuard } from './dashboard-auth.js';
 import { registerErrorHandler } from './http.js';
 import { registerReadOnlyGuard } from './read-only.js';
 import { registerStaticRoutes } from './static.js';
@@ -14,11 +14,13 @@ import { registerKbRoutes } from './kb-routes.js';
 import { registerAgentTokenUsageRoutes } from './agent-token-usage-routes.js';
 import { registerCrossSiteWriteGuard, registerWebListenerAccess, type WebListenerAccess } from './listener-access.js';
 import { registerDoNotContactRoutes } from './do-not-contact-routes.js';
+import { registerPublicIngressRoutes } from './public-ingress-routes.js';
 
 export function buildWebApp(access?: WebListenerAccess): FastifyInstance {
   const fastify: FastifyInstance = Fastify({ logger: false });
 
   if (access) registerWebListenerAccess(fastify, access);
+  registerPublicAddressGuard(fastify);
   registerCrossSiteWriteGuard(fastify);
   registerErrorHandler(fastify);
   registerDashboardAuthRoutes(fastify);
@@ -43,6 +45,7 @@ export function buildWebApp(access?: WebListenerAccess): FastifyInstance {
   registerKbRoutes(fastify);
   registerAgentTokenUsageRoutes(fastify);
   registerAgentRoutes(fastify);
+  registerPublicIngressRoutes(fastify);
   registerStaticRoutes(fastify);
 
   return fastify;

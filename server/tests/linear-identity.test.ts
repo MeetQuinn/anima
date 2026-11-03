@@ -12,7 +12,7 @@ import { LinearStore } from '../storage/schema/linear.store.js';
 import { withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
 import { FakeLinear, install, seedLinear } from './helpers/linear.js';
 
-const request = { clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'http://localhost:14174/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14175 } };
+const request = { clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'http://localhost:14174/api/linear/oauth/callback' };
 
 test('Linear dashboard OAuth uses app actor, single-use PKCE state and private atomic credentials', async () => withTempAnimaHome(async (home) => {
   await writeAgentConfigs(home, [{ id: 'scout' } as any]);
@@ -68,10 +68,11 @@ test('Linear refresh is serialized and revocation blocks stale credentials witho
   assert.equal(JSON.stringify(await identity.status()).includes('sentinel'), false);
 }));
 
-test('callback state expiry and dashboard/webhook port validation reject before token exchange', async () => withTempAnimaHome(async (home) => {
+test('callback state expiry and request validation reject before token exchange', async () => withTempAnimaHome(async (home) => {
   await writeAgentConfigs(home, [{ id: 'scout' }] as any);
   const fake = new FakeLinear(); const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch));
-  await assert.rejects(identity.begin({ ...request, listener: { host: '127.0.0.1', port: 4174 } }, 'binding'));
+  // The receiver address is not part of an install; the dashboard forwards to it.
+  await assert.rejects(identity.begin({ ...request, listener: { host: '127.0.0.1', port: 14175 } } as never, 'binding'));
   await assert.rejects(identity.begin({ ...request, callbackUrl: 'http://example.com/api/linear/oauth/callback' }, 'binding'));
   const pending = new URL((await identity.begin(request, 'binding')).authorizationUrl).searchParams.get('state')!;
   await new LinearStore('scout').update((f) => ({ ...f, pending: { ...f.pending!, expiresAt: 0 } }));

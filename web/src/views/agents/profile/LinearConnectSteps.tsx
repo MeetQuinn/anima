@@ -73,7 +73,6 @@ export function LinearConnectSteps({
       clientSecret: clientSecret.trim(),
       signingSecret: signingSecret.trim(),
       callbackUrl: callback,
-      listener: setup.listener,
     });
     if (!parsed.success) {
       setError('Check the Client ID, Client secret and Webhook signing secret.');
