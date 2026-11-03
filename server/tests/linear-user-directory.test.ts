@@ -47,6 +47,10 @@ test('the directory keeps the latest name and https avatar per Linear user', asy
   const update = t.mock.method(linearUserDirectoryStore, 'update');
   await rememberLinearUser({ id, name: 'Before', avatarUrl: avatar });
   assert.equal(update.mock.callCount(), 0, 'An unchanged sender is not written again');
+  const nextDay = new Date(Date.now() + 25 * 60 * 60 * 1000);
+  await rememberLinearUser({ id, name: 'Before', avatarUrl: avatar }, nextDay);
+  assert.equal(update.mock.callCount(), 1, 'A day later the same sender refreshes when they were last seen');
+  assert.equal((await linearUserDirectoryStore.read()).users[id]?.updatedAt, nextDay.toISOString());
 
   await rememberLinearUser({ id, name: 'After', avatarUrl: 'http://insecure.example/avatar.png' });
   assert.deepEqual((await linearUserProfiles([id])).get(id), { name: 'After' });

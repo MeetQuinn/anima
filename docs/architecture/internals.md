@@ -203,7 +203,7 @@ Linear people seen in webhooks are stored at:
 cache/linear/users.json
 ```
 
-Entries are keyed by Linear user id and hold the name, an https avatar URL and `updatedAt`. Every delivered webhook refreshes its sender, so the directory needs no Linear API calls. The transport (`server/transports/linear-message-transport.ts`) records the sender through `server/linear/user-directory.ts`, and a failure there never fails the delivery. The file keeps the 1,000 people seen most recently.
+Entries are keyed by Linear user id and hold the name, an https avatar URL and `updatedAt`. Every delivered webhook names its sender, so the directory needs no Linear API calls. An entry is rewritten when the name or avatar changes, and otherwise at most once a day, so `updatedAt` tracks when the person was last seen. The transport (`server/transports/linear-message-transport.ts`) records the sender through `server/linear/user-directory.ts` after the request is persisted, in the background: a slow or failing directory write never delays or fails the delivery. The file keeps the 1,000 people seen most recently.
 
 Linear rows in the message ledger carry the sender's Linear user id but never an avatar. When history is read, `server/web/message-profiles.ts` adds the current name and avatar from the directory.
 

@@ -102,9 +102,10 @@ export class LinearMessageTransport {
           ]);
         } catch { return reply.code(503).send({ error: 'Linear intake could not persist the request; retry delivery' }); }
         finally { if (deadline) clearTimeout(deadline); }
-        // Names and avatars for message history; never fails the delivery.
+        // Names and avatars for message history, recorded in the background:
+        // a busy or failing directory never delays or fails the delivery.
         const sender = linearEventSender(event);
-        if (sender) await rememberLinearUser(sender).catch(() => undefined);
+        if (sender) void rememberLinearUser(sender).catch(() => undefined);
         this.tick();
         return { received: true };
       }

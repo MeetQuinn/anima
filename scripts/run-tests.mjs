@@ -68,6 +68,7 @@ const groups = {
     'linear-session.test.js',
     'linear-proactive-session.test.js',
     'linear-runtime.test.js',
+    'linear-user-directory.test.js',
     'log-tail.test.js',
     'input-trace.test.js',
     'history-pagination.test.js',

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonFile } from '../storage/json-file.js';
+import { withFileLock } from '../storage/lock.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
 import { createHmac, randomUUID } from 'node:crypto';
@@ -75,14 +76,29 @@ test('dedicated port rejects unsigned, stale, cross-app and dashboard routes; ac
   } finally { await stopAndDrain(transport); }
 }));
 
-test('a delivered webhook records its sender for message history, and a directory failure never blocks delivery', async (t) => withTempAnimaHome(async (home) => {
+test('a delivered webhook records its sender for message history, and a busy or failing directory never holds up delivery', async (t) => withTempAnimaHome(async (home) => {
   const { agentStore, fake } = await seedLinear(home); t.mock.method(globalThis, 'fetch', fake.fetch);
   const port = await unusedPort(); await new ServerConfigStore().update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
   const transport = new LinearMessageTransport(home, { error() {} });
+  let release = () => {};
   try {
     await transport.reconcile([await agentStore.read()]);
+    // Another writer holds the directory lock for as long as the test says.
+    let locked = () => {};
+    const lockHeld = new Promise<void>((resolve) => { locked = resolve; });
+    const holder = withFileLock(join(home, 'cache', 'linear', 'users.json'), home,
+      () => new Promise<void>((resolve) => { release = resolve; locked(); }));
+    await lockHeld;
     const event = created(); event.agentSession.creator = { name: 'Synthetic requester', avatarUrl: 'https://public.linear.app/synthetic/a.png' };
-    assert.equal((await post(port, event, sign(event))).status, 200);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const answer = await Promise.race([post(port, event, sign(event)),
+      new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), 3000); })]);
+    clearTimeout(timer);
+    assert.equal(answer?.status, 200, 'Delivery is acknowledged while the directory is locked');
+    assert.equal((await new WakeQueueService('scout').list()).length, 1);
+    assert.equal((await linearUserProfiles([event.agentSession.creatorId!])).size, 0);
+    release(); await holder;
+    await waitFor(async () => (await linearUserProfiles([event.agentSession.creatorId!])).size === 1, { timeoutMs: 3000 });
     assert.deepEqual((await linearUserProfiles([event.agentSession.creatorId!])).get(event.agentSession.creatorId!),
       { name: 'Synthetic requester', avatarUrl: 'https://public.linear.app/synthetic/a.png' });
 
@@ -90,7 +106,7 @@ test('a delivered webhook records its sender for message history, and a director
     const next = created(randomUUID()); next.agentSession.creator = { name: 'Another requester' };
     assert.equal((await post(port, next, sign(next))).status, 200);
     await waitFor(async () => (await new WakeQueueService('scout').list()).length === 2);
-  } finally { await stopAndDrain(transport); }
+  } finally { release(); await stopAndDrain(transport); }
 }));
 
 test('incomplete credentials never bind; durable receipt recovers a queue write failure once', async (t) => withTempAnimaHome(async (home) => {

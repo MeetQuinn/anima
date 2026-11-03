@@ -8,13 +8,18 @@ import type { LinearSender } from './webhook.js';
 
 export const LINEAR_USER_DIRECTORY_LIMIT = 1000;
 
+// An unchanged entry is rewritten at most once a day, so `updatedAt` tracks
+// when the person was last seen without a write for every event.
+const SEEN_REFRESH_MS = 24 * 60 * 60 * 1000;
+
 export interface LinearUserProfile { name?: string; avatarUrl?: string }
 
 export async function rememberLinearUser(sender: LinearSender, now = new Date()): Promise<void> {
   const name = sender.name?.trim() || undefined;
   const avatarUrl = httpsUrl(sender.avatarUrl);
   const known = (await linearUserDirectoryStore.read()).users[sender.id];
-  if (known && known.name === name && known.avatarUrl === avatarUrl) return;
+  if (known && known.name === name && known.avatarUrl === avatarUrl
+    && now.getTime() - Date.parse(known.updatedAt) < SEEN_REFRESH_MS) return;
   await linearUserDirectoryStore.update((file) => ({
     users: withinLimit({
       ...file.users,
