@@ -166,8 +166,8 @@ JSON
 
 API reads follow Linear's access permissions. `respond` additionally checks Anima's
 session ownership, Stop and reply records. Use `start` and `respond` for session writes:
-a raw API activity does not mark Anima's request answered and can leave a missing-response
-notice pending.
+a raw API activity does not mark Anima's request answered, so the operator still sees the
+session as unanswered.
 
 ### Attach a pull request
 
@@ -194,9 +194,8 @@ changes, unassignment and team-access changes arrive during work already in prog
 with your next wake, so they may be older than the request you are handling.
 Reactions do not wake the agent. Use
 the issue and comment IDs in its envelope to read the discussion or reply with
-`anima linear comment`. No automatic reply is required, and finishing the turn
-silently does not post a missing-response error. A notification does not resume
-work that a person stopped.
+`anima linear comment`. No reply is required: a notification is not a session
+request. A notification does not resume work that a person stopped.
 
 Mentions can arrive as `wake=issueCommentMention` comments before Anima can match a
 work session, including mentions from another app. When Anima already knows the session,
@@ -254,13 +253,13 @@ reply. Use `--kind elicitation` to ask the person for missing information, or `-
 report a blocker or failed outcome. The default is `response`. Body text goes through stdin.
 Only report what happened; do not expose raw tools, private reasoning or credentials.
 
-The runtime sends receipt and truthful queued/executing status separately. A receipt is not
-a finished task. A response, question or error ends status updates for the inputs it owns.
-A later turn can answer a delivered request that is still unanswered, including after
-background work finishes. The runtime waits for provider background work and queued wakes
-to finish before reporting a missing response. While waiting, it can post a status activity every
-10 minutes saying that the agent still has ongoing work. This describes the shared agent, not
-progress on one issue. After a runtime restart, follow the background-interrupted recovery wake:
+The runtime sends a receipt, and a queued/executing status only while the request is
+actually queued or its run is executing. A receipt is not a finished task. End every session
+request with a response, question or error. The runtime does not post one for you: when a run
+ends without your reply, the session goes stale in Linear and the operator sees it flagged as
+unanswered. A later turn can still answer a delivered request that is unanswered, including
+after background work finishes. Only a crashed or interrupted run gets an automatic error
+notice. After a runtime restart, follow the background-interrupted recovery wake:
 check prior effects and pending work before continuing, and do not repeat completed actions.
 Follow-up envelopes carry the new prompt only; read session history when you need earlier details.
 
@@ -270,9 +269,7 @@ Linear replies but cannot cancel provider-native background tasks; check those s
 Removal/revocation blocks writes. If a send result is
 unknown, inspect the session; do not change the wording to bypass the recorded retry boundary.
 An accepted activity with degraded local bookkeeping does not need another send.
-If the automatic missing-response notice fails, its request stays open and Anima records
-the failure without retrying it on each idle poll. Inspect the session before responding;
-an explicit response still checks any uncertain earlier send.
+An explicit response still checks any uncertain earlier send.
 
 Installation and ingress belong to the operator. See [Connect Linear](/guide/connect-linear)
 for downtime and retry limits. Linear is not Anima's reminder or task store.

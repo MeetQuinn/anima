@@ -1487,15 +1487,15 @@ for (const damaged of ['{', '{"notices":{"old":{"agentId":"alpha"}}}']) test(`un
       await mkdir(join(home, 'run'), { recursive: true });
       const path = join(home, 'run', 'background-interrupted-notices.json');
       await writeFile(path, damaged);
-      const checks: Array<() => boolean> = [], errors: string[] = [];
+      const starts: string[] = [], errors: string[] = [];
       const host = new RuntimeHost({}, {
         animaHome: home,
         loadAgents: async () => ['alpha', 'beta'].map((id) => runtimeHostAgent(id, { connected: true })),
         logger: { log() {}, error(message: string) { errors.push(message); } },
         memoryCoherenceScheduler: { async reconcile() {} },
         validateAgent: async () => {},
-        startAgent: async (agent, _home, options) => {
-          checks.push(options.hasPendingBackgroundRecovery);
+        startAgent: async (agent) => {
+          starts.push(agent.id);
           return stopHandle(agent.id, []);
         },
       });
@@ -1503,14 +1503,12 @@ for (const damaged of ['{', '{"notices":{"old":{"agentId":"alpha"}}}']) test(`un
         for (let pass = 0; pass < 3; pass++) {
           await host.reconcileOnce();
           assert.deepEqual(host.runningAgentIds().sort(), ['alpha', 'beta']);
-          assert.equal(checks.length, 2);
-          assert.ok(checks.every((pending) => pending()));
+          assert.equal(starts.length, 2);
         }
         assert.ok(errors.filter((line) => /background.*notice/i.test(line)).length >= 3);
         await writeFile(path, '{"notices":{}}');
         await host.reconcileOnce();
-        assert.ok(checks.every((pending) => !pending()));
-        assert.equal(checks.length, 2, 'Repair should not require restarting either agent');
+        assert.equal(starts.length, 2, 'Repair should not require restarting either agent');
       } finally { await host.stop(); }
     });
   } finally { await rm(home, { recursive: true, force: true }); }

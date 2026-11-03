@@ -34,7 +34,6 @@ interface RunningAgentOptions extends RuntimeWorkerConfig {
   botToken?: string;
   feishu?: FeishuConfig;
   idleTimeoutMs?: number;
-  hasPendingBackgroundRecovery?: () => boolean;
   runLimiter: TeamRunLimiter;
   runtimeEnv: Record<string, string>;
   startAbortForceAfterMs?: number;
@@ -64,15 +63,6 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
     : undefined;
   const slackClient = options.botToken ? createSlackWebClient(options.botToken) : undefined;
   const reactions = processingReactionsForRuns({ feishuClient, logger: console, reactionClient });
-  let stopping = false;
-  const isIdle = async (): Promise<boolean> => {
-    const pending = await queue.list();
-    // Recheck synchronous provider work after the queue read: native re-wakes
-    // can begin without creating an Anima inbox item. Recovery uncertainty defers
-    // only this automatic closure; it must not prevent ordinary work from starting.
-    return !stopping && !options.hasPendingBackgroundRecovery?.() && !worker.isActive() && options.agentRuntime.isProviderQuiescent?.() !== false
-      && !pending.some((item) => !item.handling.settledAt && ['queued', 'running'].includes(item.handling.status));
-  };
   const worker = new AgentRuntimeWorker(
     {
       ...options,
@@ -110,7 +100,6 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
         await interactiveAskServiceForAgent(options.agentId).retryPendingAnswers().catch((error: unknown) => {
           console.warn(`Interactive ask recovery failed: ${errorMessage(error)}`);
         });
-        await linear.completeIdleRuns(isIdle);
       },
       onItemFollowupAppended: async (activeContext, context) => {
         await linear.markStarted(context.item, activeContext.item.id);
@@ -165,7 +154,6 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
       worker.setIntakePaused(paused);
     },
     async stop(stopOptions: AgentRuntimeWorkerCloseOptions = {}) {
-      stopping = true;
       await Promise.allSettled([
         subscriber.stop(),
         worker.close(stopOptions),

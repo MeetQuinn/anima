@@ -105,7 +105,7 @@ export class LinearNotificationService {
     item.text = text;
     await this.identity.authorizedInstallation(install.id);
     // The existing queue atomically deduplicates active and settled inputs. There
-    // is no session receipt, acknowledgement, or missing-response fallback here.
+    // is no session receipt or acknowledgement here.
     await wakeQueueServiceForAgent(this.identity.agentId).enqueue(item, { holdUntilRun: !wakes });
   }
 }

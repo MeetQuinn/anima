@@ -179,11 +179,13 @@ test('ordinary notifications share the Slack primary session and may finish sile
     assert.match(calls[1]!.prompt, new RegExp(`issue_id=${issueId} comment_id=${event.notification.commentId}`));
     assert.match(calls[1]!.prompt, /wake=issueNewComment/);
     assert.doesNotMatch(calls[1]!.prompt, /session_id=/);
-    await f.service.completeIdleRuns(async () => true); await f.service.tick();
+    await f.service.tick();
     assert.equal(f.fake.posts.length, 0); assert.deepEqual((await f.store.read()).receipts, {});
-    // An actual work request retains the existing missing-response fallback.
-    await f.service.receive(created(), install); await waitFor(() => f.fake.posts.some((p) => p.content.type === 'error'));
-    assert.equal(f.fake.posts.filter((p) => p.content.type === 'error').length, 1);
+    // A work session the agent leaves unanswered gets only its receipt from the runtime.
+    await f.service.receive(created(), install);
+    await waitFor(async () => Object.values((await f.store.read()).receipts).some((r) => r.settled));
+    await f.service.tick();
+    assert.deepEqual(f.fake.posts.map((p) => p.content.body), ['Received by Anima.']);
   } finally { await runner.stop(); }
 }));
 
@@ -444,7 +446,7 @@ for (const order of ['session-first', 'notification-first', 'concurrent'] as con
   const receipt = Object.values((await f.store.read()).receipts)[0]!;
   if (item!.kind === 'linear_notification') {
     assert.equal(receipt.commentItemId, item!.id); assert.equal(receipt.itemId, undefined);
-    await f.service.tick(); await f.service.completeIdleRuns(async () => true);
+    await f.service.tick();
     assert.equal(f.fake.posts.length, 1, 'A late session gets a receipt, not a second reply obligation');
     assert.equal(f.fake.posts[0]!.content.type, 'thought');
     assert.match(f.fake.posts[0]!.content.body, /Received by Anima\. .*original comment thread/);
@@ -480,7 +482,7 @@ for (const running of [false, true]) for (const stopFirst of [false, true]) for 
   assert.equal(ends.length, 1);
   assert.match(ends[0]!.content.body, /Stop requested.*background work may still exist/);
   assert.equal(f.fake.posts.length, acknowledged && !stopFirst ? 2 : 1);
-  await f.service.finishRun(item!.id, 'Interrupted'); await f.service.completeIdleRuns(async () => true);
+  await f.service.finishRun(item!.id, 'Interrupted');
   assert.equal(f.fake.posts.filter((p) => p.content.type === 'error').length, 1);
 }));
 
@@ -556,7 +558,7 @@ test('late-session receipt is attempted once even if its response is lost', asyn
   assert.equal(f.fake.posts[0]!.content.type, 'thought');
   assert.equal(Object.values((await f.store.read()).receipts)[0]!.acknowledgement, 'unknown');
   assert.equal((await queue.list()).length, 0);
-  await f.service.completeIdleRuns(async () => true);
+  await f.service.tick();
   assert.equal(f.fake.posts.length, 1);
 }));
 

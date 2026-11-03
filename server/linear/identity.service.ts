@@ -12,6 +12,9 @@ import { LinearListenerStore } from '../storage/schema/linear-listener.store.js'
 import { processAlive } from '../runtime/item-state.js';
 import { LinearApiError, LinearClient } from './client.js';
 
+// Linear marks a session stale after 30 minutes without activity.
+const LINEAR_STALE_AFTER_MS = 30 * 60_000;
+
 const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.literal(true) }), organization: z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(256) }),
   applicationInfo: z.object({ clientId: z.string() }),
 });
@@ -84,6 +87,14 @@ export class LinearIdentityService {
       if (file.installation.workspaceName) result.workspaceName = file.installation.workspaceName;
     } else if (file.pending) result.clientId = file.pending.clientId;
     if (file.lastSignedWebhookAt) result.lastSignedWebhookAt = file.lastSignedWebhookAt;
+    // The runtime does not answer for the agent. A request whose run ended unanswered goes
+    // stale in Linear after 30 minutes without activity; count the same sessions here.
+    if (file.installation && !file.installation.revoked) {
+      const staleBefore = Date.now() - LINEAR_STALE_AFTER_MS;
+      const unanswered = new Set(Object.values(file.receipts).filter((r) => r.itemId && r.settled && !r.answered && !r.stopped
+        && Date.parse(r.lastActivityAt ?? r.receivedAt) < staleBefore).map((r) => r.sessionId));
+      if (unanswered.size) result.unansweredSessions = unanswered.size;
+    }
     if (file.lastError) result.lastError = file.lastError;
     else if (file.pending && file.pending.expiresAt <= Date.now()) result.lastError = 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.';
     const listener = (await serverConfigStore.read()).linearWebhook ?? DEFAULT_LINEAR_LISTENER;

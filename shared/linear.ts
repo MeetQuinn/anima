@@ -77,6 +77,8 @@ export interface LinearStatus {
   workspaceName?: string;
   lastSignedWebhookAt?: string;
   signatureFailures: number;
+  /** Sessions whose run ended without the agent's reply and that Linear now shows as stale. */
+  unansweredSessions?: number;
   lastError?: string;
   listener?: LinearListenerConfig;
   listenerStatus?: LinearListenerStatus;
