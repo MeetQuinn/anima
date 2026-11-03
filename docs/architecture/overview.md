@@ -207,10 +207,12 @@ For a team champion deciding whether Anima fits, the architectural questions are
 
 ### Optional Linear ingress
 
-Each enabled agent can add a separate Linear OAuth app. A runtime-owned listener accepts
-bounded raw webhook bodies only after HMAC, timestamp and installation identity validation.
-It mounts only `/webhook`; the existing authenticated dashboard owns PKCE installation and
-its callback. Public HTTPS ingress is operator-managed. No complete identity means no listener.
+Each enabled agent can add a separate Linear OAuth app. The operator points one public HTTPS
+address at the dashboard. The dashboard forwards `/webhooks/linear` byte for byte to a
+runtime-owned loopback listener, which accepts bounded raw webhook bodies only after HMAC,
+timestamp and installation identity validation. It mounts only `/webhook`; the existing
+authenticated dashboard owns PKCE installation and its callback. Without a dashboard password,
+requests naming the public host reach only those paths. No complete identity means no listener.
 
 A private credential/receipt journal feeds the durable wake queue and existing primary
 provider session. Receipt/status maintenance is independent of model capacity and provider

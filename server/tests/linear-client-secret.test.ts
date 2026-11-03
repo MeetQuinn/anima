@@ -14,7 +14,7 @@ import { withTempAnimaHome, writeAgentConfigs } from './helpers/harness.js';
 import { FakeLinear, created, install, seedLinear, sessionId } from './helpers/linear.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 
-const request = { clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'http://localhost:14174/api/linear/oauth/callback', listener: { host: '127.0.0.1', port: 14175 } };
+const request = { clientId: install.clientId, clientSecret: install.clientSecret!, signingSecret: install.signingSecret, callbackUrl: 'http://localhost:14174/api/linear/oauth/callback' };
 // Values that must never leave the private Linear store: the app secret and
 // anything Linear wrote in an error body.
 const PRIVATE = [install.clientSecret!, 'private-description-sentinel', 'private-upstream-sentinel', 'candidate-secret-sentinel'];

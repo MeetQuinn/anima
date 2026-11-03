@@ -151,22 +151,26 @@ The package you pass to `npx` still decides what `start` and `restart` install. 
 ## Public address (`publicUrl`)
 
 `publicUrl` is this Anima home's public HTTPS origin, without a path, query or fragment.
-Set it in **Settings → Server**, or in the Linear dialog when you connect the first agent.
-Integrations derive their public URLs from it; saving it neither creates forwarding nor
-changes a platform's registered app URLs. See
-[Connect an agent to Linear](guide/connect-linear.md) for the two required forwarding paths.
+Forward the whole address to the dashboard. Set it in **Settings → Server**, or in the
+Linear dialog when you connect the first agent. Integrations derive their public URLs from
+it; saving it neither creates forwarding nor changes a platform's registered app URLs.
+The dashboard checks that the address reaches this Anima. Without a dashboard password,
+requests through the address reach only the paths Linear calls. See
+[Connect an agent to Linear](guide/connect-linear.md#public-address).
 
-## Linear webhook listener (`linearWebhook`)
+## Linear receiver (`linearWebhook`)
 
-| Key                  | Type                   | Default         | What it does                                       |
-| -------------------- | ---------------------- | --------------- | -------------------------------------------------- |
-| `linearWebhook.host` | string                 | `"127.0.0.1"`   | Address the Linear webhook listener binds.         |
-| `linearWebhook.port` | integer, 1024 to 65535 | none (required) | Listener port. Anima refuses the dashboard's port. |
+| Key                  | Type                   | Default       | What it does                                     |
+| -------------------- | ---------------------- | ------------- | ------------------------------------------------ |
+| `linearWebhook.host` | string                 | `"127.0.0.1"` | Address the Linear receiver binds.               |
+| `linearWebhook.port` | integer, 1024 to 65535 | `14185`       | Receiver port. Keep it off the dashboard's port. |
 
-**Settings → Server → Linear listener** and authorizing an agent write this key. All Linear
-agents share one listener. It runs in the agent service only while at least one enabled agent
-has a complete Linear installation, and it rebinds on the next check when the host or port changes. While any agent is connected or
-authorizing, a different host or port is refused. See [Connect Linear](./guide/connect-linear.md).
+Optional; edit by hand only if the default port is taken. The dashboard forwards Linear
+events from the public address to this receiver, so it does not need its own forwarding.
+All Linear agents share it. It runs in the agent service only while at least one enabled
+agent has a complete Linear installation, and it rebinds on the next check when the host or
+port changes. Earlier versions wrote this key when an agent was authorized; that address is
+kept. See [Connect Linear](./guide/connect-linear.md#public-address).
 
 ## Dashboard listener (`dashboardHost`, `dashboardPort`)
 

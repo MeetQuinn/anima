@@ -3,12 +3,16 @@ import type { IncomingHttpHeaders } from 'node:http';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
+import { LINEAR_WEBHOOK_PATH } from '../../shared/linear.js';
+import { requestNamesHost } from '../settings/public-url-check.js';
+import { defaultServerSettingsService } from '../settings/settings.service.js';
 import {
   clearDashboardAuthCookie,
   defaultDashboardAuthService,
   type DashboardAuthService,
 } from '../settings/dashboard-auth.service.js';
 import { routePath } from './http.js';
+import { LEGACY_LINEAR_WEBHOOK_PATH } from './public-ingress-routes.js';
 
 const LoginBody = z.object({
   password: z.string().min(1),
@@ -105,6 +109,42 @@ export function registerDashboardAuthGuard(
     return reply.status(401).send({ error: 'authentication_required' });
   });
 }
+
+// Paths Linear and the reachability check call on the public address. Matched on
+// the raw path, so an encoded or dotted variant is refused rather than routed.
+const PUBLIC_INGRESS_PATHS = new Set([LINEAR_WEBHOOK_PATH, LEGACY_LINEAR_WEBHOOK_PATH, '/api/linear/oauth/callback']);
+const PROBE_PATH = /^\/webhooks\/probe\/[A-Za-z0-9_-]{1,64}$/;
+
+export interface PublicAddressGuardOptions {
+  publicUrl?: () => Promise<string | undefined>;
+  passwordSet?: () => Promise<boolean>;
+}
+
+/**
+ * The public address points at this dashboard. Without a dashboard password it
+ * serves only the paths Linear calls, so exposing the address never exposes an
+ * open dashboard. A request belongs to the public address when its Host or
+ * X-Forwarded-Host names the publicUrl host, which is what tunnels forward; the
+ * reachability check reports a proxy that hides it.
+ */
+export function registerPublicAddressGuard(fastify: FastifyInstance, options: PublicAddressGuardOptions = {}): void {
+  const publicUrl = options.publicUrl ?? (async () => (await defaultServerSettingsService.getPublicUrl()).publicUrl);
+  const passwordSet = options.passwordSet ?? (async () => (await defaultDashboardAuthService.status()).enabled);
+  fastify.addHook('onRequest', async (request, reply) => {
+    const path = (request.url ?? '/').split('?')[0] ?? '/';
+    if (PUBLIC_INGRESS_PATHS.has(path) || PROBE_PATH.test(path)) return;
+    const url = await publicUrl();
+    if (!url || !requestNamesHost(request.headers, new URL(url).hostname)) return;
+    if (await passwordSet()) return;
+    reply.code(403).header('cache-control', 'no-store');
+    if (path.startsWith('/api/') || path.startsWith('/kb/')) return reply.send({ error: 'public_address_requires_password' });
+    return reply.type('text/plain; charset=utf-8').send(PUBLIC_ADDRESS_REFUSAL);
+  });
+}
+
+const PUBLIC_ADDRESS_REFUSAL = 'This Anima dashboard has no password, so its public address only accepts Linear events.\n'
+  + 'Set a password on the Anima host, then reload:\n\n'
+  + '  npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin\n';
 
 export async function dashboardStaticRedirectLocation(
   rawUrl: string | undefined,

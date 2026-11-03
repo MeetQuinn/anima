@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchServerInfo, pingHealth } from '@/api/system';
 import { shortIso, formatUptime } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { useNow } from '@/hooks/useNow';
 import PublicUrlSettings from '@/components/PublicUrlSettings';
-import LinearWebhookSettings from '@/components/LinearWebhookSettings';
 import RestartButton from '@/components/RestartButton';
 import RuntimeUpgradeRow from '@/components/RuntimeUpgrade';
 
@@ -28,13 +27,10 @@ import RuntimeUpgradeRow from '@/components/RuntimeUpgrade';
  */
 export default function ServerPage() {
   const queryClient = useQueryClient();
-  // Agents' Linear dialogs link here by anchor: open the listener section when
-  // it is the target, and bring the target into view once it exists.
-  const [listenerLinked] = useState(() => window.location.hash === '#linear-listener');
+  // Agents' Linear dialogs link here by anchor: bring the public address into view.
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash !== '#linear-listener' && hash !== '#public-url') return;
-    document.getElementById(hash.slice(1))?.scrollIntoView?.({ block: 'start' });
+    if (window.location.hash !== '#public-url') return;
+    document.getElementById('public-url')?.scrollIntoView?.({ block: 'start' });
   }, []);
   // --- Server info ---
   const { data: healthOk } = useQuery({
@@ -140,10 +136,6 @@ export default function ServerPage() {
             </dl>
           </div>
       <div className="py-5"><PublicUrlSettings /></div>
-      <details id="linear-listener" open={listenerLinked || undefined} className="py-5">
-        <summary className="min-h-[44px] cursor-pointer py-2 text-[13px] text-text-muted md:min-h-[32px]">Linear listener</summary>
-        <div className="pt-4"><LinearWebhookSettings /></div>
-      </details>
     </div>
   );
 }

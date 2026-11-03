@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { withFileLock } from '../storage/lock.js';
-import { LinearInstallRequest, type LinearClientSecretResult, type LinearStatus } from '../../shared/linear.js';
+import { DEFAULT_LINEAR_LISTENER, LinearInstallRequest, type LinearClientSecretResult, type LinearStatus } from '../../shared/linear.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { AgentStore } from '../storage/schema/agent.store.js';
 import { serverConfigStore } from '../storage/schema/server.store.js';
@@ -10,7 +10,6 @@ import { LinearStore, type LinearInstallation } from '../storage/schema/linear.s
 import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
 import { LinearListenerStore } from '../storage/schema/linear-listener.store.js';
 import { processAlive } from '../runtime/item-state.js';
-import { LinearSetupService } from './setup.service.js';
 import { LinearApiError, LinearClient } from './client.js';
 
 const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.literal(true) }), organization: z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(256) }),
@@ -87,15 +86,15 @@ export class LinearIdentityService {
     if (file.lastSignedWebhookAt) result.lastSignedWebhookAt = file.lastSignedWebhookAt;
     if (file.lastError) result.lastError = file.lastError;
     else if (file.pending && file.pending.expiresAt <= Date.now()) result.lastError = 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.';
-    const listener = (await serverConfigStore.read()).linearWebhook;
-    if (listener) result.listener = listener;
+    const listener = (await serverConfigStore.read()).linearWebhook ?? DEFAULT_LINEAR_LISTENER;
+    result.listener = listener;
     result.listenerStatus = { state: 'unknown' };
     // The dashboard outlives the daemon. A saved bind is only a recent local
     // observation, and cannot establish public ingress reachability.
     const observation = await new LinearListenerStore(this.store.animaHome).read().catch(() => undefined);
     if (observation) {
       const age = Date.now() - Date.parse(observation.observedAt);
-      const sameAddress = observation.address?.host === listener?.host && observation.address?.port === listener?.port;
+      const sameAddress = observation.address?.host === listener.host && observation.address?.port === listener.port;
       if (age >= 0 && age < 90_000 && sameAddress && processAlive(observation.processId)) {
         result.listenerStatus = { state: observation.state, observedAt: observation.observedAt };
         if (observation.reason) result.listenerStatus.reason = observation.reason;
@@ -119,10 +118,6 @@ export class LinearIdentityService {
         throw new Error('Use a separate Linear app for each agent.');
       }
     }
-    const config = await serverConfigStore.read();
-    if (request.listener.port === (config.dashboardPort ?? 4174)) throw new Error('Webhook port must differ from the dashboard port.');
-    if (config.linearWebhook && (config.linearWebhook.host !== request.listener.host || config.linearWebhook.port !== request.listener.port)
-      && (await new LinearSetupService().read()).listenerLocked) throw new Error('An installed app or an authorization in progress uses this listener. Keep its existing host and port.');
     const pending = {
       id: randomBytes(32).toString('base64url'), clientId: request.clientId, clientSecret: request.clientSecret,
       signingSecret: request.signingSecret, callbackUrl: request.callbackUrl, returnUrl,
@@ -132,7 +127,6 @@ export class LinearIdentityService {
       if (file.installation && !file.installation.revoked) throw new Error('Remove the installed identity before replacing it.');
       return { ...file, pending, lastError: undefined };
     });
-    await serverConfigStore.update((current) => ({ ...current, linearWebhook: request.listener }));
     const url = new URL('https://linear.app/oauth/authorize');
     url.search = new URLSearchParams({
       client_id: pending.clientId, redirect_uri: pending.callbackUrl, response_type: 'code',

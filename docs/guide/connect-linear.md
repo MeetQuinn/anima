@@ -17,17 +17,18 @@ one app per agent. Select **Agent session events**, **Inbox notifications** and
 leave unrelated data and OAuth authorization events off. Anima
 requests `read`, `write`, `app:assignable` and `app:mentionable` with `actor=app`.
 
-You provide the public HTTPS address and forwarding yourself. Anima does not create a
-tunnel or register a domain. Anima has one **public address**, for example
-`https://anima.example.com`, shared by the integrations and agents in this Anima home.
-Set it in **Settings → Server**, or when you connect the first agent.
+You provide the public HTTPS address yourself. Anima does not create a tunnel or register a
+domain. Anima has one **public address**, for example `https://anima.example.com`, shared
+by the integrations and agents in this Anima home. Forward the whole address to the
+dashboard, for example with a Cloudflare Tunnel to `http://127.0.0.1:4174`. Set it in
+**Settings → Server**, or when you connect the first agent.
 
 ## Install from the dashboard
 
 1. Open the agent's **Profile**. In **Setup**, select **Connect** on the Linear row.
 2. If no public address is saved yet, the dialog asks for it first. Enter the HTTPS origin
-   without a path and select **Save**. It applies to every agent, and the dialog shows the
-   two routes to forward.
+   without a path and select **Save**. It applies to every agent. The dialog then shows
+   whether Linear can reach it (see [Public address](#public-address)).
 3. Select **Create app in Linear**. Linear opens in a new tab with the agent's name, its
    avatar when available (see below), both URLs and the event subscriptions filled in.
    Review and create the app. To reuse an app you already created, select
@@ -40,40 +41,70 @@ Set it in **Settings → Server**, or when you connect the first agent.
 6. After you approve, Linear returns you to the agent's profile with the Linear dialog
    open. Authorization completes installation; there is no required test task. Mention the
    agent or delegate an issue to it. If Linear does not show "Received by Anima." after you
-   mention it, check the forwarding for `/webhook` on your public address, and the app's
-   webhook URL and event subscriptions in Linear.
+   mention it, check the public address in **Settings → Server**, and the app's webhook URL
+   and event subscriptions in Linear.
 
-For `https://anima.example.com`, forward these paths:
+### Public address
 
-| Public path                  | Local destination                                          |
-| ---------------------------- | ---------------------------------------------------------- |
-| `/webhook`                   | The Linear listener, by default `127.0.0.1:14185/webhook`  |
-| `/api/linear/oauth/callback` | The loopback dashboard's same path, on its configured port |
+Forward the whole public address to the loopback dashboard listener (`127.0.0.1` on the
+dashboard port, `4174` by default), not the restricted LAN or tailnet listener. Linear
+uses two paths on it:
 
-Forward the public callback to the loopback dashboard listener, not the restricted LAN or
-tailnet listener. The browser may return to a LAN/tailnet dashboard, but it must still
-match that listener's allowed peer and host lists.
+| Path                         | Used for                                                    |
+| ---------------------------- | ----------------------------------------------------------- |
+| `/webhooks/linear`           | Signed Linear events (the app's webhook URL)                |
+| `/api/linear/oauth/callback` | Returning your browser to Anima after you authorize the app |
 
-Keep the webhook's raw body and `Linear-Signature` unchanged. The dashboard and other API
-routes can remain private. The public callback only returns the browser to the dashboard
-that started authorization. That dashboard checks the original login session before
-exchanging the code. Authorize in the same browser and keep that dashboard reachable from
-the device you use; a public callback cannot make a private dashboard reachable remotely.
-Do not rewrite redirect destinations to a different dashboard origin.
+The dashboard passes each event's raw body and `Linear-Signature` unchanged to the
+runtime's Linear receiver on loopback (`127.0.0.1:14185` by default), which verifies it.
+If the runtime is not running, the dashboard answers `503` and Linear retries the delivery.
+Apps created before this layout use `/webhook`; the dashboard accepts that path too, so
+existing apps keep working without changes. If you put a sign-in gateway in front of the
+address (see below), also let `/webhook` through, or first change each such app's
+webhook URL in Linear to `/webhooks/linear`. Otherwise their events stop at the gateway.
+
+Anima checks the address when it is shown and after you save it: it requests a one-time
+path under `/webhooks/` through the public address and expects this Anima to answer.
+The result names what is in the way: a sign-in page or access rule, a different site, an
+error from the tunnel, or no answer within five seconds. Select **Check again** after
+changing the tunnel. A reachable address means requests through it arrive at this
+dashboard. It does not show that events are accepted: that also needs a connected agent
+and a running runtime, and the app's webhook URL in Linear. A connected agent's **Last
+event** shows that Linear's events arrive.
+
+If a sign-in gateway such as Cloudflare Access protects the address, let `/webhooks/`
+through without sign-in, for example with a Cloudflare Access application for that path
+and a **Bypass** policy. Linear cannot sign in. The OAuth callback is opened by your own
+browser, so it can stay behind the gateway.
+
+Without a dashboard password, the public address serves only Linear's paths (`/webhooks/`,
+the legacy `/webhook` and the OAuth callback); every other request through it gets `403`. Anima recognizes requests through
+the public address by their `Host` or `X-Forwarded-Host` header naming its host.
+cloudflared keeps the original `Host` by default. If your proxy replaces both, the check
+warns that the dashboard is open there. To use the dashboard itself through the public
+address, set a password with `dashboard-auth set` (see
+[Configuration](../configuration.md#dashboard-password-dashboardauth)); it then asks for
+that password there. Requests to the dashboard's local address are unaffected.
+
+The OAuth callback only returns the browser to the dashboard that started authorization.
+That dashboard checks the original login session before exchanging the code. Authorize in
+the same browser and keep that dashboard reachable from the device you use. The browser
+may return to a LAN or tailnet dashboard, but it must still match that listener's allowed
+peer and host lists. Do not rewrite redirect destinations to a different dashboard origin.
 
 Select **Rename** to adjust the suggested app name. Linear app names need 2–80 characters
 and cannot contain “Linear” or a URL. The callback and webhook URLs come from the public
-address; there is no per-agent callback field. Listener host and port are under
-**Settings → Server → Linear listener**. Existing custom listeners are preserved and remain
-locked while an app is installed or authorization is pending.
+address; there is no per-agent callback field. The receiver's local address is the
+`linearWebhook` key in the server config, and rarely needs changing; see
+[Configuration](../configuration.md#linear-receiver-linearwebhook).
 
 The new app's icon is prefilled from the agent's avatar only when that avatar is already a
 public HTTPS image, such as a Slack profile photo. Otherwise the app is created without an
 icon and you can set one in Linear. Anima does not publish local files for this, and changing
 the agent's avatar later does not update apps you already created.
 
-Saving the public address does not change existing Linear apps or verify reachability.
-After changing it, update both registered URLs in each app. Existing installed identities
+Saving the public address does not change existing Linear apps. After changing it, update
+both registered URLs in each app. Existing installed identities
 continue working without the new setting. A previous `linearWebhookUrl` is discarded when
 reading config, rather than guessing that its origin also forwards OAuth callbacks. Set the
 public address explicitly before another installation. The setting is `publicUrl` in the
@@ -102,15 +133,16 @@ The row shows the workspace name saved during installation, or **Connected** for
 installation without a saved name. Reading settings does not fetch the name or refresh
 credentials. Connection and listener details are in the dialog behind **Manage**.
 
-A connection records the verified app identity. It does not prove that ingress is reachable.
-**Local listener** separately reports a recent runtime observation: **Listening**, **Failed**
-or **Stopped**. A failure shows a coarse reason (port in use, permission denied, address
-unavailable or other) with a link to the listener settings. **Not observed yet** is shown if
+A connection records the verified app identity. It does not prove that the public address
+is reachable; that is the public address check. **Local listener** reports a recent runtime
+observation of the receiver: **Listening**, **Failed** or **Stopped**. A failure shows a
+coarse reason (port in use, permission denied, address unavailable or other) and what to
+check. **Not observed yet** is shown if
 the record is missing, unreadable, future-dated, 90 seconds old or older, from an exited
 process or for a different configured address. The runtime refreshes this small record during reconciliation. An observation write
 failure does not stop intake; it can leave an earlier observation visible until it expires.
-These states do not check your public HTTPS ingress. Check your local address and runtime
-logs when binding fails, and check the tunnel or reverse proxy separately.
+These states do not check your public address. Check `linearWebhook` and the runtime logs
+when binding fails.
 
 **Last event** shows when the last verified, signed webhook arrived, and the dialog counts
 rejected signature claims naming this app. The count is saved in a separate small diagnostic file,

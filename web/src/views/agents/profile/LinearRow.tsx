@@ -5,6 +5,7 @@ import { AlertTriangle, Check, X } from 'lucide-react';
 import {
   fetchLinearSetup,
   fetchLinearStatus,
+  linearSetupKey,
   installLinear,
   openLinearAuthorization,
   removeLinear,
@@ -12,22 +13,20 @@ import {
 } from '@/api/linear';
 import { refreshAgentData } from '@/api/agents';
 import { Button } from '@/components/ui/button';
-import { linearSetupKey } from '@/components/LinearWebhookSettings';
-import { LinearForwardingRoutes } from '@/components/LinearForwardingRoutes';
-import { PublicAddressForm } from '@/components/PublicUrlSettings';
+import { PublicAddressCheck, PublicAddressForm, PublicAddressGuidance } from '@/components/PublicUrlSettings';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import { formatRelativeShort, shortIso } from '@/lib/format';
 import { Field } from './Primitives';
 import { LinearClientSecretRequest, type LinearClientSecretResult, type LinearInstallRequest, type LinearStatus } from '@shared/linear';
-import type { LinearSetup } from '@shared/linear-setup';
 import { inputClass, LinearConnectSteps, notACredentialField } from './LinearConnectSteps';
 
+// The receiver's address is a config.json setting (linearWebhook), not a dashboard one.
 const listenerFailures = {
-  address_in_use: 'The port is already in use. Free it or choose a different listener port.',
-  permission_denied: 'Permission to bind was denied. Check the listener address and port permissions.',
-  address_unavailable: 'The bind address is unavailable. Check that it belongs to this machine.',
-  other: 'The listener could not bind. Check the runtime logs and listener settings.',
+  address_in_use: 'Its local port is already in use. Free it, or set another port in linearWebhook in config.json.',
+  permission_denied: 'Permission to bind its local port was denied. Check linearWebhook in config.json.',
+  address_unavailable: 'Its local address is unavailable. Check that linearWebhook in config.json names this machine.',
+  other: 'Its local receiver could not start. Check the runtime logs.',
 };
 
 // Only fixed installation reasons are safe to display; schema/storage errors
@@ -35,8 +34,6 @@ const listenerFailures = {
 const knownInstallErrors = new Set([
   'Set the Anima public URL in Server settings and refresh the connection form.',
   'Use a separate Linear app for each agent.',
-  'Webhook port must differ from the dashboard port.',
-  'An installed app or an authorization in progress uses this listener. Keep its existing host and port.',
   'Remove the installed identity before replacing it.',
 ]);
 
@@ -277,7 +274,7 @@ function LinearDialogBody({
     );
   if (!setup.data) return <ReadError what="machine settings" onRetry={() => void setup.refetch()} />;
   if (!setup.data.publicUrl || !setup.data.callbackUrl)
-    return <PublicAddressStep setup={setup.data} onSaved={() => void setup.refetch()} />;
+    return <PublicAddressStep onSaved={() => void setup.refetch()} />;
   // A background refresh failed: keep what the user typed, but pause
   // authorizing until the state it would act on can be read again.
   const stale = status.isError ? 'Linear status' : setup.isError ? 'machine settings' : '';
@@ -326,6 +323,7 @@ function LinearDialogBody({
           Change
         </a>
       </p>
+      <PublicAddressCheck publicUrl={setup.data.publicUrl} />
       {data.state !== 'not_configured' && (
         <button
           type="button"
@@ -340,13 +338,7 @@ function LinearDialogBody({
   );
 }
 
-function PublicAddressStep({
-  setup,
-  onSaved,
-}: {
-  setup: LinearSetup;
-  onSaved: () => void;
-}) {
+function PublicAddressStep({ onSaved }: { onSaved: () => void }) {
   return (
     <div className="space-y-5">
       <header className="space-y-1.5">
@@ -358,7 +350,7 @@ function PublicAddressStep({
         </p>
       </header>
       <PublicAddressForm autoFocus onSaved={onSaved} />
-      <LinearForwardingRoutes setup={setup} />
+      <PublicAddressGuidance />
       <p className="font-sans text-[12px] text-text-subtle">
         You can change it later in{' '}
         <a href="/settings/server#public-url" className="underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted">
@@ -392,8 +384,8 @@ function ConnectedView({
   const [confirming, setConfirming] = useState(false);
   const now = useNow();
   const listener = data.listenerStatus;
-  // Local listener state only. Reachability through the public address is not
-  // detectable here; "Last event" is the evidence that forwarding works.
+  // Local receiver state only. The public address has its own check in Server
+  // settings; "Last event" is the evidence that Linear reaches this machine.
   const events =
     listener?.state === 'listening'
       ? 'Listening'
@@ -432,10 +424,7 @@ function ConnectedView({
           <div className="min-w-0 space-y-0.5">
             <p className="font-sans text-[13px] font-medium text-health-error">Anima can’t receive Linear events</p>
             <p className="font-sans text-[12px] leading-relaxed text-text-muted">
-              {listenerFailures[listener.reason ?? 'other']}{' '}
-              <a href="/settings/server#linear-listener" className="underline underline-offset-2">
-                Listener settings
-              </a>
+              {listenerFailures[listener.reason ?? 'other']}
             </p>
           </div>
         </div>
@@ -474,9 +463,11 @@ function ConnectedView({
       ) : null}
 
       <p className="font-sans text-[12px] leading-relaxed text-text-subtle">
-        No “Received by Anima.” in Linear after a mention? Check the forwarding for{' '}
-        <span className="font-mono">/webhook</span> on your public address, and the app’s webhook URL
-        and event subscriptions in Linear.
+        No “Received by Anima.” in Linear after a mention? Check the{' '}
+        <a href="/settings/server#public-url" className="underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted">
+          public address
+        </a>
+        , and the app’s webhook URL and event subscriptions in Linear.
       </p>
 
       {error && (
