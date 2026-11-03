@@ -26,7 +26,7 @@ const schema = buildSchema(`
     agentSessionCreateOnIssue(input: AgentSessionCreateOnIssue!): SessionPayload!
     agentSessionCreateOnComment(input: AgentSessionCreateOnComment!): SessionPayload!
   }
-  type User { id: ID!, app: Boolean!, name: String!, displayName: String! }
+  type User { id: ID!, app: Boolean!, name: String!, displayName: String!, url: String! }
   type UserConnection { nodes: [User!]!, pageInfo: PageInfo! }
   type Organization { id: ID!, name: String! }
   type Application { clientId: String! }

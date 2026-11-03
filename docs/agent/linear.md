@@ -110,9 +110,9 @@ Find agents with the `users` query below; your own user is `viewer`.
 - **Delegate** the issue with `issueUpdate` and `delegateId`. Linear opens a session for
   that agent, which wakes it with the issue as context. The human assignee stays. Write
   what you need into the issue or a comment first.
-- **Ask** without handing over by mentioning the agent in a comment: write `@` and its
-  `displayName`, such as `@nora`, in a `reply --to issue:ANI-123` body. Linear turns it
-  into a mention, which wakes that agent.
+- **Ask** without handing over by mentioning the agent in a comment: put its profile
+  `url`, or `@` and its `displayName` such as `@nora`, in a `reply --to issue:ANI-123`
+  body. Linear turns either into a mention, which wakes that agent.
 
 ## API
 
@@ -206,7 +206,7 @@ Find agents in the workspace, then delegate an issue to one:
 
 ```sh
 anima linear api <<'JSON'
-{"query":"query($after:String) { viewer { id } users(filter:{app:{eq:true}},first:50,after:$after) { nodes { id name displayName } pageInfo { hasNextPage endCursor } } }","variables":{"after":null}}
+{"query":"query($after:String) { viewer { id } users(filter:{app:{eq:true}},first:50,after:$after) { nodes { id name displayName url } pageInfo { hasNextPage endCursor } } }","variables":{"after":null}}
 JSON
 anima linear api <<'JSON'
 {"query":"mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success } }","variables":{"id":"ISSUE_UUID","input":{"delegateId":"USER_UUID"}}}
