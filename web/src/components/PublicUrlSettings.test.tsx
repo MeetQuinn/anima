@@ -71,21 +71,12 @@ it('a saved address is checked: one forwarding target, and what to update after 
   expect(save().disabled).toBe(true);
 });
 
-it('without a dashboard password the check says the address serves Linear only, and how to change that', async () => {
+it('without a dashboard password the check says the dashboard is open unless a gateway asks first, and how to set one', async () => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false }));
   mount();
-  await screen.findByText(/this address only accepts Linear events/);
+  await screen.findByText(/anyone who opens this address gets the dashboard unless a\s+sign-in gateway/);
   expect(screen.getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
-});
-
-it('warns when the tunnel hides the public host and no password protects the dashboard', async () => {
-  api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
-  api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false, hostRecognized: false }));
-  mount();
-  const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toContain('Reachable, and the dashboard is open there');
-  expect(alert.textContent).toContain('dashboard-auth set --password-stdin');
 });
 
 it.each([

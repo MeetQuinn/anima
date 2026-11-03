@@ -110,14 +110,7 @@ test('the reachability check proves the public address reaches this Anima and na
     const reached = await checkPublicUrl(throughTunnel);
     assert.match(requested, /^https:\/\/agents\.example\.com\/webhooks\/probe\/[A-Za-z0-9_-]+$/);
     assert.equal(reached.reachable, true);
-    assert.equal(reached.hostRecognized, true);
     assert.equal(reached.passwordSet, false);
-    // A proxy that rewrites Host hides the public address from the password guard.
-    const rewriting: typeof fetch = async (input) => {
-      const response = await app.inject({ url: new URL(String(input)).pathname, headers: { host: '127.0.0.1:4174' } });
-      return new Response(response.body, { status: response.statusCode });
-    };
-    assert.deepEqual(await checkPublicUrl(rewriting).then(({ reachable, hostRecognized }) => ({ reachable, hostRecognized })), { reachable: true, hostRecognized: false });
     // A probe answers once, and only while its check runs.
     assert.equal((await app.inject({ url: new URL(requested).pathname })).statusCode, 404);
     assert.equal((await app.inject({ url: '/webhooks/probe/guessed' })).statusCode, 404);
@@ -144,47 +137,33 @@ test('the reachability check proves the public address reaches this Anima and na
   } finally { await app.close(); }
 }));
 
-test('without a dashboard password the public address serves only what Linear calls', async () => withTempAnimaHome(async () => {
+test('the public address is the whole dashboard: open without a password, behind its login with one', async () => withTempAnimaHome(async () => {
   await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com' });
   const app = buildWebApp();
   const port = await unusedPort();
   await serverConfigStore.update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
   const viaPublic = { host: 'agents.example.com' };
-  try {
-    for (const headers of [viaPublic, { host: 'AGENTS.example.com:443' }, { host: 'agents.example.com.' }, { host: 'AGENTS.EXAMPLE.COM.:443' }, { host: 'agents.example.com..' },
-      { host: '127.0.0.1:4174', 'x-forwarded-host': 'agents.example.com' }, { host: '127.0.0.1:4174', 'x-forwarded-host': 'Agents.Example.Com.' }]) {
-      const api = await app.inject({ url: '/api/agents', headers });
-      assert.equal(api.statusCode, 403, JSON.stringify(headers));
-      assert.deepEqual(api.json(), { error: 'public_address_requires_password' });
-    }
-    const page = await app.inject({ url: '/', headers: viaPublic });
-    assert.equal(page.statusCode, 403);
-    assert.match(page.body, /dashboard-auth set --password-stdin/);
-    assert.equal((await app.inject({ method: 'PUT', url: '/api/settings/public-url', headers: viaPublic, payload: { publicUrl: 'https://evil.example.com' } })).statusCode, 403);
-    assert.equal((await app.inject({ url: '/api/settings/public-url', headers: viaPublic })).statusCode, 403);
-    // Encoded or dotted variants of an allowed path are refused, not routed.
-    for (const url of ['/%77ebhooks/linear', '/webhooks/linear/../../api/agents', '/webhooks/probe/x/../../../api/agents']) {
-      assert.equal((await app.inject({ method: 'POST', url, headers: viaPublic, payload: '{}' })).statusCode, 403, url);
-    }
-
-    // Linear's paths stay open: the receiver is down here, so they answer 503 rather than 403.
+  const linearPathsAnswer = async () => {
+    // The receiver is down here, so events answer 503 rather than reaching it.
     for (const url of ['/webhooks/linear', '/webhook']) {
       assert.equal((await app.inject({ method: 'POST', url, headers: { ...viaPublic, 'content-type': 'application/json' }, payload: '{}' })).statusCode, 503, url);
     }
     assert.equal((await app.inject({ url: '/webhooks/probe/unknown', headers: viaPublic })).statusCode, 404);
     assert.equal((await app.inject({ url: '/api/linear/oauth/callback?state=unknown&code=synthetic', headers: viaPublic })).statusCode, 400, 'The OAuth relay answers on the public address');
+  };
+  try {
+    // Whatever forwards the address decides who reaches it; Anima treats its requests
+    // like any other.
+    for (const headers of [viaPublic, { host: '127.0.0.1:4174', 'x-forwarded-host': 'agents.example.com' }, { host: '127.0.0.1:4174' }]) {
+      assert.equal((await app.inject({ url: '/api/settings/public-url', headers })).statusCode, 200, JSON.stringify(headers));
+    }
+    assert.equal((await app.inject({ url: '/', headers: viaPublic })).statusCode, 200);
+    await linearPathsAnswer();
 
-    // On this machine the dashboard stays open as before.
-    assert.equal((await app.inject({ url: '/api/settings/public-url', headers: { host: '127.0.0.1:4174' } })).statusCode, 200);
-    // A saved address with a trailing dot names the same host.
-    await serverConfigStore.update((c) => ({ ...c, publicUrl: 'https://agents.example.com.' }));
-    assert.equal((await app.inject({ url: '/api/agents', headers: viaPublic })).statusCode, 403);
-    await serverConfigStore.update((c) => ({ ...c, publicUrl: 'https://agents.example.com' }));
-
-    // With a password the public address is the full dashboard, behind its login.
     await defaultDashboardAuthService.setPassword('synthetic-dashboard-password');
     assert.equal((await app.inject({ url: '/api/agents', headers: viaPublic })).statusCode, 401);
     assert.equal((await app.inject({ url: '/', headers: viaPublic })).statusCode, 302);
+    await linearPathsAnswer();
   } finally { await app.close(); }
 }));
 
