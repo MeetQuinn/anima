@@ -30,6 +30,7 @@ class Workspace extends FakeLinear {
   loseWrite = false;
   partialWrite = false;
   replyRoot: string | null = null;
+  commentOffIssue = false;
   fetch: typeof fetch = async (url, init) => {
     if (String(url).endsWith('/oauth/token')) {
       this.tokenCalls++;
@@ -48,7 +49,7 @@ class Workspace extends FakeLinear {
     let data: unknown;
     if (query.includes('issueCreate')) data = { issueCreate: { success: true, issue: { ...issue, id: variables.input.id, title: variables.input.title } } };
     else if (query.includes('commentCreate')) data = { commentCreate: { success: true, comment: { id: variables.input.id, body: variables.input.body, url: 'https://linear.app/synthetic/comment' } } };
-    else if (query.includes('comment(id:')) data = { comment: { issue: { id: issue.id, identifier: issue.identifier }, parent: this.replyRoot ? { id: this.replyRoot } : null } };
+    else if (query.includes('comment(id:')) data = { comment: { issue: this.commentOffIssue ? null : { id: issue.id, identifier: issue.identifier }, parent: this.replyRoot ? { id: this.replyRoot } : null } };
     else if (query.includes('searchIssues')) data = { searchIssues: { nodes: [issue], pageInfo } };
     else if (query.includes('teams(')) data = { teams: { nodes: [team], pageInfo } };
     else if (query.includes('issue(id:')) data = { issue: { ...issue, description: 'Previous work', state: { name: 'Done', type: 'completed' }, team,
@@ -76,6 +77,47 @@ test('ordinary Linear comments work without receipts and preserve reply targets'
   fake.replyRoot = randomUUID();
   await service.comment({ id: randomUUID(), issueId: issue.id, parentId, body: 'Continue a reply thread' });
   assert.equal(fake.requests.at(-1)!.variables.input.parentId, fake.replyRoot);
+}));
+
+test('one reply command answers a comment thread at its root or comments on an issue, and refuses misuse before any request', async (t) => withTempAnimaHome(async (home) => {
+  const fake = new Workspace(); await seedLinear(home, fake);
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  const output: string[] = []; const diagnostics: string[] = [];
+  t.mock.method(console, 'log', (line: string) => output.push(line));
+  t.mock.method(console, 'error', (line: string) => diagnostics.push(line));
+  let stdin = '';
+  t.mock.getter(process, 'stdin', () => Readable.from([stdin]) as typeof process.stdin);
+  const run = async (...args: string[]) => { const cli = new Command(); registerLinearCommands(cli); await cli.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', ...args]); };
+  const creates = () => fake.requests.filter((r) => r.query.includes('commentCreate')).map((r) => r.variables.input);
+  // A target inside a thread continues at its root, on the comment's own issue.
+  const root = randomUUID(); fake.replyRoot = root;
+  stdin = 'Thread answer'; await run('reply', '--to', `comment:${parentId}`);
+  assert.deepEqual({ ...creates().at(-1), id: undefined }, { id: undefined, issueId: issue.id, parentId: root, body: 'Thread answer' });
+  assert.match(output.at(-1)!, /^Linear accepted comment /);
+  assert.ok(diagnostics.some((line) => line.includes(creates().at(-1)!.id)), 'The comment id is printed before sending');
+  // A root comment is its own thread. Questions and errors are ordinary comments here.
+  fake.replyRoot = null;
+  const id = randomUUID();
+  stdin = 'Which option?'; await run('reply', '--to', `comment:${parentId}`, '--kind', 'elicitation', '--id', id);
+  assert.deepEqual(creates().at(-1), { id, issueId: issue.id, parentId, body: 'Which option?' });
+  stdin = 'New discussion'; await run('reply', '--to', 'issue:SYN-1');
+  assert.equal(creates().at(-1)!.issueId, 'SYN-1'); assert.equal(creates().at(-1)!.parentId, undefined);
+  const outbox = (await messageServiceForAgent('scout').list()).entries.filter((m) => m.direction === 'out');
+  assert.deepEqual(outbox.map((m) => [m.text, m.channelId, m.threadTs]).reverse(), [
+    ['Thread answer', issue.id, root], ['Which option?', issue.id, parentId], ['New discussion', 'SYN-1', creates().at(-1)!.id]]);
+  const requests = fake.requests.length;
+  stdin = 'Started';
+  await assert.rejects(run('reply', '--to', `comment:${parentId}`, '--kind', 'thought'), /Progress updates go only to work sessions/);
+  await assert.rejects(run('reply', '--to', 'issue:SYN-1', '--kind', 'thought'), /Progress updates go only to work sessions/);
+  await assert.rejects(run('reply', '--to', `session:${randomUUID()}`, '--id', randomUUID()), /--id applies to comment and issue targets/);
+  await assert.rejects(run('reply', '--to', parentId), /reply_to value from the Linear envelope/);
+  await assert.rejects(run('reply', '--to', `comment:${parentId}`, '--kind', 'shout'));
+  stdin = '  '; await assert.rejects(run('reply', '--to', `comment:${parentId}`));
+  assert.equal(fake.requests.length, requests);
+  // A comment Linear cannot place on a reachable issue is refused before any write.
+  fake.commentOffIssue = true; stdin = 'Lost thread';
+  await assert.rejects(run('reply', '--to', `comment:${parentId}`), /not on an issue this app can reach/);
+  assert.equal(creates().length, 3);
 }));
 
 test('a lost or partial Linear write is never retried and keeps the caller-supplied id', async () => withTempAnimaHome(async (home) => {
@@ -297,9 +339,12 @@ test('removed Linear commands fail before credentials or effects, and help gives
   }
   const cli = new Command(); registerLinearCommands(cli);
   const linear = cli.commands.find((c) => c.name() === 'linear')!;
-  assert.deepEqual(linear.commands.map((c) => c.name()).sort(), ['api', 'comment', 'respond', 'start', 'token']);
+  assert.deepEqual(linear.commands.map((c) => c.name()).sort(), ['api', 'comment', 'reply', 'respond', 'start', 'token']);
   let help = ''; linear.configureOutput({ writeOut: (text) => { help += text; } }); linear.outputHelp();
   assert.match(help, /Use api.*session reads/);
+  // One visible reply command; the earlier names still work but are not offered.
+  assert.match(help, /\n\s+reply \[options\]/);
+  assert.doesNotMatch(help, /\n\s+(respond|comment) \[options\]/);
   const guidePath = help.match(/Examples and pagination: (.+)/)?.[1]!;
   assert.equal(isAbsolute(guidePath), true);
   assert.match(await readFile(guidePath, 'utf8'), /# Work in Linear/);
@@ -349,8 +394,10 @@ test('an agent can read paginated session context through the documented API, th
   stdin = JSON.stringify(input); await run('api');
   assert.deepEqual(JSON.parse(output.at(-1)!).agentSession.externalLinks, [{ url: 'https://github.com/example/repo/pull/1' }]);
   const markdown = '**Done**\n\n- Verified `pagination`\n- [PR](https://example.com/pr)';
-  stdin = markdown; await run('respond', '--session', sessionId); await run('respond', '--session', sessionId);
+  // The envelope's reply_to and the earlier respond name reach the same deduplicated activity.
+  stdin = markdown; await run('reply', '--to', `session:${sessionId}`); await run('respond', '--session', sessionId);
   assert.equal(fake.posts.length, 1); assert.equal(fake.posts[0]!.content.body, markdown);
+  assert.match(output.at(-2)!, /Linear accepted activity/);
   assert.equal((await store.read()).receipts[item!.id]!.answered, true);
   const outbox = (await messageServiceForAgent('scout').list()).entries;
   assert.ok(outbox.some((m) => m.direction === 'out' && m.text === markdown && m.channelId === sessionId));

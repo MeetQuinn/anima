@@ -35,6 +35,7 @@ import {
   RUNTIME_RESTART_CONTINUATION_NOTE,
 } from './delivery-notes.js';
 import { buildBackgroundInterruptedDeliveryPrompt } from './background-interrupted.js';
+import { formatLinearReplyTarget, linearReplyTargetFor } from '../linear/reply-target.js';
 import { restartSubtaskPrompt, type RestartSubtaskObservation } from './restart-subtasks.js';
 
 export interface CodeAgentPromptContext {
@@ -138,8 +139,10 @@ function buildLinearDeliveryPrompt(event: LinearInboxItem | LinearNotificationIn
   const heading = [source === '[]' ? '' : source, attribution].filter(Boolean).join(' ');
   const message = snapshot ? [heading, event.text].filter(Boolean).join('\n\n')
     : `${heading}${attribution ? ': ' : heading ? ' ' : ''}${event.text}`;
+  const replyTo = linearReplyTargetFor(event);
   const trigger = renderEnvelope([
     { key: 'platform', value: 'linear' },
+    { key: 'reply_to', value: replyTo ? formatLinearReplyTarget(replyTo) : undefined },
     { key: 'session_id', value: session ? event.sessionId : undefined },
     { key: 'issue_id', value: event.issueId },
     { key: 'comment_id', value: session ? undefined : event.commentId },

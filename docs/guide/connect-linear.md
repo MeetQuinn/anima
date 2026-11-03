@@ -199,7 +199,7 @@ opens a session and posts its initial progress from stdin. It can target an exis
 with `--comment <uuid>`. The session belongs to the app and shares the agent's current
 working context; a creation webhook matching the recorded session does not wake the agent again.
 If creation was uncertain and no session ID was recorded, the webhook follows normal intake. Human replies do.
-For longer work, the agent can send progress with `anima linear respond --kind thought`
+For longer work, the agent can send progress with `anima linear reply --kind thought`
 and send its final response in a later turn, for example after background work finishes.
 
 While a request is queued or its run is executing, the runtime posts a fixed queued/executing

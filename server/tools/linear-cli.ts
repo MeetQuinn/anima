@@ -7,8 +7,9 @@ import { resolveAnimaReferencePaths } from '../runtime/anima-reference.js';
 import { readStdin, resolveToolItemId } from './tool-context.js';
 import { LinearActivityKind } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
-import { LinearCommentService, LinearCommentCreate } from '../linear/comment.service.js';
+import { LinearCommentService, LinearCommentCreate, LinearCommentReply, type LinearCreatedComment } from '../linear/comment.service.js';
 import { LinearSessionService } from '../linear/session.service.js';
+import { formatLinearReplyTarget, parseLinearReplyTarget } from '../linear/reply-target.js';
 import { withToolActivity } from './tool-context.js';
 import { runLinearApi } from './linear-api.js';
 
@@ -20,6 +21,37 @@ function identityFor(agent: string | undefined): LinearIdentityService {
 
 function serviceFor(agent: string | undefined): LinearSessionService {
   return new LinearSessionService(identityFor(agent));
+}
+
+const ReplyBody = z.string().trim().min(1).max(100_000);
+
+async function sendSessionActivity(agent: string | undefined, tool: string, sessionId: string, kind: LinearActivityKind, body: string): Promise<void> {
+  const service = serviceFor(agent);
+  const result = await withToolActivity({
+    audit: { agentId: service.agentId }, effectType: 'linear.activity.create',
+    basePayload: { tool, platform: 'linear', channelKind: 'linear_session', channel: sessionId, threadTs: sessionId, kind, text: body },
+    onCompletedAuditError: () => console.error('Linear accepted the activity; local audit is degraded. Do not resend.'),
+    op: async () => {
+      const result = await service.respond(sessionId, kind, body, await resolveToolItemId({ agent: service.agentId }));
+      return { result, completedPayload: { messageId: result.activityId, bookkeeping: result.bookkeeping } };
+    },
+  });
+  console.log(`Linear accepted activity ${result.activityId}; bookkeeping=${result.bookkeeping}.`);
+}
+
+async function sendComment(agent: string | undefined, tool: string, basePayload: Record<string, unknown>, id: string,
+  create: (service: LinearCommentService) => Promise<LinearCreatedComment>): Promise<LinearCreatedComment> {
+  const identity = identityFor(agent);
+  console.error(`Linear comment id: ${id}. If the result is unknown, inspect this id before retrying.`);
+  return withToolActivity({
+    audit: { agentId: identity.agentId }, effectType: 'linear.comment.create',
+    basePayload: { tool, platform: 'linear', channelKind: 'linear_issue', ...basePayload },
+    onCompletedAuditError: () => console.error('Linear accepted the comment; local audit is degraded. Do not resend.'),
+    op: async () => {
+      const comment = await create(new LinearCommentService(identity));
+      return { result: comment, completedPayload: { channel: comment.issueId, messageId: comment.id, permalink: comment.url, threadTs: comment.parentId ?? comment.id } };
+    },
+  });
 }
 
 export function registerLinearCommands(program: Command): void {
@@ -44,23 +76,36 @@ export function registerLinearCommands(program: Command): void {
       const result = await runLinearApi(identityFor(command.optsWithGlobals().agent), input);
       console.log(JSON.stringify(result, null, 2));
     });
-  linear.command('comment').description('Comment on any permitted issue; Markdown body on stdin.')
+  linear.command('reply').description('Reply where a Linear envelope points; Markdown body on stdin.')
+    .requiredOption('--to <reply_to>', 'reply_to from the envelope: session:<uuid>, comment:<uuid> or issue:<id>')
+    .option('--kind <kind>', 'response, thought (progress), elicitation (question) or error', 'response')
+    .option('--id <uuid>', 'comment and issue targets: stable comment UUID; generated and printed before sending if omitted')
+    .action(async (_options, command: Command) => {
+      const opts = command.optsWithGlobals();
+      const target = parseLinearReplyTarget(String(opts.to));
+      const kind = LinearActivityKind.parse(opts.kind);
+      if (target.kind === 'session' && opts.id) throw new Error('--id applies to comment and issue targets; Anima deduplicates session replies itself.');
+      // A comment is permanent and notifies the thread; progress belongs only in a work session.
+      if (target.kind !== 'session' && kind === 'thought') throw new Error('Progress updates go only to work sessions. In a comment thread or issue, reply with your result or question.');
+      const body = ReplyBody.parse(await readStdin());
+      if (target.kind === 'session') { await sendSessionActivity(opts.agent, 'anima.linear.reply', target.id, kind, body); return; }
+      const id = z.string().uuid().parse(opts.id ?? randomUUID());
+      const comment = target.kind === 'comment'
+        ? await sendComment(opts.agent, 'anima.linear.reply', { threadTs: target.id, text: body }, id,
+          (service) => service.reply(LinearCommentReply.parse({ id, commentId: target.id, body })))
+        : await sendComment(opts.agent, 'anima.linear.reply', { channel: target.id, text: body }, id,
+          (service) => service.comment(LinearCommentCreate.parse({ id, issueId: target.id, body })));
+      console.log(`Linear accepted comment ${comment.id}: ${comment.url}`);
+    });
+  // Earlier names for the same writes. Hidden so agents learn one reply command.
+  linear.command('comment', { hidden: true }).description('Comment on any permitted issue; Markdown body on stdin. Prefer reply.')
     .requiredOption('--issue <id>', 'issue UUID or identifier').option('--reply-to <uuid>', 'parent comment UUID')
     .option('--id <uuid>', 'stable comment UUID; generated and printed before sending if omitted')
     .action(async (_options, command: Command) => {
       const opts = command.optsWithGlobals();
       const input = LinearCommentCreate.parse({ id: opts.id ?? randomUUID(), issueId: opts.issue, parentId: opts.replyTo, body: await readStdin() });
-      const identity = identityFor(opts.agent);
-      console.error(`Linear comment id: ${input.id}. If the result is unknown, inspect this id before retrying.`);
-      const result = await withToolActivity({
-        audit: { agentId: identity.agentId }, effectType: 'linear.comment.create',
-        basePayload: { tool: 'anima.linear.comment', platform: 'linear', channelKind: 'linear_issue', channel: input.issueId, threadTs: input.parentId, text: input.body },
-        onCompletedAuditError: () => console.error('Linear accepted the comment; local audit is degraded. Do not resend.'),
-        op: async () => {
-          const comment = await new LinearCommentService(identity).comment(input);
-          return { result: comment, completedPayload: { messageId: comment.id, permalink: comment.url, threadTs: comment.parentId ?? comment.id } };
-        },
-      });
+      const result = await sendComment(opts.agent, 'anima.linear.comment', { channel: input.issueId, threadTs: input.parentId, text: input.body }, input.id,
+        (service) => service.comment(input));
       console.log(JSON.stringify(result, null, 2));
     });
   linear.command('start').description('Start work proactively; initial progress on stdin. No assignment is required.')
@@ -84,29 +129,18 @@ export function registerLinearCommands(program: Command): void {
           const session = await service.start(target, targetId, requestId, runItemId);
           console.error(`Linear session id: ${session.id}`);
           const progress = await service.respond(session.id, 'thought', body, runItemId);
-          return { result: { requestId, session, progress }, completedPayload: {
+          return { result: { requestId, session, replyTo: formatLinearReplyTarget({ kind: 'session', id: session.id }), progress }, completedPayload: {
             channel: session.id, threadTs: session.id, permalink: session.url, messageId: progress.activityId, bookkeeping: progress.bookkeeping,
           } };
         },
       });
       console.log(JSON.stringify(result, null, 2));
     });
-  linear.command('respond').description('Reply to a work session; Markdown body on stdin.').requiredOption('--session <id>', 'Linear session UUID')
+  linear.command('respond', { hidden: true }).description('Reply to a work session; Markdown body on stdin. Prefer reply.').requiredOption('--session <id>', 'Linear session UUID')
     .option('--kind <kind>', 'thought (progress), response, elicitation or error', 'response').action(async (_options, command: Command) => {
       const opts = command.optsWithGlobals();
       const sessionId = z.string().uuid().parse(opts.session);
       const kind = LinearActivityKind.parse(opts.kind);
-      const body = z.string().trim().min(1).max(100_000).parse(await readStdin());
-      const service = serviceFor(opts.agent);
-      const result = await withToolActivity({
-        audit: { agentId: service.agentId }, effectType: 'linear.activity.create',
-        basePayload: { tool: 'anima.linear.respond', platform: 'linear', channelKind: 'linear_session', channel: sessionId, threadTs: sessionId, kind, text: body },
-        onCompletedAuditError: () => console.error('Linear accepted the activity; local audit is degraded. Do not resend.'),
-        op: async () => {
-          const result = await service.respond(sessionId, kind, body, await resolveToolItemId({ agent: service.agentId }));
-          return { result, completedPayload: { messageId: result.activityId, bookkeeping: result.bookkeeping } };
-        },
-      });
-      console.log(`Linear accepted activity ${result.activityId}; bookkeeping=${result.bookkeeping}.`);
+      await sendSessionActivity(opts.agent, 'anima.linear.respond', sessionId, kind, ReplyBody.parse(await readStdin()));
     });
 }
