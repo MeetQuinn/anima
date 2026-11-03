@@ -238,6 +238,16 @@ Feishu attention decisions live in `server/inbox/feishu-subscription.service.ts`
 
 For operator-facing setup and scopes, see [Feishu runbook](../agent/feishu.md).
 
+## Linear
+
+Linear arrives through signed webhooks rather than a socket. `server/transports/linear-message-transport.ts` verifies each request, persists it, then acknowledges it. Agent-facing behavior is in [Work in Linear](../agent/linear.md); operator setup is in [Connect Linear](../guide/connect-linear.md).
+
+- **Sessions.** `server/linear/session.service.ts` turns session events into inbox items and receipts. The receipt lifecycle is documented on `LinearReceipt` in `server/storage/schema/linear.store.ts`, and every transition goes through `server/linear/receipt-state.ts`. The runtime posts "Received by Anima." without waiting for model capacity, and a queued/executing status only while a request is actually queued or its run is executing. A crashed or interrupted run gets an error notice; a run that ends normally gets nothing, so the agent's own reply closes the request.
+- **Own sessions.** `anima linear start` records the session it creates, so the matching `created` webhook does not enqueue another run. If no session ID was recorded, that webhook follows normal intake so automation is not lost. Start request IDs are retained, including unknown results, until the identity is removed or reinstalled, so reusing an old ID cannot create duplicate work. A session whose first prompt shows the app delegated the issue to itself is acknowledged and linked without a wake; if that origin cannot be confirmed, it follows normal intake.
+- **Notifications.** `server/inbox/linear-notification.service.ts` decides which inbox notifications wake the agent and which are held for its next run; `server/inbox/linear-comment-delivery.ts` links a delivered comment to a session that arrives later.
+- **API audit.** `server/tools/linear-api.ts` records a call ID, the agent and run when available, the operation type, up to five top-level schema field names (never aliases) and the outcome. When the top-level variables hold exactly one distinct whole value shaped like an issue key, that key is recorded too. Unparseable or ambiguous input is recorded as `unknown` and forwarded unchanged. Records omit operation names, aliases, query text, other variables, results, error bodies and credentials. If the initial record cannot be written, no request is sent; if the outcome record fails after a response, the command keeps the result and prints a warning. API calls create no outbox entries. A failed call records an unknown outcome, which does not prove the write had no effect.
+- **Credentials.** `server/runtime/host.ts` puts `LINEAR_ACCESS_TOKEN` and `LINEAR_ACCESS_TOKEN_EXPIRES_AT` in a run's environment at start; a running child never sees refreshed values. Anima keeps the refresh token. A refresh failure leaves other connected places working, but Linear commands need a connected, enabled identity.
+
 ## Invariants That Matter
 
 - Plain provider output is not a reply; visible chat output begins at the `server/tools/` outbox boundary.
