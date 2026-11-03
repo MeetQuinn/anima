@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { Command } from 'commander';
 import { z } from 'zod';
 import { LinearClient } from '../linear/client.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
-import { LinearIssueService } from '../linear/issue.service.js';
+import { LinearCommentService } from '../linear/comment.service.js';
 import { managedProviderEnvForAgent } from '../runtime/host.js';
 import { registerLinearCommands } from '../tools/linear-cli.js';
 import { runLinearApi } from '../tools/linear-api.js';
@@ -14,7 +15,7 @@ import { ActivityService, activityServiceForAgent } from '../activities/activity
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { withTempAnimaHome } from './helpers/harness.js';
-import { FakeLinear, install, seedLinear } from './helpers/linear.js';
+import { FakeLinear, install, seedLinear, created, sessionId } from './helpers/linear.js';
 import { linearQueryErrors } from './helpers/linear-schema.js';
 
 const team = { id: randomUUID(), key: 'SYN', name: 'Synthetic team' };
@@ -56,29 +57,18 @@ class Workspace extends FakeLinear {
   };
 }
 
-test('ordinary Linear actions work without receipts, preserve pagination and reply on completed issues', async () => withTempAnimaHome(async (home) => {
+test('ordinary Linear comments work without receipts and preserve reply targets', async () => withTempAnimaHome(async (home) => {
   const fake = new Workspace();
   const { identity, store } = await seedLinear(home, fake);
-  const service = new LinearIssueService(identity);
+  const service = new LinearCommentService(identity);
   assert.deepEqual((await store.read()).receipts, {});
-  assert.deepEqual(await service.teams({ limit: 2, after: 'team-cursor' }), { nodes: [team], pageInfo });
-  assert.equal(fake.requests.at(-1)!.variables.after, 'team-cursor');
-  assert.deepEqual(await service.search('quoted "text"', { limit: 3, after: 'issue-cursor' }), { nodes: [issue], pageInfo });
-  assert.equal(fake.requests.at(-1)!.variables.term, 'quoted "text"');
-  assert.equal(fake.requests.at(-1)!.variables.first, 3);
-  const read = await service.read('SYN-1', { after: 'comments-cursor' });
-  assert.equal(read.state.type, 'completed'); assert.equal(read.comments.nodes[0]!.id, parentId);
-  assert.equal(fake.requests.at(-1)!.variables.after, 'comments-cursor');
-  const id = randomUUID();
-  assert.equal((await service.create({ id, teamId: team.id, title: 'Proactive issue', description: 'From Slack' })).id, id);
   const comment = await service.comment({ id: randomUUID(), issueId: 'SYN-1', parentId, body: 'More information after completion' });
   assert.equal(comment.body, 'More information after completion');
   assert.equal(fake.requests.at(-1)!.variables.input.parentId, parentId);
   assert.ok(fake.auth.every((value) => value === `Bearer ${install.accessToken}`));
   assert.deepEqual((await store.read()).receipts, {});
   const before = fake.requests.length;
-  await assert.rejects(service.teams({ limit: 0 }));
-  await assert.rejects(service.create({ id, teamId: 'bad', title: '' }));
+  await assert.rejects(service.comment({ id: randomUUID(), issueId: issue.id, body: '' }));
   assert.equal(fake.requests.length, before);
   await assert.rejects(service.comment({ id: randomUUID(), issueId: 'SYN-OTHER', parentId, body: 'Wrong issue' }), /does not belong/);
   assert.equal(fake.requests.filter((r) => r.query.includes('commentCreate')).length, 1);
@@ -89,9 +79,9 @@ test('ordinary Linear actions work without receipts, preserve pagination and rep
 
 test('a lost or partial Linear write is never retried and keeps the caller-supplied id', async () => withTempAnimaHome(async (home) => {
   const fake = new Workspace(); const { identity } = await seedLinear(home, fake);
-  const service = new LinearIssueService(identity);
+  const service = new LinearCommentService(identity);
   const id = randomUUID(); fake.loseWrite = true;
-  await assert.rejects(service.create({ id, teamId: team.id, title: 'Single attempt' }), /may have succeeded/);
+  await assert.rejects(service.comment({ id, issueId: issue.id, body: 'Single attempt' }), /may have succeeded/);
   assert.equal(fake.requests.length, 1); assert.equal(fake.requests[0]!.variables.input.id, id);
   fake.loseWrite = false; fake.partialWrite = true;
   await assert.rejects(service.comment({ id, issueId: issue.id, body: 'Partial result' }), /invalid or rejected/);
@@ -139,7 +129,7 @@ test('managed child environment gets a Linear token in the selected home; failur
   assert.match(warnings.join(), /commands refresh them on demand/);
 }));
 
-test('registered Linear CLI creates and comments proactively, records outbox, and audits API metadata without token or request content', async (t) => withTempAnimaHome(async (home) => {
+test('registered Linear CLI comments proactively, records outbox, and audits API metadata without token or request content', async (t) => withTempAnimaHome(async (home) => {
   const fake = new Workspace(); const { store } = await seedLinear(home, fake);
   t.mock.method(globalThis, 'fetch', fake.fetch);
   const output: string[] = []; const diagnostics: string[] = [];
@@ -152,15 +142,10 @@ test('registered Linear CLI creates and comments proactively, records outbox, an
     await command.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', ...args]);
     return JSON.parse(output.at(-1)!);
   };
-  assert.equal((await run('teams')).nodes[0].id, team.id);
-  assert.equal((await run('search', 'original work')).nodes[0].identifier, 'SYN-1');
-  assert.equal((await run('issue', 'SYN-1')).comments.nodes[0].id, parentId);
-  stdin = 'Proactive description'; const created = await run('create', '--team', team.id, '--title', 'From Slack');
-  assert.match(diagnostics.at(-1)!, new RegExp(created.id));
-  stdin = 'An ordinary reply'; const commented = await run('comment', '--issue', issue.id, '--reply-to', parentId);
+  const markdown = '**Done**\n\n- Fixed `pagination`\n- [PR](https://example.com/pr)\n\n```ts\nconst ok = true;\n```';
+  stdin = markdown; const commented = await run('comment', '--issue', issue.id, '--reply-to', parentId);
   const messages = await messageServiceForAgent('scout').list();
-  assert.ok(messages.entries.some((m) => m.direction === 'out' && m.platform === 'linear' && m.text === 'An ordinary reply' && m.threadTs === parentId));
-  assert.ok(messages.entries.some((m) => m.channelId === created.id && m.text === 'From Slack\n\nProactive description' && m.permalink === created.url));
+  assert.ok(messages.entries.some((m) => m.direction === 'out' && m.platform === 'linear' && m.text === markdown && m.threadTs === parentId));
   fake.replyRoot = randomUUID();
   stdin = 'Continue the same thread'; const reply = await run('comment', '--issue', issue.id, '--reply-to', parentId);
   assert.equal(reply.parentId, fake.replyRoot);
@@ -179,7 +164,9 @@ test('registered Linear CLI creates and comments proactively, records outbox, an
   assert.deepEqual(apiAudit.map((a) => a.type), ['tool.call.started', 'tool.call.completed']);
   assert.ok(apiAudit.every((a) => a.payload?.operation === 'query'));
   assert.doesNotMatch(JSON.stringify(apiAudit), /query First|Second|access-sentinel|refresh-sentinel/);
-  assert.equal(commented.body, 'An ordinary reply'); assert.deepEqual((await store.read()).receipts, {});
+  assert.equal(commented.body, markdown);
+  assert.equal(fake.requests.find((r) => r.query.includes('commentCreate'))!.variables.input.body, markdown);
+  assert.ok((await activityServiceForAgent('scout').readAll()).some((r) => r.type === 'external.effect.completed' && r.payload?.text === markdown)); assert.deepEqual((await store.read()).receipts, {});
 }));
 
 test('raw Linear mutations correlate metadata while names, literals, variables and results stay private', async (t) => withTempAnimaHome(async (home) => {
@@ -297,4 +284,70 @@ test('API audit keeps the inherited run when the active-item lookup fails withou
   assert.deepEqual(rows.map((r) => r.payload?.itemId), ['inherited-api-run', 'inherited-api-run', undefined, undefined]);
   assert.equal(warnings.length, 2);
   assert.doesNotMatch(JSON.stringify([rows, warnings]), /PRIVATE_QUEUE_ERROR_SENTINEL/);
+}));
+
+
+test('removed Linear commands fail before credentials or effects, and help gives the API migration path', async (t) => {
+  let requests = 0;
+  t.mock.method(globalThis, 'fetch', async () => { requests++; throw new Error('Unexpected network request'); });
+  for (const name of ['teams', 'search', 'issue', 'create', 'read', 'attach-pr']) {
+    const cli = new Command().exitOverride().configureOutput({ writeErr() {} }); registerLinearCommands(cli);
+    await assert.rejects(cli.parseAsync(['node', 'anima', 'linear', name]), /unknown command/);
+  }
+  const cli = new Command(); registerLinearCommands(cli);
+  const linear = cli.commands.find((c) => c.name() === 'linear')!;
+  assert.deepEqual(linear.commands.map((c) => c.name()).sort(), ['api', 'comment', 'respond', 'start', 'token']);
+  let help = ''; linear.configureOutput({ writeOut: (text) => { help += text; } }); linear.outputHelp();
+  assert.match(help, /Use api.*session reads/); assert.match(help, /docs\/agent\/linear.md/);
+  assert.equal(requests, 0);
+});
+
+async function documentedApiExamples() {
+  const doc = await readFile('docs/agent/linear.md', 'utf8');
+  return [...doc.matchAll(/anima linear api <<'JSON'\n([^]+?)\nJSON/g)].map((m) => JSON.parse(m[1]!));
+}
+
+test('every documented Linear API example parses and validates against the schema fixture', async () => {
+  const examples = await documentedApiExamples();
+  assert.equal(examples.length, 7);
+  for (const input of examples) assert.deepEqual(linearQueryErrors(input.query), [], input.query);
+  assert.ok(linearQueryErrors('query { agentSession(id:"bad") { activities { nodes { content } } } }').length);
+});
+
+test('an agent can read paginated session context through the documented API, then reply once with Markdown and verify outbox', async (t) => withTempAnimaHome(async (home) => {
+  const fake = new FakeLinear(), originalFetch = fake.fetch;
+  const rows = Array.from({ length: 51 }, (_, i) => ({ id: `context-${i}`, content: { type: 'prompt', body: `Message ${i}` }, createdAt: new Date().toISOString() }));
+  fake.fetch = async (url, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (!request.query.includes('activities(first:50')) return originalFetch(url, init);
+    assert.deepEqual(linearQueryErrors(request.query), []);
+    const start = Number(request.variables.after ?? 0), nodes = rows.slice(start, start + 50), end = start + nodes.length;
+    return Response.json({ data: { agentSession: { id: request.variables.id, status: 'active', appUser: { id: install.appUserId },
+      activities: { nodes, pageInfo: { hasNextPage: end < rows.length, endCursor: String(end) } } } } });
+  };
+  const { service, store } = await seedLinear(home, fake);
+  await service.receive(created(), install);
+  const [item] = await new WakeQueueService('scout').list(); await service.markStarted(item!, item!.id);
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  const output: string[] = []; t.mock.method(console, 'log', (line: string) => { output.push(line); });
+  let stdin = ''; t.mock.getter(process, 'stdin', () => Readable.from([stdin]) as typeof process.stdin);
+  const run = async (...args: string[]) => { const cli = new Command(); registerLinearCommands(cli); await cli.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', ...args]); };
+  const input = (await documentedApiExamples()).find((e) => e.query.includes('activities(first:50'))!;
+  input.variables.id = sessionId; stdin = JSON.stringify(input); await run('api');
+  const first = JSON.parse(output.at(-1)!).agentSession.activities;
+  assert.equal(first.nodes.length, 50); assert.equal(first.pageInfo.hasNextPage, true);
+  input.variables.after = first.pageInfo.endCursor; stdin = JSON.stringify(input); await run('api');
+  const second = JSON.parse(output.at(-1)!).agentSession.activities;
+  assert.equal(second.nodes[0].content.body, 'Message 50'); assert.equal(second.pageInfo.hasNextPage, false);
+  const link = (await documentedApiExamples()).find((e) => e.query.includes('agentSessionUpdate'))!;
+  link.variables.id = sessionId; stdin = JSON.stringify(link); await run('api');
+  assert.equal(JSON.parse(output.at(-1)!).agentSessionUpdate.success, true);
+  assert.deepEqual(fake.links, ['https://github.com/example/repo/pull/1']);
+  const markdown = '**Done**\n\n- Verified `pagination`\n- [PR](https://example.com/pr)';
+  stdin = markdown; await run('respond', '--session', sessionId); await run('respond', '--session', sessionId);
+  assert.equal(fake.posts.length, 1); assert.equal(fake.posts[0]!.content.body, markdown);
+  assert.equal((await store.read()).receipts[item!.id]!.answered, true);
+  const outbox = (await messageServiceForAgent('scout').list()).entries;
+  assert.ok(outbox.some((m) => m.direction === 'out' && m.text === markdown && m.channelId === sessionId));
+
 }));

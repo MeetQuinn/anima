@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { Command } from 'commander';
 import { z } from 'zod';
 import { resolveAgentIdFrom } from '../cli/shared.js';
-import { readStdin, readOptionalStdin, resolveToolItemId } from './tool-context.js';
+import { readStdin, resolveToolItemId } from './tool-context.js';
 import { LinearActivityKind } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
-import { LinearIssueService, LinearIssueCreate, LinearCommentCreate } from '../linear/issue.service.js';
+import { LinearCommentService, LinearCommentCreate } from '../linear/comment.service.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { withToolActivity } from './tool-context.js';
 import { runLinearApi } from './linear-api.js';
@@ -20,12 +20,9 @@ function serviceFor(agent: string | undefined): LinearSessionService {
   return new LinearSessionService(identityFor(agent));
 }
 
-function pageOptions(command: Command): Command {
-  return command.option('--limit <count>', 'page size (1–100)', '50').option('--after <cursor>', 'next page cursor');
-}
-
 export function registerLinearCommands(program: Command): void {
-  const linear = program.command('linear').description('Use this agent’s Linear identity for issues, comments and work sessions.').option('--agent <id>', 'agent identity');
+  const linear = program.command('linear').description('Use this agent’s Linear identity for issues, comments and work sessions.').option('--agent <id>', 'agent identity')
+    .addHelpText('after', '\nUse api for issue and session reads, issue changes and external links.\nExamples and pagination: docs/agent/linear.md');
   // Credential output is for programmatic consumption, not activity records.
   // Arbitrary API calls record only fixed metadata, never their bodies.
   linear.command('token').description('Get a current access token (JSON); keep it private.')
@@ -41,37 +38,6 @@ export function registerLinearCommands(program: Command): void {
       const result = await runLinearApi(identityFor(command.optsWithGlobals().agent), input);
       console.log(JSON.stringify(result, null, 2));
     });
-  pageOptions(linear.command('teams').description('List teams this app can access.')).action(async (_options, command: Command) => {
-    const opts = command.optsWithGlobals();
-    console.log(JSON.stringify(await new LinearIssueService(identityFor(opts.agent)).teams({ limit: Number(opts.limit), after: opts.after }), null, 2));
-  });
-  pageOptions(linear.command('search <text>').description('Search issues visible to this app.')).action(async (text: string, _options, command: Command) => {
-    const opts = command.optsWithGlobals();
-    console.log(JSON.stringify(await new LinearIssueService(identityFor(opts.agent)).search(text, { limit: Number(opts.limit), after: opts.after }), null, 2));
-  });
-  pageOptions(linear.command('issue <id>').description('Read an issue (UUID or ABC-123) and one page of comments.')).action(async (id: string, _options, command: Command) => {
-    const opts = command.optsWithGlobals();
-    console.log(JSON.stringify(await new LinearIssueService(identityFor(opts.agent)).read(id, { limit: Number(opts.limit), after: opts.after }), null, 2));
-  });
-  linear.command('create').description('Create an issue; optional Markdown description on stdin.')
-    .requiredOption('--team <uuid>', 'team UUID (see linear teams)').requiredOption('--title <title>', 'issue title')
-    .option('--id <uuid>', 'stable issue UUID; generated and printed before sending if omitted')
-    .action(async (_options, command: Command) => {
-      const opts = command.optsWithGlobals();
-      const input = LinearIssueCreate.parse({ id: opts.id ?? randomUUID(), teamId: opts.team, title: opts.title, description: await readOptionalStdin() });
-      const identity = identityFor(opts.agent);
-      console.error(`Linear issue id: ${input.id}. If the result is unknown, inspect this id before retrying.`);
-      const result = await withToolActivity({
-        audit: { agentId: identity.agentId }, effectType: 'linear.issue.create',
-        basePayload: { tool: 'anima.linear.create', platform: 'linear', channelKind: 'linear_issue', channel: input.id, title: input.title, text: [input.title, input.description].filter(Boolean).join('\n\n'), messageId: input.id },
-        onCompletedAuditError: () => console.error('Linear accepted the issue; local audit is degraded. Do not resend.'),
-        op: async () => {
-          const issue = await new LinearIssueService(identity).create(input);
-          return { result: issue, completedPayload: { permalink: issue.url, identifier: issue.identifier } };
-        },
-      });
-      console.log(JSON.stringify(result, null, 2));
-    });
   linear.command('comment').description('Comment on any permitted issue; Markdown body on stdin.')
     .requiredOption('--issue <id>', 'issue UUID or identifier').option('--reply-to <uuid>', 'parent comment UUID')
     .option('--id <uuid>', 'stable comment UUID; generated and printed before sending if omitted')
@@ -85,7 +51,7 @@ export function registerLinearCommands(program: Command): void {
         basePayload: { tool: 'anima.linear.comment', platform: 'linear', channelKind: 'linear_issue', channel: input.issueId, threadTs: input.parentId, text: input.body },
         onCompletedAuditError: () => console.error('Linear accepted the comment; local audit is degraded. Do not resend.'),
         op: async () => {
-          const comment = await new LinearIssueService(identity).comment(input);
+          const comment = await new LinearCommentService(identity).comment(input);
           return { result: comment, completedPayload: { messageId: comment.id, permalink: comment.url, threadTs: comment.parentId ?? comment.id } };
         },
       });
@@ -119,10 +85,6 @@ export function registerLinearCommands(program: Command): void {
       });
       console.log(JSON.stringify(result, null, 2));
     });
-  pageOptions(linear.command('read').description('Read one page of session activities.')).requiredOption('--session <id>', 'Linear session UUID').action(async (_options, command: Command) => {
-    const opts = command.optsWithGlobals();
-    console.log(JSON.stringify(await serviceFor(opts.agent).read(z.string().uuid().parse(opts.session), { limit: Number(opts.limit), after: opts.after }), null, 2));
-  });
   linear.command('respond').requiredOption('--session <id>', 'Linear session UUID')
     .option('--kind <kind>', 'thought (progress), response, elicitation or error', 'response').action(async (_options, command: Command) => {
       const opts = command.optsWithGlobals();
@@ -140,22 +102,5 @@ export function registerLinearCommands(program: Command): void {
         },
       });
       console.log(`Linear accepted activity ${result.activityId}; bookkeeping=${result.bookkeeping}.`);
-    });
-  linear.command('attach-pr').requiredOption('--session <id>', 'Linear session UUID').requiredOption('--url <url>', 'HTTPS pull request URL')
-    .action(async (_options, command: Command) => {
-      const opts = command.optsWithGlobals();
-      const url = z.string().url().refine((value) => { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password; }).parse(opts.url);
-      const service = serviceFor(opts.agent);
-      const sessionId = z.string().uuid().parse(opts.session);
-      const result = await withToolActivity({
-        audit: { agentId: service.agentId }, effectType: 'linear.link.attach',
-        basePayload: { tool: 'anima.linear.attach-pr', platform: 'linear', channel: sessionId, url },
-        onCompletedAuditError: () => console.error('Linear accepted the link; local audit is degraded. Do not resend.'),
-        op: async () => {
-          const result = await service.attach(sessionId, url, await resolveToolItemId({ agent: service.agentId }));
-          return { result, completedPayload: { bookkeeping: result.bookkeeping } };
-        },
-      });
-      console.log(`Linear accepted the pull request link; bookkeeping=${result.bookkeeping}.`);
     });
 }

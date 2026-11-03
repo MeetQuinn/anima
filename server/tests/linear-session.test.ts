@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import { withTempAnimaHome } from './helpers/harness.js';
 import { created, install, seedLinear, sessionId, prompted, FakeLinear } from './helpers/linear.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -12,7 +11,6 @@ import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearClient } from '../linear/client.js';
 import type { LinearStore } from '../storage/schema/linear.store.js';
 import type { LinearInboxItem } from '../../shared/inbox.js';
-import { linearQueryErrors } from './helpers/linear-schema.js';
 
 async function firstItem() { return (await new WakeQueueService('scout').list())[0]! as LinearInboxItem; }
 
@@ -25,8 +23,8 @@ async function settledRequest(service: LinearSessionService, session = sessionId
   return item;
 }
 
-for (const kind of ['response', 'link'] as const) for (const failure of ['401', '400', '500', 'network', 'invalid-json', 'partial'] as const) {
-  test(`Linear ${kind} preserves explicit retry only after a confirmed rejection: ${failure}`, async () => withTempAnimaHome(async (home) => {
+for (const failure of ['401', '400', '500', 'network', 'invalid-json', 'partial'] as const) {
+  test(`Linear response preserves explicit retry only after a confirmed rejection: ${failure}`, async () => withTempAnimaHome(async (home) => {
     const fake = new FakeLinear(), fetch = fake.fetch;
     let attempts = 0;
     const setup = await seedLinear(home, fake);
@@ -35,7 +33,7 @@ for (const kind of ['response', 'link'] as const) for (const failure of ['401', 
     const { store } = setup;
     fake.fetch = async (url, init) => {
       const query = String(url).endsWith('/graphql') ? JSON.parse(String(init?.body)).query as string : '';
-      if (query.includes(kind === 'response' ? 'agentActivityCreate' : 'agentSessionUpdate')) {
+      if (query.includes('agentActivityCreate')) {
         attempts++;
         if (attempts === 1) {
           // A separate process has refreshed while the old request is in flight.
@@ -55,9 +53,7 @@ for (const kind of ['response', 'link'] as const) for (const failure of ['401', 
     const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch), store);
     const service = new LinearSessionService(identity);
     const item = await settledRequest(service);
-    const send = (target: LinearSessionService) => kind === 'response'
-      ? target.respond(sessionId, 'response', 'Done after refresh', item.id)
-      : target.attach(sessionId, 'https://github.com/example/repo/pull/1', item.id);
+    const send = (target: LinearSessionService) => target.respond(sessionId, 'response', 'Done after refresh', item.id);
     await assert.rejects(send(service));
     assert.equal(attempts, 1, 'The failing call must never retry the write automatically');
     assert.equal((await store.read()).installation!.revoked, false);
@@ -74,8 +70,8 @@ for (const kind of ['response', 'link'] as const) for (const failure of ['401', 
       assert.equal(attempts, 1, 'An ambiguous write must be reconciled, never blindly retried');
     }
     const accepted = failure === '401' || failure === 'partial';
-    assert.equal(kind === 'response' ? fake.posts.length : fake.links.length, accepted ? 1 : 0);
-    if (kind === 'response') assert.equal(Boolean((await store.read()).receipts[item.id]!.answered), accepted);
+    assert.equal(fake.posts.length, accepted ? 1 : 0);
+    assert.equal(Boolean((await store.read()).receipts[item.id]!.answered), accepted);
   }));
 }
 
@@ -141,15 +137,6 @@ test('a failed rejection cleanup leaves the Linear send intent blocking unsafe r
   assert.equal(writes, 1);
 }));
 
-test('history reads select typed activity content; the API double rejects invalid GraphQL', async () => withTempAnimaHome(async (home) => {
-  const { service } = await seedLinear(home);
-  await service.receive(created(), install);
-  await service.tick();
-  const history = await service.read(sessionId);
-  assert.deepEqual(history.activities.nodes[0]?.content, { type: 'thought', body: 'Received by Anima.' });
-  assert.ok(linearQueryErrors('query { agentSession(id:"synthetic") { activities { nodes { content } } } }').length);
-  assert.ok(linearQueryErrors('query { issue(id:"synthetic") { id }').length);
-}));
 
 test('created and consecutive prompts share the primary session, carry only new text and do not expose credentials', async () => withTempAnimaHome(async (home) => {
   const { service, fake, store } = await seedLinear(home);
@@ -256,16 +243,6 @@ for (const state of ['unstarted', 'started', 'completed', 'canceled']) test(`iss
   assert.equal(fake.calls.filter((c) => c.query.includes('issueUpdate')).length, state === 'unstarted' ? 1 : 0);
 }));
 
-test('PR attachment is idempotent; stopped and revoked sessions cannot make authorized writes', async () => withTempAnimaHome(async (home) => {
-  const { service, fake, identity } = await seedLinear(home); await service.receive(created(), install);
-  await service.attach(sessionId, 'https://github.com/example/repo/pull/1'); await service.attach(sessionId, 'https://github.com/example/repo/pull/1');
-  assert.equal(fake.links.length, 1);
-  await identity.revoke(install.id);
-  await assert.rejects(service.attach(sessionId, 'https://github.com/example/repo/pull/2'));
-  await assert.rejects(identity.graphql(install.id, 'query { viewer { id } }', {}, z.unknown()));
-  assert.equal(fake.links.length, 1);
-  assert.equal((await identity.status()).state, 'revoked');
-}));
 
 test('accepted append ownership and heartbeat survive a slow notification store', async () => withTempAnimaHome(async (home) => {
   const { service, fake, store } = await seedLinear(home);
@@ -299,18 +276,6 @@ test('failed final notice cannot republish settled run inputs; a newer prompt st
   assert.ok(Object.values((await store.read()).receipts).some((r) => !r.settled && r.item));
 }));
 
-test('accepted PR link survives bookkeeping failure and reconciles without another mutation', async (t) => withTempAnimaHome(async (home) => {
-  const { service, fake, store } = await seedLinear(home); await service.receive(created(), install);
-  const update = store.update.bind(store);
-  const mock = t.mock.method(store, 'update', async (op: Parameters<LinearStore['update']>[0]) => {
-    if (fake.links.length) throw new Error('synthetic-local-failure');
-    return update(op);
-  });
-  assert.equal((await service.attach(sessionId, 'https://github.com/example/repo/pull/1')).bookkeeping, 'degraded');
-  assert.equal(fake.links.length, 1); mock.mock.restore();
-  assert.equal((await service.attach(sessionId, 'https://github.com/example/repo/pull/1')).bookkeeping, 'recorded');
-  assert.equal(fake.links.length, 1);
-}));
 
 test('the status tick locks only sessions with pending work', async (t) => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
@@ -350,8 +315,6 @@ test('progress reconciliation keeps requests open; later turns can answer only d
   const { service, fake, store, identity } = await seedLinear(home);
   await service.receive(created(), install); const first = await firstItem();
   await assert.rejects(service.respond(sessionId, 'response', 'Not yet', 'later-run'), /No accepted input/);
-  const url = 'https://github.com/example/repo/pull/1';
-  await assert.rejects(service.attach(sessionId, url, 'later-run'), /No authorized input/);
   await service.markStarted(first, first.id);
   fake.loseResponse = true; await assert.rejects(service.respond(sessionId, 'thought', 'Started', first.id));
   fake.loseResponse = false;
@@ -359,19 +322,15 @@ test('progress reconciliation keeps requests open; later turns can answer only d
   await recovered.respond(sessionId, 'thought', 'Started', first.id);
   assert.equal(fake.posts.length, 1); assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
   await assert.rejects(recovered.respond(sessionId, 'response', 'Not this running turn', 'later-run'), /No accepted input/);
-  await assert.rejects(recovered.attach(sessionId, url, 'later-run'), /No authorized input/);
   await new WakeQueueService('scout').complete(first.id); await recovered.markSettled(first);
   // A delivered but unanswered background request must survive receipt pruning.
   await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!,
     receivedAt: new Date(Date.now() - 40 * 86400_000).toISOString(), lastActivityAt: undefined } } }));
   await recovered.receive(created(randomUUID()), install);
   assert.ok((await store.read()).receipts[first.id]);
-  await recovered.attach(sessionId, url, 'later-run'); await recovered.attach(sessionId, url, 'later-run');
-  assert.deepEqual(fake.links, [url]);
   await recovered.respond(sessionId, 'response', 'Finished', 'later-run');
   await recovered.respond(sessionId, 'response', 'Finished', 'later-run');
   await assert.rejects(recovered.respond(sessionId, 'response', 'Extra result', 'later-run'), /No accepted input/);
-  await assert.rejects(recovered.attach(sessionId, url, 'later-run'), /No authorized input/);
   assert.deepEqual(fake.posts.map((p) => p.content.type), ['thought', 'response']);
   assert.equal((await store.read()).receipts[first.id]!.answered, true);
 }));

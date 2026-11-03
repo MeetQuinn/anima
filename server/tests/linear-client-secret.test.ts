@@ -186,34 +186,30 @@ for (const [via, status] of [['refresh', 400], ['save', 400], ['refresh', 401], 
 
 // A write whose credential cannot be obtained never reaches Linear, so its intent
 // is released: once the secret is added, an explicit retry sends it exactly once.
-for (const kind of ['response', 'link'] as const) {
-  test(`a ${kind} stopped by a rejected refresh is never sent and can be retried once the secret is added`, async () => withTempAnimaHome(async (home) => {
-    const fake = new FakeLinear(); fake.refreshRequiresSecret = true;
-    const { identity, service, store } = await seedLinear(home, fake);
-    await service.receive(created(), install);
-    const queue = new WakeQueueService('scout'); const item = (await queue.list())[0]!;
-    await service.markStarted(item, item.id); await queue.complete(item.id); await service.markSettled(item);
-    await store.update((file) => ({ ...file, installation: { ...file.installation!, clientSecret: undefined, expiresAt: 0 } }));
-    const mutation = kind === 'response' ? 'agentActivityCreate' : 'agentSessionUpdate';
-    const sent = () => fake.calls.filter((call) => call.query.includes(mutation) && !call.variables.input?.ephemeral).length;
-    const send = () => kind === 'response'
-      ? service.respond(sessionId, 'response', 'Synthetic complete', item.id)
-      : service.attach(sessionId, 'https://example.com/synthetic', item.id);
-    const before = sent();
+test('a response stopped by a rejected refresh is never sent and can be retried once the secret is added', async () => withTempAnimaHome(async (home) => {
+  const fake = new FakeLinear(); fake.refreshRequiresSecret = true;
+  const { identity, service, store } = await seedLinear(home, fake);
+  await service.receive(created(), install);
+  const queue = new WakeQueueService('scout'); const item = (await queue.list())[0]!;
+  await service.markStarted(item, item.id); await queue.complete(item.id); await service.markSettled(item);
+  await store.update((file) => ({ ...file, installation: { ...file.installation!, clientSecret: undefined, expiresAt: 0 } }));
+  const mutation = 'agentActivityCreate';
+  const sent = () => fake.calls.filter((call) => call.query.includes(mutation) && !call.variables.input?.ephemeral).length;
+  const send = () => service.respond(sessionId, 'response', 'Synthetic complete', item.id);
+  const before = sent();
 
-    await assert.rejects(send(), (error: LinearApiError) => error.oauthError === 'invalid_client');
-    assert.equal(sent(), before, 'nothing reached Linear');
-    assert.deepEqual((await store.read()).operations, {}, 'the unsent intent is released');
-    assert.equal((await identity.status()).clientRejected, true);
+  await assert.rejects(send(), (error: LinearApiError) => error.oauthError === 'invalid_client');
+  assert.equal(sent(), before, 'nothing reached Linear');
+  assert.deepEqual((await store.read()).operations, {}, 'the unsent intent is released');
+  assert.equal((await identity.status()).clientRejected, true);
 
-    assert.equal(await identity.saveClientSecret(install.id, install.clientSecret!), 'saved');
-    await send();
-    await send();
-    assert.equal(sent(), before + 1, 'one explicit retry sends it once; the accepted write is not resent');
-    assert.deepEqual(Object.values((await store.read()).operations).map((op) => op.state), ['accepted']);
-    assert.equal(kind === 'response' ? fake.posts.filter((p) => !p.ephemeral).length : fake.links.length, 1);
-  }));
-}
+  assert.equal(await identity.saveClientSecret(install.id, install.clientSecret!), 'saved');
+  await send();
+  await send();
+  assert.equal(sent(), before + 1, 'one explicit retry sends it once; the accepted write is not resent');
+  assert.deepEqual(Object.values((await store.read()).operations).map((op) => op.state), ['accepted']);
+  assert.equal(fake.posts.filter((p) => !p.ephemeral).length, 1);
+}));
 
 test('revocation and removal clear a stored client secret', async () => withTempAnimaHome(async (home) => {
   const { identity, store } = await seedLinear(home);

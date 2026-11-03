@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { activityRow, isNarrativeStep } from './activities';
+import { buildActivityFeed } from './activity-feed';
 import type { Activity } from '@shared/activity';
 
 function activity(
@@ -399,5 +400,26 @@ describe('activityRow', () => {
       providerToolName: 'webSearch',
       tool: 'codex.webSearch',
     })).target).toBe('rate limit in https://docs.example/search');
+  });
+});
+
+
+describe('Linear API tool steps', () => {
+  it.each(['query', 'mutation', 'subscription', 'unknown'])('shows one completed %s request without claiming a business outcome or creating a message', (operation) => {
+    const payload = { tool: 'anima.linear.api', platform: 'linear', operation, callId: 'api-1' };
+    const started = { ...activity(payload), activityId: 'started' };
+    const completed = { ...activity({ ...payload, outcome: 'request_completed' }, 'tool.call.completed'), activityId: 'completed' };
+    const feed = buildActivityFeed({ events: [started, completed] }, false);
+    expect(feed).toHaveLength(1);
+    expect(feed[0]?.kind).toBe('step');
+    expect(isNarrativeStep(completed)).toBe(true);
+    expect(activityRow(completed).title).toBe('Linear API request completed');
+    expect(activityRow(completed).target).toBe(operation === 'unknown' ? 'Unknown operation' : operation.charAt(0).toUpperCase() + operation.slice(1));
+  });
+  it('shows unknown write outcomes without exposing arbitrary payload content', () => {
+    const record = activity({ tool: 'anima.linear.api', operation: 'mutation', outcome: 'unknown', error: 'PRIVATE_ERROR', query: 'PRIVATE_QUERY' }, 'tool.call.failed');
+    expect(isNarrativeStep(record)).toBe(true);
+    expect(activityRow(record)).toMatchObject({ title: 'Linear API request failed', target: 'Mutation · outcome unknown', kind: 'failure' });
+    expect(JSON.stringify(activityRow(record))).not.toContain('PRIVATE_');
   });
 });

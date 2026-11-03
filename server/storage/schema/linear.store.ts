@@ -39,6 +39,8 @@ const Receipt = z.object({
   lastStatusAttemptAt: z.string().optional(),
 });
 export type LinearReceipt = z.infer<typeof Receipt>;
+// Keep persisted link intents readable for inspection and normal receipt pruning.
+// New external-link writes use the generic API and do not create these intents.
 const Operation = z.object({
   id: z.string(), sessionId: z.string(), kind: z.enum(['activity', 'link']),
   state: z.enum(['sending', 'accepted', 'unknown']), itemIds: z.array(z.string()),

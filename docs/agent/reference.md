@@ -604,4 +604,4 @@ detail line rather than retrying blind.
 
 ## Linear
 
-An installed identity can find and create issues, comment, start a work session proactively, read its app's sessions, report progress or a result, and attach a PR. See [Work in Linear](/agent/linear) for command syntax and result-unknown rules.
+Use `api` for workspace queries and changes, `comment` for ordinary Markdown discussions, and `start` / `respond` for work sessions. `token` supplies current credentials to other programs when needed. See [Work in Linear](/agent/linear) for command syntax and result-unknown rules.
