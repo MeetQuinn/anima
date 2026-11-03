@@ -252,6 +252,11 @@ export type ChoiceResponseInboxItem = z.infer<typeof ChoiceResponseInboxItem>;
 
 export const LinearInboxItem = InboxItemBase.extend({
   kind: z.literal('linear'),
+  action: z.enum(['created', 'prompted']).optional(),
+  activityId: z.string().optional(),
+  sourceTime: z.string().optional(),
+  actorId: z.string().optional(),
+  contextSource: z.enum(['prompt_context', 'fallback']).optional(),
   installationId: z.string(),
   sessionId: z.string(),
   organizationId: z.string(),
@@ -266,6 +271,8 @@ export type LinearInboxItem = z.infer<typeof LinearInboxItem>;
 // Ordinary app notifications carry context without creating a session reply obligation.
 export const LinearNotificationInboxItem = InboxItemBase.extend({
   kind: z.literal('linear_notification'),
+  sourceTime: z.string().optional(),
+  actorId: z.string().optional(),
   installationId: z.string(),
   organizationId: z.string(),
   notificationType: z.string(),

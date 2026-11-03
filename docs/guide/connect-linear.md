@@ -134,7 +134,7 @@ A Stop gets an end notice confirming the stop request, without claiming that ear
 actions or provider background work have been undone.
 Anima filters overlapping notifications, self-authored activity
 and delivery retries. Permission-change
-notifications tell the agent to check current team access. Reactions do not wake
+notifications report added and removed team access. Reactions do not wake
 the agent.
 
 Existing installations need the two additional app webhook subscriptions enabled

@@ -137,7 +137,7 @@ test('permission changes deliver bounded context without session obligations and
   await f.notifications.receive(verified(event), install);
   await f.notifications.receive(verified({ ...event, webhookTimestamp: Date.now() + 1000, addedTeamIds: [...event.addedTeamIds].reverse() }), install);
   assert.equal((await queue.list()).length, 1); assert.equal(f.calls.length, 0);
-  const item = (await queue.list())[0]!; assert.match(buildCodeAgentDeliveryPrompt(item), /anima linear teams/);
+  const item = (await queue.list())[0]!; assert.match(buildCodeAgentDeliveryPrompt(item), /wake=teamAccessChanged/);
   assert.doesNotMatch(buildCodeAgentDeliveryPrompt(item), /linear respond/);
   const config = { agentId: 'scout', stateDir: home };
   assert.equal((await runtimeContextForItemId(item.id, config)).item.id, item.id);
@@ -165,8 +165,10 @@ test('ordinary notifications share the Slack primary session and may finish sile
     const event = notification(); await f.notifications.receive(verified(event), install);
     await waitFor(() => calls.length === 2); await waitFor(async () => (await queue.list()).length === 0);
     assert.equal(calls[1]!.providerSession?.id, 'same-primary-session');
-    assert.match(calls[1]!.prompt, /Linear notification/); assert.match(calls[1]!.prompt, /linear comment --issue/);
-    assert.match(calls[1]!.prompt, /no automatic response is required/);
+    assert.match(calls[1]!.prompt, /Linear conversation update/);
+    assert.match(calls[1]!.prompt, new RegExp(`issue_id=${issueId} comment_id=${event.notification.commentId}`));
+    assert.match(calls[1]!.prompt, /wake=issueNewComment/);
+    assert.doesNotMatch(calls[1]!.prompt, /session_id=/);
     await f.service.completeIdleRuns(async () => true); await f.service.tick();
     assert.equal(f.fake.posts.length, 0); assert.deepEqual((await f.store.read()).receipts, {});
     // An actual work request retains the existing missing-response fallback.
@@ -196,12 +198,11 @@ for (const mentionFirst of [false, true]) test(`comment mentions share one durab
   assert.equal(item!.id, linearCommentItemId(install.id, mention.notification.commentId!));
   assert.equal(item!.kind, 'linear_notification');
   const prompt = buildCodeAgentDeliveryPrompt(item!);
-  assert.match(prompt, /requests directed to you/);
-  assert.match(prompt, new RegExp(`--reply-to ${mention.notification.commentId}`));
-  assert.match(prompt, /Acknowledgements and completion notices do not require another reply/);
-  assert.match(prompt, /Existing Stop instructions still apply/);
-  assert.doesNotMatch(prompt, /linear respond --session/);
-  if (mentionFirst) assert.match(prompt, /Linear mention:/);
+  assert.match(prompt, /Synthetic follow-up to the proactive comment/);
+  assert.match(prompt, new RegExp(`comment_id=${mention.notification.commentId}`));
+  assert.match(prompt, new RegExp(`user_id=${humanId}`));
+  assert.doesNotMatch(prompt, /session_id=/);
+  assert.match(prompt, new RegExp(`wake=${first.action}`));
   await queue.complete(item!.id);
   await f.notifications.receive(verified(second), install);
   assert.equal((await queue.list()).length, 0);

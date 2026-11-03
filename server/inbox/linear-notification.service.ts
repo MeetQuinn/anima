@@ -45,13 +45,13 @@ export class LinearNotificationService {
       handling: { status: 'queued', createdAt: receivedAt, updatedAt: receivedAt, queuedAt: receivedAt },
     };
     if (event.type === 'PermissionChange') {
+      item.sourceTime = event.createdAt;
       const digest = createHash('sha256').update(JSON.stringify([event.createdAt, event.canAccessAllPublicTeams,
         [...event.addedTeamIds].sort(), [...event.removedTeamIds].sort()])).digest('hex');
       key = `linear:${install.id}:permissions:${digest}`;
       text = [`Linear team access changed. All public teams: ${event.canAccessAllPublicTeams ? 'yes' : 'no'}.`,
         `Added team IDs: ${event.addedTeamIds.join(', ') || 'none'}.`,
-        `Removed team IDs: ${event.removedTeamIds.join(', ') || 'none'}.`,
-        'Use anima linear teams to check current access before continuing affected work.'].join('\n');
+        `Removed team IDs: ${event.removedTeamIds.join(', ') || 'none'}.`].join('\n');
     } else {
       const n = event.notification;
       // App-origin mentions may have no AgentSessionEvent. Accept their comment
@@ -77,10 +77,12 @@ export class LinearNotificationService {
       }
       item.issueId = n.issue.id;
       item.issueUrl = n.issue.url;
+      item.sourceTime = n.updatedAt;
+      if (n.actorId) item.actorId = n.actorId;
       if (n.commentId) item.commentId = n.commentId;
       if (n.parentCommentId) item.parentCommentId = n.parentCommentId;
       if (n.actor?.name) item.actorName = n.actor.name;
-      text = [`${n.issue.identifier}: ${n.issue.title}`, `Event: ${n.type}.`, n.comment?.body].filter(Boolean).join('\n\n');
+      text = [`${n.issue.identifier}: ${n.issue.title}`, n.comment?.body].filter(Boolean).join('\n\n');
     }
     item.id = key;
     item.text = text;

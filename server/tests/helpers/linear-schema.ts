@@ -44,12 +44,12 @@ const schema = buildSchema(`
   type Team { id: ID!, key: String!, name: String!, states: StateConnection! }
   type StateConnection { nodes: [State!]! }
   input IssueUpdateInput { stateId: String }
-  type AgentSession { id: ID!, appUser: User!, creator: User, issue: Issue, comment: Comment, status: String!, url: String, activities(first: Int): ActivityConnection!, externalLinks: [ExternalLink!]! }
+  type AgentSession { id: ID!, appUser: User!, creator: User, issue: Issue, comment: Comment, status: String!, url: String, activities(first: Int, after: String): ActivityConnection!, externalLinks: [ExternalLink!]! }
   type SessionPayload { success: Boolean!, agentSession: AgentSession! }
   input AgentSessionCreateOnIssue { issueId: String! }
   input AgentSessionCreateOnComment { commentId: String! }
   type ExternalLink { url: String! }
-  type ActivityConnection { nodes: [AgentActivity!]! }
+  type ActivityConnection { nodes: [AgentActivity!]!, pageInfo: PageInfo! }
   type AgentActivity { id: ID!, agentSession: AgentSession!, content: AgentActivityContent!, createdAt: String! }
   union AgentActivityContent = AgentActivityThoughtContent | AgentActivityPromptContent | AgentActivityResponseContent | AgentActivityErrorContent | AgentActivityElicitationContent | AgentActivityActionContent
   type AgentActivityThoughtContent { type: String!, body: String! }
