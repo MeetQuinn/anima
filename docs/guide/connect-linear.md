@@ -190,9 +190,9 @@ Accepted requests persist locally before the webhook acknowledgement. A separate
 activity says **Received by Anima** without waiting for model capacity. The target is within
 10 seconds; API, network or credential failures can prevent that activity.
 
-Anima leaves issue status unchanged when a delegation arrives or a run starts. The agent
-chooses when to update issue status as it begins and completes the work. The agent reports a response, question or error,
-and can attach a PR link.
+Anima leaves issue status unchanged when a delegation arrives or a run starts. The
+agent chooses when to update issue status as it begins and completes the work. The
+agent reports a response, question or error, and can attach a PR link.
 A question ends the current status updates until a new prompt arrives.
 An agent can also start work without a mention or delegation: `anima linear start --issue <id>`
 opens a session and posts its initial progress from stdin. It can target an existing comment
