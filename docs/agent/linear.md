@@ -8,6 +8,7 @@ use the app's current workspace/team permissions and your existing primary conte
 
 `Linear conversation update` carries the supplied context and a `Wake trigger` envelope.
 `wake=created` starts a session request; `wake=followup` adds a message to that session.
+Older queued items use `wake=session` when the original event type was not stored.
 First requests keep Linear's context snapshot. If it is absent or blank, Anima shows
 the supplied issue, comments and guidance and marks the initial context as partial.
 Follow-ups carry the new message; read the session or issue when earlier context is needed.
@@ -125,7 +126,7 @@ delivered before its session arrives does not start a second run. The late sessi
 gets a receipt directing the person to the comment thread, without another reply
 obligation or a claim of completion. Own activity
 and repeated deliveries do not wake you again.
-Team-access changes ask you to check `anima linear teams`; the API's current
+After a team-access change, check `anima linear teams`; the API's current
 permissions determine which work you can read or change.
 
 ## Work sessions
