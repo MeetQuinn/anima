@@ -1,11 +1,13 @@
 import { buildSchema, parse, validate } from 'graphql';
 
-// A bounded contract fixture, checked against Linear's public schema on Oct10.
+// A bounded contract fixture, checked against Linear's public schema on Oct10;
+// users, delegate and agentSessions fields checked on Nov 3.
 // Unlike substring-only mocks, this rejects malformed queries and union selections.
 const schema = buildSchema(`
   scalar JSONObject
   type Query {
     teams(first: Int, after: String): TeamConnection!
+    users(filter: UserFilter, first: Int, after: String): UserConnection!
     searchIssues(term: String!, first: Int, after: String): IssueSearchPayload!
     comment(id: String!): Comment!
     viewer: User!
@@ -24,12 +26,14 @@ const schema = buildSchema(`
     agentSessionCreateOnIssue(input: AgentSessionCreateOnIssue!): SessionPayload!
     agentSessionCreateOnComment(input: AgentSessionCreateOnComment!): SessionPayload!
   }
-  type User { id: ID!, app: Boolean!, name: String! }
+  type User { id: ID!, app: Boolean!, name: String!, displayName: String! }
+  type UserConnection { nodes: [User!]!, pageInfo: PageInfo! }
   type Organization { id: ID!, name: String! }
   type Application { clientId: String! }
   type Success { success: Boolean! }
   type ActivityPayload { success: Boolean!, agentActivity: AgentActivity! }
-  type Issue { id: ID!, identifier: String!, title: String!, description: String, url: String!, delegate: User, state: State!, team: Team!, comments(first: Int, after: String): CommentConnection! }
+  type Issue { id: ID!, identifier: String!, title: String!, description: String, url: String!, delegate: User, state: State!, team: Team!, comments(first: Int, after: String): CommentConnection!, agentSessions(first: Int, after: String): AgentSessionConnection! }
+  type AgentSessionConnection { nodes: [AgentSession!]!, pageInfo: PageInfo! }
   type PageInfo { hasNextPage: Boolean!, endCursor: String }
   type IssueSearchPayload { nodes: [Issue!]!, pageInfo: PageInfo! }
   type IssuePayload { success: Boolean!, issue: Issue }
@@ -37,7 +41,8 @@ const schema = buildSchema(`
   type Comment { id: ID!, issueId: String, agentSession: AgentSession, body: String!, url: String!, createdAt: String!, issue: Issue, parent: Comment, user: User, children(first: Int, after: String, filter: CommentFilter): CommentConnection! }
   input CommentFilter { user: UserFilter, parent: NullableCommentFilter }
   input NullableCommentFilter { id: IDComparator }
-  input UserFilter { id: IDComparator }
+  input UserFilter { id: IDComparator, app: BooleanComparator }
+  input BooleanComparator { eq: Boolean }
   input IDComparator { eq: ID }
   type CommentConnection { nodes: [Comment!]!, pageInfo: PageInfo! }
   type TeamConnection { nodes: [Team!]!, pageInfo: PageInfo! }
@@ -47,7 +52,7 @@ const schema = buildSchema(`
   type State { id: ID!, name: String!, type: String!, position: Float! }
   type Team { id: ID!, key: String!, name: String!, states(first: Int, after: String): StateConnection! }
   type StateConnection { nodes: [State!]!, pageInfo: PageInfo! }
-  input IssueUpdateInput { stateId: String }
+  input IssueUpdateInput { stateId: String, delegateId: String }
   enum PaginationOrderBy { createdAt updatedAt }
   type AgentSession { createdAt: String!, id: ID!, appUser: User!, creator: User, issue: Issue, comment: Comment, status: String!, url: String, activities(first: Int, after: String, last: Int, orderBy: PaginationOrderBy): ActivityConnection!, externalLinks: [ExternalLink!]! }
   type SessionPayload { success: Boolean!, agentSession: AgentSession! }

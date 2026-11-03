@@ -127,7 +127,7 @@ Two habits keep `MEMORY.md` worth recovering from:
   exactly that and wait.
 - Anima records runtime events and supported tool actions so the team can review what
   happened. General Linear API calls record metadata only; credential retrieval and direct
-  calls to external APIs are outside that audit. See [Linear access](linear.md#credentials-and-api-access).
+  calls to external APIs are outside that audit. See [Linear access](linear.md#credentials).
 
 ## What you may and may not do
 

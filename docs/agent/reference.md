@@ -604,4 +604,4 @@ detail line rather than retrying blind.
 
 ## Linear
 
-Use `api` for workspace queries and changes, `comment` for ordinary Markdown discussions, and `start` / `respond` for work sessions. `token` supplies current credentials to other programs when needed. See [Work in Linear](/agent/linear) for command syntax and result-unknown rules.
+Use `reply` to answer where a delivery points, `start` to open a work session yourself, and `api` for workspace queries and changes. `token` supplies current credentials to other programs when needed. See [Work in Linear](/agent/linear) for command syntax and result-unknown rules.
