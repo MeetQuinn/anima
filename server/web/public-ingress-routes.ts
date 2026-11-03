@@ -93,7 +93,7 @@ export function registerPublicIngressRoutes(fastify: FastifyInstance): void {
   fastify.get(PROBE_PATH, async (request, reply) => {
     const nonce = (request.params as { nonce?: string }).nonce ?? '';
     reply.header('cache-control', 'no-store');
-    if (!answerProbe(nonce)) return reply.code(404).send({ error: 'unknown_probe' });
+    if (!answerProbe(nonce, 'webhooks')) return reply.code(404).send({ error: 'unknown_probe' });
     return { probe: nonce };
   });
 }

@@ -75,5 +75,13 @@ export interface PublicUrlCheck {
    * through the public address unless something in front of it asks first.
    */
   passwordSet: boolean;
+  /**
+   * What a request for a dashboard API path, sent without credentials through the
+   * address, got. `open`: this dashboard answered it, so anyone who can open the
+   * address gets the dashboard. Otherwise something asked first or answered
+   * instead: the dashboard password (401), a sign-in gateway, or a proxy that
+   * forwards only some paths. Absent without an address or an HTTP answer.
+   */
+  dashboard?: { open: boolean; status: number };
   checkedAt: string;
 }

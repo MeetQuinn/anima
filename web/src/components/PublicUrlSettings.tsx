@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Loader2 } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, ShieldAlert } from 'lucide-react';
 import { PublicUrl, type PublicUrlCheck } from '@shared/public-url';
 import { checkPublicUrl, fetchPublicUrl, publicUrlCheckKey, publicUrlKey, savePublicUrl } from '@/api/public-url';
 import { linearSetupKey } from '@/api/linear';
@@ -127,10 +127,53 @@ function failureText(check: PublicUrlCheck): string {
   }
 }
 
+const SET_PASSWORD = (
+  <code className="break-all font-mono text-[11px] text-text-muted">{SET_PASSWORD_COMMAND}</code>
+);
+
 /**
- * Whether requests through the saved address arrive at this dashboard. It does
- * not cover the runtime's receiver or the app in Linear; "Last event" on a
- * connected agent is that evidence. Runs when shown and after every save.
+ * Shown when the check opened the dashboard through the address without signing
+ * in. A warning only: Anima serves the address either way.
+ */
+function OpenDashboardWarning() {
+  return (
+    <div role="alert" className="flex gap-2.5 rounded-sm border border-health-error/50 bg-health-error-soft px-3 py-3">
+      <ShieldAlert className="mt-0.5 size-4 shrink-0 text-health-error" aria-hidden="true" />
+      <div className="min-w-0 space-y-1 font-sans text-[12px] leading-relaxed">
+        <p className="text-[13px] font-semibold text-health-error">Anyone can open the dashboard at this address</p>
+        <p className="max-w-prose text-text">
+          Anima opened it through this address without signing in. Whoever has the address can use the
+          dashboard, including its agents and settings.
+        </p>
+        <p className="max-w-prose text-text-muted">
+          Put a sign-in gateway such as Cloudflare Access in front of it and let{' '}
+          <span className="font-mono text-[11px] text-text">/webhooks/</span> through, or set a dashboard password
+          on this machine: {SET_PASSWORD}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** What protects the dashboard at a reachable address that did not open it. */
+function protection(check: PublicUrlCheck) {
+  if (check.passwordSet) return 'A dashboard password is set. The dashboard asks for it wherever it opens.';
+  if (check.dashboard)
+    return `No dashboard password is set, but Anima couldn’t open the dashboard through this address without signing in (HTTP ${check.dashboard.status}). Keep what is in front of it.`;
+  return (
+    <>
+      No dashboard password is set. If the whole address is forwarded here, anyone who opens it gets the
+      dashboard unless a sign-in gateway in front of it asks first. To have the dashboard ask too, set a
+      password on this machine: {SET_PASSWORD}
+    </>
+  );
+}
+
+/**
+ * Whether requests through the saved address arrive at this dashboard, and whether
+ * the dashboard opens there without signing in. It does not cover the runtime's
+ * receiver or the app in Linear; "Last event" on a connected agent is that
+ * evidence. Runs when shown and after every save.
  */
 export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
   const check = useQuery({
@@ -164,35 +207,29 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
     );
   }
   const result = check.data;
-  if (!result.reachable) {
-    return (
-      <div role="alert" className="flex gap-2.5 rounded-sm border border-health-error/25 bg-health-error-soft/50 px-3 py-2.5">
-        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-health-error" aria-hidden="true" />
-        <div className="min-w-0 space-y-0.5 font-sans text-[12px] leading-relaxed">
-          <p className="font-medium text-health-error">Not reachable yet</p>
-          <p className="text-text-muted">
-            {failureText(result)} {again}
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const open = result.dashboard?.open === true;
   return (
-    <div role="status" className="space-y-1 font-sans text-[12px] leading-relaxed">
-      <p className="flex flex-wrap items-center gap-x-1.5 text-health-ok">
-        <Check className="size-3.5" aria-hidden="true" /> Reachable. Requests to this address arrive at this Anima.
-        <span className="text-text-subtle">{again}</span>
-      </p>
-      {result.passwordSet ? (
-        <p className="text-text-subtle">A dashboard password is set. The dashboard asks for it wherever it opens.</p>
+    <div className="space-y-2.5">
+      {result.reachable ? (
+        <div role="status" className="space-y-1 font-sans text-[12px] leading-relaxed">
+          <p className="flex flex-wrap items-center gap-x-1.5 text-health-ok">
+            <Check className="size-3.5" aria-hidden="true" /> Reachable. Requests to this address arrive at this Anima.
+            <span className="text-text-subtle">{again}</span>
+          </p>
+          {!open && <p className="max-w-prose text-text-subtle">{protection(result)}</p>}
+        </div>
       ) : (
-        <p className="max-w-prose text-text-subtle">
-          No dashboard password is set. If the whole address is forwarded here, anyone who opens it gets the
-          dashboard unless a sign-in gateway in front of it asks first. To have the dashboard ask too, set a
-          password on this machine:{' '}
-          <code className="break-all font-mono text-[11px] text-text-muted">{SET_PASSWORD_COMMAND}</code>
-        </p>
+        <div role="alert" className="flex gap-2.5 rounded-sm border border-health-error/25 bg-health-error-soft/50 px-3 py-2.5">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-health-error" aria-hidden="true" />
+          <div className="min-w-0 space-y-0.5 font-sans text-[12px] leading-relaxed">
+            <p className="font-medium text-health-error">Not reachable yet</p>
+            <p className="text-text-muted">
+              {failureText(result)} {again}
+            </p>
+          </div>
+        </div>
       )}
+      {open && <OpenDashboardWarning />}
     </div>
   );
 }

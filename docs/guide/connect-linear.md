@@ -86,6 +86,15 @@ asks for it at every address, including its local one. If you only need Linear, 
 just `/webhooks/` and `/api/linear/oauth/callback`, plus `/webhook` for older apps, instead
 of the whole address.
 
+The same check shows whether the dashboard is open at the address. Alongside the
+`/webhooks/` probe, Anima requests a one-time dashboard path under `/api/` through the
+address, without signing in. If this Anima answers it, nothing in front of the dashboard
+asked first and the dashboard has no password, so **Settings → Server** and the Linear
+dialog warn that anyone can open the dashboard at this address. The warning blocks
+nothing. A redirect to a sign-in page, a `401` or `403`, another site's page, a `404`
+from a proxy that forwards only some paths, or no answer does not count as open. With a
+dashboard password, the dashboard itself answers `401`.
+
 The OAuth callback only returns the browser to the dashboard that started authorization.
 That dashboard checks the original login session before exchanging the code. Authorize in
 the same browser and keep that dashboard reachable from the device you use. The browser

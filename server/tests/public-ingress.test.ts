@@ -94,26 +94,38 @@ test('a signed event through the dashboard reaches the runtime receiver and wake
   }
 }));
 
+const PUBLIC = 'https://agents.example.com';
+const isWebhooksProbe = (input: Parameters<typeof fetch>[0]) => new URL(String(input)).pathname.startsWith('/webhooks/');
+
+/** A tunnel that forwards every request through the public address to this dashboard. */
+function tunnelTo(app: ReturnType<typeof buildWebApp>, requested: string[] = []): typeof fetch {
+  return async (input, init) => {
+    const url = new URL(String(input));
+    requested.push(url.href);
+    assert.equal(init?.redirect, 'manual');
+    assert.equal(init?.credentials, 'omit');
+    const response = await app.inject({ url: url.pathname, headers: { host: url.host } });
+    return new Response(response.body, { status: response.statusCode, headers: { 'content-type': String(response.headers['content-type'] ?? '') } });
+  };
+}
+
 test('the reachability check proves the public address reaches this Anima and names what is in the way', async () => withTempAnimaHome(async () => {
   const app = buildWebApp();
   try {
-    assert.deepEqual(await checkPublicUrl(async () => { throw new Error('unused'); }).then(({ reachable, failure }) => ({ reachable, failure })), { reachable: false, failure: 'not_configured' });
-    await defaultServerSettingsService.setPublicUrl({ publicUrl: 'https://agents.example.com' });
-    let requested = '';
-    const throughTunnel: typeof fetch = async (input, init) => {
-      const url = new URL(String(input));
-      requested = url.href;
-      assert.equal(init?.redirect, 'manual');
-      const response = await app.inject({ url: url.pathname, headers: { host: url.host } });
-      return new Response(response.body, { status: response.statusCode, headers: { 'content-type': String(response.headers['content-type'] ?? '') } });
-    };
-    const reached = await checkPublicUrl(throughTunnel);
-    assert.match(requested, /^https:\/\/agents\.example\.com\/webhooks\/probe\/[A-Za-z0-9_-]+$/);
+    assert.deepEqual(await checkPublicUrl(async () => { throw new Error('unused'); }).then(({ reachable, failure, dashboard }) => ({ reachable, failure, dashboard })), { reachable: false, failure: 'not_configured', dashboard: undefined });
+    await defaultServerSettingsService.setPublicUrl({ publicUrl: PUBLIC });
+    const requested: string[] = [];
+    const reached = await checkPublicUrl(tunnelTo(app, requested));
+    assert.equal(requested.length, 2);
+    const webhooksProbe = requested.find((url) => /^https:\/\/agents\.example\.com\/webhooks\/probe\/[A-Za-z0-9_-]+$/.test(url));
+    const dashboardProbe = requested.find((url) => /^https:\/\/agents\.example\.com\/api\/settings\/public-url\/probe\/[A-Za-z0-9_-]+$/.test(url));
+    assert.ok(webhooksProbe && dashboardProbe, requested.join(' '));
     assert.equal(reached.reachable, true);
     assert.equal(reached.passwordSet, false);
     // A probe answers once, and only while its check runs.
-    assert.equal((await app.inject({ url: new URL(requested).pathname })).statusCode, 404);
-    assert.equal((await app.inject({ url: '/webhooks/probe/guessed' })).statusCode, 404);
+    for (const url of [webhooksProbe, dashboardProbe, '/webhooks/probe/guessed', '/api/settings/public-url/probe/guessed']) {
+      assert.equal((await app.inject({ url: new URL(url, PUBLIC).pathname })).statusCode, 404, url);
+    }
 
     const answering = (status: number, body = '') => async () => new Response(body, { status, headers: status >= 300 && status < 400 ? { location: 'https://team.cloudflareaccess.com/' } : {} });
     for (const [fetcher, failure, status] of [
@@ -125,15 +137,69 @@ test('the reachability check proves the public address reaches this Anima and na
       [answering(530), 'unreachable', 530],
     ] as const) {
       const result = await checkPublicUrl(fetcher);
-      assert.deepEqual([result.reachable, result.failure, result.status], [false, failure, status]);
+      assert.deepEqual([result.reachable, result.failure, result.status, result.dashboard], [false, failure, status, { open: false, status }]);
     }
     const network = await checkPublicUrl(async () => { throw new TypeError('fetch failed'); });
-    assert.deepEqual([network.reachable, network.failure, network.status], [false, 'unreachable', undefined]);
+    assert.deepEqual([network.reachable, network.failure, network.status, network.dashboard], [false, 'unreachable', undefined, undefined]);
     const slow = await checkPublicUrl(async () => { throw new DOMException('timed out', 'TimeoutError'); });
     assert.equal(slow.failure, 'timeout');
 
     await defaultDashboardAuthService.setPassword('synthetic-dashboard-password');
-    assert.equal((await checkPublicUrl(throughTunnel)).passwordSet, true);
+    assert.equal((await checkPublicUrl(tunnelTo(app))).passwordSet, true);
+  } finally { await app.close(); }
+}));
+
+test('the dashboard counts as open at the public address only when this dashboard answers a request without sign-in', async () => withTempAnimaHome(async () => {
+  await defaultServerSettingsService.setPublicUrl({ publicUrl: PUBLIC });
+  const app = buildWebApp();
+  const tunnel = tunnelTo(app);
+  try {
+    const open = await checkPublicUrl(tunnel);
+    assert.deepEqual([open.reachable, open.dashboard], [true, { open: true, status: 200 }]);
+
+    // Something in front of the dashboard answers its path and lets /webhooks/ through.
+    const inFront = (status: number, body = '', headers: Record<string, string> = {}): typeof fetch => async (input, init) =>
+      isWebhooksProbe(input) ? tunnel(input, init) : new Response(body, { status, headers });
+    for (const [label, fetcher, status] of [
+      ['a gateway redirects to its sign-in', inFront(302, '', { location: 'https://team.cloudflareaccess.com/cdn-cgi/access/login' }), 302],
+      ['a gateway asks for credentials', inFront(401), 401],
+      ['an access rule refuses', inFront(403, 'Forbidden'), 403],
+      ['a gateway serves its sign-in page as 200', inFront(200, '<!doctype html><form>Sign in</form>'), 200],
+      ['another site, even another Anima\'s dashboard page', inFront(200, '<!doctype html><title>Anima</title>'), 200],
+      ['another Anima echoes only probes it issued', inFront(200, '{"probe":"someone-elses"}'), 200],
+      ['the proxy forwards only /webhooks/', inFront(404, 'Not Found'), 404],
+      ['the gateway fails', inFront(502), 502],
+    ] as const) {
+      const result = await checkPublicUrl(fetcher);
+      assert.deepEqual([result.reachable, result.dashboard], [true, { open: false, status }], label);
+    }
+
+    // No HTTP answer says nothing either way.
+    for (const error of [new TypeError('fetch failed'), new DOMException('timed out', 'TimeoutError')]) {
+      const result = await checkPublicUrl(async (input, init) => isWebhooksProbe(input) ? tunnel(input, init) : Promise.reject(error));
+      assert.deepEqual([result.reachable, result.dashboard], [true, undefined], error.name);
+    }
+
+    // Open does not depend on Linear's path getting through.
+    const webhooksBlocked = await checkPublicUrl(async (input, init) => isWebhooksProbe(input) ? new Response('', { status: 403 }) : tunnel(input, init));
+    assert.deepEqual([webhooksBlocked.reachable, webhooksBlocked.failure, webhooksBlocked.dashboard], [false, 'gateway', { open: true, status: 200 }]);
+
+    // Each path answers only its own probe, so neither can stand in for the other.
+    const crossed: number[] = [];
+    await checkPublicUrl(async (input, init) => {
+      const url = new URL(String(input));
+      const nonce = url.pathname.split('/').at(-1);
+      const other = isWebhooksProbe(input) ? `/api/settings/public-url/probe/${nonce}` : `/webhooks/probe/${nonce}`;
+      crossed.push((await app.inject({ url: other })).statusCode);
+      return tunnel(input, init);
+    });
+    assert.deepEqual(crossed, [404, 404]);
+
+    // With a dashboard password the same request gets the dashboard's 401: not open.
+    await defaultDashboardAuthService.setPassword('synthetic-dashboard-password');
+    const guarded = await checkPublicUrl(tunnel);
+    assert.deepEqual([guarded.reachable, guarded.passwordSet, guarded.dashboard], [true, true, { open: false, status: 401 }]);
+    assert.equal((await app.inject({ url: '/api/settings/public-url/probe/guessed', headers: { host: 'agents.example.com' } })).statusCode, 401);
   } finally { await app.close(); }
 }));
 
