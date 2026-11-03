@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import { Readable } from 'node:stream';
 import { Command } from 'commander';
 import { z } from 'zod';
@@ -298,7 +299,10 @@ test('removed Linear commands fail before credentials or effects, and help gives
   const linear = cli.commands.find((c) => c.name() === 'linear')!;
   assert.deepEqual(linear.commands.map((c) => c.name()).sort(), ['api', 'comment', 'respond', 'start', 'token']);
   let help = ''; linear.configureOutput({ writeOut: (text) => { help += text; } }); linear.outputHelp();
-  assert.match(help, /Use api.*session reads/); assert.match(help, /docs\/agent\/linear.md/);
+  assert.match(help, /Use api.*session reads/);
+  const guidePath = help.match(/Examples and pagination: (.+)/)?.[1]!;
+  assert.equal(isAbsolute(guidePath), true);
+  assert.match(await readFile(guidePath, 'utf8'), /# Work in Linear/);
   assert.equal(requests, 0);
 });
 
@@ -322,7 +326,7 @@ test('an agent can read paginated session context through the documented API, th
     if (!request.query.includes('activities(first:50')) return originalFetch(url, init);
     assert.deepEqual(linearQueryErrors(request.query), []);
     const start = Number(request.variables.after ?? 0), nodes = rows.slice(start, start + 50), end = start + nodes.length;
-    return Response.json({ data: { agentSession: { id: request.variables.id, status: 'active', appUser: { id: install.appUserId },
+    return Response.json({ data: { agentSession: { id: request.variables.id, status: 'active', appUser: { id: install.appUserId }, externalLinks: fake.links.map((url) => ({ url })),
       activities: { nodes, pageInfo: { hasNextPage: end < rows.length, endCursor: String(end) } } } } });
   };
   const { service, store } = await seedLinear(home, fake);
@@ -342,7 +346,8 @@ test('an agent can read paginated session context through the documented API, th
   const link = (await documentedApiExamples()).find((e) => e.query.includes('agentSessionUpdate'))!;
   link.variables.id = sessionId; stdin = JSON.stringify(link); await run('api');
   assert.equal(JSON.parse(output.at(-1)!).agentSessionUpdate.success, true);
-  assert.deepEqual(fake.links, ['https://github.com/example/repo/pull/1']);
+  stdin = JSON.stringify(input); await run('api');
+  assert.deepEqual(JSON.parse(output.at(-1)!).agentSession.externalLinks, [{ url: 'https://github.com/example/repo/pull/1' }]);
   const markdown = '**Done**\n\n- Verified `pagination`\n- [PR](https://example.com/pr)';
   stdin = markdown; await run('respond', '--session', sessionId); await run('respond', '--session', sessionId);
   assert.equal(fake.posts.length, 1); assert.equal(fake.posts[0]!.content.body, markdown);

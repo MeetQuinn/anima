@@ -181,6 +181,8 @@ activity recovers it. See [Linear’s interaction guidance](https://linear.app/d
 
 Linear's stop signal cancels pending work or requests interruption of its associated run.
 A primary run can contain other accepted messages; interrupting it may affect them too.
+Changes made through `anima linear api`, including adding a PR link, use Linear's
+permissions and are not blocked by Anima's local Stop checks.
 When the inbox run has already ended, Stop closes the request to later replies; it does
 not cancel provider-native background tasks. The notice makes that limit explicit.
 The runtime does not replay accepted input automatically.
@@ -224,9 +226,9 @@ responses. The credential file uses mode `0600`. This protects it from other OS 
 from processes running as the same user. Include it in your private runtime backup policy;
 never attach it to a support report.
 
-An accepted external activity and local audit failure are different outcomes. If a response
-is lost, Anima stores an unknown result and checks the activity/link before a retry. It does
-not blindly resend. An unavailable lookup is not proof that nothing was sent.
+An accepted external activity and local audit failure are different outcomes. If the
+response to a session activity is lost, Anima stores an unknown result and checks that
+activity before a retry. It does not blindly resend. An unavailable lookup is not proof that nothing was sent.
 
 Protocol references: [app manifests](https://linear.app/developers/oauth-app-manifests),
 [OAuth](https://linear.app/developers/oauth-2-0-authentication),

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import { z } from 'zod';
 import { resolveAgentIdFrom } from '../cli/shared.js';
+import { resolveAnimaReferencePaths } from '../runtime/anima-reference.js';
 import { readStdin, resolveToolItemId } from './tool-context.js';
 import { LinearActivityKind } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
@@ -22,7 +24,11 @@ function serviceFor(agent: string | undefined): LinearSessionService {
 
 export function registerLinearCommands(program: Command): void {
   const linear = program.command('linear').description('Use this agent’s Linear identity for issues, comments and work sessions.').option('--agent <id>', 'agent identity')
-    .addHelpText('after', '\nUse api for issue and session reads, issue changes and external links.\nExamples and pagination: docs/agent/linear.md');
+    .addHelpText('after', () => {
+      const { docsPath } = resolveAnimaReferencePaths();
+      const guide = docsPath ? join(docsPath, 'agent', 'linear.md') : 'https://github.com/MeetQuinn/anima/blob/main/docs/agent/linear.md';
+      return `\nUse api for issue and session reads, issue changes and external links.\nExamples and pagination: ${guide}`;
+    });
   // Credential output is for programmatic consumption, not activity records.
   // Arbitrary API calls record only fixed metadata, never their bodies.
   linear.command('token').description('Get a current access token (JSON); keep it private.')
@@ -85,7 +91,7 @@ export function registerLinearCommands(program: Command): void {
       });
       console.log(JSON.stringify(result, null, 2));
     });
-  linear.command('respond').requiredOption('--session <id>', 'Linear session UUID')
+  linear.command('respond').description('Reply to a work session; Markdown body on stdin.').requiredOption('--session <id>', 'Linear session UUID')
     .option('--kind <kind>', 'thought (progress), response, elicitation or error', 'response').action(async (_options, command: Command) => {
       const opts = command.optsWithGlobals();
       const sessionId = z.string().uuid().parse(opts.session);

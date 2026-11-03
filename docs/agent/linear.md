@@ -144,7 +144,8 @@ JSON
 
 Generate an issue UUID once, record it, and replace `ISSUE_UUID` and `TEAM_UUID` below.
 On an uncertain result, query `issue(id: ...)` with that same UUID before retrying.
-The API does not generate or track creation IDs for you.
+`anima linear api` does not generate or print an ID before sending. If you omit `id`,
+Linear assigns one; a lost response can then leave you without that ID for inspection.
 
 ```sh
 anima linear api <<'JSON'
@@ -159,7 +160,7 @@ GraphQL union; keep the fragments when copying this query.
 
 ```sh
 anima linear api <<'JSON'
-{"query":"query($id:String!,$after:String) { agentSession(id:$id) { id status appUser { id } activities(first:50,after:$after) { nodes { id createdAt user { id name } promptAuthor { id name } content { ... on AgentActivityThoughtContent { type body } ... on AgentActivityPromptContent { type body } ... on AgentActivityResponseContent { type body } ... on AgentActivityErrorContent { type body } ... on AgentActivityElicitationContent { type body } ... on AgentActivityActionContent { type action parameter result } } } pageInfo { hasNextPage endCursor } } } }","variables":{"id":"SESSION_UUID","after":null}}
+{"query":"query($id:String!,$after:String) { agentSession(id:$id) { id status appUser { id } externalLinks { url } activities(first:50,after:$after) { nodes { id createdAt user { id name } promptAuthor { id name } content { ... on AgentActivityThoughtContent { type body } ... on AgentActivityPromptContent { type body } ... on AgentActivityResponseContent { type body } ... on AgentActivityErrorContent { type body } ... on AgentActivityElicitationContent { type body } ... on AgentActivityActionContent { type action parameter result } } } pageInfo { hasNextPage endCursor } } } }","variables":{"id":"SESSION_UUID","after":null}}
 JSON
 ```
 
@@ -179,7 +180,8 @@ JSON
 ```
 
 This generic call uses Linear's authorization; it does not enforce Anima's local Stop,
-ownership or duplicate-send checks. An unknown result needs inspection before retrying.
+ownership or duplicate-send checks. If the result is unknown, use the session query
+above and inspect `agentSession.externalLinks` for that URL before considering a retry.
 You can also include the PR link in your Markdown `respond` body.
 
 ## Notifications and follow-up
