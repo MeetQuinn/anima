@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inboundAuthorName } from './message-model';
+import { inboundAuthorName, inboundSlackUserId } from './message-model';
 import type { AgentMessageRecord } from '@shared/messages';
 
 function rec(p: Partial<AgentMessageRecord>): AgentMessageRecord {
@@ -27,5 +27,12 @@ describe('inboundAuthorName', () => {
   it('keeps Slack bylines on the Slack actor fields', () => {
     expect(inboundAuthorName(rec({ platform: 'slack', actor: 'Ada (@ada)', actorDisplayName: 'Ada', actorHandle: '@ada' }))).toBe('Ada');
     expect(inboundAuthorName(rec({ platform: 'slack' }))).toBe('Unknown user');
+  });
+});
+
+describe('inboundSlackUserId', () => {
+  it('groups Linear senders by name, not by their Linear id', () => {
+    expect(inboundSlackUserId(rec({ platform: 'linear', actor: 'Guoqiang', actorUserId: 'linear-user-1' }))).toBeUndefined();
+    expect(inboundSlackUserId(rec({ platform: 'slack', actorUserId: 'U0ALICE001' }))).toBe('U0ALICE001');
   });
 });

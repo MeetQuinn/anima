@@ -5,7 +5,8 @@ import { DEFAULT_LINEAR_LISTENER, type LinearListenerConfig, type LinearListener
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { LinearNotificationService } from '../inbox/linear-notification.service.js';
-import { signatureMatches, verifyLinearWebhook } from '../linear/webhook.js';
+import { rememberLinearUser } from '../linear/user-directory.js';
+import { linearEventSender, signatureMatches, verifyLinearWebhook } from '../linear/webhook.js';
 import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
 import { LinearStore } from '../storage/schema/linear.store.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
@@ -101,6 +102,9 @@ export class LinearMessageTransport {
           ]);
         } catch { return reply.code(503).send({ error: 'Linear intake could not persist the request; retry delivery' }); }
         finally { if (deadline) clearTimeout(deadline); }
+        // Names and avatars for message history; never fails the delivery.
+        const sender = linearEventSender(event);
+        if (sender) await rememberLinearUser(sender).catch(() => undefined);
         this.tick();
         return { received: true };
       }

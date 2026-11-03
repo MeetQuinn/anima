@@ -4,6 +4,7 @@
 //   cache/feishu/files/<safe resource id>/meta.json
 //   cache/feishu/files/<safe resource id>/<safe filename>
 //   cache/feishu/tenants/<tenant or app id>/directory.json
+//   cache/linear/users.json
 //   cache/slack/files/<teamId>/<fileId>/meta.json
 //   cache/slack/files/<teamId>/<fileId>/<safe original filename>
 //   cache/slack/teams/<teamId>/directory-v2.json
@@ -195,6 +196,23 @@ export const FeishuDirectoryFileSchema = z.object({
     updatedAt: z.string(),
     userId: z.string().optional(),
   })).default([]),
+});
+
+// Linear people seen in webhooks, keyed by Linear user id (unique across
+// workspaces). Each event refreshes its sender's entry.
+export const LinearUserDirectoryFileSchema = z.object({
+  users: z.record(z.string(), z.object({
+    avatarUrl: z.string().optional(),
+    name: z.string().optional(),
+    updatedAt: z.string(),
+  })).default({}),
+});
+export type LinearUserDirectoryFile = z.infer<typeof LinearUserDirectoryFileSchema>;
+
+export const linearUserDirectoryStore = new JsonStore<LinearUserDirectoryFile>({
+  empty: () => ({ users: {} }),
+  parse: (value) => LinearUserDirectoryFileSchema.parse(value),
+  path: () => join(resolveAnimaHome(), 'cache', 'linear', 'users.json'),
 });
 
 export const getSlackFileCacheMetaStore = (teamId: string, fileId: string): JsonStore<Partial<SlackFileCacheMeta>> =>

@@ -5,12 +5,14 @@ import { join } from 'node:path';
 import { JsonFile } from '../storage/json-file.js';
 import { LinearSessionService } from '../linear/session.service.js';
 import { LinearDiagnosticsStore } from '../storage/schema/linear-diagnostics.store.js';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
 import { LinearMessageTransport } from '../transports/linear-message-transport.js';
 import { verifyLinearWebhook } from '../linear/webhook.js';
 import { ServerConfigStore } from '../storage/schema/server.store.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { linearUserProfiles } from '../linear/user-directory.js';
+import { linearUserDirectoryStore } from '../storage/schema/cache.js';
 import { withTempAnimaHome, waitFor } from './helpers/harness.js';
 import { created, install, seedLinear, prompted } from './helpers/linear.js';
 
@@ -70,6 +72,24 @@ test('dedicated port rejects unsigned, stale, cross-app and dashboard routes; ac
     await assert.rejects(post(port, event, sign(event)));
     await transport.reconcile([await agentStore.read()]);
     await assert.rejects(post(port, event, sign(event)));
+  } finally { await stopAndDrain(transport); }
+}));
+
+test('a delivered webhook records its sender for message history, and a directory failure never blocks delivery', async (t) => withTempAnimaHome(async (home) => {
+  const { agentStore, fake } = await seedLinear(home); t.mock.method(globalThis, 'fetch', fake.fetch);
+  const port = await unusedPort(); await new ServerConfigStore().update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));
+  const transport = new LinearMessageTransport(home, { error() {} });
+  try {
+    await transport.reconcile([await agentStore.read()]);
+    const event = created(); event.agentSession.creator = { name: 'Synthetic requester', avatarUrl: 'https://public.linear.app/synthetic/a.png' };
+    assert.equal((await post(port, event, sign(event))).status, 200);
+    assert.deepEqual((await linearUserProfiles([event.agentSession.creatorId!])).get(event.agentSession.creatorId!),
+      { name: 'Synthetic requester', avatarUrl: 'https://public.linear.app/synthetic/a.png' });
+
+    t.mock.method(linearUserDirectoryStore, 'update', async () => { throw new Error('synthetic-cache-failure'); });
+    const next = created(randomUUID()); next.agentSession.creator = { name: 'Another requester' };
+    assert.equal((await post(port, next, sign(next))).status, 200);
+    await waitFor(async () => (await new WakeQueueService('scout').list()).length === 2);
   } finally { await stopAndDrain(transport); }
 }));
 

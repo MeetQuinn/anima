@@ -16,13 +16,13 @@ import type {
 
 export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | undefined {
   if (item.kind === 'linear_notification') return {
-    actor: item.actorName ?? 'Linear', direction: 'in', kind: 'message',
+    actor: item.actorName ?? 'Linear', ...(item.actorId ? { actorUserId: item.actorId } : {}), direction: 'in', kind: 'message',
     messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.issueId ?? item.organizationId,
     channelKind: item.issueId ? 'linear_issue' : 'linear_workspace', source: { id: item.id, kind: 'inbox' },
     threadTs: item.parentCommentId ?? item.commentId, permalink: item.issueUrl, text: item.text, timestamp: item.receivedAt,
   };
   if (item.kind === 'linear') return {
-    actor: item.actorName ?? 'Linear user', direction: 'in', kind: 'message',
+    actor: item.actorName ?? 'Linear user', ...(item.actorId ? { actorUserId: item.actorId } : {}), direction: 'in', kind: 'message',
     messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.sessionId,
     channelKind: 'linear_session', threadTs: item.sessionId, source: { id: item.id, kind: 'inbox' },
     text: item.text, timestamp: item.receivedAt,
