@@ -30,7 +30,7 @@ export class LinearNotificationService {
 
   async assertRunnable(item: LinearNotificationInboxItem): Promise<void> {
     await this.identity.authorizedInstallation(item.installationId);
-    if (Object.values((await this.identity.store.read()).receipts).some((r) => r.commentItemId === item.id && r.stopped)) {
+    if (Object.values((await this.identity.store.read()).receipts).some((r) => (r.commentItemId === item.id || r.heldCommentItemId === item.id) && r.stopped)) {
       throw new Error('This Linear comment request was stopped.');
     }
   }

@@ -319,6 +319,31 @@ for (const stopCarriesComment of [false, true]) test(`a Stop before the session 
   assert.equal((await queue.list()).length, 0, 'A late mention cannot wake a stopped request');
 }));
 
+for (const failAt of ['enqueue', 'withdrawHeld'] as const) for (const stopCarriesComment of [false, true]) test(`a Stop after a takeover fails midway still settles the held comment, failAt=${failAt}, stopCarriesComment=${stopCarriesComment}`, async (t) => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const ordinary = notification();
+  await f.notifications.receive(verified(ordinary), install);
+  const commentItemId = linearCommentItemId(install.id, ordinary.notification.commentId!);
+  const session = sessionFor(ordinary);
+  const fault = t.mock.method(WakeQueueService.prototype, failAt, async () => { throw new Error('Synthetic persistence fault'); });
+  await assert.rejects(f.service.receive(verified(session), install), /Synthetic persistence fault/);
+  fault.mock.restore();
+  const replaced = (await queue.find(commentItemId))!;
+  assert.ok(isHeldInboxItem(replaced));
+  const stop = prompted(session.agentSession.id, true);
+  if (stopCarriesComment) stop.agentSession = { ...stop.agentSession, commentId: ordinary.notification.commentId, issueId };
+  await f.service.receive(verified(stop), install);
+  await f.service.receive(verified(session), install);
+  assert.equal((await queue.list()).length, 0, 'Neither the session request nor the replaced comment survives the Stop');
+  assert.equal(await queue.has(commentItemId), true);
+  assert.ok(replaced.kind === 'linear_notification');
+  await assert.rejects(f.notifications.assertRunnable(replaced), /stopped/, 'A copy already in a run cannot start either');
+  const mention = notification('issueCommentMention');
+  mention.notification = { ...mention.notification, commentId: ordinary.notification.commentId, comment: ordinary.notification.comment! };
+  await f.notifications.receive(verified(mention), install);
+  assert.equal(await queue.takeNextRunnable({ workerId: 'w0', isWorkerAlive: () => true }), undefined, 'A late mention cannot wake a stopped request');
+}));
+
 test('a Stop after a session took over a held comment stops the session request', async () => withTempAnimaHome(async (home) => {
   const f = await fixture(home), queue = new WakeQueueService('scout');
   const ordinary = notification();
