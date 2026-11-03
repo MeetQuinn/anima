@@ -148,8 +148,9 @@ function OpenDashboardWarning() {
         <p className="max-w-prose text-text-muted">
           Put a sign-in gateway such as Cloudflare Access in front of it and let{' '}
           <span className="font-mono text-[11px] text-text">/webhooks/</span> through, or set a dashboard password
-          on this machine: {SET_PASSWORD}
+          on this machine:
         </p>
+        <code className="block break-words font-mono text-[11px] text-text">{SET_PASSWORD_COMMAND}</code>
       </div>
     </div>
   );
