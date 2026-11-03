@@ -79,9 +79,9 @@ export interface PublicUrlCheck {
    * What a request for a dashboard API path, sent without credentials through the
    * address, got. `open`: this dashboard answered it, so anyone who can open the
    * address gets the dashboard. Otherwise this request did not get the dashboard:
-   * a redirect, 401 or 403 means something asked for sign-in first (the dashboard
-   * password answers 401); an error, another page or a 404 proves nothing either
-   * way. Absent without an address or an HTTP answer.
+   * a 401 or 403 means something asked for sign-in or refused (the dashboard
+   * password answers 401); a redirect, an error, another page or a 404 proves
+   * nothing either way. Absent without an address or an HTTP answer.
    */
   dashboard?: { open: boolean; status: number };
   checkedAt: string;

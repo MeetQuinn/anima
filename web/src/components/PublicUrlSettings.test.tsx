@@ -102,7 +102,6 @@ const UNCONFIRMED = /If the whole address is forwarded here, anyone who opens it
 it.each([
   [{ passwordSet: true, dashboard: { open: false, status: 401 } }, 'A dashboard password is set. The dashboard asks for it wherever it opens.'],
   [{ passwordSet: true, dashboard: { open: false, status: 502 } }, 'A dashboard password is set. The dashboard asks for it wherever it opens.'],
-  [{ passwordSet: false, dashboard: { open: false, status: 302 } }, 'something in front of it asked for sign-in or refused (HTTP 302).'],
   [{ passwordSet: false, dashboard: { open: false, status: 401 } }, 'something in front of it asked for sign-in or refused (HTTP 401).'],
   [{ passwordSet: false, dashboard: { open: false, status: 403 } }, 'something in front of it asked for sign-in or refused (HTTP 403).'],
 ])('no warning, and what asked first, when the dashboard did not open at the address: %o', async (result, message) => {
@@ -117,15 +116,23 @@ it.each([
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
-// A tunnel error, an unexpected page or a 404 is not the dashboard, but it is no
-// evidence that anything asks for sign-in either: say so, and keep the advice.
-it.each([502, 530, 200, 404])('a dashboard check answered with HTTP %i is not a security conclusion', async (code) => {
+// A redirect, a tunnel error, an unexpected page or a 404 is not the dashboard, but
+// it is no evidence that anything asks for sign-in either: say so, and keep the advice.
+it.each([
+  [301, 'was redirected (HTTP 301)'],
+  [302, 'was redirected (HTTP 302)'],
+  [308, 'was redirected (HTTP 308)'],
+  [502, 'got HTTP 502'],
+  [530, 'got HTTP 530'],
+  [200, 'got HTTP 200'],
+  [404, 'got HTTP 404'],
+])('a dashboard check answered with HTTP %i is not a security conclusion', async (code, seen) => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false, dashboard: { open: false, status: code } }));
   mount();
   await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
   const status = screen.getByRole('status');
-  expect(status.textContent).toContain(`The dashboard check got HTTP ${code}, which doesn’t show whether the dashboard is open at this address.`);
+  expect(status.textContent).toContain(`The dashboard check ${seen}, which doesn’t show whether the dashboard is open at this address.`);
   expect(status.textContent).toMatch(UNCONFIRMED);
   expect(within(status).getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
   expect(status.textContent).not.toMatch(/asked for sign-in|Keep/);
