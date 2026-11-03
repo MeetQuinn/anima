@@ -14,7 +14,7 @@ const FIELD_NAME = /^[_A-Za-z][_0-9A-Za-z]{0,63}$/;
 
 /**
  * The selected operation's type and top-level schema field names (never aliases),
- * plus an issue key only when exactly one top-level variable is nothing but a key.
+ * plus an issue key only when the top-level variables hold exactly one distinct whole-value key.
  */
 async function describeOperation(input: ApiInput): Promise<ApiDescription> {
   try {
