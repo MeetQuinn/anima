@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { LinearActivityKind } from '../../shared/linear.js';
-import type { LinearInboxItem, InboxItem } from '../../shared/inbox.js';
+import { isHeldInboxItem, type LinearInboxItem, type InboxItem } from '../../shared/inbox.js';
 import { nowIso } from '../ids.js';
 import { wakeQueueServiceForAgent } from '../inbox/wake-queue.service.js';
 import { linearCommentItemId, withLinearCommentLock } from '../inbox/linear-comment-delivery.js';
@@ -182,7 +182,11 @@ export class LinearSessionService {
     // without enqueueing a second request or inventing a session reply obligation.
     const commentItemId = session.commentId && (event.action === 'created' || stopped)
       ? linearCommentItemId(install.id, session.commentId) : undefined;
-    const commentDelivered = commentItemId && await wakeQueueServiceForAgent(this.agentId).has(commentItemId);
+    const queue = wakeQueueServiceForAgent(this.agentId);
+    const existing = commentItemId ? await queue.find(commentItemId) : undefined;
+    // A comment still held as context never reached the agent, so this session delivers the request itself.
+    const heldComment = event.action === 'created' && !stopped && existing !== undefined && isHeldInboxItem(existing);
+    const commentDelivered = commentItemId && !heldComment && await queue.has(commentItemId);
     const file = await this.identity.store.update((current) => {
       if (current.installation?.id !== install.id || current.installation.revoked) throw new Error('Linear identity changed.');
       const receipts = { ...current.receipts };
@@ -203,10 +207,10 @@ export class LinearSessionService {
       return { ...current, ...withoutExpiredReceipts(receipts, current.operations, Date.parse(receivedAt)), lastSignedWebhookAt: receivedAt };
     });
     if (file.receipts[key]!.stopped) { await this.stop(session.id); return; }
-    // A session on a comment is a request to this agent, so held context for it now wakes.
-    const deliveredTo = file.receipts[key]!.commentItemId;
-    if (deliveredTo) await wakeQueueServiceForAgent(this.agentId).releaseHeld(deliveredTo);
     await this.publish(file.receipts[key]!);
+    // Withdraw only after the session's request is durable. A failure in between leaves duplicate
+    // context rather than a lost request, and the webhook retry repeats this step.
+    if (heldComment) await queue.withdrawHeld(commentItemId!);
   }
 
   async assertRunnable(item: LinearInboxItem): Promise<void> {

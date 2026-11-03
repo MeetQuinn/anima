@@ -67,11 +67,19 @@ export class WakeQueueService {
     return { duplicate: false, item: result.item, queued: true };
   }
 
-  /** Let held context wake the agent, e.g. when a later event addresses it. */
-  async releaseHeld(itemId: string): Promise<boolean> {
-    const released = await this.store.releaseHeld(itemId);
+  /**
+   * Let held context wake the agent when a later event addresses it. `replacement`
+   * carries that event's newer content. No-op once the item was released or delivered.
+   */
+  async releaseHeld(itemId: string, replacement?: InboxItem): Promise<boolean> {
+    const released = await this.store.releaseHeld(itemId, replacement);
     if (released) signalWake(this.agentId);
     return released;
+  }
+
+  /** Drop held context that another delivery supersedes; undefined when not held. */
+  withdrawHeld(itemId: string): Promise<InboxItem | undefined> {
+    return this.store.withdrawHeld(itemId);
   }
 
   /**

@@ -162,7 +162,7 @@ are context: other new comments, status changes, unassignment and team-access
 changes. If the agent is working, they join that work; otherwise they wait and
 arrive the next time it wakes. Waiting context does not count as queued work and
 does not hold up a restart. If a mention or a work session later addresses a waiting
-comment, that comment wakes the agent. A direct comment mention can also wake the
+comment, the agent wakes for that request instead. A direct comment mention can also wake the
 agent when Anima cannot yet match it to a work session, including mentions from another
 app. The agent replies in the original comment thread. When Anima can match the mention
 to a work session before delivery, it uses that session instead. A comment delivered

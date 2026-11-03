@@ -69,11 +69,24 @@ export class LinearNotificationService {
       const queue = wakeQueueServiceForAgent(this.identity.agentId);
       // Preserve dedupe for notifications queued by earlier versions.
       if (await queue.has(key)) return;
+      item.issueId = n.issue.id;
+      item.issueUrl = n.issue.url;
+      item.sourceTime = n.updatedAt;
+      if (n.actorId) item.actorId = n.actorId;
+      if (n.commentId) item.commentId = n.commentId;
+      if (n.parentCommentId) item.parentCommentId = n.parentCommentId;
+      if (n.actor?.name) item.actorName = n.actor.name;
+      text = [`${n.issue.identifier}: ${n.issue.title}`, n.comment?.body].filter(Boolean).join('\n\n');
       if (COMMENT_TYPES.has(n.type) && n.commentId) {
         key = linearCommentItemId(install.id, n.commentId);
-        // An ordinary notification for this comment may be held; a mention of it wakes.
         if (await queue.has(key)) {
-          if (n.type === 'issueCommentMention') await queue.releaseHeld(key);
+          // An earlier notification for this comment may still be held. A mention
+          // replaces it with the request as it now reads and wakes the agent; a
+          // delivered comment stays deduplicated.
+          if (n.type === 'issueCommentMention') {
+            await this.identity.authorizedInstallation(install.id);
+            await queue.releaseHeld(key, { ...item, id: key, text });
+          }
           return;
         }
         if (Object.values((await this.identity.store.read()).receipts).some((r) => r.commentId === n.commentId)) return;
@@ -87,14 +100,6 @@ export class LinearNotificationService {
         wakes = n.type === 'issueCommentMention' || comment.parent?.user?.id === install.appUserId
           || Boolean(comment.parent?.children.nodes.length);
       }
-      item.issueId = n.issue.id;
-      item.issueUrl = n.issue.url;
-      item.sourceTime = n.updatedAt;
-      if (n.actorId) item.actorId = n.actorId;
-      if (n.commentId) item.commentId = n.commentId;
-      if (n.parentCommentId) item.parentCommentId = n.parentCommentId;
-      if (n.actor?.name) item.actorName = n.actor.name;
-      text = [`${n.issue.identifier}: ${n.issue.title}`, n.comment?.body].filter(Boolean).join('\n\n');
     }
     item.id = key;
     item.text = text;
