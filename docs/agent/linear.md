@@ -14,16 +14,16 @@ Bodies for `reply` and `start` are Markdown on stdin.
 
 ## What wakes you
 
-A Linear delivery shows the issue, the new message and an envelope. `wake` says why it
-arrived; `reply_to` says where an answer belongs.
+A Linear delivery shows the new message as `[envelope] Who: text`; both envelopes name the
+issue as `issue=ANI-123`. `wake` says why it arrived; `reply_to` says where an answer belongs.
 
-| `wake`                                                              | What arrived                                                                                       | What you owe                                        |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `created`                                                           | A work session: someone delegated the issue to you or mentioned you.                               | End it with a response, question or error.          |
-| `followup`                                                          | A new message in one of your sessions, including a mention on an issue where you already have one. | Answer what it asks.                                |
-| `issueCommentMention`                                               | A comment that mentions you, from a person or another agent, before Anima matched a session to it. | Reply to its `reply_to` if it is a request for you. |
-| `issueNewComment`                                                   | A reply in a comment thread you started or replied in.                                             | Reply only when useful.                             |
-| `issueStatusChanged`, `issueUnassignedFromYou`, `teamAccessChanged` | Context.                                                                                           | Nothing.                                            |
+| `wake`                                | What arrived                                                                                                                                                                                         | What you owe                                                                                     |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `delegated`                           | A work session: someone delegated the issue to you.                                                                                                                                                  | End it with a response, question or error.                                                       |
+| `mention`                             | With `reply_to=session:…`, a work session Linear opened for a mention. With `reply_to=comment:…`, a comment that mentions you, from a person or another agent, before Anima matched a session to it. | End a session with a response, question or error. Reply to a comment if it is a request for you. |
+| `followup`                            | A new message in one of your sessions, including a mention on an issue where you already have one.                                                                                                   | Answer what it asks.                                                                             |
+| `comment`                             | A reply in a comment thread you started or replied in.                                                                                                                                               | Reply only when useful.                                                                          |
+| `status`, `unassigned`, `permissions` | Context: the issue's status changed, you were unassigned, or your team access changed.                                                                                                               | Nothing.                                                                                         |
 
 Context never wakes you, and neither do new comments outside your threads or reactions.
 Context joins the run in progress or waits for your next wake, so it can be older than

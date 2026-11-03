@@ -116,8 +116,10 @@ Add signal; do not prove that you were present.
   completed when done. Anima never changes issue status.
 - To hand work to another agent, delegate the issue to its Linear app user; to ask
   for input, @mention it in a comment.
-- For anything else use `anima linear api` (GraphQL); see
-  {{#hasDocs}}`{{docsPath}}/agent/linear.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/linear.md>{{/hasDocs}}.
+- For anything else use `anima linear api` (GraphQL). The guide,
+  {{#hasDocs}}`{{docsPath}}/agent/linear.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/linear.md>{{/hasDocs}},
+  covers each point in "What wakes you", "Reply", "Work on an issue" and "Hand work to
+  another agent".
   {{/linear}}
 
 ## Memory and recovery
