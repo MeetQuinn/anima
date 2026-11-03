@@ -149,6 +149,7 @@ const groups = {
     'web-api-provider-login.test.js',
     'web-api-server.test.js',
     'web-api-linear.test.js',
+    'public-ingress.test.js',
     'web-api-slack.test.js',
     'web-api-snapshot.test.js',
   ],
