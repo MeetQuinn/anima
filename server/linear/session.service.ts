@@ -321,52 +321,13 @@ export class LinearSessionService {
     if (results.some((r) => r.status === 'rejected')) throw new Error('Linear run ended; one or more final notices could not be confirmed.');
   }
 
-  async completeIdleRuns(isIdle: () => Promise<boolean>): Promise<void> {
-    const file = await this.identity.store.read();
-    if (!file.installation || file.installation.revoked) return;
-    const installId = file.installation.id;
-    const pending = Object.values(file.receipts).filter((r) => r.settled && r.runItemId && !r.answered && !r.stopped && !r.idleCompletionFailed);
-    if (!pending.length || !await isIdle()) return;
-    for (const sessionId of new Set(pending.map((r) => r.sessionId))) {
-      await this.sessionLock(sessionId, async () => {
-        const latest = await this.identity.store.read();
-        if (latest.installation?.id !== installId || latest.installation.revoked) return;
-        const owners = new Set(Object.values(latest.receipts)
-          .filter((r) => r.sessionId === sessionId && r.settled && !r.answered && !r.stopped && !r.idleCompletionFailed)
-          .flatMap((r) => r.runItemId ? [r.runItemId] : []));
-        for (const owner of owners) {
-          try {
-            const result = await this.respondLocked(sessionId, 'error',
-              'The model run ended without a confirmed Linear response. Check progress before sending a new prompt.',
-              owner, 'failed', isIdle);
-            if (result?.bookkeeping !== 'degraded') continue;
-          } catch { /* Record a bounded failure below; other owners/sessions still finish. */ }
-          // Do not turn an uncertain send into a query every 15 seconds. Persist the
-          // failure for this owner, including across restarts. Explicit responses
-          // still reconcile the operation before sending anything else.
-          await this.identity.store.update((current) => {
-            if (current.installation?.id !== installId || current.installation.revoked) return current;
-            const receipts = { ...current.receipts };
-            let failed = false;
-            for (const [key, r] of Object.entries(receipts)) {
-              if (r.sessionId !== sessionId || r.runItemId !== owner || r.answered || r.stopped) continue;
-              receipts[key] = { ...r, idleCompletionFailed: true }; failed = true;
-            }
-            return failed ? { ...current, receipts,
-              lastError: 'A final Linear notice could not be confirmed. Automatic retry stopped; inspect the session before responding.' } : current;
-          });
-        }
-      });
-    }
-  }
-
   async respond(sessionId: string, kind: LinearActivityKind, body: string, runItemId?: string, terminal?: 'stopped' | 'failed'): Promise<{ activityId: string; bookkeeping: 'recorded' | 'degraded' }> {
-    return this.sessionLock(sessionId, async () => (await this.respondLocked(sessionId, kind, body, runItemId, terminal))!);
+    return this.sessionLock(sessionId, () => this.respondLocked(sessionId, kind, body, runItemId, terminal));
   }
 
   private async respondLocked(sessionId: string, kind: LinearActivityKind, body: string, runItemId?: string,
-    terminal?: 'stopped' | 'failed', isIdle?: () => Promise<boolean>,
-  ): Promise<{ activityId: string; bookkeeping: 'recorded' | 'degraded' } | undefined> {
+    terminal?: 'stopped' | 'failed',
+  ): Promise<{ activityId: string; bookkeeping: 'recorded' | 'degraded' }> {
     const install = await this.knownSession(sessionId, runItemId, !terminal);
     let file = await this.identity.store.read();
     // Resolve earlier unknown effects before a newer input can change the retry key.
@@ -401,7 +362,6 @@ export class LinearSessionService {
     const key = contentHash(hash, JSON.stringify(itemIds));
     const previous = file.operations[key];
     if (previous?.state === 'accepted') return { activityId: previous.id, bookkeeping: 'recorded' };
-    if (isIdle && !await isIdle()) return;
     const operation: LinearOperation = { id: randomUUID(), sessionId, kind: 'activity', state: 'sending', itemIds, contentHash: hash, activityKind: kind };
     if (runItemId) operation.ownerRunId = runItemId;
     await this.saveOperation(install.id, key, operation);
@@ -411,7 +371,7 @@ export class LinearSessionService {
     catch { return { activityId: operation.id, bookkeeping: 'degraded' }; }
   }
 
-  async tick(hasOngoingWork?: () => Promise<boolean>): Promise<void> {
+  async tick(): Promise<void> {
     const file = await this.identity.store.read();
     if (!file.installation || file.installation.revoked) return;
     const installId = file.installation.id;
@@ -423,18 +383,14 @@ export class LinearSessionService {
         await this.acknowledge(key, installId, receipt);
       }
     }));
-    // Lock only sessions that still have work. Locking every session each second cost a
-    // file lock per session ever seen; the lock re-checks the receipts it reads.
+    // Status covers only a request that is still queued or running. Once its run ends
+    // unanswered, the runtime says nothing more: the dashboard counts the session once it
+    // has been quiet for 30 minutes. Lock only sessions that still have such work.
     const current = await this.identity.store.read();
-    const eligible = (r: LinearReceipt) => r.itemId && !r.stopped && !r.answered && !r.idleCompletionFailed
-      && (!r.settled || (hasOngoingWork && r.runItemId));
+    const eligible = (r: LinearReceipt) => r.itemId && !r.stopped && !r.answered && !r.settled;
     const due = (r: LinearReceipt) => Date.now() - Math.max(...[r.lastActivityAt ?? r.receivedAt, r.lastStatusAttemptAt]
       .map((at) => at ? Date.parse(at) : 0)) >= 10 * 60_000;
-    const candidates = Object.values(current.receipts).filter((r) => eligible(r) && (!r.settled || due(r)));
-    // An idle/offline agent may have many unanswered sessions. Check shared work
-    // once before taking their locks, then recheck before any actual status send.
-    const sharedWork = candidates.some((r) => r.settled) && await hasOngoingWork?.();
-    const busy = candidates.filter((r) => !r.settled || sharedWork);
+    const busy = Object.values(current.receipts).filter(eligible);
     for (const sessionId of new Set(busy.map((r) => r.sessionId))) {
       await this.sessionLock(sessionId, async () => {
         const snapshot = await this.identity.store.read();
@@ -442,21 +398,17 @@ export class LinearSessionService {
         const receipts = Object.values(snapshot.receipts).filter((r) => r.sessionId === sessionId && eligible(r));
         if (!receipts.length || !receipts.every(due)) return;
         const queue = wakeQueueServiceForAgent(this.agentId);
-        const items = await Promise.all(receipts.filter((r) => !r.settled).map(async (r) => {
+        const items = await Promise.all(receipts.map(async (r) => {
           const owner = await this.ownerFor(r);
           return queue.find(owner ?? r.itemId!);
         }));
         const active = items.filter((item) => item && !item.handling.settledAt && ['queued', 'running'].includes(item.handling.status));
-        const ongoing = !active.length && receipts.some((r) => r.settled) && await hasOngoingWork?.();
-        if (!active.length && !ongoing) return;
+        if (!active.length) return;
         await this.updateSessionTimes(installId, sessionId, 'lastStatusAttemptAt');
         const latest = await this.identity.store.read();
         if (latest.installation?.id !== installId || latest.installation.revoked) return;
-        if (!receipts.some((r) => Object.values(latest.receipts).some((next) => next.itemId === r.itemId && eligible(next) && (ongoing || !next.settled)))) return;
-        // Provider work belongs to the shared primary session. Do not claim that
-        // an unrelated background task is making progress on this request.
-        const body = ongoing ? 'The agent still has ongoing work. This request is waiting for a final response.'
-          : active.some((item) => item?.handling.status === 'running') ? 'Executing this request.' : 'This request is queued.';
+        if (!receipts.some((r) => Object.values(latest.receipts).some((next) => next.itemId === r.itemId && eligible(next)))) return;
+        const body = active.some((item) => item?.handling.status === 'running') ? 'Executing this request.' : 'This request is queued.';
         await this.createActivity(installId, sessionId, randomUUID(), 'thought', body, true);
         await this.updateSessionTimes(installId, sessionId, 'lastActivityAt');
       });

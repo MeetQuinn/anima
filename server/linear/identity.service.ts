@@ -12,6 +12,9 @@ import { LinearListenerStore } from '../storage/schema/linear-listener.store.js'
 import { processAlive } from '../runtime/item-state.js';
 import { LinearApiError, LinearClient } from './client.js';
 
+// Linear can mark a session stale after 30 minutes without activity; use the same quiet period.
+const UNANSWERED_AFTER_MS = 30 * 60_000;
+
 const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.literal(true) }), organization: z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(256) }),
   applicationInfo: z.object({ clientId: z.string() }),
 });
@@ -84,6 +87,25 @@ export class LinearIdentityService {
       if (file.installation.workspaceName) result.workspaceName = file.installation.workspaceName;
     } else if (file.pending) result.clientId = file.pending.clientId;
     if (file.lastSignedWebhookAt) result.lastSignedWebhookAt = file.lastSignedWebhookAt;
+    // The runtime does not answer for the agent. Count sessions where a finished request has no
+    // recorded reply and the session has had no recorded activity for 30 minutes. These are local
+    // records, not Linear's session state: a raw API reply or a later error can change what Linear
+    // shows. Judge the whole session: a new prompt or any later activity refreshes it, and a
+    // request that is still queued or running has not ended.
+    if (file.installation && !file.installation.revoked) {
+      const sessions = new Map<string, { unanswered: boolean; open: boolean; lastAt: number }>();
+      for (const r of Object.values(file.receipts)) {
+        const session = sessions.get(r.sessionId) ?? { unanswered: false, open: false, lastAt: 0 };
+        const pending = Boolean(r.itemId) && !r.answered && !r.stopped;
+        if (pending && r.settled) session.unanswered = true;
+        if (pending && !r.settled) session.open = true;
+        for (const at of [r.receivedAt, r.lastActivityAt]) if (at) session.lastAt = Math.max(session.lastAt, Date.parse(at));
+        sessions.set(r.sessionId, session);
+      }
+      const quietSince = Date.now() - UNANSWERED_AFTER_MS;
+      const unanswered = [...sessions.values()].filter((s) => s.unanswered && !s.open && s.lastAt < quietSince).length;
+      if (unanswered) result.unansweredSessions = unanswered;
+    }
     if (file.lastError) result.lastError = file.lastError;
     else if (file.pending && file.pending.expiresAt <= Date.now()) result.lastError = 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.';
     const listener = (await serverConfigStore.read()).linearWebhook ?? DEFAULT_LINEAR_LISTENER;

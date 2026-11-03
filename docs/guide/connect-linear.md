@@ -200,24 +200,22 @@ with `--comment <uuid>`. The session belongs to the app and shares the agent's c
 working context; a creation webhook matching the recorded session does not wake the agent again.
 If creation was uncertain and no session ID was recorded, the webhook follows normal intake. Human replies do.
 For longer work, the agent can send progress with `anima linear respond --kind thought`
-and send its final response in a later turn. An unanswered request stays open while the
-provider has background work or the agent has queued wakes. Once both are empty, the
-runtime reports a missing response as an error. Providers without background-work
-reporting use the active run and queue state.
+and send its final response in a later turn, for example after background work finishes.
 
-After 10 minutes without a successful activity, the runtime can post a fixed queued/executing
-status for owned inbox work. After the inbox run finishes, it can instead report that the agent
-still has ongoing work and the request is waiting for a final response. This checks the whole
-agent's active run, background work and queue; it does not claim progress on a particular request.
-Unrelated work can also delay a missing-response notice. Status updates stop on response, question,
-failure or cancellation. Failed status sends are attempted at most once per 10-minute interval.
+While a request is queued or its run is executing, the runtime posts a fixed queued/executing
+status after 10 minutes without a successful activity. Failed status sends are attempted at
+most once per 10-minute interval. Once the run ends, the runtime says nothing more: only the
+agent's response, question or error finishes the request. If Anima has no recorded reply and
+the session has had no recorded activity for 30 minutes, the agent's Linear row in the dashboard
+counts it as a session with no recorded reply. This uses Anima's records, not Linear's session
+state; Linear may show the session as stale. Check the session in Linear: reply there to wake
+the agent again, or stop it. A crashed or interrupted run still gets one error notice.
 
-After a runtime restart, interrupted background work gets a durable recovery wake.
-If its records cannot be read or the wake cannot be saved, ordinary work still starts, but
-automatic Linear idle completion waits for a later retry. The agent checks earlier effects
-before continuing; native background tasks are not automatically resumed or rerun. During downtime
-or failed status sends, Linear can still display the session as stale after 30 minutes; a later
-activity recovers it. See [Linear’s interaction guidance](https://linear.app/developers/agent-best-practices).
+After a runtime restart, interrupted background work gets a durable recovery wake. The agent
+checks earlier effects before continuing; native background tasks are not automatically
+resumed or rerun. During downtime or failed status sends, Linear can also display the session
+as stale; a later activity recovers it.
+See [Linear’s interaction guidance](https://linear.app/developers/agent-best-practices).
 
 Linear's stop signal cancels pending work or requests interruption of its associated run.
 A primary run can contain other accepted messages; interrupting it may affect them too.

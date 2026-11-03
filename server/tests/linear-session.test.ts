@@ -335,73 +335,10 @@ test('progress reconciliation keeps requests open; later turns can answer only d
   assert.equal((await store.read()).receipts[first.id]!.answered, true);
 }));
 
-test('idle closure skips missing or revoked installations before checking work and rechecks identity under the lock', async () => withTempAnimaHome(async (home) => {
-  const { service, store, identity, fake } = await seedLinear(home);
-  const neverCheck = async () => { assert.fail('No eligible Linear receipt needs a queue read'); };
-  await service.completeIdleRuns(neverCheck);
-  await settledRequest(service);
-  await store.update((f) => ({ ...f, installation: undefined }));
-  await service.completeIdleRuns(neverCheck);
-  await store.update((f) => ({ ...f, installation: { ...install } }));
-  await identity.revoke(install.id);
-  for (let i = 0; i < 3; i++) await service.completeIdleRuns(neverCheck);
-  await store.update((f) => ({ ...f, installation: { ...install } }));
-  let checks = 0;
-  await service.completeIdleRuns(async () => { checks++; await identity.revoke(install.id); return true; });
-  assert.equal(checks, 1); assert.equal(fake.calls.length, 0);
-}));
-
-for (const failure of ['not-created', 'lost-response', 'bookkeeping'] as const) test(`idle closure records ${failure} once, continues other sessions and preserves explicit recovery`, async (t) => withTempAnimaHome(async (home) => {
-  const { service, store, identity, fake } = await seedLinear(home);
-  const first = await settledRequest(service);
-  const otherSession = randomUUID(); const other = await settledRequest(service, otherSession);
-  const graphql = identity.graphql.bind(identity);
-  t.mock.method(identity, 'graphql', async (...args: Parameters<typeof identity.graphql>) => {
-    const input = args[2].input as { agentSessionId?: string } | undefined;
-    fake.failMutation = failure === 'not-created' && input?.agentSessionId === sessionId;
-    fake.loseResponse = failure === 'lost-response' && input?.agentSessionId === sessionId;
-    return graphql(...args);
-  });
-  const update = store.update.bind(store);
-  let bookkeepingFailed = false;
-  t.mock.method(store, 'update', (op: Parameters<LinearStore['update']>[0]) => update(async (f) => {
-    const next = await op(f);
-    if (failure === 'bookkeeping' && !bookkeepingFailed && next.receipts[first.id]?.answered) {
-      bookkeepingFailed = true; throw new Error('synthetic-bookkeeping-secret');
-    }
-    return next;
-  }));
-  await service.completeIdleRuns(async () => true);
-  const file = await store.read();
-  assert.equal(file.receipts[first.id]!.idleCompletionFailed, true);
-  assert.notEqual(file.receipts[first.id]!.answered, true);
-  assert.equal(file.receipts[other.id]!.answered, true, 'One failure does not block another session');
-  assert.match(file.lastError!, /Automatic retry stopped/);
-  assert.doesNotMatch(file.lastError!, /secret/);
-  const recovered = new LinearSessionService(identity); const before = fake.calls.length;
-  for (let i = 0; i < 3; i++) await recovered.completeIdleRuns(async () => { assert.fail('Failed owners need no further idle checks'); });
-  assert.equal(fake.calls.length, before, 'No repeated confirmation queries, including after service recreation');
-  const body = 'The model run ended without a confirmed Linear response. Check progress before sending a new prompt.';
-  if (failure === 'not-created') {
-    await assert.rejects(recovered.respond(sessionId, 'response', 'Changed result', 'later-run'), /unknown/);
-    assert.equal(fake.posts.filter((p) => p.agentSessionId === sessionId).length, 0);
-  } else {
-    await recovered.respond(sessionId, 'error', body, first.id);
-    assert.equal(fake.posts.filter((p) => p.agentSessionId === sessionId).length, 1);
-    assert.equal((await store.read()).receipts[first.id]!.answered, true);
-  }
-  const freshSession = randomUUID(); const fresh = await settledRequest(recovered, freshSession);
-  await recovered.completeIdleRuns(async () => true);
-  assert.equal((await store.read()).receipts[fresh.id]!.answered, true, 'Failure suppression is scoped to its receipts');
-}));
-
-test('idle closure rechecks work after locking and preserves legacy terminal operation semantics', async () => withTempAnimaHome(async (home) => {
+test('legacy activity operations without a kind still count as terminal replies', async () => withTempAnimaHome(async (home) => {
   const { service, fake, store } = await seedLinear(home);
   await service.receive(created(), install); const first = await firstItem(); await service.markStarted(first, first.id);
   await new WakeQueueService('scout').complete(first.id); await service.markSettled(first);
-  let checks = 0;
-  await service.completeIdleRuns(async () => ++checks === 1);
-  assert.equal(checks, 2); assert.equal(fake.posts.length, 0);
   fake.loseResponse = true;
   await assert.rejects(service.respond(sessionId, 'response', 'Legacy accepted', first.id));
   fake.loseResponse = false;
@@ -412,59 +349,69 @@ test('idle closure rechecks work after locking and preserves legacy terminal ope
   assert.equal(fake.posts.length, 1); assert.equal((await store.read()).receipts[first.id]!.answered, true);
 }));
 
+test('a new prompt in a quiet unanswered session clears the count until that request also ends unanswered', async () => withTempAnimaHome(async (home) => {
+  const { service, identity, store, fake } = await seedLinear(home);
+  await settledRequest(service);
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const age = async (minutes: number) => store.update((f) => ({ ...f, receipts: Object.fromEntries(Object.entries(f.receipts).map(([id, r]) => [id,
+    { ...r, acknowledgement: 'accepted' as const, receivedAt: ago(minutes), lastActivityAt: ago(minutes) }])) }));
+  await age(31);
+  assert.equal((await identity.status()).unansweredSessions, 1);
+  await service.receive(prompted(), install);
+  await service.tick();
+  assert.deepEqual(fake.posts.map((p) => p.content.body), ['Received by Anima.']);
+  assert.equal((await identity.status()).unansweredSessions, undefined, 'The new prompt and its receipt are fresh session activity');
+  // Even after 30 quiet minutes, a request that is still queued has not ended.
+  await age(45);
+  assert.equal((await identity.status()).unansweredSessions, undefined);
+  const queue = new WakeQueueService('scout');
+  const item = (await queue.list()).find((i) => i.kind === 'linear')!;
+  await service.markStarted(item, item.id); await queue.complete(item.id); await service.markSettled(item);
+  assert.equal((await identity.status()).unansweredSessions, 1);
+  // A crash notice answers only its own request, but it is still fresh activity in the session.
+  await service.receive(prompted(), install);
+  const crashed = (await queue.list()).find((i) => i.kind === 'linear')!;
+  await service.markStarted(crashed, crashed.id);
+  await service.finishRun(crashed.id, 'The model run failed.');
+  assert.equal(Object.values((await store.read()).receipts).filter((r) => !r.answered).length, 2);
+  assert.equal((await identity.status()).unansweredSessions, undefined, 'The error is recent session activity');
+  await age(31);
+  assert.equal((await identity.status()).unansweredSessions, 1);
+}));
 
-test('settled requests get bounded, truthful background heartbeats across service restarts', async (t) => withTempAnimaHome(async (home) => {
+test('a run that ends unanswered gets no runtime notice; the dashboard counts it after 30 quiet minutes', async (t) => withTempAnimaHome(async (home) => {
   const { service, identity, store, fake } = await seedLinear(home);
   const first = await settledRequest(service);
-  const old = new Date(Date.now() - 11 * 60_000).toISOString();
-  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: old } } }));
-  let workChecks = 0;
-  const work = async () => { workChecks++; return true; };
-  await service.tick(work);
-  assert.equal(fake.posts.length, 1);
-  assert.equal(fake.posts[0]!.ephemeral, true);
-  assert.equal(fake.posts[0]!.content.body, 'The agent still has ongoing work. This request is waiting for a final response.');
-  assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
-  const recovered = new LinearSessionService(identity);
-  const lock = t.mock.method(recovered as unknown as { sessionLock(id: string, op: () => Promise<unknown>): Promise<unknown> }, 'sessionLock');
-  await recovered.tick(work);
-  assert.equal(fake.posts.length, 1); assert.equal(workChecks, 2); assert.equal(lock.mock.callCount(), 0);
-  // A failed activity is attempted once per interval, including after restart.
-  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: old, lastStatusAttemptAt: old } } }));
-  fake.failMutation = true;
-  await assert.rejects(recovered.tick(work));
-  const calls = fake.calls.length;
-  await assert.doesNotReject(new LinearSessionService(identity).tick(work));
-  assert.equal(fake.calls.length, calls); assert.equal(workChecks, 4);
-  // Fresh progress wins over an older attempted heartbeat.
-  fake.failMutation = false;
-  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: new Date().toISOString(), lastStatusAttemptAt: old } } }));
-  await recovered.tick(work); assert.equal(workChecks, 4);
-}));
-
-for (const ending of ['idle', 'stopped', 'answered', 'revoked'] as const) test(`a background heartbeat does not survive ${ending}`, async () => withTempAnimaHome(async (home) => {
-  const { service, store, fake } = await seedLinear(home);
-  const first = await settledRequest(service);
-  await store.update((f) => ({ ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, acknowledgement: 'accepted', lastActivityAt: new Date(Date.now() - 11 * 60_000).toISOString() } } }));
-  await service.tick(async () => {
-    if (ending !== 'idle') await store.update((f) => ending === 'revoked'
-      ? { ...f, installation: { ...f.installation!, revoked: true } }
-      : { ...f, receipts: { ...f.receipts, [first.id]: { ...f.receipts[first.id]!, [ending]: true } } });
-    return ending !== 'idle';
-  });
-  assert.equal(fake.posts.length, 0);
-}));
-
-
-test('idle background status checks share one work read and take no session locks', async (t) => withTempAnimaHome(async (home) => {
-  const { service, store, fake } = await seedLinear(home);
-  const first = await settledRequest(service);
-  const old = new Date(Date.now() - 11 * 60_000).toISOString();
-  await store.update((f) => ({ ...f, receipts: Object.fromEntries(Array.from({ length: 100 }, (_, i) => [
-    `settled-${i}`, { ...f.receipts[first.id]!, sessionId: randomUUID(), acknowledgement: 'accepted', lastActivityAt: old },
-  ])) }));
+  const other = randomUUID(); await settledRequest(service, other);
+  await store.update((f) => ({ ...f, receipts: Object.fromEntries(Object.entries(f.receipts).map(([id, r]) => [id, { ...r, acknowledgement: 'accepted' }])) }));
   const lock = t.mock.method(service as unknown as { sessionLock(id: string, op: () => Promise<unknown>): Promise<unknown> }, 'sessionLock');
-  let checks = 0;
-  for (let tick = 0; tick < 3; tick++) await service.tick(async () => { checks++; return false; });
-  assert.equal(checks, 3); assert.equal(lock.mock.callCount(), 0); assert.equal(fake.posts.length, 0);
+  const age = async (minutes: number) => store.update((f) => ({ ...f, receipts: Object.fromEntries(Object.entries(f.receipts).map(([id, r]) => [id,
+    { ...r, receivedAt: new Date(Date.now() - minutes * 60_000).toISOString(), lastActivityAt: undefined, lastStatusAttemptAt: undefined }])) }));
+  await age(11);
+  for (let tick = 0; tick < 3; tick++) await service.tick();
+  assert.equal(fake.posts.length, 0, 'No heartbeat or missing-response error once the run ended');
+  assert.equal(lock.mock.callCount(), 0, 'Ended requests take no session lock');
+  assert.equal((await identity.status()).unansweredSessions, undefined, 'Not quiet for 30 minutes yet');
+  await age(31);
+  assert.equal((await identity.status()).unansweredSessions, 2);
+  assert.notEqual((await store.read()).receipts[first.id]!.answered, true);
+  // A request that is still queued or running is not one that ended without a reply.
+  const third = randomUUID(); await service.receive(created(third), install);
+  await store.update((f) => ({ ...f, receipts: Object.fromEntries(Object.entries(f.receipts).map(([id, r]) => [id,
+    r.sessionId === third ? { ...r, receivedAt: new Date(Date.now() - 31 * 60_000).toISOString() } : r])) }));
+  assert.equal((await identity.status()).unansweredSessions, 2);
+  // Progress keeps a session fresh; a reply or a Stop resolves it.
+  await service.respond(sessionId, 'thought', 'Still checking', 'later-run');
+  assert.equal((await identity.status()).unansweredSessions, 1);
+  // A Stop resolves the session even when its notice cannot be sent.
+  fake.failMutation = true;
+  await service.receive(prompted(other, true), install).catch(() => {});
+  fake.failMutation = false;
+  assert.notEqual(Object.values((await store.read()).receipts).find((r) => r.sessionId === other)!.answered, true);
+  assert.equal((await identity.status()).unansweredSessions, undefined);
+  await age(31);
+  assert.equal((await identity.status()).unansweredSessions, 1, 'Without further activity the session is counted again');
+  await service.respond(sessionId, 'response', 'Finished', 'later-run');
+  assert.equal((await identity.status()).unansweredSessions, undefined);
+  assert.deepEqual(fake.posts.map((p) => p.content.type), ['thought', 'response']);
 }));
