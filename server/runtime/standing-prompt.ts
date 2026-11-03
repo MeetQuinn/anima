@@ -19,6 +19,11 @@ export interface AnimaRuntimeProfile {
     handle?: string;
     userId: string;
   };
+  /** The agent's Linear app user from its installation; the name is absent for older installations. */
+  linearIdentity?: {
+    appUserId: string;
+    name?: string;
+  };
   transports: {
     feishu: boolean;
     linear?: boolean;
@@ -34,8 +39,12 @@ export function buildAnimaRuntimeProfile(profile: AnimaRuntimeProfile): string {
     docsPath: referencePaths.docsPath ?? '',
     feishu: profile.transports.feishu,
     linear: profile.transports.linear === true,
+    linearAppUserId: profile.linearIdentity?.appUserId ?? '',
+    linearName: profile.linearIdentity?.name ?? '',
     hasDocs: Boolean(referencePaths.docsPath),
     hasLocalSource: Boolean(referencePaths.sourcePath),
+    hasLinearIdentity: Boolean(profile.linearIdentity?.appUserId),
+    hasLinearName: Boolean(profile.linearIdentity?.name),
     hasSlackIdentity: Boolean(profile.slackIdentity?.userId),
     name,
     role,

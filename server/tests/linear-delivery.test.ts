@@ -7,6 +7,7 @@ import { verifyLinearWebhook, type LinearWebhook } from '../linear/webhook.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { buildCodeAgentDeliveryPrompt } from '../runtime/delivery-prompt.js';
 import { buildAnimaRuntimeProfile } from '../runtime/standing-prompt.js';
+import { linearIssueKey } from '../linear/delivery-text.js';
 import { startRunningAgent } from '../runtime/agent-runner.js';
 import { TeamRunLimiter } from '../runtime/team-run-limiter.js';
 import type { AgentRuntimeInput } from '../providers/contract.js';
@@ -36,9 +37,8 @@ test('a follow-up identifies its actual author and source time instead of attrib
   const prompt = buildCodeAgentDeliveryPrompt(item);
   assert.match(prompt, /wake=followup/);
   assert.match(prompt, new RegExp(`reply_to=session:${sessionId}`));
-  assert.match(prompt, new RegExp(`session_id=${sessionId}`));
-  assert.match(prompt, new RegExp(`activity_id=${event.agentActivity!.id}`));
-  assert.match(prompt, new RegExp(`user_id=${event.agentActivity!.userId}`));
+  assert.match(prompt, new RegExp(`\\[activity_id=${event.agentActivity!.id} time=`));
+  assert.doesNotMatch(prompt, /session_id=|user_id=|received_at=/);
   assert.match(prompt, /time=2026-10-03T01:02:03Z/);
   assert.match(prompt, /claimed_at=2026-10-04T05:06:07Z/);
   assert.match(prompt, /Follow-up author: Use the second option\./);
@@ -60,8 +60,9 @@ for (const promptContext of [undefined, '', ' \n\t']) test(`missing or blank ini
   await service.receive(verified(event), install);
   const [item] = await new WakeQueueService('scout').list();
   const prompt = buildCodeAgentDeliveryPrompt(item!);
-  assert.match(prompt, /wake=created/); assert.match(prompt, /context=partial/);
-  assert.match(prompt, /Partial initial context/);
+  // The session's thread root has no author, as Linear writes it for a delegation.
+  assert.match(prompt, /^Linear conversation update:\n\nSynthetic requester delegated an issue to you:\nChoose an approach\n/);
+  assert.match(prompt, /wake=delegated /); assert.doesNotMatch(prompt, /context=|Partial initial context|requester_id=/);
   assert.match(prompt, /Preserve existing data/); assert.match(prompt, /Option two changes only the copy/);
   assert.match(prompt, new RegExp(`user_id=${authorId}`));
   assert.match(prompt, /Keep the public API stable/);
@@ -100,13 +101,17 @@ test('a supplied full context stays intact and old queued inputs recover their e
   assert.doesNotMatch(rendered, /Legacy requester|Requested by|context=snapshot|user_id=|\stime=/);
   old.handling.resumeReason = 'runtime_restart';
   assert.match(buildCodeAgentDeliveryPrompt(old), /Legacy request/);
-  assert.match(buildCodeAgentDeliveryPrompt(old), new RegExp(`session_id=${sessionId}`));
+  assert.match(buildCodeAgentDeliveryPrompt(old), new RegExp(`reply_to=session:${sessionId} wake=followup `));
+  old.handling.resumeReason = undefined;
+  // A created session from before origins were stored counts as a delegation; its key comes from the URL.
   old.id = `linear:${install.id}:created:${sessionId}`;
-  assert.match(buildCodeAgentDeliveryPrompt(old), /wake=created/);
-  assert.match(buildCodeAgentDeliveryPrompt(old), /Requested by Legacy requester/);
+  old.issueUrl = 'https://linear.app/synthetic/issue/SYN-7/legacy-title';
+  assert.match(buildCodeAgentDeliveryPrompt(old), /^Linear conversation update:\n\n\[issue=SYN-7\] Legacy requester delegated SYN-7 to you:\nLegacy request\n\n/);
+  assert.match(buildCodeAgentDeliveryPrompt(old), /issue=SYN-7 wake=delegated /);
+  assert.doesNotMatch(buildCodeAgentDeliveryPrompt(old), /Issue: |https:/);
   old.id = 'unclassified-legacy-item';
-  assert.match(buildCodeAgentDeliveryPrompt(old), /wake=session/);
-  assert.doesNotMatch(buildCodeAgentDeliveryPrompt(old), /Requested by|context=snapshot|Legacy requester/);
+  assert.match(buildCodeAgentDeliveryPrompt(old), /wake=followup /);
+  assert.doesNotMatch(buildCodeAgentDeliveryPrompt(old), /Requested by|delegated|context=snapshot|Legacy requester/);
 }));
 
 test('every Linear envelope names one reply target: the session, the thread root, or the issue', () => {
@@ -159,6 +164,8 @@ for (const connected of [undefined, false, true]) test(`runtime injects the Line
     assert.equal(standing.includes('anima linear'), connected === true);
     assert.doesNotMatch(standing, /LINEAR_ACCESS_TOKEN|linear respond|linear comment|linear start/);
     assert.equal(standing.includes('anima linear reply --to <reply_to>'), connected === true);
+    // This installation predates recorded names, so only the app user id is known.
+    assert.equal(standing.includes(`- You are app user \`${install.appUserId}\` in Linear.`), connected === true);
   } finally { await runner.stop(); }
 }));
 
@@ -167,3 +174,95 @@ test('the short capability entry has a usable docs link without local bundled do
   assert.match(text, /https:\/\/github\.com\/MeetQuinn\/anima\/tree\/main\/docs\/agent\/linear\.md/);
   assert.doesNotMatch(text, /\{\{|\/agent\/linear\.md`/);
 });
+
+test('the runtime names the agent in Linear from its installation', async (t) => withTempAnimaHome(async (home) => {
+  const { fake, agentStore, store } = await seedLinear(home); t.mock.method(globalThis, 'fetch', fake.fetch);
+  await store.update((file) => ({ ...file, installation: { ...file.installation!, appName: 'Scout' } }));
+  const calls: AgentRuntimeInput[] = [];
+  const runtime = { kind: 'synthetic', async run(input: AgentRuntimeInput) { calls.push(input); return { text: 'Done' }; },
+    async appendToActiveRun() { return { accepted: false }; }, async close() {} };
+  const runner = await startRunningAgent({ agentId: 'scout', agentRuntime: runtime, animaHome: home, stateDir: home,
+    homePath: (await agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
+  try {
+    const queue = new WakeQueueService('scout');
+    await queue.enqueue(makeSlackEvent({ channelId: 'D-synthetic', teamId: 'T-synthetic', userId: 'U-synthetic', text: 'A Slack message' }));
+    await waitFor(() => calls.length === 1);
+    assert.match(calls[0]!.systemPrompt!, new RegExp(`\\n- You are \\*\\*Scout\\*\\* in Linear \\(app user \`${install.appUserId}\`\\)\\. Comments and\\n  activities from that id are your own\\.\\n`));
+  } finally { await runner.stop(); }
+}));
+
+test('the standing Linear section renders with a named identity, an id only, no identity, or without Linear', () => {
+  const render = (extra: Partial<Parameters<typeof buildAnimaRuntimeProfile>[0]>, linear = true) => buildAnimaRuntimeProfile({ displayName: 'Synthetic',
+    referencePaths: { docsPath: '/synthetic-docs' }, transports: { linear, slack: false, feishu: false }, ...extra });
+  const section = (text: string) => text.slice(text.indexOf('### Linear'), text.indexOf('## Memory and recovery'));
+  const named = section(render({ linearIdentity: { appUserId: 'app-user-sentinel', name: 'Synthetic app' } }));
+  assert.match(named, /^### Linear\n\n+- You are \*\*Synthetic app\*\* in Linear \(app user `app-user-sentinel`\)\. Comments and\n  activities from that id are your own\.\n- A delegation, an @mention/);
+  assert.match(named, /\n- For anything else use `anima linear api` \(GraphQL\)\. The guide,\n  `\/synthetic-docs\/agent\/linear\.md`,\n  covers each point in "What wakes you", "Reply", "Work on an issue" and "Hand work to\n  another agent"\.\n+$/);
+  for (const line of ['Anima never changes issue status.', 'send progress as `--kind thought`', 'delegate the issue to its Linear app user']) assert.ok(named.includes(line), line);
+  const idOnly = section(render({ linearIdentity: { appUserId: 'app-user-sentinel' } }));
+  assert.match(idOnly, /^### Linear\n\n- You are app user `app-user-sentinel` in Linear\. Comments and activities from that\n  id are your own\.\n- A delegation/);
+  const anonymous = section(render({}));
+  assert.match(anonymous, /^### Linear\n\n- A delegation/);
+  const off = render({ linearIdentity: { appUserId: 'app-user-sentinel', name: 'Synthetic app' } }, false);
+  assert.doesNotMatch(off, /### Linear|app-user-sentinel|Synthetic app|anima linear/);
+  for (const text of [named, idOnly, anonymous, off]) assert.doesNotMatch(text, /\{\{|\}\}/);
+});
+
+// Created sessions: Linear writes the root comment of a delegated session's thread itself.
+for (const [origin, creator, wake, line] of [
+  ['delegation', true, 'delegated', 'Synthetic requester delegated SYN-12 to you:'],
+  ['delegation', false, 'delegated', 'SYN-12 was delegated to you:'],
+  ['mention', true, 'mention', 'Synthetic requester mentioned you on SYN-12:'],
+  ['mention', false, 'mention', 'You were mentioned on SYN-12:'],
+] as const) test(`a created session (${origin}, creator=${creator}) opens with who asked, then Linear's context unchanged`, async () => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  const event = created(), issueId = randomUUID(), rootId = randomUUID();
+  event.agentSession.createdAt = '2026-11-03T17:02:58.123Z';
+  event.agentSession.issueId = issueId;
+  event.agentSession.issue = { id: issueId, identifier: 'SYN-12', title: 'Synthetic', url: 'https://linear.app/synthetic/issue/SYN-12/synthetic' };
+  event.agentSession.commentId = rootId;
+  event.agentSession.comment = origin === 'mention' ? { id: rootId, body: '@scout please look', userId: randomUUID() }
+    : { id: rootId, body: 'This thread is for an agent session with scout.', userId: null };
+  if (!creator) { event.agentSession.creatorId = null; event.agentSession.creator = null; }
+  event.promptContext = '  <issue identifier="SYN-12">\n<title>Synthetic</title>\n</issue>';
+  await service.receive(verified(event), install);
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear');
+  assert.equal(item.origin, origin); assert.equal(item.issueKey, 'SYN-12');
+  item.handling.queuedAt = '2026-11-03T17:03:00.000Z';
+  assert.equal(buildCodeAgentDeliveryPrompt(item), `Linear conversation update:\n\n[issue=SYN-12 time=2026-11-03T17:02:58Z] ${line}\n`
+    + `  <issue identifier="SYN-12">\n<title>Synthetic</title>\n</issue>\n\n`
+    + `Wake trigger:\n[platform=linear reply_to=session:${sessionId} issue=SYN-12 wake=${wake} queued_at=2026-11-03T17:03:00Z]`);
+}));
+
+test('a follow-up names its issue and author so it reads on its own', async () => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  const event = prompted(), issueId = randomUUID(), authorId = randomUUID();
+  event.agentSession.issueId = issueId;
+  event.agentSession.issue = { id: issueId, identifier: 'SYN-12', title: 'Synthetic', url: 'https://linear.app/synthetic/issue/SYN-12/synthetic' };
+  event.agentActivity!.createdAt = '2026-11-03T18:10:00.000Z';
+  event.agentActivity!.userId = authorId; event.agentActivity!.user = { id: authorId, name: 'Synthetic teammate' };
+  event.agentActivity!.content!.body = '@scout can you take a look?';
+  await service.receive(verified(event), install);
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear');
+  item.handling.queuedAt = '2026-11-03T18:10:01.000Z'; item.handling.startedAt = '2026-11-03T18:10:02.000Z';
+  assert.equal(buildCodeAgentDeliveryPrompt(item), `Linear conversation update:\n\n`
+    + `[issue=SYN-12 activity_id=${event.agentActivity!.id} time=2026-11-03T18:10:00Z] Synthetic teammate: @scout can you take a look?\n\n`
+    + `Wake trigger:\n[platform=linear reply_to=session:${sessionId} issue=SYN-12 wake=followup queued_at=2026-11-03T18:10:01Z claimed_at=2026-11-03T18:10:02Z]`);
+}));
+
+test('an identifier that is not an issue key falls back to the issue URL and never rejects the event', async () => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  const event = created(), issueId = randomUUID();
+  event.agentSession.issueId = issueId;
+  event.agentSession.issue = { id: issueId, identifier: 42 as unknown as string, title: 'Synthetic', url: 'https://linear.app/synthetic/issue/SYN-9/synthetic' };
+  await service.receive(verified(event), install);
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear'); assert.equal(item.issueKey, 'SYN-9');
+  assert.equal(linearIssueKey('syn-9', 'https://linear.app/synthetic/issue/SYN-9/x'), 'SYN-9');
+  assert.equal(linearIssueKey('SYN-10', 'https://linear.app/synthetic/issue/SYN-9/x'), 'SYN-10');
+  for (const url of ['https://linear.app/synthetic/project/SYN-9', 'https://linear.app/issue/SYN-9', 'not a url', 'https://linear.app/synthetic/issue/syn-9']) {
+    assert.equal(linearIssueKey(undefined, url), undefined, url);
+  }
+}));

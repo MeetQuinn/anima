@@ -46,6 +46,7 @@ import {
   prepareCursorDelivery,
 } from './cursor-delivery.js';
 import { backfillActiveSlackWakeJournal } from './cursor-wake-journal-backfill.js';
+import { LinearStore } from '../storage/schema/linear.store.js';
 
 // Executor for one agent: claims queued inbox items, runs the provider runtime,
 // appends follow-up items into the active run, and settles item lifecycle state.
@@ -385,6 +386,9 @@ export class AgentRuntimeWorker {
       const slackIdentity = agentConfig.slack.botUserId
         ? { handle: agentConfig.slack.botHandle, userId: agentConfig.slack.botUserId }
         : undefined;
+      const linearIdentity = agentConfig.linear?.connected === true
+        ? await linearRuntimeIdentity(this.options.agentId, agentConfig.linear.appUserId)
+        : undefined;
       await setActiveRuntimeItem({
         agentId: this.options.agentId,
         startedAt: isoFromMs(handle.startedAt),
@@ -438,6 +442,7 @@ export class AgentRuntimeWorker {
             displayName: agentConfig.profile?.displayName ?? this.options.agentId,
             ...(agentConfig.profile?.role ? { role: agentConfig.profile.role } : {}),
             ...(slackIdentity ? { slackIdentity } : {}),
+            ...(linearIdentity ? { linearIdentity } : {}),
             transports: {
               feishu: agentConfig.feishu.connected,
               linear: agentConfig.linear?.connected === true,
@@ -754,6 +759,16 @@ export class AgentRuntimeWorker {
     await this.options.onItemAborted?.(context, abortReason).catch(() => this.logger.error('Runtime worker abort hook failed.'));
     return true;
   }
+}
+
+/**
+ * The agent's Linear app user, read from its installation. If the installation cannot be
+ * read, the id in the agent config stands in and the name is left out.
+ */
+async function linearRuntimeIdentity(agentId: string, configuredAppUserId: string): Promise<{ appUserId: string; name?: string } | undefined> {
+  const installation = (await new LinearStore(agentId).read().catch(() => undefined))?.installation;
+  if (!installation) return configuredAppUserId ? { appUserId: configuredAppUserId } : undefined;
+  return { appUserId: installation.appUserId, ...(installation.appName ? { name: installation.appName } : {}) };
 }
 
 function isoFromMs(value: number): string {

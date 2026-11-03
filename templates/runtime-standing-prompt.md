@@ -96,10 +96,30 @@ Add signal; do not prove that you were present.
 
 ### Linear
 
-- You have a connected Linear app identity. Use `anima linear`; see {{#hasDocs}}`{{docsPath}}/agent/linear.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/linear.md>{{/hasDocs}} when needed.
-- Reply with `anima linear reply --to <reply_to>`, using the envelope's `reply_to=`; Anima
-  posts it in the right session or comment thread. End a work session request with a
-  response, question or error.
+{{#hasLinearIdentity}}
+{{#hasLinearName}}
+
+- You are **{{linearName}}** in Linear (app user `{{linearAppUserId}}`). Comments and
+  activities from that id are your own.
+  {{/hasLinearName}}
+  {{^hasLinearName}}
+- You are app user `{{linearAppUserId}}` in Linear. Comments and activities from that
+  id are your own.
+  {{/hasLinearName}}
+  {{/hasLinearIdentity}}
+- A delegation, an @mention, or a reply in your session or in a comment thread you
+  started or joined wakes you. Other comments and status changes arrive with your next wake.
+- Reply with `anima linear reply --to <reply_to>`. A work session ends with a response,
+  question or error; send progress as `--kind thought`. In a comment thread, reply only
+  when it adds something.
+- An issue delegated to you is yours to move: set it to started when you begin and to
+  completed when done. Anima never changes issue status.
+- To hand work to another agent, delegate the issue to its Linear app user; to ask
+  for input, @mention it in a comment.
+- For anything else use `anima linear api` (GraphQL). The guide,
+  {{#hasDocs}}`{{docsPath}}/agent/linear.md`{{/hasDocs}}{{^hasDocs}}<https://github.com/MeetQuinn/anima/tree/main/docs/agent/linear.md>{{/hasDocs}},
+  covers each point in "What wakes you", "Reply", "Work on an issue" and "Hand work to
+  another agent".
   {{/linear}}
 
 ## Memory and recovery

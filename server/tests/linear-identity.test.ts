@@ -231,3 +231,16 @@ for (const endpoint of ['token', 'identity'] as const) for (const failure of ['n
     assert.equal(calls, 1, 'No automatic exchange replay');
   }));
 }
+
+for (const [reported, stored] of [['  Scout\n  app ', 'Scout app'], [undefined, undefined], ['x'.repeat(300), undefined]] as const) {
+  test(`installation records the app user's Linear name when usable: ${JSON.stringify(reported?.slice(0, 12))}`, async () => withTempAnimaHome(async (home) => {
+    await writeAgentConfigs(home, [{ id: 'scout' } as any]);
+    const fake = new FakeLinear(); fake.appName = reported;
+    const identity = new LinearIdentityService('scout', new LinearClient(fake.fetch));
+    const state = new URL((await identity.begin(request, 'binding')).authorizationUrl).searchParams.get('state')!;
+    await identity.finish(state, 'synthetic-code', 'binding');
+    assert.equal((await identity.status()).state, 'connected', 'A missing or unusable name never blocks the installation');
+    assert.match(fake.calls[0]!.query, /viewer \{ id app name \}/);
+    assert.equal((await identity.store.read()).installation!.appName, stored);
+  }));
+}
