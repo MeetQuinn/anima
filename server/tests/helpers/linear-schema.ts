@@ -45,8 +45,8 @@ const schema = buildSchema(`
   input CommentCreateInput { id: String, issueId: String, parentId: String, body: String }
 
   type State { id: ID!, name: String!, type: String!, position: Float! }
-  type Team { id: ID!, key: String!, name: String!, states: StateConnection! }
-  type StateConnection { nodes: [State!]! }
+  type Team { id: ID!, key: String!, name: String!, states(first: Int, after: String): StateConnection! }
+  type StateConnection { nodes: [State!]!, pageInfo: PageInfo! }
   input IssueUpdateInput { stateId: String }
   enum PaginationOrderBy { createdAt updatedAt }
   type AgentSession { createdAt: String!, id: ID!, appUser: User!, creator: User, issue: Issue, comment: Comment, status: String!, url: String, activities(first: Int, after: String, last: Int, orderBy: PaginationOrderBy): ActivityConnection!, externalLinks: [ExternalLink!]! }

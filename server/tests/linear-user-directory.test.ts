@@ -74,7 +74,7 @@ test('Linear history shows the sender\'s current name and avatar from the direct
   const sender = randomUUID();
   const item: LinearInboxItem = {
     id: 'linear:item', kind: 'linear', installationId: install.id, organizationId: install.organizationId, sessionId: randomUUID(),
-    action: 'created', text: 'Synthetic request', receivedAt: new Date().toISOString(), humanRequested: true,
+    action: 'created', text: 'Synthetic request', receivedAt: new Date().toISOString(),
     actorId: sender, actorName: 'Old name',
     handling: { status: 'queued', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), queuedAt: new Date().toISOString() },
   };

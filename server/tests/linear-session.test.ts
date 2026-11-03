@@ -244,17 +244,20 @@ test('shared run stop targets the root and reports interruption after actual abo
   assert.ok(fake.posts.every((p) => p.content.body === 'This shared run was interrupted.'));
 }));
 
-for (const state of ['unstarted', 'started', 'completed', 'canceled']) test(`issue state ${state} respects delegated ownership and human initiation`, async () => withTempAnimaHome(async (home) => {
-  const { service, fake } = await seedLinear(home); const event = created();
-  if (event.type === 'AgentSessionEvent') event.agentSession.issueId = randomUUID();
-  fake.issueState = state; await service.receive(event, install); const item = await firstItem(); await service.markStarted(item, item.id);
-  assert.equal(fake.calls.filter((c) => c.query.includes('issueUpdate')).length, state === 'unstarted' ? 1 : 0);
-  assert.deepEqual(fake.calls.find((c) => c.query.includes('issueUpdate'))?.variables.input, state === 'unstarted' ? { stateId: 'started-state' } : undefined);
-  fake.issueState = 'unstarted'; fake.issueDelegate = null; await service.markStarted(item, item.id);
-  assert.equal(fake.calls.filter((c) => c.query.includes('issueUpdate')).length, state === 'unstarted' ? 1 : 0);
-  await service.markStarted({ ...item, humanRequested: false }, item.id);
-  assert.equal(fake.calls.filter((c) => c.query.includes('issueUpdate')).length, state === 'unstarted' ? 1 : 0);
-}));
+for (const human of [true, false]) for (const state of ['backlog', 'unstarted', 'triage', 'started', 'completed', 'canceled']) {
+  test(`starting a run leaves issue status to the agent: human=${human}, state=${state}`, async () => withTempAnimaHome(async (home) => {
+    const { service, fake, store } = await seedLinear(home), event = created();
+    event.agentSession.issueId = randomUUID();
+    if (!human) { event.agentSession.creatorId = null; delete event.agentSession.creator; }
+    fake.issueState = state;
+    await service.receive(event, install);
+    const item = await firstItem(), before = fake.calls.length;
+    await service.markStarted(item, item.id);
+    assert.equal((await store.read()).receipts[item.id]!.state, 'running', 'Request lifecycle still tracks the run');
+    assert.equal(fake.issueState, state);
+    assert.deepEqual(fake.calls.slice(before), [], 'Starting a run must neither read nor mutate Linear issue status');
+  }));
+}
 
 
 test('accepted append ownership and heartbeat survive a slow notification store', async () => withTempAnimaHome(async (home) => {

@@ -16,10 +16,6 @@ import { renderEnvelope } from '../messages/envelope.js';
 
 const Created = z.object({ agentActivityCreate: z.object({ success: z.literal(true), agentActivity: z.object({ id: z.string() }) }) });
 const ReadActivity = z.object({ agentActivity: z.object({ id: z.string(), agentSession: z.object({ id: z.string() }) }) });
-const Issue = z.object({ issue: z.object({ id: z.string(), delegate: z.object({ id: z.string() }).nullable(),
-  state: z.object({ type: z.string() }), team: z.object({ states: z.object({ nodes: z.array(z.object({ id: z.string(), type: z.string(), position: z.number() })) }) }),
-}) });
-const IssueUpdated = z.object({ issueUpdate: z.object({ success: z.literal(true) }) });
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
 const sessionFields = 'id appUser{id} creator{id} issue{id} comment{id} status url';
 const SessionOrigin = z.object({ agentSession: z.object({
@@ -172,7 +168,7 @@ export class LinearSessionService {
       : hasPromptContext ? event.promptContext! : fallbackContext(event);
     const item: LinearInboxItem = {
       id: key, kind: 'linear', installationId: install.id, organizationId: install.organizationId,
-      sessionId: session.id, action: event.action, text, receivedAt, humanRequested: Boolean(session.creatorId),
+      sessionId: session.id, action: event.action, text, receivedAt,
       handling: { status: 'queued', createdAt: receivedAt, updatedAt: receivedAt, queuedAt: receivedAt },
     };
     if (event.action === 'prompted') {
@@ -253,25 +249,12 @@ export class LinearSessionService {
     if (item.kind !== 'linear') return;
     const owner = { installationId: item.installationId, runItemId };
     this.pendingOwners.set(item.id, owner);
-    const startedFile = await this.identity.store.update((file) => {
+    await this.identity.store.update((file) => {
       const receipt = file.receipts[item.id];
       if (!receipt || !isActiveRequest(receipt) || file.installation?.id !== item.installationId) return file;
       return { ...file, receipts: { ...file.receipts, [item.id]: startReceipt(receipt, runItemId) } };
     });
     if (this.pendingOwners.get(item.id) === owner) this.pendingOwners.delete(item.id);
-    const started = startedFile.receipts[item.id];
-    if (started?.state !== 'running' || started.runItemId !== runItemId) return;
-    if (item.issueId && item.humanRequested) {
-      const result = await this.identity.graphql(item.installationId,
-        'query($id:String!){ issue(id:$id){ id delegate { id } state { type } team { states { nodes { id type position } } } } }', { id: item.issueId }, Issue);
-      const issue = result.issue;
-      const install = (await this.identity.store.read()).installation;
-      if (issue.delegate?.id !== install?.appUserId || ['started', 'completed', 'canceled'].includes(issue.state.type)) return;
-      const startedState = issue.team.states.nodes.filter((state) => state.type === 'started').sort((a, b) => a.position - b.position)[0];
-      const current = (await this.identity.store.read()).receipts[item.id];
-      if (startedState && !(current && isStopped(current))) await this.identity.graphql(item.installationId, 'mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}',
-        { id: item.issueId, input: { stateId: startedState.id } }, IssueUpdated);
-    }
   }
 
   async markSettled(item: InboxItem): Promise<void> {

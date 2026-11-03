@@ -162,6 +162,41 @@ anima linear api <<'JSON'
 JSON
 ```
 
+### Update issue status
+
+You own the issue's status. Anima does not change it when you receive a delegation or
+when your run starts. Leave queued work unchanged until you begin it.
+
+When you begin work, move the issue to the team's first started state, with two
+exceptions: leave an issue already in `started`, `completed` or `canceled` unchanged;
+and leave an automation-delegated issue in `triage` for a human to pick up, without
+starting it yourself. Do not move an issue backwards. These exceptions follow
+[Linear's agent guidance](https://linear.app/developers/agent-best-practices).
+
+When the work is finished, deliberately move it to the appropriate `completed` state
+(often named Done). A reply to a session does not change issue status.
+
+Read the current issue and its team's states before updating. Choose the `started`
+state with the lowest `position`; for completion, choose the team's appropriate
+`completed` state. State names vary between teams, so use the returned state ID
+rather than a fixed name.
+
+```sh
+anima linear api <<'JSON'
+{"query":"query($id:String!,$after:String) { issue(id:$id) { id state { id name type } team { states(first:50,after:$after) { nodes { id name type position } pageInfo { hasNextPage endCursor } } } } }","variables":{"id":"ANI-123","after":null}}
+JSON
+```
+
+If `states.pageInfo.hasNextPage` is true, repeat with its `endCursor` in `after` before
+choosing a state. Reuse the issue ID and chosen state ID below, then check `success`.
+Only `stateId` changes; the assignee is preserved.
+
+```sh
+anima linear api <<'JSON'
+{"query":"mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success } }","variables":{"id":"ISSUE_UUID","input":{"stateId":"STATE_UUID"}}}
+JSON
+```
+
 ### Read a work session
 
 Use the session UUID from the delivery or `start` result. The activity content is a

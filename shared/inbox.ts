@@ -266,7 +266,6 @@ export const LinearInboxItem = InboxItemBase.extend({
   sessionId: z.string(),
   organizationId: z.string(),
   issueId: z.string().optional(),
-  humanRequested: z.boolean(),
   issueUrl: z.string().optional(),
   actorName: z.string().optional(),
   text: z.string(),
