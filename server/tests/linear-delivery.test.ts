@@ -69,22 +69,44 @@ for (const promptContext of [undefined, '', ' \n\t']) test(`missing or blank ini
   assert.equal(prompt.split('Compare two approaches.').length - 1, 1, 'The root comment also present in previousComments is shown once');
 }));
 
-test('a supplied full context stays intact and old queued inputs do not invent an action, author or source time', async () => withTempAnimaHome(async (home) => {
+test('partial context keeps earlier thread comments before the triggering reply', async () => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  const event = created(); event.promptContext = undefined;
+  const root = { id: randomUUID(), body: 'FIRST: compare the options.' };
+  const reply = { id: randomUUID(), body: 'SECOND: option two changes the copy.' };
+  event.previousComments = [root, reply, root];
+  event.agentSession.comment = { id: randomUUID(), body: 'THIRD: use option two.' };
+  event.agentSession.commentId = event.agentSession.comment.id;
+  await service.receive(verified(event), install);
+  const [item] = await new WakeQueueService('scout').list();
+  const prompt = buildCodeAgentDeliveryPrompt(item!);
+  assert.ok(prompt.indexOf('FIRST:') < prompt.indexOf('SECOND:'));
+  assert.ok(prompt.indexOf('SECOND:') < prompt.indexOf('THIRD:'));
+  assert.equal(prompt.split('FIRST:').length - 1, 1);
+}));
+
+test('a supplied full context stays intact and old queued inputs recover their event type without borrowing the requester as speaker', async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
   const event = created(); event.promptContext = '  Full supplied context\nwith its original indentation.';
   await service.receive(verified(event), install);
   const [item] = await new WakeQueueService('scout').list();
   assert.match(buildCodeAgentDeliveryPrompt(item!), /  Full supplied context\nwith its original indentation\./);
   assert.doesNotMatch(buildCodeAgentDeliveryPrompt(item!), /Partial initial context/);
-  const old = LinearInboxItem.parse({ id: 'old-input', kind: 'linear', installationId: install.id, organizationId: install.organizationId,
+  const old = LinearInboxItem.parse({ id: `linear:${install.id}:prompted:${randomUUID()}`, kind: 'linear', installationId: install.id, organizationId: install.organizationId,
     sessionId, humanRequested: true, actorName: 'Legacy requester', text: 'Legacy request', receivedAt: '2026-10-03T01:02:03Z',
     handling: { status: 'queued', createdAt: '2026-10-03T01:02:03Z', updatedAt: '2026-10-03T01:02:03Z' } });
   const rendered = buildCodeAgentDeliveryPrompt(old);
-  assert.match(rendered, /wake=session/); assert.match(rendered, /Requested by Legacy requester/);
-  assert.doesNotMatch(rendered, /wake=followup|user_id=|\stime=/);
+  assert.match(rendered, /wake=followup/); assert.match(rendered, /Unknown author: Legacy request/);
+  assert.doesNotMatch(rendered, /Legacy requester|Requested by|context=snapshot|user_id=|\stime=/);
   old.handling.resumeReason = 'runtime_restart';
   assert.match(buildCodeAgentDeliveryPrompt(old), /Legacy request/);
   assert.match(buildCodeAgentDeliveryPrompt(old), new RegExp(`session_id=${sessionId}`));
+  old.id = `linear:${install.id}:created:${sessionId}`;
+  assert.match(buildCodeAgentDeliveryPrompt(old), /wake=created/);
+  assert.match(buildCodeAgentDeliveryPrompt(old), /Requested by Legacy requester/);
+  old.id = 'unclassified-legacy-item';
+  assert.match(buildCodeAgentDeliveryPrompt(old), /wake=session/);
+  assert.doesNotMatch(buildCodeAgentDeliveryPrompt(old), /Requested by|context=snapshot|Legacy requester/);
 }));
 
 test('a follow-up with no author never inherits the responsible human from its session', async () => withTempAnimaHome(async (home) => {

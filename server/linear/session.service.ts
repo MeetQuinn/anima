@@ -41,11 +41,12 @@ const FINISHED_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 function fallbackContext(event: Extract<LinearWebhook, { type: 'AgentSessionEvent' }>): string {
   const session = event.agentSession;
-  const comments = [];
-  if (session.comment) comments.push({ ...session.comment, id: session.comment.id ?? session.commentId ?? undefined });
+  const comments: NonNullable<typeof event.previousComments> = [];
+  const trigger = session.comment ? { ...session.comment, id: session.comment.id ?? session.commentId ?? undefined } : undefined;
   for (const comment of event.previousComments ?? []) {
-    if (!comment.id || !comments.some((previous) => previous.id === comment.id)) comments.push(comment);
+    if (!comment.id || comment.id !== trigger?.id && !comments.some((previous) => previous.id === comment.id)) comments.push(comment);
   }
+  if (trigger) comments.push(trigger);
   const thread = comments.map((comment) => {
     const envelope = renderEnvelope([
       { key: 'comment_id', value: comment.id },

@@ -121,8 +121,9 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
 
 function buildLinearDeliveryPrompt(event: LinearInboxItem | LinearNotificationInboxItem): string {
   const session = event.kind === 'linear';
-  const followup = session && event.action === 'prompted';
-  const snapshot = session && !followup;
+  const action = session ? event.action ?? /^linear:[^:]+:(created|prompted):[^:]+$/.exec(event.id)?.[1] : undefined;
+  const followup = session && action === 'prompted';
+  const snapshot = session && action === 'created';
   const source = renderEnvelope([
     { key: 'context', value: snapshot ? event.contextSource === 'fallback' ? 'partial' : 'snapshot' : undefined },
     { key: 'activity_id', value: session ? event.activityId : undefined },
@@ -130,7 +131,8 @@ function buildLinearDeliveryPrompt(event: LinearInboxItem | LinearNotificationIn
     { key: 'time', value: event.sourceTime ? envelopeTime(event.sourceTime) : undefined },
     { key: snapshot ? 'requester_id' : 'user_id', value: event.actorId },
   ]);
-  const actor = event.actorName ?? event.actorId;
+  // Legacy session items stored the requester as actorName, including follow-ups.
+  const actor = session && !event.action && !snapshot ? undefined : event.actorName ?? event.actorId;
   const conversational = followup || !session && Boolean(event.commentId);
   const attribution = snapshot ? actor ? `Requested by ${actor}` : '' : actor ?? (conversational ? 'Unknown author' : '');
   const heading = [source === '[]' ? '' : source, attribution].filter(Boolean).join(' ');
@@ -143,7 +145,7 @@ function buildLinearDeliveryPrompt(event: LinearInboxItem | LinearNotificationIn
     { key: 'comment_id', value: session ? undefined : event.commentId },
     { key: 'parent_comment_id', value: session ? undefined : event.parentCommentId },
     { key: 'activity_id', value: session ? event.activityId : undefined },
-    { key: 'wake', value: session ? followup ? 'followup' : event.action === 'created' ? 'created' : 'session' : event.notificationType },
+    { key: 'wake', value: session ? followup ? 'followup' : snapshot ? 'created' : 'session' : event.notificationType },
     { key: 'received_at', value: envelopeTime(event.receivedAt) },
     { key: 'queued_at', value: envelopeTime(event.handling.queuedAt ?? event.handling.createdAt) },
     { key: 'claimed_at', value: event.handling.startedAt ? envelopeTime(event.handling.startedAt) : undefined },
