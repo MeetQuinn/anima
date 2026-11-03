@@ -299,6 +299,41 @@ for (const failFirst of [false, true]) test(`a session on a held comment deliver
   assert.equal((await queue.list()).length, 1, 'Retries of the comment do not deliver it again');
 }));
 
+for (const stopCarriesComment of [false, true]) test(`a Stop before the session settles its held comment for good, stopCarriesComment=${stopCarriesComment}`, async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const ordinary = notification();
+  await f.notifications.receive(verified(ordinary), install);
+  const commentItemId = linearCommentItemId(install.id, ordinary.notification.commentId!);
+  const session = sessionFor(ordinary), stop = prompted(session.agentSession.id, true);
+  if (stopCarriesComment) stop.agentSession = { ...stop.agentSession, commentId: ordinary.notification.commentId, issueId };
+  await f.service.receive(verified(stop), install);
+  await f.service.receive(verified(session), install);
+  assert.equal((await queue.list()).length, 0, 'The stopped request is not delivered');
+  assert.equal(await queue.has(commentItemId), true);
+  const receipts = Object.values((await f.store.read()).receipts);
+  assert.ok(receipts.every((r) => r.stopped && !r.itemId));
+  assert.ok(receipts.some((r) => r.commentItemId === commentItemId));
+  const mention = notification('issueCommentMention');
+  mention.notification = { ...mention.notification, commentId: ordinary.notification.commentId, comment: ordinary.notification.comment! };
+  await f.notifications.receive(verified(mention), install);
+  assert.equal((await queue.list()).length, 0, 'A late mention cannot wake a stopped request');
+}));
+
+test('a Stop after a session took over a held comment stops the session request', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const ordinary = notification();
+  await f.notifications.receive(verified(ordinary), install);
+  const session = sessionFor(ordinary);
+  await f.service.receive(verified(session), install);
+  assert.deepEqual((await queue.list()).map((item) => item.kind), ['linear']);
+  const stop = prompted(session.agentSession.id, true);
+  stop.agentSession = { ...stop.agentSession, commentId: ordinary.notification.commentId, issueId };
+  await f.service.receive(verified(stop), install);
+  assert.equal((await queue.list()).length, 0);
+  assert.ok(Object.values((await f.store.read()).receipts).every((r) => r.stopped && !r.commentItemId));
+  assert.deepEqual(f.fake.posts.filter((p) => p.content.type === 'error').map((p) => p.content.body), ['Stopped the pending request. Check any earlier actions before continuing.']);
+}));
+
 test('real work joining a memory pass releases held context and takes new context', async () => withTempAnimaHome(async (home) => {
   const f = await fixture(home), queue = new WakeQueueService('scout');
   await f.notifications.receive(verified(notification('issueStatusChanged')), install);

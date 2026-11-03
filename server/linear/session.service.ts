@@ -184,14 +184,19 @@ export class LinearSessionService {
       ? linearCommentItemId(install.id, session.commentId) : undefined;
     const queue = wakeQueueServiceForAgent(this.agentId);
     const existing = commentItemId ? await queue.find(commentItemId) : undefined;
-    // A comment still held as context never reached the agent, so this session delivers the request itself.
     const heldComment = event.action === 'created' && !stopped && existing !== undefined && isHeldInboxItem(existing);
-    const commentDelivered = commentItemId && !heldComment && await queue.has(commentItemId);
+    const commentQueued = commentItemId && await queue.has(commentItemId);
     const file = await this.identity.store.update((current) => {
       if (current.installation?.id !== install.id || current.installation.revoked) throw new Error('Linear identity changed.');
       const receipts = { ...current.receipts };
       if (!receipts[key]) {
         const alreadyStopped = event.action === 'created' && Object.values(receipts).some((r) => r.sessionId === session.id && r.stopped);
+        // A comment still held as context never reached the agent, so an open session delivers
+        // the request itself. A stopped session keeps the comment, so its Stop settles it. Once the
+        // session took over, the withdrawn comment is not its request, so a later Stop leaves it out.
+        const tookOver = Object.values(receipts).some((r) => r.sessionId === session.id && r.commentId === session.commentId && r.itemId)
+          && !Object.values(receipts).some((r) => r.sessionId === session.id && r.commentItemId);
+        const commentDelivered = commentQueued && (heldComment ? alreadyStopped : !tookOver);
         receipts[key] = { sessionId: session.id, receivedAt, acknowledgement: stopped || alreadyStopped ? 'accepted' : 'pending', acknowledgementId: randomUUID() };
         if (session.commentId) receipts[key].commentId = session.commentId;
         if (commentDelivered) receipts[key].commentItemId = commentItemId;
@@ -210,7 +215,7 @@ export class LinearSessionService {
     await this.publish(file.receipts[key]!);
     // Withdraw only after the session's request is durable. A failure in between leaves duplicate
     // context rather than a lost request, and the webhook retry repeats this step.
-    if (heldComment) await queue.withdrawHeld(commentItemId!);
+    if (heldComment && !file.receipts[key]!.commentItemId) await queue.withdrawHeld(commentItemId!);
   }
 
   async assertRunnable(item: LinearInboxItem): Promise<void> {
