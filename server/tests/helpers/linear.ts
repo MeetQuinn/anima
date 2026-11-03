@@ -79,7 +79,10 @@ export class FakeLinear {
     else if (query.includes('agentSessionUpdate')) { this.links.push(variables.input.addedExternalUrls[0].url); data = { agentSessionUpdate: { success: true } }; }
     else if (query.includes('issueUpdate')) { this.issueState = 'started'; data = { issueUpdate: { success: true } }; }
     else if (query.includes('issue(id:')) data = { issue: { id: variables.id, delegate: this.issueDelegate ? { id: this.issueDelegate } : null, state: { type: this.issueState }, team: { states: { nodes: [{ id: 'started-state', type: 'started', position: 1 }] } } } };
-    else data = { agentSession: { id: variables.id, appUser: { id: install.appUserId }, activities: { nodes: this.posts.map((p) => ({ id: p.id, content: p.content, createdAt: new Date().toISOString() })) } } };
+    else data = { agentSession: { id: variables.id, appUser: { id: install.appUserId }, activities: {
+      nodes: this.posts.map((p) => ({ id: p.id, content: p.content, createdAt: new Date().toISOString() })),
+      pageInfo: { hasNextPage: false, endCursor: this.posts.at(-1)?.id ?? null },
+    } } };
     return new Response(JSON.stringify({ data }), { status: 200 });
   };
 }

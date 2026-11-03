@@ -49,6 +49,7 @@ class Sessions extends FakeLinear {
         this.calls.push({ query, variables });
         return Response.json({ data: { agentSession: { ...this.sessions.get(variables.id), activities: {
           nodes: this.posts.filter((p) => p.agentSessionId === variables.id).map((p) => ({ id: p.id, content: p.content, createdAt: new Date().toISOString() })),
+          pageInfo: { hasNextPage: false, endCursor: null },
         } } } });
       }
       return baseFetch(url, init);

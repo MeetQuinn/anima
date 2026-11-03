@@ -3,26 +3,32 @@ import { z } from 'zod';
 import type { LinearInstallation } from '../storage/schema/linear.store.js';
 
 const Id = z.string().uuid();
+const Time = z.string().datetime({ offset: true });
+const User = z.object({ id: Id, name: z.string().max(512) });
+const Comment = z.object({ id: Id.optional(), body: z.string().max(100_000), userId: Id.nullish() });
 const Common = z.object({ organizationId: Id, oauthClientId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/), webhookTimestamp: z.number().finite() });
 const Session = z.object({
   id: Id, appUserId: Id, organizationId: Id, issueId: Id.nullish(), commentId: Id.nullish(), url: z.string().url().nullish(),
+  createdAt: Time.optional(),
   issue: z.object({ id: Id, title: z.string(), description: z.string().nullish(), url: z.string().url().nullish() }).nullish(),
-  comment: z.object({ body: z.string().max(100_000) }).nullish(),
-  creatorId: Id.nullish(), creator: z.object({ name: z.string() }).nullish(),
+  comment: Comment.nullish(),
+  creatorId: Id.nullish(), creator: z.object({ name: z.string().max(512) }).nullish(),
 });
 const Prompt = z.object({
   id: Id, agentSessionId: Id, signal: z.string().nullish(), body: z.string().max(100_000).optional(),
+  createdAt: Time.optional(), userId: Id.nullish(), user: User.nullish(),
   content: z.object({ type: z.literal('prompt'), body: z.string().max(100_000) }).optional(),
 });
 const Notification = z.object({
-  id: Id, type: z.string().min(1), userId: Id, createdAt: z.string(), updatedAt: z.string(),
-  actorId: Id.nullish(), actor: z.object({ id: Id, name: z.string() }).nullish(), archivedAt: z.string().nullish(),
+  id: Id, type: z.string().min(1), userId: Id, createdAt: Time, updatedAt: Time,
+  actorId: Id.nullish(), actor: User.nullish(), archivedAt: z.string().nullish(),
   issueId: Id.nullish(), issue: z.object({ id: Id, identifier: z.string(), title: z.string(), url: z.string().url() }).nullish(),
   commentId: Id.nullish(), comment: z.object({ id: Id, body: z.string().max(100_000), userId: Id.nullish(), issueId: Id.nullish() }).nullish(),
   parentCommentId: Id.nullish(),
 });
 export const LinearWebhook = z.discriminatedUnion('type', [
   Common.extend({ type: z.literal('AgentSessionEvent'), action: z.enum(['created', 'prompted']),
+    createdAt: Time.optional(), previousComments: z.array(Comment).nullish(),
     appUserId: Id, agentSession: Session, promptContext: z.string().max(200_000).nullish(), agentActivity: Prompt.optional(), guidance: z.array(z.object({ body: z.string().max(50_000) })).max(100).nullish(),
   }),
   Common.extend({ type: z.literal('OAuthApp'), action: z.literal('revoked') }),
@@ -52,6 +58,7 @@ export function verifyLinearWebhook(raw: Buffer, signature: string | undefined, 
     if (event.agentSession.issue && event.agentSession.issueId !== event.agentSession.issue.id) throw new Error('Linear issue identity mismatch');
     if (event.action === 'prompted') {
       if (!event.agentActivity || event.agentActivity.agentSessionId !== event.agentSession.id) throw new Error('Missing Linear prompt');
+      if (event.agentActivity.user && event.agentActivity.userId && event.agentActivity.user.id !== event.agentActivity.userId) throw new Error('Linear prompt author mismatch');
       if (event.agentActivity.signal !== 'stop' && !(event.agentActivity.body ?? event.agentActivity.content?.body)?.trim()) throw new Error('Empty Linear prompt');
     }
   }

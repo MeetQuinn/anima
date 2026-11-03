@@ -119,9 +119,9 @@ export function registerLinearCommands(program: Command): void {
       });
       console.log(JSON.stringify(result, null, 2));
     });
-  linear.command('read').requiredOption('--session <id>', 'Linear session UUID').action(async (_options, command: Command) => {
+  pageOptions(linear.command('read').description('Read one page of session activities.')).requiredOption('--session <id>', 'Linear session UUID').action(async (_options, command: Command) => {
     const opts = command.optsWithGlobals();
-    console.log(JSON.stringify(await serviceFor(opts.agent).read(z.string().uuid().parse(opts.session)), null, 2));
+    console.log(JSON.stringify(await serviceFor(opts.agent).read(z.string().uuid().parse(opts.session), { limit: Number(opts.limit), after: opts.after }), null, 2));
   });
   linear.command('respond').requiredOption('--session <id>', 'Linear session UUID')
     .option('--kind <kind>', 'thought (progress), response, elicitation or error', 'response').action(async (_options, command: Command) => {

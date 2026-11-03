@@ -11,13 +11,17 @@ import type { LinearInstallation, LinearOperation, LinearReceipt } from '../stor
 import { LinearIdentityService, linearRequestNotSent } from './identity.service.js';
 import { LinearApiError } from './client.js';
 import type { LinearWebhook } from './webhook.js';
+import { renderEnvelope } from '../messages/envelope.js';
 
 const Created = z.object({ agentActivityCreate: z.object({ success: z.literal(true), agentActivity: z.object({ id: z.string() }) }) });
 const ReadActivity = z.object({ agentActivity: z.object({ id: z.string(), agentSession: z.object({ id: z.string() }) }) });
 const Updated = z.object({ agentSessionUpdate: z.object({ success: z.literal(true) }) });
 const SessionHistory = z.object({ agentSession: z.object({ id: z.string(), appUser: z.object({ id: z.string() }),
-  activities: z.object({ nodes: z.array(z.object({ id: z.string(), content: z.unknown(), createdAt: z.string() })) }),
+  activities: z.object({ nodes: z.array(z.object({ id: z.string(), content: z.unknown(), createdAt: z.string() })),
+    pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+  }),
 }) });
+const HistoryPage = z.object({ limit: z.number().int().min(1).max(100).default(50), after: z.string().min(1).optional() });
 const Links = z.object({ agentSession: z.object({ appUser: z.object({ id: z.string() }), externalLinks: z.array(z.object({ url: z.string() })) }) });
 const Issue = z.object({ issue: z.object({ id: z.string(), delegate: z.object({ id: z.string() }).nullable(),
   state: z.object({ type: z.string() }), team: z.object({ states: z.object({ nodes: z.array(z.object({ id: z.string(), type: z.string(), position: z.number() })) }) }),
@@ -34,6 +38,24 @@ const SessionDetails = z.object({ id: z.string().uuid(), appUser: z.object({ id:
 // deduplication long before 30 days. Without a limit, linear.json kept every receipt
 // of every session ever seen.
 const FINISHED_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+
+function fallbackContext(event: Extract<LinearWebhook, { type: 'AgentSessionEvent' }>): string {
+  const session = event.agentSession;
+  const comments = [];
+  if (session.comment) comments.push({ ...session.comment, id: session.comment.id ?? session.commentId ?? undefined });
+  for (const comment of event.previousComments ?? []) {
+    if (!comment.id || !comments.some((previous) => previous.id === comment.id)) comments.push(comment);
+  }
+  const thread = comments.map((comment) => {
+    const envelope = renderEnvelope([
+      { key: 'comment_id', value: comment.id },
+      { key: 'user_id', value: comment.userId },
+    ]);
+    return `${envelope === '[]' ? '' : `${envelope} `}${comment.body}`;
+  }).join('\n\n');
+  const guidance = event.guidance?.map((g) => g.body).join('\n\n');
+  return [session.issue?.title, session.issue?.description, thread, guidance ? `Guidance:\n${guidance}` : ''].filter(Boolean).join('\n\n');
+}
 
 /** Drops receipts finished more than 30 days ago, then operations whose session has no receipt left. */
 function withoutExpiredReceipts(receipts: Record<string, LinearReceipt>, operations: Record<string, LinearOperation>, now: number) {
@@ -140,16 +162,28 @@ export class LinearSessionService {
     const eventId = event.action === 'created' ? session.id : event.agentActivity!.id;
     const key = `linear:${install.id}:${event.action}:${eventId}`;
     const stopped = event.agentActivity?.signal === 'stop';
+    const hasPromptContext = Boolean(event.promptContext?.trim());
     const text = event.action === 'prompted' ? event.agentActivity!.body ?? event.agentActivity!.content?.body ?? ''
-      : event.promptContext ?? [session.issue?.title, session.issue?.description, session.comment?.body, ...(event.guidance?.map((g) => g.body) ?? [])].filter(Boolean).join('\n\n');
+      : hasPromptContext ? event.promptContext! : fallbackContext(event);
     const item: LinearInboxItem = {
       id: key, kind: 'linear', installationId: install.id, organizationId: install.organizationId,
-      sessionId: session.id, text: text ?? '', receivedAt, humanRequested: Boolean(session.creatorId),
+      sessionId: session.id, action: event.action, text, receivedAt, humanRequested: Boolean(session.creatorId),
       handling: { status: 'queued', createdAt: receivedAt, updatedAt: receivedAt, queuedAt: receivedAt },
     };
+    if (event.action === 'prompted') {
+      const activity = event.agentActivity!;
+      item.activityId = activity.id;
+      item.sourceTime = activity.createdAt ?? event.createdAt;
+      if (activity.userId ?? activity.user?.id) item.actorId = activity.userId ?? activity.user!.id;
+      if (activity.user?.name) item.actorName = activity.user.name;
+    } else {
+      item.contextSource = hasPromptContext ? 'prompt_context' : 'fallback';
+      item.sourceTime = session.createdAt ?? event.createdAt;
+      if (session.creatorId) item.actorId = session.creatorId;
+      if (session.creator?.name) item.actorName = session.creator.name;
+    }
     if (session.issueId) item.issueId = session.issueId;
     if (session.issue?.url) item.issueUrl = session.issue.url;
-    if (session.creator?.name) item.actorName = session.creator.name;
     // A notification can win delivery before Linear creates/reports a session.
     // Associate the late session with that comment so Stop still reaches it,
     // without enqueueing a second request or inventing a session reply obligation.
@@ -314,17 +348,18 @@ export class LinearSessionService {
     }
   }
 
-  async read(sessionId: string) {
+  async read(sessionId: string, page: { limit?: number; after?: string } = {}) {
+    const { limit, after } = HistoryPage.parse(page);
     const install = await this.identity.authorizedInstallation();
     const result = await this.identity.graphql(install.id,
-      `query($id:String!){agentSession(id:$id){id appUser{id} activities(first:50){nodes{id createdAt content {
+      `query($id:String!,$first:Int!,$after:String){agentSession(id:$id){id appUser{id} activities(first:$first,after:$after){nodes{id createdAt content {
         ... on AgentActivityThoughtContent { type body }
         ... on AgentActivityPromptContent { type body }
         ... on AgentActivityResponseContent { type body }
         ... on AgentActivityErrorContent { type body }
         ... on AgentActivityElicitationContent { type body }
         ... on AgentActivityActionContent { type action parameter result }
-      }}}}}`, { id: sessionId }, SessionHistory);
+      }} pageInfo{hasNextPage endCursor}}}}`, { id: sessionId, first: limit, after }, SessionHistory);
     if (result.agentSession.id !== sessionId || result.agentSession.appUser.id !== install.appUserId) throw new Error('Linear session does not belong to this app.');
     return result.agentSession;
   }
