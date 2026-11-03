@@ -4,6 +4,12 @@ Your connected app is your Linear identity. You can find issues, create work and
 existing discussions without an assignment or an incoming agent session. These actions
 use the app's current workspace/team permissions and your existing primary context.
 
+Use `api` to read or change workspace data, `comment` for ordinary discussions, and
+`start` / `respond` for work sessions. Comments and session bodies accept Markdown on
+stdin. `token` is an auxiliary command for programs that need current credentials.
+The former `teams`, `search`, `issue`, `create`, `read` and `attach-pr` commands have
+been removed; use the API examples below.
+
 ## Incoming conversations
 
 `Linear conversation update` carries the supplied context and a `Wake trigger` envelope.
@@ -24,24 +30,16 @@ Newer messages alone do not cancel an open request. Explicit Stop instructions s
 ## Issues and ordinary comments
 
 ```sh
-anima linear teams
-anima linear search 'login timeout'
-anima linear issue ANI-123
-anima linear create --team <team-uuid> --title 'Fix login timeout' <<'DESCRIPTION'
-Context, expected behavior and acceptance criteria.
-DESCRIPTION
 anima linear comment --issue ANI-123 <<'COMMENT'
-Here is another observation.
+**Observation**
+
+- The timeout occurs after login.
+- See the [trace](https://example.com/trace).
 COMMENT
 anima linear comment --issue ANI-123 --reply-to <comment-uuid> <<'REPLY'
 This answers your question.
 REPLY
 ```
-
-`teams`, `search` and `issue` return one page. Use `--limit` (1–100) and the returned
-`pageInfo.endCursor` as `--after` when `hasNextPage` is true. For `issue`, the cursor
-pages its comments. Issue IDs may be UUIDs or identifiers such as `ANI-123`; creation
-uses a team UUID from `teams`.
 
 `--reply-to` accepts either a root comment or a reply. Linear has one reply level;
 Anima resolves a reply to its root so the new comment stays in that discussion.
@@ -57,12 +55,12 @@ answering. Acknowledgements and completion notices do not require another reply;
 do not mention another agent just to acknowledge it. Existing Stop instructions
 still apply. If the delivery includes a session ID instead, use `respond` below.
 
-Issue and comment creation print their generated UUID to stderr before sending and accept an
-explicit `--id`. They make one write attempt. If the result is uncertain, inspect that
-UUID with `issue` or the API's `comment(id: ...)` query before retrying; do not start a
-second creation with a fresh UUID. A successful response includes the object's ID and
-URL. Common creation/comment commands record activity and outbox entries; a local
-audit warning after success does not mean the external write failed.
+Comment creation prints its generated UUID to stderr before sending and accepts an
+explicit `--id`. It makes one write attempt. If the result is uncertain, inspect that
+UUID through the API's `comment(id: ...)` query before retrying; do not create another
+comment with a fresh UUID. A successful response includes the comment ID and URL.
+Comments and session responses record their Markdown bodies in Activities and outbox;
+a local audit warning after success does not mean the external write failed.
 
 ## Credentials and API access
 
@@ -80,7 +78,7 @@ transcript. Never paste the JSON into messages or shared files. Anima retains th
 refresh token. A refresh failure leaves other connected places available, but Linear
 commands still require a connected, enabled identity.
 
-For API operations without a dedicated command, pass GraphQL JSON on stdin:
+Pass GraphQL JSON on stdin:
 
 ```sh
 anima linear api <<'JSON'
@@ -104,8 +102,87 @@ which does not prove that a write had no effect.
 If the initial audit cannot be recorded, no API request is sent. If recording the
 outcome fails after a response, the command preserves the result and prints a warning;
 do not repeat a write to repair the local audit. Generic API calls do not create chat
-outbox entries. Use dedicated create/comment/session commands for their outbox receipts.
+outbox entries. Use `comment`, `start` and `respond` for their outbox receipts.
+The dashboard shows API completions and failures as tool steps when tool steps are visible.
+A completed request is not a confirmed business outcome; check `success` and returned objects.
 Direct calls with the token remain outside Anima's activity and message records.
+
+## API examples
+
+Change IDs and `variables`, keeping user text in variables rather than interpolating
+it into GraphQL. The result is the `data` object, without a surrounding `data` key.
+For other operations, consult [Linear's API guide](https://linear.app/developers/graphql),
+[schema explorer](https://studio.apollographql.com/public/Linear-API/schema/reference?variant=current)
+and [pagination guide](https://linear.app/developers/pagination). Introspection is also
+available through `api`.
+
+### Read an issue and its discussion
+
+```sh
+anima linear api <<'JSON'
+{"query":"query($id:String!,$after:String) { issue(id:$id) { id identifier title description url state { name type } comments(first:50,after:$after) { nodes { id body url createdAt user { id name } parent { id } } pageInfo { hasNextPage endCursor } } } }","variables":{"id":"ANI-123","after":null}}
+JSON
+```
+
+Issue IDs can be UUIDs or identifiers such as `ANI-123`. When
+`issue.comments.pageInfo.hasNextPage` is true, put its `endCursor` in `variables.after`
+and repeat. Do the same for the `teams`, `searchIssues` and session `activities`
+connections below. One page is not a complete history while another page remains.
+
+### Find issues and teams
+
+```sh
+anima linear api <<'JSON'
+{"query":"query($term:String!,$after:String) { searchIssues(term:$term,first:50,after:$after) { nodes { id identifier title url } pageInfo { hasNextPage endCursor } } }","variables":{"term":"login timeout","after":null}}
+JSON
+anima linear api <<'JSON'
+{"query":"query($after:String) { teams(first:50,after:$after) { nodes { id key name } pageInfo { hasNextPage endCursor } } }","variables":{"after":null}}
+JSON
+```
+
+### Create an issue
+
+Generate an issue UUID once, record it, and replace `ISSUE_UUID` and `TEAM_UUID` below.
+On an uncertain result, query `issue(id: ...)` with that same UUID before retrying.
+`anima linear api` does not generate or print an ID before sending. If you omit `id`,
+Linear assigns one; a lost response can then leave you without that ID for inspection.
+
+```sh
+anima linear api <<'JSON'
+{"query":"mutation($input:IssueCreateInput!) { issueCreate(input:$input) { success issue { id identifier url } } }","variables":{"input":{"id":"ISSUE_UUID","teamId":"TEAM_UUID","title":"Fix login timeout","description":"**Expected:** login completes without a timeout."}}}
+JSON
+```
+
+### Read a work session
+
+Use the session UUID from the delivery or `start` result. The activity content is a
+GraphQL union; keep the fragments when copying this query.
+
+```sh
+anima linear api <<'JSON'
+{"query":"query($id:String!,$after:String) { agentSession(id:$id) { id status appUser { id } externalLinks { url } activities(first:50,after:$after) { nodes { id createdAt user { id name } promptAuthor { id name } content { ... on AgentActivityThoughtContent { type body } ... on AgentActivityPromptContent { type body } ... on AgentActivityResponseContent { type body } ... on AgentActivityErrorContent { type body } ... on AgentActivityElicitationContent { type body } ... on AgentActivityActionContent { type action parameter result } } } pageInfo { hasNextPage endCursor } } } }","variables":{"id":"SESSION_UUID","after":null}}
+JSON
+```
+
+API reads follow Linear's access permissions. `respond` additionally checks Anima's
+session ownership, Stop and reply records. Use `start` and `respond` for session writes:
+a raw API activity does not mark Anima's request answered and can leave a missing-response
+notice pending.
+
+### Attach a pull request
+
+After checking that the work is still active, add a link through the API:
+
+```sh
+anima linear api <<'JSON'
+{"query":"mutation($id:String!,$input:AgentSessionUpdateInput!) { agentSessionUpdate(id:$id,input:$input) { success } }","variables":{"id":"SESSION_UUID","input":{"addedExternalUrls":[{"url":"https://github.com/example/repo/pull/1","label":"Pull request"}]}}}
+JSON
+```
+
+This generic call uses Linear's authorization; it does not enforce Anima's local Stop,
+ownership or duplicate-send checks. If the result is unknown, use the session query
+above and inspect `agentSession.externalLinks` for that URL before considering a retry.
+You can also include the PR link in your Markdown `respond` body.
 
 ## Notifications and follow-up
 
@@ -125,7 +202,7 @@ delivered before its session arrives does not start a second run. The late sessi
 gets a receipt directing the person to the comment thread, without another reply
 obligation or a claim of completion. Own activity
 and repeated deliveries do not wake you again.
-After a team-access change, check `anima linear teams`; the API's current
+After a team-access change, query `teams` through `api`; the API's current
 permissions determine which work you can read or change.
 
 ## Work sessions
@@ -147,9 +224,9 @@ a creation webhook matching the recorded session does not enqueue another run. H
 If creation is uncertain, reuse `--request-id <uuid>` to check the recorded result.
 Anima never repeats an uncertain creation. If no session ID was recorded, a created webhook
 follows normal intake so automation is not lost. Inspect Linear for the session; if it exists,
-`read`, `respond` and `attach-pr` can recover an open session created by your own app.
-They cannot adopt an unreceived human request, another app's session, or terminal work.
-Known Stop and completed-request records continue to block new replies. Session reads
+`respond` can recover an open session created by your own app.
+It cannot adopt an unreceived human request, another app's session, or terminal work.
+Known Stop and completed-request records continue to block new replies. API reads
 use the remote app identity and do not require a local receipt.
 
 Creation request IDs are retained until this identity is removed or reinstalled, including
@@ -174,25 +251,9 @@ reply. Use `--kind elicitation` to ask the person for missing information, or `-
 report a blocker or failed outcome. The default is `response`. Body text goes through stdin.
 Only report what happened; do not expose raw tools, private reasoning or credentials.
 
-Read one page of session activities:
-
-```sh
-anima linear read --session <uuid>
-```
-
-Use `--limit` (1–100, default 50) to set the page size. When
-`activities.pageInfo.hasNextPage` is true, pass `activities.pageInfo.endCursor`
-as `--after` to continue. One page is not the complete history while another page remains.
-
-Attach a pull request before or alongside your reply:
-
-```sh
-anima linear attach-pr --session <uuid> --url https://github.com/example/repo/pull/1
-```
-
 The runtime sends receipt and truthful queued/executing status separately. A receipt is not
 a finished task. A response, question or error ends status updates for the inputs it owns.
-A later turn can attach a PR and answer a delivered request that is still unanswered, including after
+A later turn can answer a delivered request that is still unanswered, including after
 background work finishes. The runtime waits for provider background work and queued wakes
 to finish before reporting a missing response. While waiting, it can post a status activity every
 10 minutes saying that the agent still has ongoing work. This describes the shared agent, not

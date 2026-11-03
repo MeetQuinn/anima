@@ -45,12 +45,9 @@ class Sessions extends FakeLinear {
         this.calls.push({ query, variables });
         return Response.json({ data: { comment: { id: variables.id, parent: variables.id === replyId ? { id: rootId } : null } } });
       }
-      if (query.includes('agentSession(id:') && !query.includes('externalLinks')) {
+      if (query.includes('agentSession(id:')) {
         this.calls.push({ query, variables });
-        return Response.json({ data: { agentSession: { ...this.sessions.get(variables.id), activities: {
-          nodes: this.posts.filter((p) => p.agentSessionId === variables.id).map((p) => ({ id: p.id, content: p.content, createdAt: new Date().toISOString() })),
-          pageInfo: { hasNextPage: false, endCursor: null },
-        } } } });
+        return Response.json({ data: { agentSession: this.sessions.get(variables.id) } });
       }
       return baseFetch(url, init);
     };
@@ -96,15 +93,13 @@ test('a lost session creation is not repeated; its own open remote session can b
   const restarted = new LinearSessionService(f.identity);
   await assert.rejects(restarted.start('issue', issueId, request, 'next-turn'), /creation is unknown/);
   assert.equal(fake.starts.length, 1);
-  assert.equal((await restarted.read(session.id)).id, session.id);
   fake.loseResponse = true;
   await assert.rejects(restarted.respond(session.id, 'thought', 'Recovered progress', 'next-turn'));
   fake.loseResponse = false;
   await restarted.respond(session.id, 'thought', 'Recovered progress', 'next-turn');
   assert.equal(fake.posts.length, 1);
-  await restarted.attach(session.id, 'https://github.com/example/project/pull/1', 'later-turn');
   await restarted.respond(session.id, 'response', 'Recovered result', 'later-turn');
-  assert.equal(fake.posts.length, 2); assert.equal(fake.links.length, 1);
+  assert.equal(fake.posts.length, 2);
 }));
 
 test('remote ownership, human requests and terminal sessions cannot be bypassed by proactive adoption', async () => withTempAnimaHome(async (home) => {
@@ -112,12 +107,9 @@ test('remote ownership, human requests and terminal sessions cannot be bypassed 
   for (const change of [{ appUser: { id: randomUUID() } }, { creator: { id: randomUUID() } }, { status: 'complete' }, { status: 'error' }, { status: 'awaitingInput' }, { status: 'stopping' }]) {
     const session = { ...details(), ...change }; fake.sessions.set(session.id, session);
     await assert.rejects(f.service.respond(session.id, 'thought', 'Not authorized', 'turn'));
-    await assert.rejects(f.service.attach(session.id, 'https://example.com/pr', 'turn'));
   }
-  assert.equal(fake.posts.length, 0); assert.equal(fake.links.length, 0);
+  assert.equal(fake.posts.length, 0);
   assert.deepEqual((await f.store.read()).receipts, {});
-  const other = details(); other.appUser.id = randomUUID(); fake.sessions.set(other.id, other);
-  await assert.rejects(f.service.read(other.id), /does not belong/);
   const stale = details(); stale.status = 'stale'; fake.sessions.set(stale.id, stale);
   await f.service.respond(stale.id, 'thought', 'Still working', 'turn');
   await f.service.receive(prompted(stale.id, true), install);

@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
-import { Command } from 'commander';
 import { LinearInboxItem } from '../../shared/inbox.js';
 import { verifyLinearWebhook, type LinearWebhook } from '../linear/webhook.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -10,11 +9,9 @@ import { buildAnimaRuntimeProfile } from '../runtime/standing-prompt.js';
 import { startRunningAgent } from '../runtime/agent-runner.js';
 import { TeamRunLimiter } from '../runtime/team-run-limiter.js';
 import type { AgentRuntimeInput } from '../providers/contract.js';
-import { registerLinearCommands } from '../tools/linear-cli.js';
 import { withTempAnimaHome, waitFor } from './helpers/harness.js';
-import { created, prompted, install, seedLinear, FakeLinear, sessionId } from './helpers/linear.js';
+import { created, prompted, install, seedLinear, sessionId } from './helpers/linear.js';
 import { makeSlackEvent } from './helpers/slack.js';
-import { linearQueryErrors } from './helpers/linear-schema.js';
 
 function verified<T extends LinearWebhook>(event: T): T {
   const raw = Buffer.from(JSON.stringify(event));
@@ -118,43 +115,6 @@ test('a follow-up with no author never inherits the responsible human from its s
   assert.match(prompt, /Unknown author/); assert.doesNotMatch(prompt, /Not the known speaker|user_id=/);
 }));
 
-test('session reads expose and follow pagination through the CLI without writes, and still enforce app ownership', async (t) => withTempAnimaHome(async (home) => {
-  const fake = new FakeLinear();
-  const requests: Array<Record<string, unknown>> = [];
-  let wrongOwner = false;
-  const rows = Array.from({ length: 51 }, (_,i) => ({ id: `activity-${i}`, createdAt: new Date(1_700_000_000_000 + i * 1000).toISOString(), content: { type: 'prompt', body: `Message ${i}` } }));
-  fake.fetch = async (_url, init) => {
-    const { query, variables } = JSON.parse(String(init?.body));
-    assert.deepEqual(linearQueryErrors(query), []);
-    assert.doesNotMatch(query, /mutation/);
-    requests.push(variables);
-    const start = variables.after ? Number(variables.after) : 0;
-    const nodes = rows.slice(start, start + variables.first);
-    const end = start + nodes.length;
-    return Response.json({ data: { agentSession: { id: variables.id, appUser: { id: wrongOwner ? 'another-app' : install.appUserId },
-      activities: { nodes, pageInfo: { hasNextPage: end < rows.length, endCursor: nodes.length ? String(end) : null } } } } });
-  };
-  const { service } = await seedLinear(home, fake);
-  t.mock.method(globalThis, 'fetch', fake.fetch);
-  const output: string[] = []; t.mock.method(console, 'log', (value: string) => { output.push(value); });
-  const run = async (args: string[]) => {
-    const cli = new Command(); registerLinearCommands(cli);
-    await cli.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'read', '--session', sessionId, ...args]);
-    return JSON.parse(output.at(-1)!);
-  };
-  const first = await run([]);
-  assert.equal(first.activities.nodes.length, 50);
-  assert.equal(first.activities.pageInfo.hasNextPage, true);
-  const next = await run(['--limit', '1', '--after', first.activities.pageInfo.endCursor]);
-  assert.equal(next.activities.nodes[0].content.body, 'Message 50');
-  assert.equal(next.activities.pageInfo.hasNextPage, false);
-  assert.deepEqual(requests, [{ id: sessionId, first: 50 }, { id: sessionId, first: 1, after: '50' }]);
-  await assert.rejects(run(['--limit', '0']));
-  await assert.rejects(run(['--limit', '101']));
-  assert.equal(requests.length, 2, 'Invalid limits fail before any network call');
-  wrongOwner = true;
-  await assert.rejects(service.read(sessionId, { after: '50' }), /does not belong/);
-}));
 
 for (const connected of [undefined, false, true]) test(`runtime injects the Linear capability only for an installed identity: ${connected}`, async (t) => withTempAnimaHome(async (home) => {
   const { fake, agentStore } = await seedLinear(home); t.mock.method(globalThis, 'fetch', fake.fetch);

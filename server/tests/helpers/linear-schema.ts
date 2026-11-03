@@ -34,7 +34,7 @@ const schema = buildSchema(`
   type IssueSearchPayload { nodes: [Issue!]!, pageInfo: PageInfo! }
   type IssuePayload { success: Boolean!, issue: Issue }
   type CommentPayload { success: Boolean!, comment: Comment }
-  type Comment { id: ID!, issueId: String, agentSession: AgentSession, body: String!, url: String!, issue: Issue, parent: Comment, user: User }
+  type Comment { id: ID!, issueId: String, agentSession: AgentSession, body: String!, url: String!, createdAt: String!, issue: Issue, parent: Comment, user: User }
   type CommentConnection { nodes: [Comment!]!, pageInfo: PageInfo! }
   type TeamConnection { nodes: [Team!]!, pageInfo: PageInfo! }
   input IssueCreateInput { id: String, teamId: String!, title: String!, description: String }
@@ -50,7 +50,7 @@ const schema = buildSchema(`
   input AgentSessionCreateOnComment { commentId: String! }
   type ExternalLink { url: String! }
   type ActivityConnection { nodes: [AgentActivity!]!, pageInfo: PageInfo! }
-  type AgentActivity { id: ID!, agentSession: AgentSession!, content: AgentActivityContent!, createdAt: String! }
+  type AgentActivity { id: ID!, agentSession: AgentSession!, content: AgentActivityContent!, createdAt: String!, user: User!, promptAuthor: User }
   union AgentActivityContent = AgentActivityThoughtContent | AgentActivityPromptContent | AgentActivityResponseContent | AgentActivityErrorContent | AgentActivityElicitationContent | AgentActivityActionContent
   type AgentActivityThoughtContent { type: String!, body: String! }
   type AgentActivityPromptContent { type: String!, body: String! }

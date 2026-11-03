@@ -179,11 +179,6 @@ for (const finish of ['late-reply', 'idle', 'stop'] as const) test(`Linear progr
       runs++; inputs.push(input.itemId);
       if (runs === 1) await reply('thought');
       else {
-        for (let i = 0; i < 2; i++) {
-          const cli = new Command(); registerLinearCommands(cli);
-          await cli.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'attach-pr', '--session', sessionId,
-            '--url', 'https://github.com/example/repo/pull/1']);
-        }
         body = 'Finished'; await reply('response'); await reply('response');
       }
       return { text: 'Synthetic completion' };
@@ -224,7 +219,6 @@ for (const finish of ['late-reply', 'idle', 'stop'] as const) test(`Linear progr
         await waitFor(() => fake.posts.some((p) => p.content.type === 'response'));
         await waitFor(() => idleChecks >= 4);
         assert.notEqual(inputs[0], inputs[1], 'The final reply comes from a later inbox item');
-        assert.deepEqual(fake.links, ['https://github.com/example/repo/pull/1']);
         assert.deepEqual(fake.posts.map((p) => p.content), [{ type: 'thought', body: 'Started' }, { type: 'response', body: 'Finished' }]);
       } else {
         await queue.fail(wake.id); await checkIdle();
@@ -322,7 +316,6 @@ for (const failedPublish of [false, true]) for (const stop of [false, true]) tes
         await assert.rejects(service.respond(sessionId, 'response', 'Late after Stop', input.itemId), /No accepted input/);
         refused = true;
       } else {
-        await service.attach(sessionId, 'https://github.com/example/repo/pull/1', input.itemId);
         await service.respond(sessionId, 'response', 'Recovered and finished', input.itemId);
         await service.respond(sessionId, 'response', 'Recovered and finished', input.itemId);
       }
@@ -354,7 +347,7 @@ for (const failedPublish of [false, true]) for (const stop of [false, true]) tes
     await host.reconcileOnce();
     assert.equal(runs, 1);
     assert.equal(fake.posts.filter((p) => p.content.type === 'response').length, stop ? 0 : 1);
-    assert.equal(fake.links.length, stop ? 0 : 1); assert.equal(refused, stop);
+    assert.equal(refused, stop);
     assert.equal(fake.posts.filter((p) => /ended without a confirmed/.test(p.content.body)).length, 0);
   } finally { finish(); await host.stop(); await (host as unknown as { linear: { observationWrite?: Promise<void> } }).linear.observationWrite; }
 }));

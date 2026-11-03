@@ -15,14 +15,6 @@ import { renderEnvelope } from '../messages/envelope.js';
 
 const Created = z.object({ agentActivityCreate: z.object({ success: z.literal(true), agentActivity: z.object({ id: z.string() }) }) });
 const ReadActivity = z.object({ agentActivity: z.object({ id: z.string(), agentSession: z.object({ id: z.string() }) }) });
-const Updated = z.object({ agentSessionUpdate: z.object({ success: z.literal(true) }) });
-const SessionHistory = z.object({ agentSession: z.object({ id: z.string(), appUser: z.object({ id: z.string() }),
-  activities: z.object({ nodes: z.array(z.object({ id: z.string(), content: z.unknown(), createdAt: z.string() })),
-    pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
-  }),
-}) });
-const HistoryPage = z.object({ limit: z.number().int().min(1).max(100).default(50), after: z.string().min(1).optional() });
-const Links = z.object({ agentSession: z.object({ appUser: z.object({ id: z.string() }), externalLinks: z.array(z.object({ url: z.string() })) }) });
 const Issue = z.object({ issue: z.object({ id: z.string(), delegate: z.object({ id: z.string() }).nullable(),
   state: z.object({ type: z.string() }), team: z.object({ states: z.object({ nodes: z.array(z.object({ id: z.string(), type: z.string(), position: z.number() })) }) }),
 }) });
@@ -349,22 +341,6 @@ export class LinearSessionService {
     }
   }
 
-  async read(sessionId: string, page: { limit?: number; after?: string } = {}) {
-    const { limit, after } = HistoryPage.parse(page);
-    const install = await this.identity.authorizedInstallation();
-    const result = await this.identity.graphql(install.id,
-      `query($id:String!,$first:Int!,$after:String){agentSession(id:$id){id appUser{id} activities(first:$first,after:$after){nodes{id createdAt content {
-        ... on AgentActivityThoughtContent { type body }
-        ... on AgentActivityPromptContent { type body }
-        ... on AgentActivityResponseContent { type body }
-        ... on AgentActivityErrorContent { type body }
-        ... on AgentActivityElicitationContent { type body }
-        ... on AgentActivityActionContent { type action parameter result }
-      }} pageInfo{hasNextPage endCursor}}}}`, { id: sessionId, first: limit, after }, SessionHistory);
-    if (result.agentSession.id !== sessionId || result.agentSession.appUser.id !== install.appUserId) throw new Error('Linear session does not belong to this app.');
-    return result.agentSession;
-  }
-
   async respond(sessionId: string, kind: LinearActivityKind, body: string, runItemId?: string, terminal?: 'stopped' | 'failed'): Promise<{ activityId: string; bookkeeping: 'recorded' | 'degraded' }> {
     return this.sessionLock(sessionId, async () => (await this.respondLocked(sessionId, kind, body, runItemId, terminal))!);
   }
@@ -414,39 +390,6 @@ export class LinearSessionService {
     catch (error) { await this.recordWriteFailure(install.id, key, operation, error); throw error; }
     try { await this.acceptOperation(install.id, key, operation); return { activityId: operation.id, bookkeeping: 'recorded' }; }
     catch { return { activityId: operation.id, bookkeeping: 'degraded' }; }
-  }
-
-  async attach(sessionId: string, url: string, runItemId?: string): Promise<{ bookkeeping: 'recorded' | 'degraded' }> {
-    return this.sessionLock(sessionId, async () => {
-      const install = await this.knownSession(sessionId, runItemId, true);
-      const receipts = Object.values((await this.identity.store.read()).receipts);
-      let authorized = false;
-      for (const receipt of receipts) {
-        if (receipt.sessionId !== sessionId || !receipt.itemId || receipt.stopped) continue;
-        const owner = await this.ownerFor(receipt);
-        if (!runItemId || owner === runItemId || (receipt.settled && !receipt.answered && owner)) authorized = true;
-      }
-      if (!authorized) throw new Error('No authorized input for this link.');
-      const key = contentHash('link', JSON.stringify([sessionId, url]));
-      const previous = (await this.identity.store.read()).operations[key];
-      if (previous?.state === 'accepted') return { bookkeeping: 'recorded' };
-      if (previous) {
-        const links = await this.identity.graphql(install.id, 'query($id:String!){agentSession(id:$id){appUser{id} externalLinks{url}}}', { id: sessionId }, Links);
-        if (links.agentSession.appUser.id !== install.appUserId || !links.agentSession.externalLinks.some((link) => link.url === url)) {
-          throw new Error('Previous link result is unknown; inspect Linear before retrying.');
-        }
-        await this.saveOperation(install.id, key, { ...previous, state: 'accepted' });
-        return { bookkeeping: 'recorded' };
-      }
-      const operation: LinearOperation = { id: randomUUID(), sessionId, kind: 'link', state: 'sending', itemIds: [], contentHash: key, url };
-      await this.saveOperation(install.id, key, operation);
-      try {
-        await this.identity.graphql(install.id, 'mutation($id:String!,$input:AgentSessionUpdateInput!){agentSessionUpdate(id:$id,input:$input){success}}',
-          { id: sessionId, input: { addedExternalUrls: [{ url, label: 'Pull request' }] } }, Updated);
-      } catch (error) { await this.recordWriteFailure(install.id, key, operation, error); throw error; }
-      try { await this.saveOperation(install.id, key, { ...operation, state: 'accepted' }); return { bookkeeping: 'recorded' }; }
-      catch { return { bookkeeping: 'degraded' }; }
-    });
   }
 
   async tick(hasOngoingWork?: () => Promise<boolean>): Promise<void> {

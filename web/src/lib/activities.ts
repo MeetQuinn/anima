@@ -108,7 +108,7 @@ export function isNarrativeStep(activity: ActivityRecord): boolean {
     if (status === 'held') return true;
     if (classifyOutboundEffect({ effect, status, tool })) return true;
     // anima.message.read + reminder management DO emit completed (CLI tools).
-    if (tool === 'anima.message.read') return true;
+    if (tool === 'anima.message.read' || tool === 'anima.linear.api') return true;
     if (tool.startsWith('anima.reminder.') && tool !== 'anima.reminder.list') return true;
     // Provider file/code/web tools have no successful completed today;
     // when they do (backend cleanup), add them here and remove from started arm.
@@ -156,6 +156,16 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   const payload = activity.payload ?? {};
   const tool = String(payload['providerToolName'] || payload['tool'] || '').replace(/^claude\./, '');
   const normalized = tool.toLowerCase();
+
+  if (normalized === 'anima.linear.api') {
+    const operation = payload['operation'];
+    const label = operation === 'query' ? 'Query' : operation === 'mutation' ? 'Mutation'
+      : operation === 'subscription' ? 'Subscription' : 'Unknown operation';
+    if (activity.type === 'tool.call.failed') return {
+      title: 'Linear API request failed', target: `${label} · outcome unknown`, color: COLOR_FAILURE, kind: 'failure',
+    };
+    return tool_(activity.type === 'tool.call.completed' ? 'Linear API request completed' : 'Linear API request started', label);
+  }
 
   if (activity.type === 'memory_coherence.outcome') {
     return memoryCoherenceOutcomeRow(payload);
