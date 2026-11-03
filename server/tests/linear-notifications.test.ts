@@ -21,7 +21,7 @@ import { withTempAnimaHome, waitFor } from './helpers/harness.js';
 import { created, prompted, install, seedLinear } from './helpers/linear.js';
 import { linearQueryErrors } from './helpers/linear-schema.js';
 import { makeSlackEvent } from './helpers/slack.js';
-import { isClaimableQueuedInboxItem, isHeldInboxItem } from '../../shared/inbox.js';
+import { isClaimableQueuedInboxItem, isHeldInboxItem, LinearNotificationInboxItem } from '../../shared/inbox.js';
 import { listRestartBlockers } from '../services/restart-gate.js';
 import { isStopped } from '../linear/receipt-state.js';
 
@@ -146,7 +146,7 @@ test('permission changes deliver bounded context without session obligations and
   await f.notifications.receive(verified(event), install);
   await f.notifications.receive(verified({ ...event, webhookTimestamp: Date.now() + 1000, addedTeamIds: [...event.addedTeamIds].reverse() }), install);
   assert.equal((await queue.list()).length, 1); assert.equal(f.calls.length, 0);
-  const item = (await queue.list())[0]!; assert.match(buildCodeAgentDeliveryPrompt(item), /wake=teamAccessChanged/);
+  const item = (await queue.list())[0]!; assert.match(buildCodeAgentDeliveryPrompt(item), /\n\[time=[^\]]+\] Linear team access changed\. All public teams: no\.\n[^]*wake=permissions /);
   assert.doesNotMatch(buildCodeAgentDeliveryPrompt(item), /linear respond/);
   const config = { agentId: 'scout', stateDir: home };
   assert.equal((await runtimeContextForItemId(item.id, config)).item.id, item.id);
@@ -177,9 +177,9 @@ test('ordinary notifications share the Slack primary session and may finish sile
     await waitFor(() => calls.length === 2); await waitFor(async () => (await queue.list()).length === 0);
     assert.equal(calls[1]!.providerSession?.id, 'same-primary-session');
     assert.match(calls[1]!.prompt, /Linear conversation update/);
-    assert.match(calls[1]!.prompt, new RegExp(`issue_id=${issueId} comment_id=${event.notification.commentId}`));
-    assert.match(calls[1]!.prompt, /wake=issueNewComment/);
-    assert.doesNotMatch(calls[1]!.prompt, /session_id=/);
+    assert.match(calls[1]!.prompt, new RegExp(`\\[issue=SYN-1 comment_id=${event.notification.commentId} time=`));
+    assert.match(calls[1]!.prompt, /issue=SYN-1 wake=comment /);
+    assert.doesNotMatch(calls[1]!.prompt, /session_id=|issue_id=|Synthetic discussion/);
     await f.service.tick();
     assert.equal(f.fake.posts.length, 0); assert.deepEqual((await f.store.read()).receipts, {});
     // A work session the agent leaves unanswered gets only its receipt from the runtime.
@@ -225,7 +225,7 @@ test('only requests addressed to the agent wake it; other Linear events wait for
     assert.equal(prompts.length, 6);
     assert.match(prompts[0]!, new RegExp(`comment_id=${joined.notification.commentId}`));
     for (const event of [topLevel, otherThread]) assert.ok(prompts.some((p) => p.includes(`comment_id=${event.notification.commentId}`)));
-    for (const wake of ['issueStatusChanged', 'issueUnassignedFromYou', 'teamAccessChanged']) assert.ok(prompts.some((p) => p.includes(`wake=${wake}`)));
+    for (const wake of ['status', 'unassigned', 'permissions']) assert.ok(prompts.some((p) => p.includes(`wake=${wake} `)));
   } finally { await runner.stop(); }
 }));
 
@@ -274,7 +274,7 @@ test('a late mention of a held comment delivers the request as it now reads', as
   assert.equal(item!.notificationType, 'issueCommentMention'); assert.equal(item!.sourceTime, later);
   const prompt = buildCodeAgentDeliveryPrompt(item!);
   assert.match(prompt, /NEW_REQUEST_FIX_THIS/); assert.doesNotMatch(prompt, /OLD_FYI_NO_REQUEST/);
-  assert.match(prompt, /wake=issueCommentMention/);
+  assert.match(prompt, /wake=mention /);
   // Once delivered, the comment stays deduplicated.
   await queue.complete(item!.id);
   await f.notifications.receive(verified({ ...mention, notification: { ...mention.notification, id: randomUUID() } }), install);
@@ -409,9 +409,9 @@ for (const mentionFirst of [false, true]) test(`comment mentions share one durab
   const prompt = buildCodeAgentDeliveryPrompt(item!);
   assert.match(prompt, /Synthetic follow-up to the proactive comment/);
   assert.match(prompt, new RegExp(`comment_id=${mention.notification.commentId}`));
-  assert.match(prompt, new RegExp(`user_id=${humanId}`));
-  assert.doesNotMatch(prompt, /session_id=/);
-  assert.match(prompt, /wake=issueCommentMention/, 'A mention of a held comment delivers it as a mention');
+  assert.match(prompt, /\] Synthetic teammate: Synthetic follow-up to the proactive comment\n/);
+  assert.doesNotMatch(prompt, /session_id=|user_id=/);
+  assert.match(prompt, /wake=mention /, 'A mention of a held comment delivers it as a mention');
   await queue.complete(item!.id);
   await f.notifications.receive(verified(second), install);
   assert.equal((await queue.list()).length, 0);
@@ -582,3 +582,50 @@ test('late-session Stop with a lost response reconciles its one write instead of
   assert.equal(f.fake.posts.length, 1); assert.equal((await queue.list()).length, 0);
   assert.equal(Object.values((await f.store.read()).operations)[0]!.state, 'accepted');
 }));
+
+// Each line is what happened, by whom; the issue key names the issue in both envelopes.
+for (const [type, wake, line] of [
+  ['issueCommentMention', 'mention', 'Synthetic teammate: Synthetic follow-up to the proactive comment'],
+  ['issueNewComment', 'comment', 'Synthetic teammate: Synthetic follow-up to the proactive comment'],
+  ['issueStatusChanged', 'status', 'Synthetic teammate changed the status of SYN-1'],
+  ['issueUnassignedFromYou', 'unassigned', 'Synthetic teammate unassigned you from SYN-1'],
+] as const) test(`a ${type} notification renders as wake=${wake}`, async (t) => withTempAnimaHome(async (home) => {
+  const f = await fixture(home); t.mock.method(globalThis, 'fetch', f.fetcher);
+  const event = notification(type);
+  event.notification.updatedAt = '2026-11-03T18:00:00.123Z';
+  if (wake === 'status' || wake === 'unassigned') { delete event.notification.commentId; delete event.notification.comment; }
+  await f.notifications.receive(verified(event), install);
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear_notification');
+  assert.equal(item.issueKey, 'SYN-1');
+  assert.equal(item.text, wake === 'mention' || wake === 'comment' ? 'Synthetic follow-up to the proactive comment' : line.replace('Synthetic teammate ', ''));
+  item.handling.queuedAt = '2026-11-03T18:00:01.000Z'; item.handling.startedAt = '2026-11-03T18:00:02.000Z';
+  const commentId = event.notification.commentId;
+  assert.equal(buildCodeAgentDeliveryPrompt(item), [
+    'Linear conversation update:',
+    `[issue=SYN-1${commentId ? ` comment_id=${commentId}` : ''} time=2026-11-03T18:00:00Z] ${line}`,
+    `Wake trigger:\n[platform=linear reply_to=${commentId ? `comment:${commentId}` : `issue:${issueId}`} issue=SYN-1 wake=${wake} queued_at=2026-11-03T18:00:01Z claimed_at=2026-11-03T18:00:02Z]`,
+  ].join('\n\n'));
+}));
+
+test('notifications queued before the issue key was stored still render, with the key taken from the issue URL', () => {
+  const at = '2026-10-03T01:02:03Z', root = randomUUID();
+  const render = (notificationType: string, text: string, extra: Record<string, unknown> = {}) => buildCodeAgentDeliveryPrompt(LinearNotificationInboxItem.parse({
+    id: `linear:${install.id}:notification:${randomUUID()}:${at}`, kind: 'linear_notification', installationId: install.id, organizationId: install.organizationId,
+    notificationType, text, receivedAt: at, sourceTime: at, actorName: 'Synthetic teammate', issueId, issueUrl: 'https://linear.app/synthetic/issue/SYN-1/synthetic-discussion',
+    handling: { status: 'queued', createdAt: at, updatedAt: at }, ...extra }));
+  // Older items stored the issue title as their text; a status line is composed from the type instead.
+  assert.equal(render('issueStatusChanged', 'SYN-1: Synthetic discussion'), `Linear conversation update:\n\n[issue=SYN-1 time=${at}] Synthetic teammate changed the status of SYN-1\n\n`
+    + `Wake trigger:\n[platform=linear reply_to=issue:${issueId} issue=SYN-1 wake=status queued_at=${at}]`);
+  assert.match(render('issueUnassignedFromYou', 'SYN-1: Synthetic discussion', { actorName: undefined }), /\] Someone unassigned you from SYN-1\n[^]* wake=unassigned /);
+  // A stored comment keeps its old text, title included, and is answered at its thread root.
+  const commentId = randomUUID();
+  assert.equal(render('issueNewComment', 'SYN-1: Synthetic discussion\n\nOld body', { commentId, parentCommentId: root }),
+    `Linear conversation update:\n\n[issue=SYN-1 comment_id=${commentId} time=${at}] Synthetic teammate: SYN-1: Synthetic discussion\n\nOld body\n\n`
+    + `Wake trigger:\n[platform=linear reply_to=comment:${root} issue=SYN-1 wake=comment queued_at=${at}]`);
+  // Without a key, the trigger still names the issue by id and the line names no key.
+  assert.match(render('issueStatusChanged', '', { issueUrl: 'https://linear.app/synthetic/project/SYN-1' }),
+    new RegExp(`\\[time=${at}\\] Synthetic teammate changed the status of the issue\\n[^]* issue=${issueId} wake=status `));
+  assert.equal(render('teamAccessChanged', 'Linear team access changed.', { actorName: undefined, issueId: undefined, issueUrl: undefined }),
+    `Linear conversation update:\n\n[time=${at}] Linear team access changed.\n\nWake trigger:\n[platform=linear wake=permissions queued_at=${at}]`);
+});

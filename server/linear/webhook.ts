@@ -12,7 +12,8 @@ const Common = z.object({ organizationId: Id, oauthClientId: z.string().min(1).m
 const Session = z.object({
   id: Id, appUserId: Id, organizationId: Id, issueId: Id.nullish(), commentId: Id.nullish(), url: z.string().url().nullish(),
   createdAt: Time.optional(),
-  issue: z.object({ id: Id, title: z.string(), description: z.string().nullish(), url: z.string().url().nullish() }).nullish(),
+  // The identifier only names the issue in the prompt; an odd one is dropped, never rejected.
+  issue: z.object({ id: Id, identifier: z.string().nullish().catch(undefined), title: z.string(), description: z.string().nullish(), url: z.string().url().nullish() }).nullish(),
   comment: Comment.nullish(),
   creatorId: Id.nullish(), creator: z.object({ name: z.string().max(512), avatarUrl: AvatarUrl }).nullish(),
 });

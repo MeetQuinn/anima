@@ -14,6 +14,8 @@ const Installation = z.object({
   clientRejected: z.boolean().optional(),
   organizationId: z.string(), appUserId: z.string(), accessToken: z.string(),
   workspaceName: z.string().trim().min(1).max(256).optional(),
+  // The app user's display name in Linear; installations made before it was recorded have none.
+  appName: z.string().trim().min(1).max(256).optional(),
   refreshToken: z.string(), expiresAt: z.number(), revoked: z.boolean(),
 });
 export type LinearInstallation = z.infer<typeof Installation>;

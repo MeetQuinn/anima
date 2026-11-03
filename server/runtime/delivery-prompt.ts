@@ -36,6 +36,7 @@ import {
 } from './delivery-notes.js';
 import { buildBackgroundInterruptedDeliveryPrompt } from './background-interrupted.js';
 import { formatLinearReplyTarget, linearReplyTargetFor } from '../linear/reply-target.js';
+import { linearIssueKey, linearNotificationEvent } from '../linear/delivery-text.js';
 import { restartSubtaskPrompt, type RestartSubtaskObservation } from './restart-subtasks.js';
 
 export interface CodeAgentPromptContext {
@@ -120,46 +121,74 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
   return buildSlackMessageDeliveryPrompt(event);
 }
 
+/**
+ * Linear `wake=` values:
+ * - delegated: Linear opened a session because the issue was delegated to the agent.
+ * - mention: Linear opened a session for an @mention, or an `issueCommentMention`
+ *   notification. Since Linear's 2026-09-24 change, an @mention on an issue that already
+ *   has a session arrives as a followup in its latest session instead, even a finished one.
+ * - followup: a new prompt in an existing session.
+ * - comment: `issueNewComment`.
+ * - status: `issueStatusChanged`.
+ * - unassigned: `issueUnassignedFromYou`.
+ * - permissions: `teamAccessChanged`; Linear changed which teams the app can see.
+ * Items queued before these values: a created session without an origin counts as a
+ * delegation, and a session item without a recorded action as a followup.
+ */
+const LINEAR_NOTIFICATION_WAKES: Record<string, string> = {
+  issueCommentMention: 'mention',
+  issueNewComment: 'comment',
+  issueStatusChanged: 'status',
+  issueUnassignedFromYou: 'unassigned',
+  teamAccessChanged: 'permissions',
+};
+
+function linearWake(event: LinearInboxItem | LinearNotificationInboxItem): string {
+  if (event.kind === 'linear_notification') return LINEAR_NOTIFICATION_WAKES[event.notificationType] ?? event.notificationType;
+  const action = event.action ?? /^linear:[^:]+:(created|prompted):[^:]+$/.exec(event.id)?.[1];
+  if (action !== 'created') return 'followup';
+  return event.origin === 'mention' ? 'mention' : 'delegated';
+}
+
 function buildLinearDeliveryPrompt(event: LinearInboxItem | LinearNotificationInboxItem): string {
   const session = event.kind === 'linear';
-  const action = session ? event.action ?? /^linear:[^:]+:(created|prompted):[^:]+$/.exec(event.id)?.[1] : undefined;
-  const followup = session && action === 'prompted';
-  const snapshot = session && action === 'created';
+  const wake = linearWake(event);
+  const created = session && (wake === 'delegated' || wake === 'mention');
+  const key = event.issueKey ?? linearIssueKey(undefined, event.issueUrl);
   const source = renderEnvelope([
-    { key: 'context', value: snapshot ? event.contextSource === 'fallback' ? 'partial' : 'snapshot' : undefined },
+    { key: 'issue', value: key },
     { key: 'activity_id', value: session ? event.activityId : undefined },
     { key: 'comment_id', value: session ? undefined : event.commentId },
     { key: 'time', value: event.sourceTime ? envelopeTime(event.sourceTime) : undefined },
-    { key: snapshot ? 'requester_id' : 'user_id', value: event.actorId },
   ]);
-  // Legacy session items stored the requester as actorName, including follow-ups.
-  const actor = session && !event.action && !snapshot ? undefined : event.actorName ?? event.actorId;
-  const conversational = followup || !session && Boolean(event.commentId);
-  const attribution = snapshot ? actor ? `Requested by ${actor}` : '' : actor ?? (conversational ? 'Unknown author' : '');
-  const heading = [source === '[]' ? '' : source, attribution].filter(Boolean).join(' ');
-  const message = snapshot ? [heading, event.text].filter(Boolean).join('\n\n')
-    : `${heading}${attribution ? ': ' : heading ? ' ' : ''}${event.text}`;
+  const prefix = source === '[]' ? '' : `${source} `;
+  // Session items queued without an action stored the session's requester as actorName.
+  const actor = session && !event.action && !created ? undefined : event.actorName ?? event.actorId;
+  const happened = session ? undefined : linearNotificationEvent(event.notificationType, key);
+  let message: string;
+  if (created) {
+    // Linear omits the creator when an agent or automation opened the session.
+    const intro = wake === 'mention'
+      ? `${actor ? `${actor} mentioned you` : 'You were mentioned'}${key ? ` on ${key}` : ''}:`
+      : actor ? `${actor} delegated ${key ?? 'an issue'} to you:` : `${key ?? 'An issue'} was delegated to you:`;
+    message = `${prefix}${intro}\n${event.text}`;
+  } else if (happened) {
+    // Composed from the type, so items that stored the issue title instead read the same.
+    message = `${prefix}${actor ?? 'Someone'} ${happened}`;
+  } else {
+    const speaker = actor ?? (session || event.commentId ? 'Unknown author' : undefined);
+    message = `${prefix}${speaker ? `${speaker}: ` : ''}${event.text}`;
+  }
   const replyTo = linearReplyTargetFor(event);
   const trigger = renderEnvelope([
     { key: 'platform', value: 'linear' },
     { key: 'reply_to', value: replyTo ? formatLinearReplyTarget(replyTo) : undefined },
-    { key: 'session_id', value: session ? event.sessionId : undefined },
-    { key: 'issue_id', value: event.issueId },
-    { key: 'comment_id', value: session ? undefined : event.commentId },
-    { key: 'parent_comment_id', value: session ? undefined : event.parentCommentId },
-    { key: 'activity_id', value: session ? event.activityId : undefined },
-    { key: 'wake', value: session ? followup ? 'followup' : snapshot ? 'created' : 'session' : event.notificationType },
-    { key: 'received_at', value: envelopeTime(event.receivedAt) },
+    { key: 'issue', value: key ?? event.issueId },
+    { key: 'wake', value: wake },
     { key: 'queued_at', value: envelopeTime(event.handling.queuedAt ?? event.handling.createdAt) },
     { key: 'claimed_at', value: event.handling.startedAt ? envelopeTime(event.handling.startedAt) : undefined },
   ]);
-  return [
-    'Linear conversation update:',
-    event.issueUrl ? `Issue: ${event.issueUrl}` : '',
-    message,
-    snapshot && event.contextSource === 'fallback' ? '(Partial initial context: only the supplied issue, comments and guidance are shown.)' : '',
-    `Wake trigger:\n${trigger}`,
-  ].filter(Boolean).join('\n\n');
+  return ['Linear conversation update:', message, `Wake trigger:\n${trigger}`].join('\n\n');
 }
 
 /** Render Slack unfurl previews + attached_files for inclusion in the cursor envelope. */

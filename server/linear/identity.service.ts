@@ -16,7 +16,7 @@ import { isActiveRequest } from './receipt-state.js';
 // Linear can mark a session stale after 30 minutes without activity; use the same quiet period.
 const UNANSWERED_AFTER_MS = 30 * 60_000;
 
-const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.literal(true) }), organization: z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(256) }),
+const Identity = z.object({ viewer: z.object({ id: z.string().uuid(), app: z.literal(true), name: z.string().nullish() }), organization: z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(256) }),
   applicationInfo: z.object({ clientId: z.string() }),
 });
 
@@ -180,12 +180,15 @@ export class LinearIdentityService {
         ...(pending.clientSecret ? { client_secret: pending.clientSecret } : {}),
         redirect_uri: pending.callbackUrl, code_verifier: pending.verifier, code });
       stage = 'identity';
-      const identity = await this.client.graphql(tokens.access_token, 'query($clientId:String!) { viewer { id app } organization { id name } applicationInfo(clientId:$clientId) { clientId } }', { clientId: pending.clientId }, Identity);
+      const identity = await this.client.graphql(tokens.access_token, 'query($clientId:String!) { viewer { id app name } organization { id name } applicationInfo(clientId:$clientId) { clientId } }', { clientId: pending.clientId }, Identity);
       if (identity.applicationInfo.clientId !== pending.clientId) throw new Error('Linear application identity mismatch.');
+      // The name only tells the agent what it is called; an unusable one is left out.
+      const appName = identity.viewer.name?.replace(/\s+/g, ' ').trim();
       const installation: LinearInstallation = {
         id: randomUUID(), clientId: pending.clientId, signingSecret: pending.signingSecret,
         ...(pending.clientSecret ? { clientSecret: pending.clientSecret } : {}),
         organizationId: identity.organization.id, appUserId: identity.viewer.id, workspaceName: identity.organization.name,
+        ...(appName && appName.length <= 256 ? { appName } : {}),
         accessToken: tokens.access_token, refreshToken: tokens.refresh_token,
         expiresAt: Date.now() + tokens.expires_in * 1000, revoked: false,
       };

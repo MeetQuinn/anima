@@ -8,6 +8,7 @@ import { LinearIdentityService } from '../linear/identity.service.js';
 import type { LinearWebhook } from '../linear/webhook.js';
 import { linearCommentItemId, withLinearCommentLock } from './linear-comment-delivery.js';
 import { isStopped, sessionStopped } from '../linear/receipt-state.js';
+import { linearIssueKey, linearNotificationEvent } from '../linear/delivery-text.js';
 
 const Session = z.object({ appUser: z.object({ id: z.string() }) }).nullable();
 const CommentThread = z.object({ comment: z.object({ id: z.string(), issueId: z.string().nullable(),
@@ -79,7 +80,10 @@ export class LinearNotificationService {
       if (n.commentId) item.commentId = n.commentId;
       if (n.parentCommentId) item.parentCommentId = n.parentCommentId;
       if (n.actor?.name) item.actorName = n.actor.name;
-      text = [`${n.issue.identifier}: ${n.issue.title}`, n.comment?.body].filter(Boolean).join('\n\n');
+      const issueKey = linearIssueKey(n.issue.identifier, n.issue.url);
+      if (issueKey) item.issueKey = issueKey;
+      // A comment is only what its author wrote; the envelope names the issue.
+      text = COMMENT_TYPES.has(n.type) ? n.comment?.body ?? '' : linearNotificationEvent(n.type, issueKey) ?? '';
       if (COMMENT_TYPES.has(n.type) && n.commentId) {
         key = linearCommentItemId(install.id, n.commentId);
         if (await queue.has(key)) {

@@ -39,6 +39,8 @@ export class FakeLinear {
   refreshRequiresSecret = false;
   /** The app's real secret; any other value is invalid_client. */
   clientSecret = install.clientSecret!;
+  /** The app user's name the viewer query reports; omitted when undefined. */
+  appName?: string;
   /** Forces the next refresh outcome. */
   refreshFailure?: 'invalid_grant' | 'server_error' | 'unreadable' | 'network';
   fetch: typeof fetch = async (url, init) => {
@@ -66,7 +68,7 @@ export class FakeLinear {
     if (errors.length) return new Response(JSON.stringify({ errors: errors.map((message) => ({ message })) }), { status: 400 });
     if (this.quotaUnauthorized) return new Response('{}', { status: 401 });
     let data: unknown;
-    if (query.includes('viewer')) data = { viewer: { id: install.appUserId, app: true }, organization: { id: install.organizationId, name: install.workspaceName }, applicationInfo: { clientId: variables.clientId } };
+    if (query.includes('viewer')) data = { viewer: { id: install.appUserId, app: true, ...(this.appName === undefined ? {} : { name: this.appName }) }, organization: { id: install.organizationId, name: install.workspaceName }, applicationInfo: { clientId: variables.clientId } };
     else if (query.includes('agentActivityCreate')) {
       if (this.failMutation) throw new Error('synthetic-network-error-secret');
       this.posts.push(variables.input);

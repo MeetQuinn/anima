@@ -13,6 +13,7 @@ import { awaitsAcknowledgement, claimable, closeReceipt, endRun, isActiveRequest
 import { LinearApiError } from './client.js';
 import type { LinearWebhook } from './webhook.js';
 import { renderEnvelope } from '../messages/envelope.js';
+import { linearIssueKey } from './delivery-text.js';
 
 const Created = z.object({ agentActivityCreate: z.object({ success: z.literal(true), agentActivity: z.object({ id: z.string() }) }) });
 const ReadActivity = z.object({ agentActivity: z.object({ id: z.string(), agentSession: z.object({ id: z.string() }) }) });
@@ -182,9 +183,14 @@ export class LinearSessionService {
       item.sourceTime = session.createdAt ?? event.createdAt;
       if (session.creatorId) item.actorId = session.creatorId;
       if (session.creator?.name) item.actorName = session.creator.name;
+      // Every session has a thread. Linear writes the root of a delegated session's thread
+      // itself, so that comment has no author; an @mention opens the session in a person's thread.
+      item.origin = session.comment?.userId ? 'mention' : 'delegation';
     }
     if (session.issueId) item.issueId = session.issueId;
     if (session.issue?.url) item.issueUrl = session.issue.url;
+    const issueKey = linearIssueKey(session.issue?.identifier, session.issue?.url);
+    if (issueKey) item.issueKey = issueKey;
     // A notification can win delivery before Linear creates/reports a session.
     // Associate the late session with that comment so Stop still reaches it,
     // without enqueueing a second request or inventing a session reply obligation.
