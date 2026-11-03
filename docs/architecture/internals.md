@@ -93,6 +93,8 @@ The active statuses come from `shared/inbox.ts`: `queued`, `running`, `completed
 
 `WakeQueueService.takeNextRunnable` claims work for a worker. It recovers stale running work when the previous worker is no longer alive or the item is older than the stale-running threshold. `WakeQueueService.takeNextFollowup` claims same-session queued items for the currently active worker.
 
+`enqueue(item, { holdUntilRun: true })` is for context that must not wake the agent. When no run is active, the item is stored with `handling.heldAt`: it never starts a run, does not count as pending work or a restart blocker, and claiming the next run releases every held item into that run as follow-ups. During a run the item is queued normally. `releaseHeld` lets a later event that addresses held context wake the agent.
+
 The wake signal is not the only scheduling mechanism. `server/runtime/runtime-worker.ts` subscribes with `onWake`, but it also has a fallback poll interval. The fallback covers stale-running crash recovery and cross-process enqueue cases.
 
 ### 6. Runtime worker

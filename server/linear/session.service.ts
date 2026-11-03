@@ -203,6 +203,9 @@ export class LinearSessionService {
       return { ...current, ...withoutExpiredReceipts(receipts, current.operations, Date.parse(receivedAt)), lastSignedWebhookAt: receivedAt };
     });
     if (file.receipts[key]!.stopped) { await this.stop(session.id); return; }
+    // A session on a comment is a request to this agent, so held context for it now wakes.
+    const deliveredTo = file.receipts[key]!.commentItemId;
+    if (deliveredTo) await wakeQueueServiceForAgent(this.agentId).releaseHeld(deliveredTo);
     await this.publish(file.receipts[key]!);
   }
 

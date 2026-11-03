@@ -10,10 +10,14 @@ import { linearCommentItemId, withLinearCommentLock } from './linear-comment-del
 
 const Session = z.object({ appUser: z.object({ id: z.string() }) }).nullable();
 const CommentThread = z.object({ comment: z.object({ id: z.string(), issueId: z.string().nullable(),
-  agentSession: Session, parent: z.object({ agentSession: Session }).nullable(),
+  agentSession: Session, parent: z.object({ agentSession: Session, user: z.object({ id: z.string() }).nullable(),
+    children: z.object({ nodes: z.array(z.object({ id: z.string() })) }) }).nullable(),
 }) });
+// The thread root, whether this app wrote it, and whether this app replied in it.
+const COMMENT_THREAD_QUERY = `query($id:String!,$app:ID!){comment(id:$id){id issueId agentSession{appUser{id}}
+  parent{agentSession{appUser{id}} user{id} children(first:1,filter:{user:{id:{eq:$app}}}){nodes{id}}}}}`;
 const COMMENT_TYPES = new Set(['issueNewComment', 'issueCommentMention']);
-const WAKE_TYPES = new Set([...COMMENT_TYPES, 'issueUnassignedFromYou', 'issueStatusChanged']);
+const DELIVERED_TYPES = new Set([...COMMENT_TYPES, 'issueUnassignedFromYou', 'issueStatusChanged']);
 
 export class LinearNotificationService {
   constructor(private readonly identity: LinearIdentityService) {}
@@ -39,6 +43,9 @@ export class LinearNotificationService {
     });
     let key: string;
     let text: string;
+    // Only a request addressed to the agent wakes it: a mention, or a reply in a
+    // thread it started or joined. Other events wait for its next run.
+    let wakes = false;
     const item: LinearNotificationInboxItem = {
       id: '', kind: 'linear_notification', installationId: install.id, organizationId: install.organizationId,
       notificationType: event.action, receivedAt, text: '',
@@ -56,7 +63,7 @@ export class LinearNotificationService {
       const n = event.notification;
       // App-origin mentions may have no AgentSessionEvent. Accept their comment
       // notifications too, but never answer our own comments or duplicate a session.
-      if (!WAKE_TYPES.has(n.type) || n.archivedAt || n.actorId === install.appUserId || n.comment?.userId === install.appUserId && COMMENT_TYPES.has(n.type)) return;
+      if (!DELIVERED_TYPES.has(n.type) || n.archivedAt || n.actorId === install.appUserId || n.comment?.userId === install.appUserId && COMMENT_TYPES.has(n.type)) return;
       if (!n.issue) return;
       key = `linear:${install.id}:notification:${n.id}:${n.commentId ?? n.updatedAt}`;
       const queue = wakeQueueServiceForAgent(this.identity.agentId);
@@ -64,16 +71,21 @@ export class LinearNotificationService {
       if (await queue.has(key)) return;
       if (COMMENT_TYPES.has(n.type) && n.commentId) {
         key = linearCommentItemId(install.id, n.commentId);
-        if (await queue.has(key)) return;
+        // An ordinary notification for this comment may be held; a mention of it wakes.
+        if (await queue.has(key)) {
+          if (n.type === 'issueCommentMention') await queue.releaseHeld(key);
+          return;
+        }
         if (Object.values((await this.identity.store.read()).receipts).some((r) => r.commentId === n.commentId)) return;
         // Replies in this app's work session arrive as immutable AgentActivity
         // prompts. Query the thread before enqueueing the ordinary notification;
         // a failed lookup rejects delivery so Linear can retry it.
-        const { comment } = await this.identity.graphql(install.id,
-          'query($id:String!){comment(id:$id){id issueId agentSession{appUser{id}} parent{agentSession{appUser{id}}}}}',
-          { id: n.commentId }, CommentThread);
+        const { comment } = await this.identity.graphql(install.id, COMMENT_THREAD_QUERY,
+          { id: n.commentId, app: install.appUserId }, CommentThread);
         if (comment.id !== n.commentId || comment.issueId !== n.issueId) throw new Error('Linear comment notification mismatch.');
         if (comment.agentSession?.appUser.id === install.appUserId || comment.parent?.agentSession?.appUser.id === install.appUserId) return;
+        wakes = n.type === 'issueCommentMention' || comment.parent?.user?.id === install.appUserId
+          || Boolean(comment.parent?.children.nodes.length);
       }
       item.issueId = n.issue.id;
       item.issueUrl = n.issue.url;
@@ -89,6 +101,6 @@ export class LinearNotificationService {
     await this.identity.authorizedInstallation(install.id);
     // The existing queue atomically deduplicates active and settled inputs. There
     // is no session receipt, acknowledgement, or missing-response fallback here.
-    await wakeQueueServiceForAgent(this.identity.agentId).enqueue(item);
+    await wakeQueueServiceForAgent(this.identity.agentId).enqueue(item, { holdUntilRun: !wakes });
   }
 }
