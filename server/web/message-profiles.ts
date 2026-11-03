@@ -1,5 +1,6 @@
 import { agentSlackServiceForAgent } from '../agents/agent-slack.service.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { linearUserProfiles, type LinearUserProfile } from '../linear/user-directory.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
 import type { WebClient } from '@slack/web-api';
 import type { AgentMessageHistoryPage } from '../../shared/messages.js';
@@ -19,6 +20,10 @@ import type { AgentMessageHistoryPage } from '../../shared/messages.js';
 // workspace, no photo) leaves the row without an avatar and the UI falls back
 // to the initial — resolution is never a hard gate. Dedupes by user so the
 // resolver cache is hit once per unique sender per page.
+//
+// Linear senders come from the local Linear user directory, which webhooks
+// keep current, so they get their current name and avatar without any IO to
+// Linear.
 
 export const SLACK_USER_ID = /^[UW][A-Z0-9]+$/;
 
@@ -34,6 +39,8 @@ export interface AvatarEnrichmentDeps {
     teamId: string;
     userId: string;
   }) => Promise<string | undefined>;
+  /** Defaults to the local Linear user directory. */
+  linearUsers?: (userIds: string[]) => Promise<Map<string, LinearUserProfile>>;
 }
 
 const defaultDeps: AvatarEnrichmentDeps = {
@@ -95,21 +102,33 @@ export async function enrichInboundAvatars<P extends Pick<AgentMessageHistoryPag
   page: P,
   deps: AvatarEnrichmentDeps = defaultDeps,
 ): Promise<P> {
-  const userIds = new Set<string>();
+  const slackIds = new Set<string>();
+  const linearIds = new Set<string>();
   for (const m of page.entries) {
-    if (m.direction === 'in' && m.platform !== 'feishu' && m.actorUserId) {
-      userIds.add(m.actorUserId);
-    }
+    if (m.direction !== 'in' || !m.actorUserId || m.platform === 'feishu') continue;
+    (m.platform === 'linear' ? linearIds : slackIds).add(m.actorUserId);
   }
-  if (userIds.size === 0) return page;
+  if (slackIds.size === 0 && linearIds.size === 0) return page;
 
-  const avatarByUser = await resolveAvatarsForUsers(agentId, userIds, deps);
-  if (avatarByUser.size === 0) return page;
+  const [avatarByUser, linearByUser] = await Promise.all([
+    slackIds.size ? resolveAvatarsForUsers(agentId, slackIds, deps) : new Map<string, string>(),
+    linearIds.size ? (deps.linearUsers ?? linearUserProfiles)([...linearIds]).catch(() => new Map<string, LinearUserProfile>()) : new Map<string, LinearUserProfile>(),
+  ]);
+  if (avatarByUser.size === 0 && linearByUser.size === 0) return page;
 
   return {
     ...page,
     entries: page.entries.map((m) => {
-      const avatarUrl = m.actorUserId ? avatarByUser.get(m.actorUserId) : undefined;
+      if (!m.actorUserId) return m;
+      if (m.platform === 'linear') {
+        const user = m.direction === 'in' ? linearByUser.get(m.actorUserId) : undefined;
+        return user ? {
+          ...m,
+          ...(user.name ? { actorDisplayName: user.name } : {}),
+          ...(user.avatarUrl ? { actorAvatarUrl: user.avatarUrl } : {}),
+        } : m;
+      }
+      const avatarUrl = avatarByUser.get(m.actorUserId);
       return avatarUrl ? { ...m, actorAvatarUrl: avatarUrl } : m;
     }),
   };

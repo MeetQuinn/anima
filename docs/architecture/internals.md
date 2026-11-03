@@ -195,6 +195,18 @@ Entries have per-entry `syncedAt` timestamps. Full user and channel refreshes ha
 
 The freshness rule is in `server/slack/workspace-directory.service.ts`: fresh cached entries are returned immediately; stale cached entries are also returned immediately, while a single-flight background refresh updates the cache. Channel collection hits are honored only if the cached `channelsFullSyncTypes` covers the requested Slack conversation types.
 
+### Linear user directory
+
+Linear people seen in webhooks are stored at:
+
+```text
+cache/linear/users.json
+```
+
+Entries are keyed by Linear user id and hold the name, an https avatar URL and `updatedAt`. Every delivered webhook names its sender, so the directory needs no Linear API calls. An entry is rewritten when the name or avatar changes, and otherwise at most once a day, so `updatedAt` tracks when the person was last seen. The transport (`server/transports/linear-message-transport.ts`) records the sender through `server/linear/user-directory.ts` after the request is persisted, in the background: a slow or failing directory write never delays or fails the delivery. The file keeps the 1,000 people seen most recently.
+
+Linear rows in the message ledger carry the sender's Linear user id but never an avatar. When history is read, `server/web/message-profiles.ts` adds the current name and avatar from the directory.
+
 ### File caches
 
 Platform file caches are reconstructable and live under `ANIMA_HOME/cache`.
@@ -205,7 +217,8 @@ The schema comments in `server/storage/schema/cache.ts` list the current layout:
 - `cache/slack/files/<teamId>/<fileId>/<safe original filename>`;
 - `cache/feishu/files/<safe resource id>/meta.json`;
 - `cache/feishu/files/<safe resource id>/<safe filename>`;
-- `cache/feishu/tenants/<tenant or app id>/directory.json`.
+- `cache/feishu/tenants/<tenant or app id>/directory.json`;
+- `cache/linear/users.json`.
 
 Slack file download/cache code is in `server/slack/slack-file.service.ts`. Feishu file download/cache code is in `server/feishu/feishu-file.service.ts`.
 

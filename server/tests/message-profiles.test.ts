@@ -12,6 +12,7 @@ import type {
 //   • enriches inbound Slack rows
 //   • dedupes one resolver call per unique sender
 //   • skips outbound / Feishu / non-Slack ids
+//   • Linear rows use the Linear user directory, never Slack
 //   • missing token OR missing team id returns the page with no Slack calls
 //   • resolver failure returns the original page unchanged
 // The external touchpoints (agent config, web client, profile resolver) are
@@ -159,4 +160,36 @@ test('a sender with no photo leaves that row on the initials fallback', async ()
   );
   assert.equal(result.entries[0]!.actorAvatarUrl, 'https://avatars.test/U0ALICE001.png');
   assert.equal(result.entries[1]!.actorAvatarUrl, undefined); // honest degrade
+});
+
+test('Linear rows take name and avatar from the Linear directory, never from Slack', async () => {
+  const { deps, calls } = makeDeps();
+  const asked: string[][] = [];
+  deps.linearUsers = async (ids) => {
+    asked.push(ids);
+    return new Map([['linear-user-1', { name: 'Current name', avatarUrl: 'https://public.linear.app/a.png' }]]);
+  };
+  const result = await enrichInboundAvatars('scout', page([
+    makeRecord({ messageId: 'l-1', platform: 'linear', actor: 'Old name', actorUserId: 'linear-user-1' }),
+    makeRecord({ messageId: 'l-2', platform: 'linear', actorUserId: 'linear-user-1' }),
+    makeRecord({ messageId: 'l-3', platform: 'linear', actor: 'Unknown', actorUserId: 'linear-user-2' }),
+    makeRecord({ messageId: 's-1', actorUserId: 'U0ALICE001' }),
+  ]), deps);
+  assert.deepEqual(asked, [['linear-user-1', 'linear-user-2']]);
+  assert.deepEqual(calls.resolvedUsers, ['U0ALICE001']);
+  assert.equal(result.entries[0]!.actorDisplayName, 'Current name');
+  assert.equal(result.entries[0]!.actorAvatarUrl, 'https://public.linear.app/a.png');
+  assert.equal(result.entries[1]!.actorAvatarUrl, 'https://public.linear.app/a.png');
+  assert.equal(result.entries[2]!.actorAvatarUrl, undefined);
+  assert.equal(result.entries[2]!.actorDisplayName, undefined);
+  assert.equal(result.entries[3]!.actorAvatarUrl, 'https://avatars.test/U0ALICE001.png');
+});
+
+test('a failed Linear directory read leaves Linear rows unchanged', async () => {
+  const { deps, calls } = makeDeps();
+  deps.linearUsers = async () => { throw new Error('synthetic directory failure'); };
+  const input = page([makeRecord({ messageId: 'l-1', platform: 'linear', actorUserId: 'linear-user-1' })]);
+  const result = await enrichInboundAvatars('scout', input, deps);
+  assert.equal(calls.loadAgent, 0);
+  assert.equal(result, input);
 });

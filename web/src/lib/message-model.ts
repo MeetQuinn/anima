@@ -64,10 +64,10 @@ export function inboundAuthorName(message: AgentMessageRecord): string {
 }
 
 // Inbound sender's Slack user id — the author-grouping key. Undefined for
-// non-Slack sources (feishu / system wakes / choice responses) and when the
-// id is unknown, so callers fall back to the display name.
+// non-Slack sources (feishu / linear / system wakes / choice responses) and
+// when the id is unknown, so callers fall back to the display name.
 export function inboundSlackUserId(message: AgentMessageRecord): string | undefined {
-  if (!isPersonMessage(message) || message.platform === 'feishu') return undefined;
+  if (!isPersonMessage(message) || message.platform === 'feishu' || message.platform === 'linear') return undefined;
   return message.actorUserId || undefined;
 }
 

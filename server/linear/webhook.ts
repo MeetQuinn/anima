@@ -4,7 +4,9 @@ import type { LinearInstallation } from '../storage/schema/linear.store.js';
 
 const Id = z.string().uuid();
 const Time = z.string().datetime({ offset: true });
-const User = z.object({ id: Id, name: z.string().max(512) });
+// Decorative: a malformed avatar is dropped and never rejects the event.
+const AvatarUrl = z.string().max(2048).nullish().catch(undefined);
+const User = z.object({ id: Id, name: z.string().max(512), avatarUrl: AvatarUrl });
 const Comment = z.object({ id: Id.optional(), body: z.string().max(100_000), userId: Id.nullish() });
 const Common = z.object({ organizationId: Id, oauthClientId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/), webhookTimestamp: z.number().finite() });
 const Session = z.object({
@@ -12,7 +14,7 @@ const Session = z.object({
   createdAt: Time.optional(),
   issue: z.object({ id: Id, title: z.string(), description: z.string().nullish(), url: z.string().url().nullish() }).nullish(),
   comment: Comment.nullish(),
-  creatorId: Id.nullish(), creator: z.object({ name: z.string().max(512) }).nullish(),
+  creatorId: Id.nullish(), creator: z.object({ name: z.string().max(512), avatarUrl: AvatarUrl }).nullish(),
 });
 const Prompt = z.object({
   id: Id, agentSessionId: Id, signal: z.string().nullish(), body: z.string().max(100_000).optional(),
@@ -38,6 +40,24 @@ export const LinearWebhook = z.discriminatedUnion('type', [
   }),
 ]);
 export type LinearWebhook = z.infer<typeof LinearWebhook>;
+
+export interface LinearSender { id: string; name?: string; avatarUrl?: string }
+
+// The person behind an event, as the payload describes them.
+export function linearEventSender(event: LinearWebhook): LinearSender | undefined {
+  let id: string | null | undefined;
+  let user: { name: string; avatarUrl?: string | null } | null | undefined;
+  if (event.type === 'AgentSessionEvent' && event.action === 'prompted') {
+    user = event.agentActivity?.user; id = event.agentActivity?.user?.id ?? event.agentActivity?.userId;
+  } else if (event.type === 'AgentSessionEvent') {
+    user = event.agentSession.creator; id = event.agentSession.creatorId;
+  } else if (event.type === 'AppUserNotification') {
+    user = event.notification.actor; id = event.notification.actor?.id ?? event.notification.actorId;
+  }
+  // Only a payload that describes the user can refresh what is known about them.
+  if (!id || !user) return undefined;
+  return { id, ...(user.name ? { name: user.name } : {}), ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}) };
+}
 
 export function signatureMatches(raw: Buffer, signature: string | undefined, secret: string): boolean {
   if (!signature || !/^[a-f0-9]{64}$/i.test(signature) || !secret) return false;
