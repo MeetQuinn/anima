@@ -27,7 +27,7 @@ export function FeishuRow({
     queryKey: queryKeys.agentFeishuScopes(agentId),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId),
   });
-  const scopeNote = feishuScopeNote(scopes.data, scopes.isError);
+  const scopeNote = feishuScopeNote(scopes);
   const close = useCallback(() => {
     if (syncing) return;
     setSyncError('');
@@ -64,8 +64,10 @@ export function FeishuRow({
               Mention {agentName} in a Feishu chat or send it a direct message.
             </ConnectionHeader>
             <dl className="grid grid-cols-2 overflow-hidden rounded-sm border border-border-soft">
-              <Fact label="App ID" value={appId || '—'} mono />
-              <Fact label="Bot Open ID" value={botOpenId || '—'} mono />
+              {/* Feishu IDs are long (a Bot Open ID is 35 characters): a full row
+                  each, so they read on one line at phone width too. */}
+              <Fact label="App ID" value={appId || '—'} mono wide />
+              <Fact label="Bot Open ID" value={botOpenId || '—'} mono wide />
               <Fact label="Credentials" value="Configured" wide />
               <Fact label="Delivery" value="Long-lived connection" wide />
             </dl>

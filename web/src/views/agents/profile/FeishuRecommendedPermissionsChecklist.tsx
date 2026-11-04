@@ -243,11 +243,15 @@ export function FeishuRecommendedPermissionsChecklist({
           <div className="flex-1 space-y-2">
             <span className="font-serif text-[13px] leading-snug text-text">Verify access</span>
             <div>
+              {/* aria-disabled, not disabled: a focused button that turns
+                  disabled drops focus to the page, out of the dialog. */}
               <button
                 type="button"
-                onClick={onRecheck}
-                disabled={isRechecking}
-                className="inline-flex min-h-[44px] items-center justify-center gap-1 rounded-sm md:min-h-8 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => {
+                  if (!isRechecking) onRecheck();
+                }}
+                aria-disabled={isRechecking}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1 rounded-sm md:min-h-8 font-sans text-[12px] text-text-muted underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
               >
                 {isRechecking ? (
                   <Loader2 className="h-3 w-3 animate-spin" />

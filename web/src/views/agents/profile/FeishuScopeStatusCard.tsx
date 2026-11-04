@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 
 import { fetchAgentFeishuScopeStatus } from '@/api/agents';
 import type { AgentFeishuScopeStatus } from '@shared/agent-config';
@@ -21,23 +21,30 @@ type RecheckResult = {
   state: 'granted' | 'missing';
 };
 
+type ScopeQuery = Pick<UseQueryResult<AgentFeishuScopeStatus>, 'data' | 'isError' | 'errorUpdateCount'>;
+
 /**
  * What the Feishu row says about permissions: null exactly when this card has
  * nothing to show, so the row and the card in its dialog cannot disagree.
  */
-export function feishuScopeNote(data: AgentFeishuScopeStatus | undefined, isError: boolean): ConnectionNote | null {
+export function feishuScopeNote({ data, isError, errorUpdateCount }: ScopeQuery): ConnectionNote | null {
+  // Asking again after a failure with nothing on hand puts the query back to
+  // pending. It is still a failed check until an answer comes back, so the
+  // note and the card (and the focus on its Recheck button) stay put.
+  const failed = isError || (data === undefined && errorUpdateCount > 0);
   const state = data?.recommended?.state ?? data?.profileName.state;
-  if (!isError && (!data || state === 'granted' || state === 'not_connected')) return null;
+  if (!failed && (!data || state === 'granted' || state === 'not_connected')) return null;
   return {
     tone: 'warn',
-    text: isError || state === 'unknown' ? 'Could not check Feishu permissions' : 'Permissions to authorize',
+    text: failed || state === 'unknown' ? 'Could not check Feishu permissions' : 'Permissions to authorize',
   };
 }
 
 export function FeishuScopeStatusCard({ agentId }: Props) {
   const [recheckResult, setRecheckResult] = useState<RecheckResult | null>(null);
   const [showPerms, setShowPerms] = useState(false);
-  const { data, isError, isFetching, refetch } = useQuery({
+  const successRef = useRef<HTMLDivElement>(null);
+  const query = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId),
     // The Feishu row owns this query and the card opens in its dialog: read the
@@ -46,6 +53,7 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
     refetchOnMount: false,
     retryOnMount: false,
   });
+  const { data, isError, isFetching, refetch } = query;
 
   const currentAppId = data?.appId;
   const currentRecheckResult =
@@ -53,7 +61,12 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
       ? recheckResult.state
       : null;
   const recommended = data?.recommended;
-  if (currentRecheckResult !== 'granted' && !feishuScopeNote(data, isError)) return null;
+  // The success line replaces the checklist and its Recheck button; take the
+  // focus the button had instead of leaving it on the page behind the dialog.
+  useEffect(() => {
+    if (currentRecheckResult === 'granted' && document.activeElement === document.body) successRef.current?.focus();
+  }, [currentRecheckResult]);
+  if (currentRecheckResult !== 'granted' && !feishuScopeNote(query)) return null;
 
   const authUrl = recommended?.authUrl ?? data?.profileName.authUrl;
   const authUrls = recommended?.authUrls;
@@ -74,7 +87,12 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
 
   if (currentRecheckResult === 'granted') {
     return (
-      <div className="rounded-md border border-health-ok/30 bg-health-ok-soft px-4 py-3">
+      <div
+        ref={successRef}
+        tabIndex={-1}
+        role="status"
+        className="rounded-md border border-health-ok/30 bg-health-ok-soft px-4 py-3 outline-none"
+      >
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">

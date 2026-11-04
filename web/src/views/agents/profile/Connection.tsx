@@ -147,7 +147,7 @@ export function Fact({
   tone?: 'error';
 }) {
   return (
-    <div className={`min-w-0 border-border-soft px-3.5 py-3 ${wide ? 'col-span-2 border-t' : 'even:border-l'}`}>
+    <div className={`min-w-0 border-border-soft px-3.5 py-3 ${wide ? 'col-span-2 border-t first:border-t-0' : 'even:border-l'}`}>
       <dt className="font-sans text-[11px] tracking-wide text-text-subtle">{label}</dt>
       <dd
         title={title}
