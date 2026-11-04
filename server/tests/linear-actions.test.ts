@@ -184,7 +184,8 @@ test('the real token command keeps credentials off both output streams on every 
     let out = '';
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => { out += chunk; }); child.stderr.on('data', (chunk: string) => { out += chunk; });
-    const [status] = (await once(child, 'exit')) as [number | null];
+    // `close` waits for both pipes to drain, so a write just before exit is still checked.
+    const [status] = (await once(child, 'close')) as [number | null];
     for (const secret of [install.accessToken, install.refreshToken, install.clientSecret!, install.signingSecret]) {
       assert.ok(!out.includes(secret), `token ${args.join(' ') || '(no program)'} printed a credential`);
     }
