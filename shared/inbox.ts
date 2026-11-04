@@ -271,6 +271,7 @@ export const LinearInboxItem = InboxItemBase.extend({
   text: z.string(),
   // Items queued before these fields fall back to the issue URL and to a delegation.
   issueKey: z.string().optional(),
+  issueTitle: z.string().optional(),
   origin: z.enum(['delegation', 'mention']).optional(),
 });
 export type LinearInboxItem = z.infer<typeof LinearInboxItem>;
@@ -290,6 +291,7 @@ export const LinearNotificationInboxItem = InboxItemBase.extend({
   actorName: z.string().optional(),
   text: z.string(),
   issueKey: z.string().optional(),
+  issueTitle: z.string().optional(),
 });
 export type LinearNotificationInboxItem = z.infer<typeof LinearNotificationInboxItem>;
 

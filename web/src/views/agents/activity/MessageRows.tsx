@@ -16,13 +16,15 @@ import type { ActivityFeedItem } from '@/lib/activity-feed';
 
 // Small external-link affordance rendered at the end of a row's title line.
 // Always visible at low opacity (touch-friendly); lifts to full on hover.
-function SlackLink({ href }: { href: string }) {
+function PlatformLink({ href, platform }: { href: string; platform?: string }) {
+  const name = platform === 'linear' ? 'Linear' : platform === 'feishu' ? 'Feishu' : !platform || platform === 'slack' ? 'Slack' : 'source';
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer"
-      title="Open in Slack"
+      title={`Open in ${name}`}
+      aria-label={`Open in ${name}`}
       onClick={(e) => e.stopPropagation()}
       className="inline-flex shrink-0 items-center self-center text-text-subtle opacity-30 transition-opacity hover:opacity-100 focus-visible:opacity-100"
     >
@@ -62,8 +64,7 @@ export function MessageOutRow({
     : isDm && item.surface.label
       ? `${verb} to ${item.surface.label.replace(/^@/, '')}`
       : verb;
-  // Jump-to-Slack URL for the sent message. Only present when the backend
-  // recorded it (send-message completion payload). Degrades gracefully.
+  // Only present when the backend recorded the platform URL.
   const outLink = item.permalink;
   return (
     <Row
@@ -74,7 +75,7 @@ export function MessageOutRow({
       secondary={
         <span className="inline-flex items-center gap-2">
           <SurfaceText chip={item.surface} />
-          {outLink && <SlackLink href={outLink} />}
+          {outLink && <PlatformLink href={outLink} platform={item.platform} />}
         </span>
       }
       body={
@@ -119,7 +120,7 @@ export function FileOutRow({
       secondary={
         <span className="inline-flex items-center gap-2">
           <SurfaceText chip={item.surface} />
-          {fileLink && <SlackLink href={fileLink} />}
+          {fileLink && <PlatformLink href={fileLink} platform={item.platform} />}
         </span>
       }
       body={

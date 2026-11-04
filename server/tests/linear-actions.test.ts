@@ -16,7 +16,7 @@ import { ActivityService, activityServiceForAgent } from '../activities/activity
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { withTempAnimaHome } from './helpers/harness.js';
-import { FakeLinear, install, seedLinear, created, sessionId } from './helpers/linear.js';
+import { FakeLinear, install, seedLinear, created, prompted, sessionId } from './helpers/linear.js';
 import { linearQueryErrors } from './helpers/linear-schema.js';
 
 const team = { id: randomUUID(), key: 'SYN', name: 'Synthetic team' };
@@ -48,7 +48,7 @@ class Workspace extends FakeLinear {
     if (query.includes('mutation') && this.partialWrite) return Response.json({ data: { commentCreate: { success: true, comment: { id: variables.input.id, body: variables.input.body, url: 'https://linear.app/comment' } } }, errors: [{ message: 'private-server-error' }] });
     let data: unknown;
     if (query.includes('issueCreate')) data = { issueCreate: { success: true, issue: { ...issue, id: variables.input.id, title: variables.input.title } } };
-    else if (query.includes('commentCreate')) data = { commentCreate: { success: true, comment: { id: variables.input.id, body: variables.input.body, url: 'https://linear.app/synthetic/comment' } } };
+    else if (query.includes('commentCreate')) data = { commentCreate: { success: true, comment: { id: variables.input.id, body: variables.input.body, url: 'https://linear.app/synthetic/comment', issue } } };
     else if (query.includes('comment(id:')) data = { comment: { issue: this.commentOffIssue ? null : { id: issue.id, identifier: issue.identifier }, parent: this.replyRoot ? { id: this.replyRoot } : null } };
     else if (query.includes('searchIssues')) data = { searchIssues: { nodes: [issue], pageInfo } };
     else if (query.includes('teams(')) data = { teams: { nodes: [team], pageInfo } };
@@ -104,7 +104,8 @@ test('one reply command answers a comment thread at its root or comments on an i
   assert.equal(creates().at(-1)!.issueId, 'SYN-1'); assert.equal(creates().at(-1)!.parentId, undefined);
   const outbox = (await messageServiceForAgent('scout').list()).entries.filter((m) => m.direction === 'out');
   assert.deepEqual(outbox.map((m) => [m.text, m.channelId, m.threadTs]).reverse(), [
-    ['Thread answer', issue.id, root], ['Which option?', issue.id, parentId], ['New discussion', 'SYN-1', creates().at(-1)!.id]]);
+    ['Thread answer', issue.id, root], ['Which option?', issue.id, parentId], ['New discussion', issue.id, creates().at(-1)!.id]]);
+  assert.ok(outbox.every((m) => m.issueKey === issue.identifier && m.issueTitle === issue.title && m.permalink === issue.url));
   const requests = fake.requests.length;
   stdin = 'Started';
   await assert.rejects(run('reply', '--to', `comment:${parentId}`, '--kind', 'thought'), /Progress updates go only to work sessions/);
@@ -189,6 +190,7 @@ test('registered Linear CLI comments proactively, records outbox, and audits API
   stdin = markdown; const commented = await run('comment', '--issue', issue.id, '--reply-to', parentId);
   const messages = await messageServiceForAgent('scout').list();
   assert.ok(messages.entries.some((m) => m.direction === 'out' && m.platform === 'linear' && m.text === markdown && m.threadTs === parentId));
+  assert.ok(messages.entries.every((m) => m.issueKey === issue.identifier && m.issueTitle === issue.title && m.permalink === issue.url));
   fake.replyRoot = randomUUID();
   stdin = 'Continue the same thread'; const reply = await run('comment', '--issue', issue.id, '--reply-to', parentId);
   assert.equal(reply.parentId, fake.replyRoot);
@@ -412,8 +414,12 @@ test('an agent can read paginated session context through the documented API, th
       activities: { nodes, pageInfo: { hasNextPage: end < rows.length, endCursor: String(end) } } } } });
   };
   const { service, store } = await seedLinear(home, fake);
-  await service.receive(created(), install);
+  const event = created();
+  event.agentSession.issueId = issue.id;
+  event.agentSession.issue = issue;
+  await service.receive(event, install);
   const [item] = await new WakeQueueService('scout').list(); await service.markStarted(item!, item!.id);
+  await service.receive(prompted(), install); // A follow-up can omit display metadata.
   t.mock.method(globalThis, 'fetch', fake.fetch);
   const output: string[] = []; t.mock.method(console, 'log', (line: string) => { output.push(line); });
   let stdin = ''; t.mock.getter(process, 'stdin', () => Readable.from([stdin]) as typeof process.stdin);
@@ -432,11 +438,14 @@ test('an agent can read paginated session context through the documented API, th
   assert.deepEqual(JSON.parse(output.at(-1)!).agentSession.externalLinks, [{ url: 'https://github.com/example/repo/pull/1' }]);
   const markdown = '**Done**\n\n- Verified `pagination`\n- [PR](https://example.com/pr)';
   // The envelope's reply_to and the earlier respond name reach the same deduplicated activity.
+  const callsBeforeReply = fake.calls.length;
   stdin = markdown; await run('reply', '--to', `session:${sessionId}`); await run('respond', '--session', sessionId);
   assert.equal(fake.posts.length, 1); assert.equal(fake.posts[0]!.content.body, markdown);
   assert.match(output.at(-2)!, /Linear accepted activity/);
   assert.equal((await store.read()).receipts[item!.id]!.state, 'answered');
   const outbox = (await messageServiceForAgent('scout').list()).entries;
-  assert.ok(outbox.some((m) => m.direction === 'out' && m.text === markdown && m.channelId === sessionId));
+  assert.ok(outbox.some((m) => m.direction === 'out' && m.text === markdown && m.channelId === issue.id
+    && m.threadTs === sessionId && m.issueKey === issue.identifier && m.issueTitle === issue.title && m.permalink === issue.url));
+  assert.deepEqual(fake.calls.slice(callsBeforeReply).map((call) => call.query.includes('agentActivityCreate')), [true], 'Display fields require no extra lookup, even after service recreation');
 
 }));

@@ -41,6 +41,7 @@ export function buildActivityAuthorResolvers(input: {
   const resolveSurface: SurfaceResolver = (item) => {
     const chip = 'surface' in item ? item.surface : undefined;
     if (!chip) return { key: '' };
+    if (chip.issueKey) return { key: `linear:${chip.issueKey}`, chip };
     return { key: `${chip.kind}:${chip.label}`, chip };
   };
   return { agentAuthor, resolveAuthor, resolveSurface };

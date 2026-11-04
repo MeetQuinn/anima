@@ -108,6 +108,9 @@ test('app notifications authenticate resources and enqueue once across retries, 
     assert.equal(ledger.entries.length, 1); assert.equal(ledger.entries[0]?.channelId, issueId);
     assert.equal(ledger.entries[0]?.threadTs, event.notification.parentCommentId);
     assert.equal(ledger.entries[0]?.platform, 'linear');
+    assert.equal(ledger.entries[0]?.issueKey, event.notification.issue!.identifier);
+    assert.equal(ledger.entries[0]?.issueTitle, event.notification.issue!.title);
+    assert.equal(ledger.entries[0]?.permalink, event.notification.issue!.url);
   } finally { await app.close(); await transport.stop(); await (transport as unknown as { observationWrite?: Promise<void> }).observationWrite; }
 }));
 
@@ -136,6 +139,29 @@ test('self, duplicate session and unsupported notifications do not wake; ordinar
   assert.equal((await queue.list()).length, 4);
   await f.agentStore.update((a) => ({ ...a, enabled: false }));
   await assert.rejects(f.notifications.receive(verified(notification()), install)); assert.equal((await queue.list()).length, 4);
+}));
+
+test('a session and comment on one issue share a place, keep distinct threads, and still deduplicate by input', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home);
+  const comment = notification('issueCommentMention');
+  comment.notification.parentCommentId = randomUUID();
+  const session = created();
+  session.agentSession.issueId = issueId;
+  session.agentSession.issue = comment.notification.issue;
+  await f.service.receive(verified(session), install);
+  await f.notifications.receive(verified(comment), install);
+  await f.service.receive(verified(session), install);
+  await f.notifications.receive(verified(comment), install);
+  const history = messageServiceForAgent('scout');
+  const place = (await history.list({ channel: issueId })).entries;
+  assert.equal(place.length, 2);
+  assert.equal(new Set(place.map((m) => m.messageId)).size, 2);
+  assert.ok(place.every((m) => m.channelKind === 'linear_issue' && m.issueKey === 'SYN-1'
+    && m.issueTitle === 'Synthetic discussion' && m.permalink === comment.notification.issue!.url));
+  assert.equal((await history.list({ channel: 'SYN-1' })).entries.length, 2);
+  assert.equal((await history.search({ keywords: ['Synthetic discussion'] })).entries.length, 2);
+  assert.deepEqual((await history.list({ channel: issueId, threadTs: session.agentSession.id })).entries.map((m) => m.threadTs), [session.agentSession.id]);
+  assert.deepEqual((await history.list({ channel: issueId, threadTs: comment.notification.parentCommentId! })).entries.map((m) => m.threadTs), [comment.notification.parentCommentId]);
 }));
 
 test('permission changes deliver bounded context without session obligations and ignore retry timestamps', async () => withTempAnimaHome(async (home) => {

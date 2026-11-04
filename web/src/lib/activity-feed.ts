@@ -87,6 +87,9 @@ export interface SurfaceChip {
   // tab (`?c=<channelId>`). Absent for reminder / onboarding / unknown surfaces,
   // which have no channel to open.
   channelId?: string;
+  href?: string;
+  linkTitle?: string;
+  issueKey?: string;
 }
 
 export interface OutboundFile {
@@ -123,8 +126,9 @@ export type ActivityFeedItem =
   | {
       kind: 'message-out';
       text: string;
-      // Jump-to-Slack link for the sent message, when the backend recorded it.
+      // Link to the message's platform, when the backend recorded it.
       permalink?: string;
+      platform?: string;
       timestamp: string;
       surface: SurfaceChip;
       isEdit: boolean;
@@ -140,6 +144,7 @@ export type ActivityFeedItem =
       caption: string;
       files: OutboundFile[];
       permalink?: string;
+      platform?: string;
       timestamp: string;
       surface: SurfaceChip;
       messageTs?: string;
@@ -440,6 +445,7 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
       items.push({
         kind: 'message-out',
         text: message.text,
+        platform: message.platform,
         ...(message.permalink ? { permalink: message.permalink } : {}),
         timestamp: message.timestamp,
         surface: surfaceChipForOutboundMessage(message),
@@ -452,6 +458,7 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
     if (message.kind === 'file') {
       items.push({
         kind: 'file-out',
+        platform: message.platform,
         caption: message.text.split(/\r?\nFiles:/)[0] ?? '',
         files: (message.files ?? []).map((file, index) => ({
           fileId: file.fileId ?? `${message.messageId}:file:${index}`,
@@ -558,6 +565,7 @@ function projectCompletedOutboundEffect(
       item: {
         kind: 'message-out',
         text: typeof text === 'string' ? text : '',
+        platform: typeof payload['platform'] === 'string' ? payload['platform'] : undefined,
         ...(permalink ? { permalink } : {}),
         timestamp: activity.createdAt,
         surface: surfaceChipForOutbound(activity),
@@ -574,6 +582,7 @@ function projectCompletedOutboundEffect(
       action: 'emit',
       item: {
         kind: 'file-out',
+        platform: typeof payload['platform'] === 'string' ? payload['platform'] : undefined,
         caption,
         files: outboundFilesFromPayload(payload['uploads']),
         ...(permalink ? { permalink } : {}),
@@ -590,6 +599,8 @@ function projectCompletedOutboundEffect(
   // send does, and reads stay folded steps.
   if (tool === 'anima.linear.api' && payload['operation'] === 'mutation') {
     const key = linearApiSubjectKey(payload);
+    const surface: SurfaceChip = { kind: 'channel', label: key ?? 'Linear' };
+    if (key) surface.issueKey = key;
     return {
       action: 'emit',
       item: {
@@ -597,7 +608,7 @@ function projectCompletedOutboundEffect(
         label: linearWriteLabel(payload),
         timestamp: activity.createdAt,
         // The audit knows an issue only by its key; no title or link.
-        surface: { kind: 'channel', label: key ?? 'Linear' },
+        surface,
       },
       rememberText: false,
     };
@@ -635,6 +646,11 @@ function surfaceChipForInboundMessage(message: AgentMessageRecord): SurfaceChip 
   }
   if (message.kind === 'choice_response') return surfaceChipForChoiceMessage(message);
   if (message.platform === 'linear') {
+    if (message.issueKey) {
+      const label = message.issueTitle ? `${message.issueKey} · ${message.issueTitle}` : message.issueKey;
+      return { kind: message.threadTs ? 'thread' : 'channel', label: message.threadTs ? `${label} · thread` : label,
+        issueKey: message.issueKey, href: message.permalink, linkTitle: 'Open in Linear' };
+    }
     if (message.channelKind === 'linear_issue') return { kind: message.threadTs ? 'thread' : 'channel', label: 'Linear issue' };
     if (message.channelKind === 'linear_workspace') return { kind: 'channel', label: 'Linear workspace' };
     return { kind: 'thread', label: 'Linear session' };
@@ -719,6 +735,9 @@ interface OutboundSurfaceFields {
   dmHandle: string;
   platform: string;
   threadTs: string;
+  issueKey: string;
+  issueTitle: string;
+  permalink: string;
 }
 
 function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
@@ -740,6 +759,9 @@ function surfaceChipForOutbound(activity: ActivityRecord): SurfaceChip {
     dmHandle: str('dmHandle'),
     platform: str('platform'),
     threadTs: str('threadTs'),
+    issueKey: str('issueKey'),
+    issueTitle: str('issueTitle'),
+    permalink: str('permalink'),
   });
 }
 
@@ -755,6 +777,9 @@ function surfaceChipForOutboundMessage(message: AgentMessageRecord): SurfaceChip
     dmHandle: message.dmHandle ?? '',
     platform: message.platform ?? '',
     threadTs: message.threadTs ?? '',
+    issueKey: message.issueKey ?? '',
+    issueTitle: message.issueTitle ?? '',
+    permalink: message.permalink ?? '',
   });
 }
 
@@ -770,6 +795,11 @@ function outboundSurfaceChip(fields: OutboundSurfaceFields): SurfaceChip {
   } = fields;
 
   if (platform === 'linear') {
+    if (fields.issueKey) return {
+      kind: payloadThreadTs ? 'thread' : 'channel',
+      label: fields.issueTitle ? `${fields.issueKey} · ${fields.issueTitle}` : fields.issueKey,
+      issueKey: fields.issueKey, href: fields.permalink || undefined, linkTitle: 'Open in Linear',
+    };
     if (payloadChannelKind === 'linear_issue') return { kind: payloadThreadTs ? 'thread' : 'channel', label: 'Linear issue' };
     if (payloadChannelKind === 'linear_workspace') return { kind: 'channel', label: 'Linear workspace' };
     return { kind: 'thread', label: 'Linear session' };

@@ -22,6 +22,7 @@ export function messageMatchesChannel(entry: AgentMessageRecord, channel: string
     entry.channelId,
     entry.channelName,
     entry.channelDisplayName,
+    entry.issueKey,
     entry.dmHandle,
     entry.dmUserId,
   ];

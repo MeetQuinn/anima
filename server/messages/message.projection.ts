@@ -20,12 +20,14 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
     actor: item.actorName ?? 'Linear', ...(item.actorId ? { actorUserId: item.actorId } : {}), direction: 'in', kind: 'message',
     messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.issueId ?? item.organizationId,
     channelKind: item.issueId ? 'linear_issue' : 'linear_workspace', source: { id: item.id, kind: 'inbox' },
+    issueKey: item.issueKey, issueTitle: item.issueTitle,
     threadTs: item.parentCommentId ?? item.commentId, permalink: item.issueUrl, text: item.text, timestamp: item.receivedAt,
   };
   if (item.kind === 'linear') return {
     actor: item.actorName ?? 'Linear user', ...(item.actorId ? { actorUserId: item.actorId } : {}), direction: 'in', kind: 'message',
-    messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.sessionId,
-    channelKind: 'linear_session', threadTs: item.sessionId, source: { id: item.id, kind: 'inbox' },
+    messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.issueId ?? item.sessionId,
+    channelKind: item.issueId ? 'linear_issue' : 'linear_session', threadTs: item.sessionId, source: { id: item.id, kind: 'inbox' },
+    issueKey: item.issueKey, issueTitle: item.issueTitle, permalink: item.issueUrl,
     // The agent gets Linear's context for models; people read it rendered.
     text: item.contextSource === 'prompt_context' ? linearSessionDisplayText(item.text) : item.text, timestamp: item.receivedAt,
   };
@@ -258,6 +260,8 @@ function baseOutboxMessage(
     direction: 'out',
     dmHandle: stringField(payload, 'dmHandle'),
     dmUserId: stringField(payload, 'dmUserId'),
+    issueKey: stringField(payload, 'issueKey'),
+    issueTitle: stringField(payload, 'issueTitle'),
     messageId: messageIdForActivity(activity),
     messageTs: entry.messageTs,
     permalink: stringField(payload, 'permalink'),

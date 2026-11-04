@@ -3,8 +3,10 @@ import { LinearIdentityService } from './identity.service.js';
 
 const Id = z.string().trim().min(1).max(256);
 const Body = z.string().trim().min(1).max(100_000);
-const Comment = z.object({ id: z.string(), body: z.string(), url: z.string() });
-const commentFields = 'id body url';
+const Comment = z.object({ id: z.string(), body: z.string(), url: z.string(),
+  issue: z.object({ id: z.string(), identifier: z.string(), title: z.string(), url: z.string() }),
+});
+const commentFields = 'id body url issue { id identifier title url }';
 const CommentPlace = z.object({ comment: z.object({
   issue: z.object({ id: z.string(), identifier: z.string() }).nullable(), parent: z.object({ id: z.string().uuid() }).nullable(),
 }) });
@@ -58,7 +60,7 @@ export class LinearCommentService {
       { input: parsed }, z.object({ commentCreate: z.object({ success: z.literal(true), comment: Comment }) }),
     );
     if (result.commentCreate.comment.id !== parsed.id) throw new Error('Linear returned a different comment id; inspect the comment before retrying.');
-    const comment: LinearCreatedComment = { ...result.commentCreate.comment, issueId: parsed.issueId };
+    const comment: LinearCreatedComment = { ...result.commentCreate.comment, issueId: result.commentCreate.comment.issue.id };
     if (parsed.parentId) comment.parentId = parsed.parentId;
     return comment;
   }

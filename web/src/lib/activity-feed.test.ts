@@ -150,6 +150,7 @@ describe('buildActivityFeed', () => {
       {
         kind: 'message-out',
         text: 'edited body',
+        platform: 'slack',
         permalink: 'https://slack.example/p-message',
         timestamp: '2026-07-04T14:00:01.000Z',
         surface: { channelId: 'C123', kind: 'thread', label: '#build' },
@@ -158,6 +159,7 @@ describe('buildActivityFeed', () => {
       {
         kind: 'file-out',
         caption: 'the report',
+        platform: 'slack',
         files: [
           {
             fileId: 'F1',
@@ -297,6 +299,7 @@ describe('buildActivityFeed', () => {
               {
                 kind: 'message-out',
                 text: 'child reply',
+                platform: 'slack',
                 timestamp: '2026-07-04T14:00:01.000Z',
                 surface: { channelId: 'C123', kind: 'channel', label: '#build' },
                 isEdit: false,
@@ -304,6 +307,7 @@ describe('buildActivityFeed', () => {
               {
                 kind: 'file-out',
                 caption: 'child report',
+                platform: 'feishu',
                 files: [
                   { fileId: 'f1', filename: 'child.pdf', mimetype: 'application/pdf', sizeBytes: 11 },
                 ],
@@ -612,9 +616,9 @@ describe('Linear API writes', () => {
       api('w4', 'tool.call.completed', { operation: 'mutation', fields: ['issueCreate'], issueKey: 'ANI-5', outcome: 'request_completed' }),
     ] });
     expect(feed).toEqual([
-      { kind: 'action-out', label: 'Update ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5' } },
-      { kind: 'action-out', label: 'Comment on ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5' } },
-      { kind: 'action-out', label: 'Start work session on ANI-23', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-23' } },
+      { kind: 'action-out', label: 'Update ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5' } },
+      { kind: 'action-out', label: 'Comment on ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5' } },
+      { kind: 'action-out', label: 'Start work session on ANI-23', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-23', issueKey: 'ANI-23' } },
       // A key in a create request is the parent, not the place.
       { kind: 'action-out', label: 'Create issue', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'Linear' } },
     ]);
@@ -654,7 +658,7 @@ describe('Linear API writes', () => {
       query: 'PRIVATE_QUERY', variables: { input: 'PRIVATE_VARIABLE' }, result: 'PRIVATE_RESULT', error: 'PRIVATE_ERROR', text: 'PRIVATE_TEXT',
       channel: 'PRIVATE_CHANNEL', threadTs: 'PRIVATE_THREAD', permalink: 'https://linear.app/PRIVATE_LINK',
     })] });
-    expect(item).toEqual({ kind: 'action-out', label: 'Update ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5' } });
+    expect(item).toEqual({ kind: 'action-out', label: 'Update ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5' } });
     expect(JSON.stringify(item)).not.toContain('PRIVATE_');
   });
 
@@ -682,4 +686,31 @@ describe('Linear API writes', () => {
     expect(feed.map((item) => item.kind)).toEqual(['message-out', 'message-out', 'message-out', 'action-out']);
     expect(feed.map((item) => ('surface' in item ? item.surface.label : ''))).toEqual(['Linear session', 'Linear issue', 'Linear session', 'ANI-5']);
   });
+});
+
+it.each([undefined, 'Show the issue'])('names and links Linear issue chips with title %s', (issueTitle) => {
+  const issueKey = 'ANI-21', permalink = 'https://linear.app/anima/issue/ANI-21';
+  const label = issueTitle ? `${issueKey} · ${issueTitle}` : issueKey;
+  for (const threadTs of ['session-id', 'comment-root', undefined]) {
+    const entries: AgentMessageRecord[] = ['in', 'out'].map((direction) => ({
+      direction: direction as 'in' | 'out', kind: 'message', messageId: `${direction}-${threadTs}`,
+      platform: 'linear', channelKind: 'linear_issue', channelId: 'issue-id', threadTs, issueKey, issueTitle, permalink,
+      source: { id: `${direction}-${threadTs}`, kind: direction === 'in' ? 'inbox' : 'activity' },
+      text: 'A message', timestamp: '2026-11-04T00:00:00Z',
+    }));
+    const rows = buildMessageFeed({ entries });
+    for (const row of rows) {
+      if (row.kind !== 'message-in' && row.kind !== 'message-out') throw new Error('expected message');
+      expect(row.surface).toEqual({ kind: threadTs ? 'thread' : 'channel',
+        label: row.kind === 'message-in' && threadTs ? `${label} · thread` : label, issueKey, href: permalink, linkTitle: 'Open in Linear' });
+    }
+    for (const effect of ['linear.activity.create', 'linear.comment.create', 'linear.session.start']) {
+      const [row] = buildActivityFeed({ events: [activityEvent(effect, 'external.effect.completed', {
+        platform: 'linear', channelKind: 'linear_issue', channel: 'issue-id', threadTs, issueKey, issueTitle, permalink, text: 'A reply', effect,
+      })] });
+      if (row?.kind !== 'message-out') throw new Error('expected outgoing activity');
+      expect(row.platform).toBe('linear');
+      expect(row.surface).toEqual({ kind: threadTs ? 'thread' : 'channel', label, issueKey, href: permalink, linkTitle: 'Open in Linear' });
+    }
+  }
 });
