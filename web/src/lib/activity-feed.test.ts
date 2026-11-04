@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from './activity-feed';
+import { buildActivityConversationItems, buildStepItems } from './activity-timeline';
 import type { AgentActivityFeedPage } from '@shared/activity';
 import type { AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
 
@@ -596,4 +597,89 @@ it('labels ordinary Linear issue and workspace activity separately from work ses
     if (outbound?.kind !== 'message-out') throw new Error('expected outgoing activity');
     expect(outbound.surface).toEqual({ kind, label });
   }
+});
+
+describe('Linear API writes', () => {
+  const api = (id: string, type: string, extra: Record<string, unknown>, createdAt = '2026-11-04T01:00:00.000Z') =>
+    activityEvent(id, type, { tool: 'anima.linear.api', platform: 'linear', callId: id, ...extra }, createdAt);
+
+  it('render completed writes as outbound actions with the issue as their place', () => {
+    const feed = buildActivityFeed({ nextCursor: null, events: [
+      api('w1-started', 'tool.call.started', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5', status: 'started' }),
+      api('w1', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5', status: 'completed', outcome: 'request_completed' }),
+      api('w2', 'tool.call.completed', { operation: 'mutation', fields: ['commentCreate'], issueKey: 'ANI-5', outcome: 'request_completed' }),
+      api('w3', 'tool.call.completed', { operation: 'mutation', fields: ['agentSessionCreateOnIssue'], issueKey: 'ANI-23', outcome: 'request_completed' }),
+      api('w4', 'tool.call.completed', { operation: 'mutation', fields: ['issueCreate'], issueKey: 'ANI-5', outcome: 'request_completed' }),
+    ] });
+    expect(feed).toEqual([
+      { kind: 'action-out', label: 'Update ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5' } },
+      { kind: 'action-out', label: 'Comment on ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5' } },
+      { kind: 'action-out', label: 'Start work session on ANI-23', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-23' } },
+      // A key in a create request is the parent, not the place.
+      { kind: 'action-out', label: 'Create issue', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'Linear' } },
+    ]);
+  });
+
+  it('keep reads and failed writes as steps', () => {
+    const events = [
+      api('r1', 'tool.call.completed', { operation: 'query', fields: ['issue'], issueKey: 'ANI-5', outcome: 'request_completed' }),
+      api('f1', 'tool.call.failed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5', outcome: 'unknown' }),
+    ];
+    const feed = buildActivityFeed({ nextCursor: null, events });
+    expect(feed.map((item) => item.kind)).toEqual(['step', 'step']);
+    expect(buildActivityConversationItems({ events })).toEqual([]);
+    expect(buildStepItems({ events }).map((step) => step.activity.activityId)).toEqual(['r1', 'f1']);
+  });
+
+  it('rank with outbound messages when they share an instant with a step', () => {
+    const feed = buildActivityFeed({ nextCursor: null, events: [
+      api('r1', 'tool.call.completed', { operation: 'query', fields: ['issue'] }),
+      api('w1', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5' }),
+    ] });
+    expect(feed.map((item) => item.kind)).toEqual(['action-out', 'step']);
+  });
+
+  it('move writes out of the folded steps and into the conversation', () => {
+    const events = [
+      api('r1', 'tool.call.completed', { operation: 'query', fields: ['issue'], issueKey: 'ANI-5' }, '2026-11-04T01:00:00.000Z'),
+      api('w1', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5' }, '2026-11-04T01:00:01.000Z'),
+    ];
+    expect(buildStepItems({ events }).map((step) => step.activity.activityId)).toEqual(['r1']);
+    expect(buildActivityConversationItems({ events })).toMatchObject([{ kind: 'action-out', label: 'Update ANI-5' }]);
+  });
+
+  it('carry nothing from the request beyond the action label and issue key', () => {
+    const [item] = buildActivityFeed({ nextCursor: null, events: [api('w1', 'tool.call.completed', {
+      operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5', outcome: 'request_completed',
+      query: 'PRIVATE_QUERY', variables: { input: 'PRIVATE_VARIABLE' }, result: 'PRIVATE_RESULT', error: 'PRIVATE_ERROR', text: 'PRIVATE_TEXT',
+      channel: 'PRIVATE_CHANNEL', threadTs: 'PRIVATE_THREAD', permalink: 'https://linear.app/PRIVATE_LINK',
+    })] });
+    expect(item).toEqual({ kind: 'action-out', label: 'Update ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5' } });
+    expect(JSON.stringify(item)).not.toContain('PRIVATE_');
+  });
+
+  it('read records from before field names and issue keys were kept', () => {
+    const feed = buildActivityFeed({ nextCursor: null, events: [
+      api('old-write', 'tool.call.completed', { operation: 'mutation' }, '2026-11-04T01:00:00.000Z'),
+      api('old-read', 'tool.call.completed', { operation: 'query' }, '2026-11-04T01:00:01.000Z'),
+      api('odd-write', 'tool.call.completed', { operation: 'mutation', fields: ['PRIVATE_FIELD'], issueKey: 'ANI-5' }, '2026-11-04T01:00:02.000Z'),
+    ] });
+    expect(feed).toMatchObject([
+      { kind: 'action-out', label: 'Change Linear data', surface: { kind: 'channel', label: 'Linear' } },
+      { kind: 'step' },
+      { kind: 'action-out', label: 'Change Linear data', surface: { kind: 'channel', label: 'Linear' } },
+    ]);
+    expect(JSON.stringify(feed[2])).not.toContain('PRIVATE_');
+  });
+
+  it('sit beside Linear replies, comments and session starts, which are already outbound messages', () => {
+    const feed = buildActivityFeed({ nextCursor: null, events: [
+      activityEvent('reply', 'tool.call.completed', { tool: 'anima.linear.reply', platform: 'linear', channelKind: 'linear_session', channel: 'session-uuid', threadTs: 'session-uuid', text: 'Done' }, '2026-11-04T01:00:00.000Z'),
+      activityEvent('comment', 'tool.call.completed', { tool: 'anima.linear.comment', platform: 'linear', channelKind: 'linear_issue', channel: 'issue-uuid', text: 'Looks good' }, '2026-11-04T01:00:01.000Z'),
+      activityEvent('start', 'tool.call.completed', { tool: 'anima.linear.start', platform: 'linear', channelKind: 'linear_session', text: 'Taking this' }, '2026-11-04T01:00:02.000Z'),
+      api('write', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5' }, '2026-11-04T01:00:03.000Z'),
+    ] });
+    expect(feed.map((item) => item.kind)).toEqual(['message-out', 'message-out', 'message-out', 'action-out']);
+    expect(feed.map((item) => ('surface' in item ? item.surface.label : ''))).toEqual(['Linear session', 'Linear issue', 'Linear session', 'ANI-5']);
+  });
 });

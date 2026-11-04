@@ -667,24 +667,47 @@ const LINEAR_API_ACTIONS: Record<string, string> = {
   agentActivityCreate: 'Post session activity',
 };
 
-function linearApiLabel(payload: Record<string, unknown>): string {
-  const operation = payload['operation'];
-  const fields = Array.isArray(payload['fields'])
+function linearApiFields(payload: Record<string, unknown>): string[] {
+  return Array.isArray(payload['fields'])
     ? payload['fields'].filter((f): f is string => typeof f === 'string')
     : [];
+}
+
+function linearApiAction(field: string): string | undefined {
+  return Object.hasOwn(LINEAR_API_ACTIONS, field) ? LINEAR_API_ACTIONS[field] : undefined;
+}
+
+/**
+ * The issue a Linear API request acted on, when the audit can say: a single
+ * field whose action names an issue. A key in a create or list request is a
+ * parent or a filter, and with several fields it could belong to any of them.
+ */
+export function linearApiSubjectKey(payload: Record<string, unknown>): string | undefined {
+  const fields = linearApiFields(payload);
+  const key = payload['issueKey'];
+  return fields.length === 1 && linearApiAction(fields[0]!)?.includes('{key}')
+    && typeof key === 'string' && LINEAR_ISSUE_KEY.test(key) ? key : undefined;
+}
+
+function linearApiLabel(payload: Record<string, unknown>): string {
+  const operation = payload['operation'];
+  const fields = linearApiFields(payload);
   // Records from before field names were kept.
   if (!fields.length) {
     return operation === 'query' ? 'Query' : operation === 'mutation' ? 'Mutation'
       : operation === 'subscription' ? 'Subscription' : 'Unknown operation';
   }
-  const action = fields.map((f) => (Object.hasOwn(LINEAR_API_ACTIONS, f) ? LINEAR_API_ACTIONS[f] : undefined)).find(Boolean);
-  // A key only names the issue when the request had a single field it could belong to.
-  const key = typeof payload['issueKey'] === 'string' && LINEAR_ISSUE_KEY.test(payload['issueKey']) && fields.length === 1
-    ? payload['issueKey'] : undefined;
+  const action = fields.map(linearApiAction).find(Boolean);
   const first = action
-    ? action.replace('{key}', key ?? 'issue')
+    ? action.replace('{key}', linearApiSubjectKey(payload) ?? 'issue')
     : operation === 'mutation' ? 'Change Linear data' : 'Read Linear data';
   return fields.length > 1 ? `${first} and more` : first;
+}
+
+/** The requested action of a completed Linear write, for its outbound row. */
+export function linearWriteLabel(payload: Record<string, unknown>): string {
+  // Records from before field names were kept say only that it was a write.
+  return linearApiFields(payload).length ? linearApiLabel(payload) : 'Change Linear data';
 }
 
 function tool_(title: string, target?: string, targetFull?: string): ActivityRow {

@@ -12,6 +12,7 @@ import {
   isHeldSendStatus,
 } from '@shared/outbound-effects';
 import { isRuntimeEventNoise } from '@shared/runtime-event-noise';
+import { linearApiSubjectKey, linearWriteLabel } from './activities';
 
 // Hidden by default. Toggled on by "show all steps".
 //   - runtime.* are spawn-lifecycle plumbing
@@ -37,7 +38,7 @@ type CompletedOutboundEffectProjection =
       action: 'emit';
       item: Extract<
         ActivityFeedItem,
-        { kind: 'file-out' | 'message-out' | 'reaction-out' | 'system-event' }
+        { kind: 'action-out' | 'file-out' | 'message-out' | 'reaction-out' | 'system-event' }
       >;
       rememberText: boolean;
     }
@@ -157,6 +158,16 @@ export type ActivityFeedItem =
       surface: SurfaceChip;
       messageTs?: string;
       threadTs?: string;
+    }
+  | {
+      // A write the agent made through the Linear API: create, update, comment,
+      // delegate, start a session. It acts on other people's work, so it sits
+      // with replies instead of folding into steps. The audit keeps no query
+      // text, variables or result, so `label` is the requested action only.
+      kind: 'action-out';
+      label: string;
+      timestamp: string;
+      surface: SurfaceChip;
     }
   | { kind: 'step'; activity: ActivityRecord; timestamp: string; subagentStreams?: SubagentStream[] }
   | {
@@ -477,7 +488,12 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
 
 function activityFeedSortRank(item: ActivityFeedItem): number {
   if (item.kind === 'message-in') return 0;
-  if (item.kind === 'message-out' || item.kind === 'file-out' || item.kind === 'reaction-out')
+  if (
+    item.kind === 'message-out' ||
+    item.kind === 'file-out' ||
+    item.kind === 'reaction-out' ||
+    item.kind === 'action-out'
+  )
     return 1;
   if (item.kind === 'step' && item.activity.type === 'runtime.completed') return 3;
   return 2;
@@ -569,6 +585,22 @@ function projectCompletedOutboundEffect(
   }
   if (tool === 'anima.reminder.fire') {
     return { action: 'suppress' };
+  }
+  // A completed write. A failed one stays a failure step, as a failed Slack
+  // send does, and reads stay folded steps.
+  if (tool === 'anima.linear.api' && payload['operation'] === 'mutation') {
+    const key = linearApiSubjectKey(payload);
+    return {
+      action: 'emit',
+      item: {
+        kind: 'action-out',
+        label: linearWriteLabel(payload),
+        timestamp: activity.createdAt,
+        // The audit knows an issue only by its key; no title or link.
+        surface: { kind: 'channel', label: key ?? 'Linear' },
+      },
+      rememberText: false,
+    };
   }
   if (classified?.kind === 'reaction') {
     return {

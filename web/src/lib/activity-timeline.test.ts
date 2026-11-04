@@ -136,6 +136,26 @@ describe('activity timeline builders', () => {
     );
   });
 
+  it('places Linear writes in the conversation as agent rows, between the messages around them', () => {
+    const write = activity('write-1', 'tool.call.completed', '2026-07-04T10:00:30.000Z', {
+      fields: ['issueUpdate'],
+      issueKey: 'ANI-5',
+      operation: 'mutation',
+      platform: 'linear',
+      tool: 'anima.linear.api',
+    });
+    const items = buildConversationItems(
+      { entries: [message('m1', '2026-07-04T10:00:00.000Z'), message('m2', '2026-07-04T10:01:00.000Z')] },
+      { events: [write] },
+    );
+    expect(items.map((item) => item.kind)).toEqual(['message-in', 'action-out', 'message-in']);
+    const days = buildTimelineByDay(items, buildStepItems({ events: [write] }));
+    expect(days.flatMap(([, entries]) => entries.map((entry) => entry.type))).toEqual(['conv', 'conv', 'conv']);
+    const { resolveAuthor, resolveSurface } = buildActivityAuthorResolvers({ agent: undefined, agentId: 'nora' });
+    expect(resolveAuthor(items[1]!).isAgent).toBe(true);
+    expect(resolveSurface(items[1]!)).toEqual({ key: 'channel:ANI-5', chip: { kind: 'channel', label: 'ANI-5' } });
+  });
+
   it('builds narrative step items and suppresses started rows with matching failure rows', () => {
     const started = activity('started', 'tool.call.started', '2026-07-04T10:00:00.000Z', {
       providerToolId: 'toolu_1',
