@@ -21,7 +21,8 @@ test('Linear dashboard OAuth uses app actor, single-use PKCE state and private a
   const before = await identity.status(); assert.equal(before.state, 'not_configured');
   const auth = new URL((await identity.begin(request, 'session-binding')).authorizationUrl);
   assert.equal(auth.searchParams.get('actor'), 'app'); assert.equal(auth.searchParams.get('code_challenge_method'), 'S256');
-  assert.match(auth.searchParams.get('scope')!, /app:assignable/);
+  assert.deepEqual(new Set(auth.searchParams.get('scope')!.split(',')),
+    new Set(['read', 'write', 'app:assignable', 'app:mentionable', 'customer:write', 'initiative:write', 'timeSchedule:write']));
   const state = auth.searchParams.get('state')!;
   await assert.rejects(identity.finish(state, 'synthetic-code', 'wrong-session')); assert.equal(fake.tokenCalls, 0);
   let release!: () => void; fake.tokenGate = new Promise<void>((r) => { release = r; });

@@ -152,7 +152,7 @@ export class LinearIdentityService {
     const url = new URL('https://linear.app/oauth/authorize');
     url.search = new URLSearchParams({
       client_id: pending.clientId, redirect_uri: pending.callbackUrl, response_type: 'code',
-      actor: 'app', scope: 'read,write,app:assignable,app:mentionable',
+      actor: 'app', scope: 'read,write,app:assignable,app:mentionable,customer:write,initiative:write,timeSchedule:write',
       state: pending.id, code_challenge_method: 'S256',
       code_challenge: createHash('sha256').update(pending.verifier).digest('base64url'),
     }).toString();
