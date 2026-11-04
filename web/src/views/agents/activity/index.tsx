@@ -1,3 +1,4 @@
+import { agentConnectionDisplay } from '@/lib/platform-connection';
 import { slackConnectionDisplay } from '@/lib/slack-connection';
 import { Fragment, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -282,7 +283,7 @@ export function ActivityStatusSummary({
   connectionRevalidatingAt?: number;
 }) {
   if (!status) return null;
-  const connection = slackConnectionDisplay(status.health, now.getTime(), connectionRevalidatingAt);
+  const connection = agentConnectionDisplay(status, now.getTime(), connectionRevalidatingAt);
   const work = agentWorkState(status);
   const running = work.state === 'working';
   const background = work.state === 'background';

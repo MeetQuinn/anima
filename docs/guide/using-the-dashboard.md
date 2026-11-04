@@ -272,5 +272,12 @@ The activity header shows the disconnected duration, a safe error code such as `
 and the next retry. A terminal failure says automatic retries stopped. A successful connection
 clears the warning. If the connection snapshot has not been refreshed for more than 30 seconds,
 the dashboard shows **Slack status unavailable** instead of relying on an old connected state.
+
+Linear has no connection to keep open: Linear posts each event to Anima. The agent list and the
+activity header warn when something stops the agent hearing Linear: **Linear access revoked**,
+**Linear credentials not accepted** when Linear refuses the app's credentials while renewing
+access, and **Linear not receiving** when the local listener failed. Profile shows the details
+and the last event received. When Slack and Linear both need attention, the warning names both,
+the more serious first.
 Older runtimes without connection snapshots do not show this row. These indicators report the
 Socket Mode connection; they cannot recover messages missed while disconnected.

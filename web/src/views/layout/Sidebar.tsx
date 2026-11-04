@@ -34,7 +34,7 @@ import {
   sidebarUsesBackgroundRing,
 } from './sidebar/AgentRow';
 import { agentWorkState } from '@/lib/agent-work-state';
-import { slackConnectionDisplay } from '@/lib/slack-connection';
+import { agentConnectionDisplay } from '@/lib/platform-connection';
 import { KbRow, isKbActive } from './sidebar/KbRow';
 import { agentOptionId, useSidebarAgentKeyboardNav } from './sidebar/useSidebarAgentKeyboardNav';
 import { AgentCreateModal } from './AgentCreateModalLazy';
@@ -227,7 +227,7 @@ export default function Sidebar({
     const dotTitle = sidebarDotTitle(collapsedStatus?.health, work.state, work.backgroundTaskCount);
     const backgroundRing = sidebarUsesBackgroundRing(collapsedStatus?.health, work.state);
     const showCollapsedDot = enabled && !notConnected;
-    const connection = enabled ? slackConnectionDisplay(collapsedStatus?.health, now.getTime(), connectionRevalidatingAt) : undefined;
+    const connection = enabled ? agentConnectionDisplay(collapsedStatus, now.getTime(), connectionRevalidatingAt) : undefined;
     const connectionWarning = connection && connection.severity !== 'normal' ? connection : undefined;
     return (
       <div key={agent.id} className="relative w-full flex justify-center">

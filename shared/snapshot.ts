@@ -25,6 +25,8 @@ export interface DeferredWakeSummary {
 
 export interface AgentStatusSummary {
   agentId: string;
+  /** Present once the agent has a Linear installation, including a revoked one. */
+  linear?: LinearConnectionSummary;
   currentItemStartedAt?: string;
   currentItemId?: string;
   /** Still-deferred rate-limit wakes; empty/absent when none. */
@@ -32,6 +34,18 @@ export interface AgentStatusSummary {
   health?: AgentRuntimeHealthSummary;
   queueDepth: number;
   itemCount: number;
+}
+
+/**
+ * Linear reaches the agent by webhook, so there is no connection to watch: this is the
+ * installation's own record and the machine's webhook listener, as Profile shows them.
+ */
+export interface LinearConnectionSummary {
+  state: 'connected' | 'revoked';
+  /** Linear did not accept the app's credentials when renewing access. */
+  clientRejected?: boolean;
+  listener: 'listening' | 'failed' | 'stopped' | 'unknown';
+  lastSignedWebhookAt?: string;
 }
 
 export type AgentHealthState = 'degraded' | 'healthy' | 'starting' | 'unhealthy' | 'unknown';
