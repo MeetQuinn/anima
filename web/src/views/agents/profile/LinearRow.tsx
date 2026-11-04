@@ -64,10 +64,6 @@ function failureNotice(lastError: string): Notice {
   return { title: 'Authorization didn’t finish', body: lastError };
 }
 
-function unansweredTitle(count: number): string {
-  return count === 1 ? '1 session has no recorded reply' : `${count} sessions have no recorded reply`;
-}
-
 function noticeFor(data: LinearStatus | undefined): Notice | null {
   if (!data) return null;
   if (data.state === 'revoked')
@@ -106,7 +102,6 @@ export function LinearRow({
   const connected = data?.state === 'connected';
   const notice = noticeFor(data);
   const clientRejected = connected && Boolean(data.clientRejected);
-  const unanswered = connected ? (data.unansweredSessions ?? 0) : 0;
   const attention =
     status.isError ||
     data?.state === 'revoked' ||
@@ -191,7 +186,6 @@ export function LinearRow({
             : (notice?.title ?? 'Needs attention'),
     });
   if (connected && data.needsReauthorization) notes.push({ tone: 'warn', text: 'Authorize again for new permissions' });
-  if (!attention && unanswered > 0) notes.push({ tone: 'warn', text: unansweredTitle(unanswered) });
   return (
     <>
       <ConnectionRow
@@ -443,19 +437,6 @@ function ConnectedView({
           </div>
         </div>
       )}
-
-      {data.unansweredSessions ? (
-        <div className="flex gap-3 rounded-sm border border-health-warn/30 bg-health-warn-soft px-3.5 py-3">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-health-warn" aria-hidden="true" />
-          <div className="min-w-0 space-y-0.5">
-            <p className="font-sans text-[13px] font-medium text-health-warn-ink">{unansweredTitle(data.unansweredSessions)}</p>
-            <p className="font-sans text-[12px] leading-relaxed text-text-muted">
-              Anima still has no reply from {agentName} recorded, and no recorded activity for 30 minutes. Check the
-              session in Linear: reply there to wake {agentName} again, or stop it.
-            </p>
-          </div>
-        </div>
-      ) : null}
 
       <dl className="grid grid-cols-2 overflow-hidden rounded-sm border border-border-soft">
         <Fact label="Local listener" value={events} tone={listener?.state === 'failed' ? 'error' : undefined} />
