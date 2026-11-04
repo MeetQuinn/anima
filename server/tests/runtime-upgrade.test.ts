@@ -537,6 +537,11 @@ async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
 
 for (const mode of ['healthy', 'info-headers', 'info-body', 'health-headers', 'rollback-inspection'] as const) {
   test(`upgrade HTTP deadline covers ${mode}`, async () => withTempAnimaHome(async (home) => {
+    // For rollback-inspection the target install is incomplete, so the upgrade
+    // fails before boot verification and the first /api/server-info request is
+    // always the rollback inspection. Stalling the second request instead let an
+    // extra boot-verification poll take the stall (ANI-5).
+    const incompleteTarget = mode === 'rollback-inspection' ? '0.1.2' : '';
     const npm = join(home, 'fake-npm.cjs');
     await writeFile(npm, `#!/usr/bin/env node
 const { mkdirSync, writeFileSync } = require('node:fs');
@@ -547,7 +552,7 @@ const pkg = join(prefix, 'node_modules', '@meetquinn', 'animactl');
 mkdirSync(join(pkg, 'dist/server/cli'), { recursive: true });
 mkdirSync(join(pkg, 'templates'), { recursive: true });
 writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@meetquinn/animactl', version }));
-writeFileSync(join(pkg, 'templates/runtime-standing-prompt.md'), 'synthetic');
+if (version !== ${JSON.stringify(incompleteTarget)}) writeFileSync(join(pkg, 'templates/runtime-standing-prompt.md'), 'synthetic');
 writeFileSync(join(pkg, 'dist/server/cli/animactl.js'), ${JSON.stringify(`
 const fs = require('node:fs'), path = require('node:path');
 const receipt = process.env.ANIMA_RESTART_RESULT_FILE;
@@ -563,7 +568,7 @@ fs.writeFileSync(receipt, JSON.stringify({ status: 'succeeded', mode: 'idle', fa
       if (info) infoRequests += 1;
       const stall = (mode === 'info-headers' || mode === 'info-body') && info
         || mode === 'health-headers' && !info
-        || mode === 'rollback-inspection' && infoRequests === 2;
+        || mode === 'rollback-inspection' && infoRequests === 1;
       if (stall) {
         response.on('close', () => { stalledClosed += 1; });
         if (mode === 'info-body') {
@@ -573,9 +578,8 @@ fs.writeFileSync(receipt, JSON.stringify({ status: 'succeeded', mode: 'idle', fa
         return;
       }
       const installed = JSON.parse(await readFile(join(home, 'runtime/current/node_modules/@meetquinn/animactl/package.json'), 'utf8')) as { version: string };
-      const version = mode === 'rollback-inspection' && infoRequests === 1 ? '0.0.0' : installed.version;
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(info ? JSON.stringify({ animaHome: home, version, startedAt: new Date().toISOString() }) : '{}');
+      response.end(info ? JSON.stringify({ animaHome: home, version: installed.version, startedAt: new Date().toISOString() }) : '{}');
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -595,13 +599,14 @@ fs.writeFileSync(receipt, JSON.stringify({ status: 'succeeded', mode: 'idle', fa
         assert.equal(result, undefined);
         assert.equal(operation.status, 'succeeded');
       } else {
-        assert.match(String(result), /Runtime boot verification timed out/);
+        assert.match(String(result), mode === 'rollback-inspection' ? /Installed runtime template missing/ : /Runtime boot verification timed out/);
         assert.equal(operation.status, 'failed');
         await waitFor(async () => stalledClosed === 1);
         assert.equal(operation.rollback, mode === 'rollback-inspection' ? 'succeeded' : 'not_needed');
         if (mode === 'rollback-inspection') {
           assert.equal(operation.currentVersion, '0.1.1');
-          assert.equal(infoRequests, 3);
+          // The stalled inspection, then the boot check of the reinstalled 0.1.1.
+          assert.equal(infoRequests, 2);
         }
       }
     } finally {
