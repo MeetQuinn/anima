@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Command } from 'commander';
 import { z } from 'zod';
@@ -199,7 +199,28 @@ test('registered Linear CLI comments proactively, records outbox, and audits API
   assert.equal(threaded.find((m) => m.text === 'Continue the same thread')?.threadTs, fake.replyRoot);
   assert.equal(threaded.find((m) => m.text === 'Start a new discussion')?.threadTs, root.id);
   const auditBefore = await activityServiceForAgent('scout').readAll();
-  const token = await run('token'); assert.equal(token.accessToken, install.accessToken); assert.equal(token.refreshToken, undefined);
+  // The token reaches only the named program's environment; nothing prints it.
+  const runToken = async (...args: string[]) => {
+    const command = new Command(); registerLinearCommands(command);
+    await command.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'token', ...args]);
+  };
+  const printedBefore = output.length;
+  await assert.rejects(runToken(), /Name the program that needs the token: anima linear token -- <command>/);
+  const envFile = join(home, 'token-env.json');
+  const keys = ['LINEAR_ACCESS_TOKEN', 'LINEAR_ACCESS_TOKEN_EXPIRES_AT', 'LINEAR_ORGANIZATION_ID', 'LINEAR_APP_USER_ID', 'LINEAR_REFRESH_TOKEN'];
+  const writeEnv = `require('node:fs').writeFileSync(process.argv[1], JSON.stringify(Object.fromEntries(${JSON.stringify(keys)}.map((k) => [k, process.env[k] ?? null]))))`;
+  try {
+    await runToken('--', process.execPath, '-e', writeEnv, envFile);
+    assert.equal(process.exitCode, 0);
+    const env = JSON.parse(await readFile(envFile, 'utf8')) as Record<string, string | null>;
+    assert.deepEqual({ ...env, LINEAR_ACCESS_TOKEN_EXPIRES_AT: null }, { LINEAR_ACCESS_TOKEN: install.accessToken, LINEAR_ACCESS_TOKEN_EXPIRES_AT: null,
+      LINEAR_ORGANIZATION_ID: install.organizationId, LINEAR_APP_USER_ID: install.appUserId, LINEAR_REFRESH_TOKEN: null });
+    assert.ok(!Number.isNaN(Date.parse(env.LINEAR_ACCESS_TOKEN_EXPIRES_AT!)));
+    await runToken('--', process.execPath, '-e', 'process.exit(3)');
+    assert.equal(process.exitCode, 3, 'The program exit status is the command status');
+  } finally { process.exitCode = undefined; }
+  assert.equal(output.length, printedBefore);
+  assert.doesNotMatch([...output, ...diagnostics].join('\n'), /synthetic-access-sentinel|synthetic-refresh-sentinel/);
   assert.deepEqual(await activityServiceForAgent('scout').readAll(), auditBefore);
   stdin = JSON.stringify({ query: 'query First { viewer { id } } query Second { viewer { id } }', variables: {}, operationName: 'Second' });
   assert.equal((await run('api')).viewer.id, install.appUserId);
