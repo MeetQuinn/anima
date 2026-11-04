@@ -3,6 +3,8 @@ import { CheckCircle2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 import { fetchAgentFeishuScopeStatus } from '@/api/agents';
+import type { AgentFeishuScopeStatus } from '@shared/agent-config';
+import type { ConnectionNote } from './Connection';
 import {
   FeishuRecommendedPermissionsChecklist,
   recommendedScopesForDisplay,
@@ -19,12 +21,30 @@ type RecheckResult = {
   state: 'granted' | 'missing';
 };
 
+/**
+ * What the Feishu row says about permissions: null exactly when this card has
+ * nothing to show, so the row and the card in its dialog cannot disagree.
+ */
+export function feishuScopeNote(data: AgentFeishuScopeStatus | undefined, isError: boolean): ConnectionNote | null {
+  const state = data?.recommended?.state ?? data?.profileName.state;
+  if (!isError && (!data || state === 'granted' || state === 'not_connected')) return null;
+  return {
+    tone: 'warn',
+    text: isError || state === 'unknown' ? 'Could not check Feishu permissions' : 'Permissions to authorize',
+  };
+}
+
 export function FeishuScopeStatusCard({ agentId }: Props) {
   const [recheckResult, setRecheckResult] = useState<RecheckResult | null>(null);
   const [showPerms, setShowPerms] = useState(false);
   const { data, isError, isFetching, refetch } = useQuery({
     queryKey: queryKeys.agentFeishuScopes(agentId),
     queryFn: () => fetchAgentFeishuScopeStatus(agentId),
+    // The Feishu row owns this query and the card opens in its dialog: read the
+    // row's answer instead of asking again, so the row cannot change under the
+    // dialog. Recheck access asks again on purpose.
+    refetchOnMount: false,
+    retryOnMount: false,
   });
 
   const currentAppId = data?.appId;
@@ -33,13 +53,7 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
       ? recheckResult.state
       : null;
   const recommended = data?.recommended;
-  const state = recommended?.state ?? data?.profileName.state;
-  if (
-    currentRecheckResult !== 'granted' &&
-    !isError &&
-    (!data || state === 'granted' || state === 'not_connected')
-  )
-    return null;
+  if (currentRecheckResult !== 'granted' && !feishuScopeNote(data, isError)) return null;
 
   const authUrl = recommended?.authUrl ?? data?.profileName.authUrl;
   const authUrls = recommended?.authUrls;

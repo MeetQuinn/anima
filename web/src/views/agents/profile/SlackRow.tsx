@@ -61,7 +61,7 @@ export function SlackRow({
         workspace={workspaceName}
         iconUrl={workspaceIconUrl}
         notes={updateAvailable ? [{ tone: 'warn', text: 'Slack app update available' }] : []}
-        action={updateAvailable ? 'Review' : 'Manage'}
+        action="Manage"
         onAction={() => setOpen(true)}
       />
       {open && (
