@@ -92,8 +92,8 @@ or question instead.
 End every session request with a response, question or error. Anima posts "Received by
 Anima.", a queued/executing status while the request waits or runs, and notices for a
 crash or a Stop, but it never answers for you. If your run ends without an answer, Linear
-shows the session as stale and the dashboard flags it as having no recorded reply. You can still
-answer in a later turn, for example after background work finishes.
+may later show the session as stale. You can still answer in a later turn, for example after
+background work finishes.
 
 A comment does not answer a session, and no reply changes issue status. Report what
 happened; do not paste raw tool output, private reasoning or credentials. Acknowledgements

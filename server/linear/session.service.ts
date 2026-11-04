@@ -431,9 +431,8 @@ export class LinearSessionService {
         await this.acknowledge(key, installId, receipt);
       }
     }));
-    // Status covers only a request that is still queued or running. Once its run ends
-    // unanswered, the runtime says nothing more: the dashboard counts the session once it
-    // has been quiet for 30 minutes. Lock only sessions that still have such work.
+    // Status covers only a request that is still queued or running. Once its run ends,
+    // the runtime sends no further status. Lock only sessions that still have such work.
     const current = await this.identity.store.read();
     const eligible = isActiveRequest;
     const due = (r: LinearReceipt) => Date.now() - Math.max(...[r.lastActivityAt ?? r.receivedAt, r.lastStatusAttemptAt]
