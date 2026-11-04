@@ -1,4 +1,6 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { z } from 'zod';
@@ -61,6 +63,8 @@ async function sendComment(agent: string | undefined, tool: string, basePayload:
   });
 }
 
+const TOKEN_ENV = ['LINEAR_ACCESS_TOKEN', 'LINEAR_ACCESS_TOKEN_EXPIRES_AT', 'LINEAR_ORGANIZATION_ID', 'LINEAR_APP_USER_ID'];
+
 export function registerLinearCommands(program: Command): void {
   const linear = program.command('linear').description('Use this agent’s Linear identity for issues, comments and work sessions.').option('--agent <id>', 'agent identity')
     .addHelpText('after', () => {
@@ -68,12 +72,22 @@ export function registerLinearCommands(program: Command): void {
       const guide = docsPath ? join(docsPath, 'agent', 'linear.md') : 'https://github.com/MeetQuinn/anima/blob/main/docs/agent/linear.md';
       return `\nUse api for issue and session reads, issue changes and external links.\nExamples and pagination: ${guide}`;
     });
-  // Credential output is for programmatic consumption, not activity records.
+  // Tool output lands in the agent's transcript, so the token goes only into the
+  // environment of the program that needs it. Neither it nor the call is recorded.
   // Arbitrary API calls record only fixed metadata, never their bodies.
-  linear.command('token').description('Get a current access token (JSON); keep it private.')
-    .action(async (_options, command: Command) => {
+  linear.command('token').description('Run a program with a fresh LINEAR_ACCESS_TOKEN in its environment; Anima does not print it.\nUse: anima linear token -- <command> [args...]')
+    .allowUnknownOption(true)
+    .argument('[command...]')
+    .action(async (commandArgs: string[], _options, command: Command) => {
+      const [program, ...args] = commandArgs;
+      if (!program) throw new Error(`Name the program that needs the token: anima linear token -- <command> [args...]. It runs with ${TOKEN_ENV.join(', ')} set. Anima does not print the token.`);
       const { accessToken, expiresAt, organizationId, appUserId } = await identityFor(command.optsWithGlobals().agent).credentials();
-      console.log(JSON.stringify({ accessToken, expiresAt, organizationId, appUserId }, null, 2));
+      const child = spawn(program, args, { stdio: 'inherit', env: { ...process.env,
+        LINEAR_ACCESS_TOKEN: accessToken, LINEAR_ACCESS_TOKEN_EXPIRES_AT: expiresAt, LINEAR_ORGANIZATION_ID: organizationId, LINEAR_APP_USER_ID: appUserId,
+      } });
+      const [status, signal] = (await once(child, 'exit')) as [number | null, NodeJS.Signals | null];
+      if (signal) console.error(`linear token command terminated by ${signal}`);
+      process.exitCode = signal ? 1 : status ?? 1;
     });
   linear.command('api').description('Send GraphQL JSON {query, variables?, operationName?} from stdin; no automatic retry.')
     .action(async (_options, command: Command) => {

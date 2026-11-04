@@ -8,7 +8,7 @@ every other connected place; do not create another provider session for it.
 - `anima linear reply` answers where a delivery points.
 - `anima linear start` opens a work session yourself.
 - `anima linear api` reads or changes anything else through Linear's GraphQL API.
-- `anima linear token` hands current credentials to another program. You rarely need it.
+- `anima linear token -- <command>` runs another program with current credentials. You rarely need it.
 
 Bodies for `reply` and `start` are Markdown on stdin.
 
@@ -153,10 +153,13 @@ Inspect before you retry. Never resend with a fresh ID or changed wording.
 ### Credentials
 
 Prefer `api`: it refreshes credentials and keeps the token out of your tool output.
-`token` prints JSON with `accessToken`, `expiresAt`, `organizationId` and `appUserId`.
-Capture it inside the program that needs it; never run it as a standalone tool call,
-echo it, or paste it into messages or files. `LINEAR_ACCESS_TOKEN` and
-`LINEAR_ACCESS_TOKEN_EXPIRES_AT` in your environment are a snapshot from when your run
+When another program must call Linear itself, run it with
+`anima linear token -- <command> [args...]`. The program gets a fresh
+`LINEAR_ACCESS_TOKEN`, `LINEAR_ACCESS_TOKEN_EXPIRES_AT`, `LINEAR_ORGANIZATION_ID` and
+`LINEAR_APP_USER_ID`, and the command ends with its exit status. Anima does not print the
+token, but the program shares your output: never let it print or echo the token, or
+paste it into messages or files. `LINEAR_ACCESS_TOKEN` and
+`LINEAR_ACCESS_TOKEN_EXPIRES_AT` in your own environment are a snapshot from when your run
 started. The dashboard shows each `api` call's operation and outcome, never its content;
 direct calls with the token are outside Anima's records.
 
