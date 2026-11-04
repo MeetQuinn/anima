@@ -58,7 +58,8 @@ The screenshot and trace show the failure.
 REPLY
 ```
 
-Anima uploads the files to Linear's private storage and appends links to the reply.
+Anima uploads the files to Linear's private storage and appends them to the reply:
+images use Markdown image embeds; other files use links.
 It checks every local file before uploading and checks the final body against the
 host's do-not-contact list. Uploads and the reply are separate effects: if an upload
 fails, no reply is posted, but earlier files may already be in storage. Identical

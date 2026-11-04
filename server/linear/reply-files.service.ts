@@ -43,16 +43,16 @@ function label(name: string): string {
   return name.replace(/[\r\n]/g, ' ').replace(/[\\`*_[\]<>!]/g, '\\$&');
 }
 
-export function linearReplyWithFiles(body: string, files: { name: string; url: string }[]): string {
-  return [body, ...files.map((file) => `[${label(file.name)}](<${file.url}>)`)].filter(Boolean).join('\n\n');
+export function linearReplyWithFiles(body: string, files: { name: string; url: string; image: boolean }[]): string {
+  return [body, ...files.map((file) => `${file.image ? '!' : ''}[${label(file.name)}](<${file.url}>)`)].filter(Boolean).join('\n\n');
 }
 
 export class LinearReplyFilesService {
   constructor(readonly identity: LinearIdentityService) {}
 
-  async upload(files: LinearReplyFile[]): Promise<{ name: string; url: string }[]> {
+  async upload(files: LinearReplyFile[]): Promise<{ name: string; url: string; image: boolean }[]> {
     const { id: installationId } = await this.identity.authorizedInstallation();
-    const uploaded: { name: string; url: string }[] = [];
+    const uploaded: { name: string; url: string; image: boolean }[] = [];
     for (const file of files) {
       const key = createHash('sha256').update(JSON.stringify([file.name, file.digest])).digest('hex');
       const home = this.identity.store.animaHome;
@@ -72,7 +72,7 @@ export class LinearReplyFilesService {
         });
         return upload.assetUrl;
       });
-      uploaded.push({ name: file.name, url });
+      uploaded.push({ name: file.name, url, image: file.blob.type.startsWith('image/') });
     }
     await this.identity.authorizedInstallation(installationId);
     return uploaded;

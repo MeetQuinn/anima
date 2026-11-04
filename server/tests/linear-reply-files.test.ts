@@ -100,7 +100,7 @@ test('reply uploads multiple files then posts one threaded comment with a captio
   assert.deepEqual(fake.puts.map((p) => p.bytes), ['synthetic PNG bytes', 'trace bytes']);
   assert.equal(fake.puts[0]!.headers.get('content-type'), 'image/png');
   assert.equal(fake.comments.length, 1); assert.equal(fake.comments[0]!.parentId, root);
-  const body = '**Evidence**\n\n[screenshot.png](<https://uploads.linear.app/private/file/1>)\n\n[trace \\[1\\].log](<https://uploads.linear.app/private/file/2>)';
+  const body = '**Evidence**\n\n![screenshot.png](<https://uploads.linear.app/private/file/1>)\n\n[trace \\[1\\].log](<https://uploads.linear.app/private/file/2>)';
   assert.equal(fake.comments[0]!.body, body);
   const out = (await messageServiceForAgent('scout').list()).entries.filter((r) => r.direction === 'out');
   assert.equal(out.length, 1); assert.equal(out[0]!.text, body);
@@ -119,7 +119,7 @@ test('file-only replies work, concurrent identical uploads reuse one private ass
   assert.doesNotMatch(JSON.stringify(await seeded.store.read()), /UPLOAD_SECRET|SIGNED_HEADER_SECRET|storage.googleapis.com/);
   await run('reply', '--to', 'issue:SYN-1', '--file', path);
   assert.equal(fake.puts.length, 1);
-  assert.equal(fake.comments[0]!.body, '[screenshot.png](<https://uploads.linear.app/private/file/1>)');
+  assert.equal(fake.comments[0]!.body, '![screenshot.png](<https://uploads.linear.app/private/file/1>)');
   await writeFile(path, 'changed');
   await run('reply', '--to', 'issue:SYN-1', '--file', path);
   assert.equal(fake.puts.length, 2);
