@@ -31,9 +31,10 @@ export class ContactPolicyRefusal extends Error {
   }
 }
 
-type Refusal = { kind: ContactPolicyRefusalKind; message: string };
+export type ContactRefusal = { kind: ContactPolicyRefusalKind; message: string };
 
-const FAILURE_KIND: Record<ContactPolicyRefusalKind, string> = {
+/** Activity `failureKind` for each refusal; the dashboard keys its rows on these. */
+export const CONTACT_FAILURE_KIND: Record<ContactPolicyRefusalKind, string> = {
   listed: 'do-not-contact',
   unverified: 'contact-unverified',
   config: 'contact-policy-config',
@@ -49,14 +50,14 @@ export async function assertSlackContactAllowed(input: ContactPolicyInput): Prom
       tool: input.tool,
       channel: input.channelId,
       status: 'failed',
-      failureKind: FAILURE_KIND[refusal.kind],
+      failureKind: CONTACT_FAILURE_KIND[refusal.kind],
       error: refusal.message,
     },
   });
   throw new ContactPolicyRefusal(refusal.message, refusal.kind);
 }
 
-async function refusalReason(input: ContactPolicyInput): Promise<Refusal | undefined> {
+async function refusalReason(input: ContactPolicyInput): Promise<ContactRefusal | undefined> {
   let blocked: string[];
   try {
     const config = await serverConfigStore.read();
@@ -115,7 +116,7 @@ async function refusalReason(input: ContactPolicyInput): Promise<Refusal | undef
  * Fail closed, but say what actually happened: agents otherwise read a lookup
  * failure as "this person asked not to be contacted" and stop reaching them.
  */
-function unresolved(channelId: string, subject: string, slackError?: string): Refusal {
+function unresolved(channelId: string, subject: string, slackError?: string): ContactRefusal {
   const cause = slackError ? ` (Slack: ${slackError})` : '';
   return {
     kind: 'unverified',

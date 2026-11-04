@@ -27,22 +27,27 @@ Agents on this host connected to this workspace will not DM or @mention these pe
 
 Here, “unaffected” means channel messages without a mention of a listed person; mentions in channel threads are refused too. Group DMs are refused if any member is listed. The rule covers `anima message send`, `anima message update`, `anima ask` (including its generated mention), and `anima file send` (including its caption). Literal mention tokens inside code do not count as mentions.
 
-Open **Settings > Outreach limits** in the dashboard. Each connected Slack
-workspace has its own list. Choose **+** (Add a person) on that workspace's list,
-search by name or `@username`, and confirm with **Add member**. Check the member
-ID before confirming, especially for duplicate
-names. Removal also asks for confirmation because it lifts the restriction.
+Each Linear workspace has its own list too. In Linear, agents will not @mention a listed person, by `@displayName` or profile URL, or assign, delegate or subscribe them. The rule covers `anima linear reply` (session replies and comments), `anima linear start`, and every write sent through `anima linear api`. An API write is refused when its document or variables contain the person's user ID, profile URL or `@displayName`, which covers `assigneeId`, `delegateId`, `subscriberIds` and mention nodes in `bodyData`. Reads are unaffected. So are comments and replies without a mention, including answers in a session or thread the listed person opened, and Anima's own acknowledgements and final notices. Mention text in a reply's code spans or fenced code blocks does not count; in an API write it does.
 
-Anima selects a configured connection in that workspace and verifies its token's
-workspace before reading the Slack directory. Tokens stay on the server. This
-lookup does not send messages or wake an agent. If the directory is unavailable,
-saved IDs remain visible and restricted; use **Retry lookup** after repairing the
-connection. A disconnected workspace's saved list remains available for removal.
+Open **Settings > Outreach limits** in the dashboard. The page groups the lists by
+platform and states what each one blocks. Each connected Slack workspace, and each
+Linear workspace an agent on this host is connected to, has its own list. Choose
+**+** (Add a person) on that workspace's list, search by name or `@username`, and
+confirm with **Add member**. Check the member ID before confirming, especially for
+duplicate names. Removal also asks for confirmation because it lifts the restriction.
+
+Anima reads the directory on the server. For Slack, it selects a configured
+connection in that workspace and verifies its token's workspace first. For Linear,
+it uses a connected agent's Linear token and verifies its organization first; the
+search lists people only, not apps or agents, and never shows email addresses.
+Tokens stay on the server. This lookup does not send messages or wake an agent. If
+the directory is unavailable, saved IDs remain visible and restricted; use **Retry
+lookup** after repairing the connection. A disconnected workspace's saved list
+remains available for removal.
 
 Changes take effect on the next Anima tool operation without a restart. The list
-applies to every agent in this Anima instance connected to that Slack workspace,
-not just the agent currently selected in the sidebar. It does not block incoming
-messages. **What this blocks** in the panel describes the enforced operations.
+applies to every agent in this Anima instance connected to that workspace, not just
+the agent currently selected in the sidebar. It does not block incoming messages.
 
 Alternatively, edit the root `config.json` in your `ANIMA_HOME` (normally `~/.anima/config.json`), preserving its other settings:
 
@@ -56,15 +61,31 @@ Alternatively, edit the root `config.json` in your `ANIMA_HOME` (normally `~/.an
 
 Use the Slack workspace ID (`T…`), not an Anima team ID. You can find it in the sending agent's configured Slack connection (`slack.teamId`). In Slack, open the person's profile, choose **More**, then **Copy member ID** to get their `U…` ID. Every agent in that workspace on this host uses the same entry. Deleting an agent does not remove the entry.
 
-Save valid JSON to a temporary file beside `config.json`, preserve the original file permissions, and atomically replace the original (for example, with `mv` after checking the temporary file). The next tool send reads the updated policy; no agent restart is needed. Removing an ID permits contact again. An absent key or empty workspace list applies no contact restriction. Invalid or unreadable configuration refuses sending; repair the configuration before retrying.
+For Linear, use `linearDoNotContact` with the Linear organization ID and user IDs (both UUIDs):
+
+```json
+{
+  "linearDoNotContact": {
+    "1b2c3d4e-0000-4000-8000-00000000000a": [
+      "5f6a7b8c-0000-4000-8000-00000000000b"
+    ]
+  }
+}
+```
+
+The dashboard is the simplest way to find Linear IDs. An agent can also read them through `anima linear api` with `query { organization { id } users { nodes { id name displayName } } }`.
+
+Save valid JSON to a temporary file beside `config.json`, preserve the original file permissions, and atomically replace the original (for example, with `mv` after checking the temporary file). The next tool send reads the updated policy; no agent restart is needed. Removing an ID permits contact again. An absent key or empty workspace list applies no contact restriction. Invalid or unreadable configuration refuses Slack sends and Linear writes; repair the configuration before retrying.
 
 A refusal exits with status 1, explains who requested no contact and what the agent should do, and appears in Activity as **Send refused: do-not-contact list** (`anima.do_not_contact`, not retryable). A recipient or group membership lookup failure also holds the send when the workspace list is non-empty, but reports it separately: `anima.contact_unverified` (retryable) names the channel ID and Slack error, says it is not a do-not-contact match, and appears in Activity as **Send held: recipient could not be verified**. A mistyped or truncated channel ID is the usual cause. An invalid policy file reports `anima.contact_policy_config`.
+
+Linear refusals use the same codes and Activity rows. A write that contains a listed user ID is refused without a lookup. For mention text, Anima looks up the listed people's `@displayName` and profile URL with the agent's own Linear token; if that lookup fails, `anima.contact_unverified` holds only writes that could contain a mention (an `@` or a profile link) and says it is not a do-not-contact match. An organization with no list makes no extra Linear call.
 
 This is an Anima tool-layer constraint, not a security sandbox. List management
 is an operator dashboard feature, not an agent tool. Its endpoints use the
 dashboard's existing authentication setting; adding this UI does not introduce
 operator-only process isolation. Same-user shell access can still read or alter
-the file, and a directly used Slack token can bypass Anima's tools. The file is
+the file, and a directly used Slack or Linear token (for example from `anima linear token`) can bypass Anima's tools. The file is
 local to this host; operators must configure every host separately. Feishu is not
 covered.
 

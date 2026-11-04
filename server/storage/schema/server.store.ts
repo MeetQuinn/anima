@@ -35,6 +35,8 @@ const ServerConfigFields = z
     dashboardHost: z.string().min(1).optional(),
     dashboardPort: z.number().int().positive().max(65535).optional(),
     doNotContact: z.record(z.string().regex(/^T[A-Z0-9]+$/), z.array(z.string().regex(/^U[A-Z0-9]+$/))).optional(),
+    // Linear organization ID → Linear user IDs. Same rule as doNotContact.
+    linearDoNotContact: z.record(z.string().uuid(), z.array(z.string().uuid())).optional(),
     memoryCoherence: MemoryCoherenceConfig.optional(),
     linearWebhook: LinearListenerConfig.optional(),
     publicUrl: PublicUrl.optional(),

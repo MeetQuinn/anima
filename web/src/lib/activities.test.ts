@@ -425,6 +425,21 @@ describe('Linear API tool steps', () => {
     expect(JSON.stringify(activityRow(record))).not.toContain('PRIVATE_');
   });
 
+  it.each([
+    ['do-not-contact', 'Send refused: do-not-contact list'],
+    ['contact-unverified', 'Send held: recipient could not be verified'],
+    ['contact-policy-config', 'Send refused: do-not-contact config invalid'],
+  ])('shows a %s refusal of a Linear write as a refusal, not an unknown outcome', (failureKind, title) => {
+    const error = "Not sent. nicholas (5c87ef88-14cd-402e-bd67-f4718e3d8848) is on this Linear workspace's do-not-contact list.";
+    for (const tool of ['anima.linear.api', 'anima.linear.reply', 'anima.linear.start']) {
+      const record = activity({ tool, platform: 'linear', operation: 'mutation', callId: 'api-1', status: 'failed', failureKind, error }, 'tool.call.failed');
+      expect(activityRow(record)).toMatchObject({ title, target: error, kind: 'failure' });
+      const feed = buildActivityFeed({ events: [record] }, false);
+      expect(feed).toHaveLength(1);
+      expect(feed[0]?.kind).toBe('step');
+    }
+  });
+
   const linearApi = (fields: unknown, extra: Record<string, unknown> = {}, type: Activity['type'] = 'tool.call.completed') =>
     activityRow(activity({ tool: 'anima.linear.api', platform: 'linear', operation: 'mutation', callId: 'api-1', fields, ...extra }, type));
 

@@ -2,21 +2,29 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContactWorkspace } from '@shared/do-not-contact';
-import { changeContactMember, fetchContactDirectory, fetchContactWorkspaces } from '@/api/do-not-contact';
+import {
+  changeContactMember, changeLinearContactMember, fetchContactDirectory, fetchContactWorkspaces, fetchLinearContactDirectory,
+} from '@/api/do-not-contact';
 import OutreachLimitsPage from './OutreachLimitsPage';
 
 vi.mock('@/api/do-not-contact', () => ({
   fetchContactWorkspaces: vi.fn(), fetchContactDirectory: vi.fn(), changeContactMember: vi.fn(),
+  fetchLinearContactDirectory: vi.fn(), changeLinearContactMember: vi.fn(),
 }));
 const user = { slackUserId: 'U123', displayName: 'Alex', handle: 'alex' };
 let workspaces: ContactWorkspace[];
 
 beforeEach(() => {
   vi.resetAllMocks();
-  workspaces = [{ id: 'T123', name: 'Example', memberIds: ['USAVED'], canLookup: true }];
+  workspaces = [{ platform: 'slack', id: 'T123', name: 'Example', memberIds: ['USAVED'], canLookup: true }];
   vi.mocked(fetchContactWorkspaces).mockImplementation(async () => structuredClone(workspaces));
   vi.mocked(fetchContactDirectory).mockResolvedValue({ users: [user, { ...user, slackUserId: 'U456', handle: 'alex2' }] });
   vi.mocked(changeContactMember).mockImplementation(async (id, memberId, action) => {
+    const workspace = workspaces.find((w) => w.id === id)!;
+    workspace.memberIds = action === 'add' ? [...workspace.memberIds, memberId] : workspace.memberIds.filter((value) => value !== memberId);
+    return { ok: true };
+  });
+  vi.mocked(changeLinearContactMember).mockImplementation(async (id, memberId, action) => {
     const workspace = workspaces.find((w) => w.id === id)!;
     workspace.memberIds = action === 'add' ? [...workspace.memberIds, memberId] : workspace.memberIds.filter((value) => value !== memberId);
     return { ok: true };
@@ -38,8 +46,12 @@ describe('Outreach limits page', () => {
   it('states the policy in one sentence, instance-wide, without IDs or token/source/Fleet concepts', async () => {
     mount();
     await screen.findByRole('heading', { name: 'Example' });
-    expect(screen.getByText(/Agents will not DM or @mention the people listed here/)).toBeTruthy();
-    expect(screen.getByText(/Applies to every agent in this Anima instance, per Slack workspace/)).toBeTruthy();
+    expect(screen.getByText(/Agents will not reach out to the people listed here/)).toBeTruthy();
+    expect(screen.getByText(/Applies to every agent in this Anima instance, per workspace/)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Slack' })).toBeTruthy();
+    expect(screen.getByText('Not DMed or @mentioned. Ordinary channel posts are unaffected.')).toBeTruthy();
+    // No Linear workspace, no Linear group.
+    expect(screen.queryByRole('heading', { name: 'Linear' })).toBeNull();
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.queryByText('T123')).toBeNull();
     expect(screen.queryByText(/Fleet|token|via Milo|through Milo|connection source|per-agent|each agent's own/i)).toBeNull();
@@ -48,7 +60,7 @@ describe('Outreach limits page', () => {
   });
 
   it('stacks every workspace as its own block with a people count and its own add control', async () => {
-    workspaces.push({ id: 'T456', name: 'Second', memberIds: [], canLookup: true });
+    workspaces.push({ platform: 'slack', id: 'T456', name: 'Second', memberIds: [], canLookup: true });
     vi.mocked(fetchContactDirectory).mockImplementation(async (id) => ({ users: id === 'T123' ? [user] : [] }));
     mount();
     await screen.findByRole('heading', { name: 'Second' });
@@ -154,7 +166,7 @@ describe('Outreach limits page', () => {
   });
 
   it('each block searches its own directory and never carries users across workspaces', async () => {
-    workspaces.push({ id: 'T456', name: 'Second', memberIds: ['UOTHER'], canLookup: true });
+    workspaces.push({ platform: 'slack', id: 'T456', name: 'Second', memberIds: ['UOTHER'], canLookup: true });
     vi.mocked(fetchContactDirectory).mockImplementation(async (id) => ({ users: id === 'T123' ? [user] : [] }));
     mount();
     const first = await openSearch('Example');
@@ -196,5 +208,83 @@ describe('Outreach limits page', () => {
     expect(changeContactMember).toHaveBeenCalledTimes(1);
     done({ ok: true });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+describe('Outreach limits page · Linear', () => {
+  const org = '6f1c2a10-0000-4000-8000-000000000001';
+  const savedId = '6f1c2a10-0000-4000-8000-0000000000aa';
+  const alexId = '6f1c2a10-0000-4000-8000-0000000000bb';
+  const alex = { linearUserId: alexId, name: 'Alex Kim', displayName: 'alex' };
+  beforeEach(() => {
+    workspaces.push({ platform: 'linear', id: org, name: 'Anima', memberIds: [savedId], canLookup: true });
+    vi.mocked(fetchLinearContactDirectory).mockResolvedValue({ users: [alex, { linearUserId: savedId, name: 'Sam Lee', displayName: 'sam' }] });
+  });
+
+  it('groups Linear workspaces under the Linear rule, named, after Slack', async () => {
+    mount();
+    await screen.findByRole('heading', { name: 'Anima' });
+    expect(screen.getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Slack', 'Example', 'Linear', 'Anima']);
+    expect(screen.getByText('Not @mentioned, assigned, delegated or subscribed, in replies, comments, started sessions or API writes. Comments without a mention are unaffected, including answers in a session they opened.')).toBeTruthy();
+    expect(screen.queryByText(org)).toBeNull();
+    await within(membersOf('Anima')).findByText('Sam Lee');
+    expect(within(membersOf('Anima')).getByText('@sam')).toBeTruthy();
+    expect(fetchLinearContactDirectory).toHaveBeenCalledWith(org);
+    expect(fetchContactDirectory).not.toHaveBeenCalledWith(org);
+  });
+
+  it('searches Linear people by @username and adds only after the ID is confirmed', async () => {
+    mount();
+    fireEvent.click(await addIn('Anima'));
+    const results = await screen.findByRole('list', { name: 'Linear search results · Anima' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Linear members in Anima' }), { target: { value: '@alex' } });
+    expect(within(results).getAllByRole('button')).toHaveLength(1);
+    fireEvent.click(within(results).getByRole('button', { name: /Alex Kim/ }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(`(${alexId})`)).toBeTruthy();
+    expect(changeLinearContactMember).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add member' }));
+    await screen.findByText('Added. Restriction is active.');
+    expect(changeLinearContactMember).toHaveBeenCalledExactlyOnceWith(org, alexId, 'add');
+    expect(changeContactMember).not.toHaveBeenCalled();
+  });
+
+  it('a Linear lookup failure keeps saved IDs restricted and offers Retry lookup', async () => {
+    vi.mocked(fetchLinearContactDirectory).mockRejectedValue(new Error('unavailable'));
+    mount();
+    await screen.findByText('Linear directory unavailable. Saved IDs remain restricted.');
+    expect(within(membersOf('Anima')).getByText(savedId)).toBeTruthy();
+    expect(within(membersOf('Anima')).getByText('Saved ID · still restricted')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add a person to Anima' }));
+    expect(screen.queryByRole('list', { name: 'Linear search results · Anima' })).toBeNull();
+    vi.mocked(fetchLinearContactDirectory).mockResolvedValue({ users: [alex] });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry lookup' }));
+    await screen.findByRole('list', { name: 'Linear search results · Anima' });
+    expect(within(membersOf('Anima')).getByText('Not found in the Linear directory · still restricted')).toBeTruthy();
+    expect(changeLinearContactMember).not.toHaveBeenCalled();
+  });
+
+  it('a disconnected Linear workspace keeps its list, cannot add, and can still remove', async () => {
+    workspaces[1]!.canLookup = false;
+    mount();
+    expect(((await addIn('Anima')) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('No Linear connection is available for this workspace. Saved IDs remain restricted.')).toBeTruthy();
+    expect(fetchLinearContactDirectory).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: `Remove ${savedId}` }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove member' }));
+    await screen.findByText('Removed. Restriction lifted.');
+    expect(changeLinearContactMember).toHaveBeenCalledExactlyOnceWith(org, savedId, 'remove');
+    await waitFor(() => expect(screen.queryByRole('button', { name: `Remove ${savedId}` })).toBeNull());
+  });
+
+  it('shows only the groups that have workspaces, and names both platforms when there are none', async () => {
+    workspaces.shift();
+    const { unmount } = mount();
+    await screen.findByRole('heading', { name: 'Anima' });
+    expect(screen.getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Linear', 'Anima']);
+    unmount();
+    workspaces = [];
+    mount();
+    await screen.findByText('Connect an agent to Slack or Linear to manage a workspace’s list.');
   });
 });

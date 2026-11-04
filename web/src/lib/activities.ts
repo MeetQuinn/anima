@@ -158,7 +158,8 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   const tool = String(payload['providerToolName'] || payload['tool'] || '').replace(/^claude\./, '');
   const normalized = tool.toLowerCase();
 
-  if (normalized === 'anima.linear.api') {
+  // A do-not-contact refusal sent nothing: it uses the shared refusal rows below.
+  if (normalized === 'anima.linear.api' && payload['failureKind'] === undefined) {
     const label = linearApiLabel(payload);
     if (activity.type === 'tool.call.failed') return {
       title: 'Linear API failed', target: `${label} · outcome unknown`, color: COLOR_FAILURE, kind: 'failure',

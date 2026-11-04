@@ -34,6 +34,7 @@ modification time and size, so the first read after a save sees the new contents
 | `dashboardHost`, `dashboardPort`   | hand edit                       | after a service restart (see below)                                      |
 | `dashboardAuth`                    | `animactl dashboard-auth`       | next dashboard request                                                   |
 | `doNotContact`                     | **Settings > Outreach limits**  | next send                                                                |
+| `linearDoNotContact`               | **Settings > Outreach limits**  | next Linear write                                                        |
 
 ## Edit the file safely
 
@@ -41,7 +42,7 @@ modification time and size, so the first read after a save sees the new contents
   file fail with an error that names the path. Until you fix it:
   - the agent service doesn't start. If it is already running, it logs
     `Runtime host reconcile failed` and stops applying config changes;
-  - Slack wakes are requeued instead of delivered, and Slack sends are refused;
+  - Slack wakes are requeued instead of delivered, and Slack sends and Linear writes are refused;
   - dashboard API requests fail.
 - Unknown keys inside `sidebarOrder` don't cause an error. Anima drops them, so a misspelled key
   there is ignored.
@@ -219,11 +220,12 @@ npx -y @meetquinn/animactl@latest dashboard-auth disable
 
 ## Other keys
 
-| Key            | Type                                    | Default | What it does                                                                                                                                                                                                                                                                                                                                |
-| -------------- | --------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `doNotContact` | Slack workspace ID → list of member IDs | unset   | Agent Slack messages (sends and updates) are refused when they DM a listed member, include one in a group DM, or @mention one in any channel. While a list is active, a DM whose recipients can't be resolved is refused too. Edit it in **Settings > Outreach limits**; see [Working with your agent](./guide/working-with-your-agent.md). |
-| `teams`        | array of `{ id, name, home }`           | unset   | Managed by Anima; don't edit by hand. The dashboard creates teams and changes their name and home, and agents refer to them by `id`. The default team is filled in on read and written only once a team is created or edited.                                                                                                               |
-| `sidebarOrder` | object                                  | unset   | Managed by Anima. Saved when you reorder the dashboard sidebar.                                                                                                                                                                                                                                                                             |
+| Key                  | Type                                      | Default | What it does                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------- | ----------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `doNotContact`       | Slack workspace ID → list of member IDs   | unset   | Agent Slack messages (sends and updates) are refused when they DM a listed member, include one in a group DM, or @mention one in any channel. While a list is active, a DM whose recipients can't be resolved is refused too. Edit it in **Settings > Outreach limits**; see [Working with your agent](./guide/working-with-your-agent.md).                                                                                   |
+| `linearDoNotContact` | Linear organization ID → list of user IDs | unset   | Agent Linear writes (`anima linear reply`, `start`, and `api` writes) are refused when they @mention a listed person, by `@displayName` or profile URL, or assign, delegate or subscribe them. While a list is active, a write that could contain a mention is refused if the listed people can't be looked up. Edit it in **Settings > Outreach limits**; see [Working with your agent](./guide/working-with-your-agent.md). |
+| `teams`              | array of `{ id, name, home }`             | unset   | Managed by Anima; don't edit by hand. The dashboard creates teams and changes their name and home, and agents refer to them by `id`. The default team is filled in on read and written only once a team is created or edited.                                                                                                                                                                                                 |
+| `sidebarOrder`       | object                                    | unset   | Managed by Anima. Saved when you reorder the dashboard sidebar.                                                                                                                                                                                                                                                                                                                                                               |
 
 ## Environment variables
 

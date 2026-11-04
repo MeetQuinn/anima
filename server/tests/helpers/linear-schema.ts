@@ -1,7 +1,8 @@
 import { buildSchema, parse, validate } from 'graphql';
 
 // A bounded contract fixture, checked against Linear's public schema on Oct10;
-// users, delegate and agentSessions fields checked on Nov 3.
+// users, delegate and agentSessions fields checked on Nov 3; IDComparator.in and
+// User.avatarUrl (do-not-contact lookups) on Nov 4.
 // Unlike substring-only mocks, this rejects malformed queries and union selections.
 const schema = buildSchema(`
   scalar JSONObject
@@ -26,7 +27,7 @@ const schema = buildSchema(`
     agentSessionCreateOnIssue(input: AgentSessionCreateOnIssue!): SessionPayload!
     agentSessionCreateOnComment(input: AgentSessionCreateOnComment!): SessionPayload!
   }
-  type User { id: ID!, app: Boolean!, name: String!, displayName: String!, url: String! }
+  type User { id: ID!, app: Boolean!, name: String!, displayName: String!, url: String!, avatarUrl: String }
   type UserConnection { nodes: [User!]!, pageInfo: PageInfo! }
   type Organization { id: ID!, name: String! }
   type Application { clientId: String! }
@@ -43,7 +44,7 @@ const schema = buildSchema(`
   input NullableCommentFilter { id: IDComparator }
   input UserFilter { id: IDComparator, app: BooleanComparator }
   input BooleanComparator { eq: Boolean }
-  input IDComparator { eq: ID }
+  input IDComparator { eq: ID, in: [ID!] }
   type CommentConnection { nodes: [Comment!]!, pageInfo: PageInfo! }
   type TeamConnection { nodes: [Team!]!, pageInfo: PageInfo! }
   input IssueCreateInput { id: String, teamId: String!, title: String!, description: String }
