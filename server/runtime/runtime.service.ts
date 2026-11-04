@@ -10,6 +10,7 @@ import { isDeferredQueuedInboxItem, isHeldInboxItem, type InboxItem } from '../.
 import type {
   AgentStatusSummary,
   DeferredWakeSummary,
+  LinearConnectionSummary,
 } from '../../shared/snapshot.js';
 import { agentHasConnectedTransport } from '../../shared/agent-transports.js';
 import { nowIso } from '../ids.js';
@@ -17,6 +18,7 @@ import { AgentHealthService, defaultAgentHealthService, sampleApiHealth, restart
 import { defaultAgentRestartCommandStore } from './agent-restart-command.store.js';
 import { findActiveRuntimeItem } from './active-item.js';
 import { latestPrimaryRunningItem } from './item-state.js';
+import { LinearIdentityService } from '../linear/identity.service.js';
 
 export class RuntimeServiceError extends Error {
   readonly statusCode: number;
@@ -96,8 +98,10 @@ export class RuntimeService {
       }
     }
     const deferredWakes = deferredWakeSummaries(items);
+    const linear = agent.linear ? await linearConnection(agent.id) : undefined;
     return {
       agentId: agent.id,
+      ...(linear ? { linear } : {}),
       ...(running ? { currentItemId: running.id } : {}),
       ...(currentItemStartedAt ? { currentItemStartedAt } : {}),
       ...(deferredWakes.length > 0 ? { deferredWakes } : {}),
@@ -120,6 +124,19 @@ export class RuntimeService {
 }
 
 export const defaultRuntimeService = new RuntimeService();
+
+// Read from local records only; status() makes no Linear call. A failure to read leaves
+// Linear out rather than failing the agent's whole status.
+async function linearConnection(agentId: string): Promise<LinearConnectionSummary | undefined> {
+  const status = await new LinearIdentityService(agentId).status().catch(() => undefined);
+  if (status?.state !== 'connected' && status?.state !== 'revoked') return undefined;
+  return {
+    state: status.state,
+    ...(status.clientRejected ? { clientRejected: true } : {}),
+    listener: status.listenerStatus?.state ?? 'unknown',
+    ...(status.lastSignedWebhookAt ? { lastSignedWebhookAt: status.lastSignedWebhookAt } : {}),
+  };
+}
 
 function expectsRuntimeHealth(agent: AgentConfig): boolean {
   if (agent.enabled === false) return false;

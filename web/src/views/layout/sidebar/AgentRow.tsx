@@ -1,4 +1,4 @@
-import { slackConnectionDisplay } from '@/lib/slack-connection';
+import { agentConnectionDisplay } from '@/lib/platform-connection';
 import { agentColor, initialOf } from '@/lib/avatars';
 import { agentAvatarUrl, agentDisplayName } from '@/lib/agent-avatar';
 import { agentHasConnectedTransport } from '@shared/agent-transports';
@@ -87,7 +87,7 @@ export function AgentRow({
   nowMs?: number;
   connectionRevalidatingAt?: number;
 }) {
-  const connection = enabled ? slackConnectionDisplay(status?.health, nowMs, connectionRevalidatingAt) : undefined;
+  const connection = enabled ? agentConnectionDisplay(status, nowMs, connectionRevalidatingAt) : undefined;
   const color = agentColor(index);
   const displayName = agentDisplayName(agent);
   const avatarUrl = agentAvatarUrl(agent);

@@ -11,6 +11,8 @@ import { LinearListenerStore } from '../storage/schema/linear-listener.store.js'
 import { ServerConfigStore } from '../storage/schema/server.store.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { buildWebApp } from '../web/app.js';
+import { RuntimeService } from '../runtime/runtime.service.js';
+import { DEFAULT_LINEAR_LISTENER } from '../../shared/linear.js';
 import { withTempAnimaHome, waitFor, withTimeout } from './helpers/harness.js';
 import { created, install, seedLinear } from './helpers/linear.js';
 
@@ -205,4 +207,22 @@ test('observation write failure leaves unknown without failing binding, intake o
     await waitFor(async () => (await identity.status()).listenerStatus?.state === 'listening');
     await waitFor(() => fake.posts.length === 1);
   } finally { await stopAndDrain(transport); }
+}));
+
+test('the agent status carries Linear health for the sidebar: listener, rejected credentials, revocation', async () => withTempAnimaHome(async (home) => {
+  const { store, agentStore } = await seedLinear(home);
+  const runtime = new RuntimeService();
+  const linear = async () => (await runtime.getStatus('scout')).linear;
+  assert.deepEqual(await linear(), { state: 'connected', listener: 'unknown' });
+  await store.update((file) => ({ ...file, lastSignedWebhookAt: '2026-11-04T00:40:00.000Z' }));
+  await new LinearListenerStore(home).write({ state: 'failed', reason: 'address_in_use', address: DEFAULT_LINEAR_LISTENER, observedAt: new Date().toISOString(), processId: process.pid });
+  assert.deepEqual(await linear(), { state: 'connected', listener: 'failed', lastSignedWebhookAt: '2026-11-04T00:40:00.000Z' });
+  await store.update((file) => ({ ...file, installation: { ...file.installation!, clientRejected: true } }));
+  assert.equal((await linear())?.clientRejected, true);
+  await store.update((file) => ({ ...file, installation: { ...file.installation!, revoked: true } }));
+  const revoked = await linear();
+  assert.equal(revoked?.state, 'revoked');
+  assert.equal(revoked?.clientRejected, undefined, 'A revoked installation reports the revocation');
+  await agentStore.update((agent) => ({ ...agent, linear: undefined }));
+  assert.equal(await linear(), undefined, 'An agent without Linear has no Linear health');
 }));
