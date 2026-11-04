@@ -30,7 +30,6 @@ import { DEFAULT_TEAM_ID } from '@shared/server-settings';
 import { SessionSection } from './SessionStats';
 import { SlackConnectStepper } from './SlackConnectStepper';
 import { FeishuConnectStepper } from './FeishuConnectStepper';
-import { FeishuScopeStatusCard } from './FeishuScopeStatusCard';
 import { SlackRow } from './SlackRow';
 import { FeishuRow } from './FeishuRow';
 import { LinearRow } from './LinearRow';
@@ -341,11 +340,6 @@ export default function Profile() {
               initialOpen={linearReturn}
             />
           </div>
-          {feishuConnected && (
-            <div className="mt-4">
-              <FeishuScopeStatusCard agentId={agentId} />
-            </div>
-          )}
         </Section>
 
         {/* Owner picker modal */}

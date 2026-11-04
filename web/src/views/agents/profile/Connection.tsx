@@ -7,8 +7,9 @@ import { Field } from './Primitives';
 // Every platform an agent is reachable on (Slack, Feishu, Linear) is one row
 // with the same anatomy: the workspace (icon and name), the notes that need
 // the user, and a single action that opens the platform's dialog. Healthy rows
-// stay quiet (an icon, no words); handles, IDs and secondary actions live in
-// the dialog.
+// stay quiet (an icon, no words); a connected row with a note always offers
+// Review, so the same situation reads the same on every platform. Handles, IDs
+// and secondary actions live in the dialog.
 
 export type ConnectionNote = { tone: 'warn' | 'error'; text: string };
 
@@ -53,9 +54,12 @@ export function ConnectionRow({
   /** Shown instead of the workspace when not connected, e.g. "Not connected". */
   status?: string;
   notes?: ConnectionNote[];
+  /** What the action is called when nothing needs the user (or to connect). */
   action: string;
   onAction: () => void;
 }) {
+  const needsUser = connected && notes.length > 0;
+  const verb = needsUser ? 'Review' : action;
   return (
     <Field label={label}>
       <div className="flex min-w-0 items-center gap-3">
@@ -79,12 +83,12 @@ export function ConnectionRow({
         </div>
         {/* Quiet when there is nothing to do: a settings icon, like the
           pencils above. A word only when the row asks for the user. */}
-        {connected && notes.length === 0 ? (
+        {connected && !needsUser ? (
           <button
             type="button"
             aria-haspopup="dialog"
-            aria-label={`${action} ${label}`}
-            title={`${action} ${label}`}
+            aria-label={`${verb} ${label}`}
+            title={`${verb} ${label}`}
             onClick={onAction}
             className="ml-auto flex size-[44px] shrink-0 items-center justify-center rounded-sm text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text focus-visible:outline focus-visible:outline-accent md:size-8"
           >
@@ -94,11 +98,11 @@ export function ConnectionRow({
           <button
             type="button"
             aria-haspopup="dialog"
-            aria-label={`${action} ${label}`}
+            aria-label={`${verb} ${label}`}
             onClick={onAction}
             className="ml-auto inline-flex min-h-[44px] shrink-0 items-center rounded-sm px-2.5 font-sans text-[12px] font-medium text-accent transition-colors hover:bg-surface-elevated hover:text-accent-hover focus-visible:outline focus-visible:outline-accent md:min-h-8"
           >
-            {action}
+            {verb}
           </button>
         )}
       </div>

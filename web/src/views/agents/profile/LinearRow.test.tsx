@@ -412,7 +412,7 @@ it.each([
   });
   mount();
   await screen.findByText('Not receiving events');
-  const dialog = await openDialog('Manage');
+  const dialog = await openDialog('Review');
   const alert = within(dialog).getByRole('alert');
   expect(alert.closest('details')).toBeNull();
   expect(alert.textContent).toContain('Anima can’t receive Linear events');
@@ -579,7 +579,7 @@ it.each([
   mount();
   await screen.findByText('Credentials not accepted');
   expect(screen.getByText('Demo workspace')).toBeTruthy();
-  const dialog = await openDialog('Manage');
+  const dialog = await openDialog('Review');
   const alert = within(dialog).getByRole('alert');
   expect(alert.textContent).toBe(`Linear didn’t accept this app’s credentials${body}`);
   expect(alert.textContent).not.toMatch(/disconnected|broken|revoked/i);
@@ -598,7 +598,9 @@ it('connected: sessions with no recorded reply are flagged on the row and explai
   mount();
   await screen.findByText('Demo workspace');
   expect(screen.getByText('2 sessions have no recorded reply')).toBeTruthy();
-  const dialog = await openDialog('Manage');
+  // Same word as Slack and Feishu when a connected row carries a note.
+  expect(screen.getByRole('button', { name: 'Review Linear' }).textContent).toBe('Review');
+  const dialog = await openDialog('Review');
   expect(within(dialog).getByText('2 sessions have no recorded reply')).toBeTruthy();
   const note = within(dialog).getByText(/Anima still has no reply from Scout recorded/);
   expect(note.textContent).toMatch(/Check the session in Linear/);
@@ -620,7 +622,7 @@ it('a lost answer for a secret Linear still rejects asks to try again', async ()
   api.saveSecret.mockRejectedValue(new Error('private-failure-sentinel'));
   mount();
   await screen.findByText('Credentials not accepted');
-  const dialog = await openDialog('Manage');
+  const dialog = await openDialog('Review');
   fireEvent.click(within(dialog).getByRole('button', { name: 'Replace Client secret' }));
   fireEvent.change(within(dialog).getByLabelText('Client secret'), { target: { value: 'synthetic-client-secret-sentinel' } });
   const reads = api.status.mock.calls.length;
@@ -658,7 +660,7 @@ it('reauthorizes a connected app with stored credentials and shows missing permi
   api.reauthorize.mockResolvedValue({ authorizationUrl });
   mount();
   await screen.findByText('Authorize again for new permissions');
-  const dialog = await openDialog('Manage');
+  const dialog = await openDialog('Review');
   expect(within(dialog).queryByLabelText('Client secret')).toBeNull();
   expect(within(dialog).getByRole('button', { name: 'Authorize again' }).closest('details')).toBeNull();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize again' }));
@@ -677,7 +679,7 @@ it('asks only a legacy connection for the missing secret and clears it after sub
   api.reauthorize.mockRejectedValue(new Error('private-server-sentinel'));
   mount();
   await screen.findByText('Demo workspace');
-  const dialog = await openDialog('Manage');
+  const dialog = await openDialog('Review');
   expect(within(dialog).getByRole('button', { name: 'Authorize again' }).closest('details')).toBeNull();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize again' }));
   const input = within(dialog).getByLabelText('Client secret') as HTMLInputElement;
@@ -701,7 +703,7 @@ it('keeps the connected view for pending or failed reauthorization and removes t
   api.status.mockResolvedValue({ ...connected, needsReauthorization: true, reauthorizing: true });
   const client = mount();
   await screen.findByText('Demo workspace');
-  const dialog = await openDialog('Manage');
+  const dialog = await openDialog('Review');
   expect(within(dialog).getByText(/Authorization is pending in Linear/)).toBeTruthy();
   api.status.mockResolvedValue({
     ...connected,
@@ -714,6 +716,8 @@ it('keeps the connected view for pending or failed reauthorization and removes t
   api.status.mockResolvedValue({ ...connected, needsReauthorization: false });
   await refetch(client, ['agent', 'scout', 'linear']);
   await waitFor(() => expect(screen.queryByText('Authorize again for new permissions')).toBeNull());
+  // Nothing left to review: the row is quiet again.
+  expect(screen.getByRole('button', { name: 'Manage Linear' }).textContent).toBe('');
   expect(within(dialog).queryByRole('alert')).toBeNull();
   expect(within(dialog).getByText(/The current permissions have been granted/)).toBeTruthy();
 });

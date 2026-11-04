@@ -1,8 +1,11 @@
 import { useCallback, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { RotateCcw } from 'lucide-react';
-import { refreshAgentData, syncAgentFeishuAvatar } from '@/api/agents';
+import { fetchAgentFeishuScopeStatus, refreshAgentData, syncAgentFeishuAvatar } from '@/api/agents';
 import { Button } from '@/components/ui/button';
+import { queryKeys } from '@/lib/query-keys';
 import { ConnectionDialog, ConnectionHeader, ConnectionRow, Fact } from './Connection';
+import { FeishuScopeStatusCard, feishuScopeNote } from './FeishuScopeStatusCard';
 
 export function FeishuRow({
   agentId,
@@ -18,6 +21,13 @@ export function FeishuRow({
   const [open, setOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
+  // Same query as the permissions card in the dialog, so the row knows about
+  // missing permissions without a second request.
+  const scopes = useQuery({
+    queryKey: queryKeys.agentFeishuScopes(agentId),
+    queryFn: () => fetchAgentFeishuScopeStatus(agentId),
+  });
+  const scopeNote = feishuScopeNote(scopes.data, scopes.isError);
   const close = useCallback(() => {
     if (syncing) return;
     setSyncError('');
@@ -43,6 +53,7 @@ export function FeishuRow({
       <ConnectionRow
         label="Feishu"
         connected
+        notes={scopeNote ? [scopeNote] : []}
         action="Manage"
         onAction={() => setOpen(true)}
       />
@@ -62,6 +73,7 @@ export function FeishuRow({
               Feishu credentials are stored in the agent config and injected by Anima at runtime. Secret values are
               hidden in the dashboard.
             </p>
+            <FeishuScopeStatusCard agentId={agentId} />
             {syncError && (
               <p role="alert" className="font-sans text-[12px] text-health-error">
                 {syncError}
