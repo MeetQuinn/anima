@@ -46,10 +46,11 @@ export function mergeMessagePages(
 }
 
 // The conversation spine is built in two halves that change at different
-// rates: message rows follow the message ledger; send-hold rows follow the
-// activity feed. Keeping them separate lets the view memoise each half on its
-// own input, so an activity-only poll (the common case while an agent works)
-// keeps every message item's identity and the memoised message rows skip.
+// rates: message rows follow the message ledger; send-hold rows and Linear
+// writes follow the activity feed. Keeping them separate lets the view memoise
+// each half on its own input, so an activity-only poll (the common case while
+// an agent works) keeps every message item's identity and the memoised message
+// rows skip.
 export function buildMessageConversationItems(
   messagesData: Pick<AgentMessageHistoryPage, 'entries'> | undefined,
 ): ActivityFeedItem[] {
@@ -59,25 +60,25 @@ export function buildMessageConversationItems(
   );
 }
 
-// Send-hold rows live only on the activity stream (never the message ledger).
-// They merge into the conversation spine so held never silently vanishes and
-// never renders as an empty message-out.
-export function buildHeldConversationItems(
+// Conversation rows that live only on the activity stream (never the message
+// ledger): send-hold rows, so held never silently vanishes and never renders
+// as an empty message-out, and Linear API writes, which sit with replies.
+export function buildActivityConversationItems(
   activitiesData: Pick<AgentActivityFeedPage, 'events'> | undefined,
 ): ActivityFeedItem[] {
   if (!activitiesData) return [];
   return buildActivityFeed(activitiesData, false).filter(
-    (item): item is Extract<ActivityFeedItem, { kind: 'system-event' }> =>
-      item.kind === 'system-event' && item.eventKind === 'held',
+    (item) =>
+      (item.kind === 'system-event' && item.eventKind === 'held') || item.kind === 'action-out',
   );
 }
 
 export function combineConversationItems(
   fromMessages: ActivityFeedItem[],
-  fromHeld: ActivityFeedItem[],
+  fromActivity: ActivityFeedItem[],
 ): ActivityFeedItem[] {
-  if (fromHeld.length === 0) return fromMessages;
-  return [...fromMessages, ...fromHeld].sort((a, b) =>
+  if (fromActivity.length === 0) return fromMessages;
+  return [...fromMessages, ...fromActivity].sort((a, b) =>
     a.timestamp.localeCompare(b.timestamp),
   );
 }
@@ -88,7 +89,7 @@ export function buildConversationItems(
 ): ActivityFeedItem[] {
   return combineConversationItems(
     buildMessageConversationItems(messagesData),
-    buildHeldConversationItems(activitiesData),
+    buildActivityConversationItems(activitiesData),
   );
 }
 

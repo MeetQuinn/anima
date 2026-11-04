@@ -4,6 +4,7 @@ import {
   MessageSquareQuote,
   MessageSquareReply,
   SmilePlus,
+  SquarePen,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { renderMrkdwn } from '@/lib/mrkdwn';
@@ -115,6 +116,17 @@ function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId: strin
           ))}
         </div>
       </>
+    );
+  }
+  if (item.kind === 'action-out') {
+    // A Linear write: something the agent did, not something it said, so it
+    // reads as an action line under the agent's byline, like a reaction. The
+    // label is the requested action; a completed call does not prove the change.
+    return (
+      <span className="inline-flex min-w-0 items-center gap-1.5 font-sans text-[13px] text-text-muted">
+        <SquarePen className="h-3.5 w-3.5 shrink-0 text-text-subtle" aria-hidden />
+        <span className="min-w-0 break-words">{item.label}</span>
+      </span>
     );
   }
   if (item.kind !== 'reaction-out') return null;

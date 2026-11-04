@@ -411,7 +411,8 @@ describe('Linear API tool steps', () => {
     const completed = { ...activity({ ...payload, outcome: 'request_completed' }, 'tool.call.completed'), activityId: 'completed' };
     const feed = buildActivityFeed({ events: [started, completed] }, false);
     expect(feed).toHaveLength(1);
-    expect(feed[0]?.kind).toBe('step');
+    // A completed write is an outbound action; everything else stays a step.
+    expect(feed[0]?.kind).toBe(operation === 'mutation' ? 'action-out' : 'step');
     expect(isNarrativeStep(completed)).toBe(true);
     expect(activityRow(completed).title).toBe('Linear API');
     expect(activityRow(started).title).toBe('Linear API');

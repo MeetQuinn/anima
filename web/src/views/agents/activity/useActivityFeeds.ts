@@ -8,7 +8,7 @@ import {
 } from '@/api/agents';
 import { queryKeys, refetchIntervals } from '@/lib/query-keys';
 import {
-  buildHeldConversationItems,
+  buildActivityConversationItems,
   buildMessageConversationItems,
   buildStepItems,
   combineConversationItems,
@@ -208,12 +208,12 @@ export function useActivityFeeds(agentId: string | undefined) {
 
   // Two memo halves on purpose (see buildMessageConversationItems): message
   // items keep identity across activity-only polls, so memoised message rows
-  // skip; only the rare held row rides on the activity feed.
+  // skip; only held rows and Linear writes ride on the activity feed.
   const messageItems = useMemo(() => buildMessageConversationItems(messagesData), [messagesData]);
-  const heldItems = useMemo(() => buildHeldConversationItems(activitiesData), [activitiesData]);
+  const activityItems = useMemo(() => buildActivityConversationItems(activitiesData), [activitiesData]);
   const conversationItems = useMemo(
-    () => combineConversationItems(messageItems, heldItems),
-    [messageItems, heldItems],
+    () => combineConversationItems(messageItems, activityItems),
+    [messageItems, activityItems],
   );
   const stepItems = useMemo(() => buildStepItems(activitiesData), [activitiesData]);
 
