@@ -114,7 +114,7 @@ export function LinearConnectSteps({
                   setReusedApp(false);
                   clearSecrets();
                 }}
-                className="inline-flex min-h-11 items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
+                className="inline-flex min-h-[44px] items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
               >
                 Change
               </button>
@@ -131,12 +131,12 @@ export function LinearConnectSteps({
                     target="_blank"
                     rel="noreferrer"
                     onClick={() => setAppReady(true)}
-                    className={buttonVariants({ className: 'h-11 gap-2 px-4 text-[13px] md:h-10' })}
+                    className={buttonVariants({ className: 'h-[44px] gap-2 px-4 text-[13px] md:h-10' })}
                   >
                     Create app in Linear <ExternalLink className="size-3.5" aria-hidden="true" />
                   </a>
                 ) : (
-                  <span aria-disabled="true" className={buttonVariants({ className: 'h-11 px-4 text-[13px] opacity-50 md:h-10' })}>
+                  <span aria-disabled="true" className={buttonVariants({ className: 'h-[44px] px-4 text-[13px] opacity-50 md:h-10' })}>
                     Create app in Linear
                   </span>
                 )}
@@ -147,7 +147,7 @@ export function LinearConnectSteps({
                     setReusedApp(true);
                     setAppReady(true);
                   }}
-                  className="inline-flex min-h-11 items-center font-sans text-[13px] text-text-muted underline decoration-text-subtle/50 underline-offset-2 hover:text-text disabled:opacity-50 md:min-h-8"
+                  className="inline-flex min-h-[44px] items-center font-sans text-[13px] text-text-muted underline decoration-text-subtle/50 underline-offset-2 hover:text-text disabled:opacity-50 md:min-h-8"
                 >
                   I already have one
                 </button>
@@ -181,7 +181,7 @@ export function LinearConnectSteps({
                   <button
                     type="button"
                     onClick={() => setRenaming(true)}
-                    className="inline-flex min-h-11 items-center underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
+                    className="inline-flex min-h-[44px] items-center underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
                   >
                     Rename
                   </button>
@@ -266,7 +266,7 @@ export function LinearConnectSteps({
                 <Button
                   type="submit"
                   disabled={busy || disabled || !credentialsReady}
-                  className="h-11 gap-2 px-4 text-[13px] md:h-10"
+                  className="h-[44px] gap-2 px-4 text-[13px] md:h-10"
                 >
                   {busy ? (
                     <>
@@ -305,7 +305,7 @@ export const notACredentialField = {
 } as const;
 
 export const inputClass =
-  'h-11 w-full min-w-0 rounded-sm border border-border-soft bg-surface-raised px-3 font-mono text-[13px] text-text outline-none placeholder:font-sans placeholder:text-text-subtle focus-visible:border-accent aria-invalid:border-health-error/60 disabled:cursor-not-allowed disabled:opacity-60 md:h-10';
+  'h-[44px] w-full min-w-0 rounded-sm border border-border-soft bg-surface-raised px-3 font-mono text-[13px] text-text outline-none placeholder:font-sans placeholder:text-text-subtle focus-visible:border-accent aria-invalid:border-health-error/60 disabled:cursor-not-allowed disabled:opacity-60 md:h-10';
 
 function Step({
   n,

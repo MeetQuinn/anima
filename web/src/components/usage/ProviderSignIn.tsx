@@ -51,8 +51,8 @@ export function ProviderSignIn({
     <div className="space-y-1.5" data-testid={`provider-sign-in-${login.provider}`}>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">Sign-in</span>
-        <span className={`font-sans text-[12px] ${stateTone}`}>{stateLabel}</span>
-        {login.detail && login.state !== 'signed_out' && (
+        <span className={`font-sans text-[12px] ${stateTone}`} title={login.state === 'signed_in' ? login.detail : undefined}>{stateLabel}</span>
+        {login.detail && login.state !== 'signed_out' && login.state !== 'signed_in' && (
           <span className="min-w-0 truncate font-mono text-[10px] text-text-subtle" title={login.detail}>
             {login.detail}
           </span>

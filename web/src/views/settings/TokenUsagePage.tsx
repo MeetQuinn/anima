@@ -116,7 +116,7 @@ export default function TokenUsagePage() {
                         onClick={() => {
                           navigate(`/agents/${encodeURIComponent(agent.agentId)}/profile`);
                         }}
-                        className="group grid w-full items-center gap-x-4 gap-y-2 py-3.5 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(150px,0.5fr)_1fr_112px_16px] md:px-1"
+                        className="group grid grid-cols-[minmax(0,1fr)_auto] w-full items-center gap-x-4 gap-y-2 py-3.5 text-left hover:bg-surface-elevated/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent md:grid-cols-[minmax(150px,0.5fr)_1fr_112px_16px] md:px-1"
                       >
                         <div className="flex min-w-0 items-center gap-2.5">
                           <span className="w-[12px] shrink-0 text-right font-mono text-[10px] tabular-nums text-text-subtle">
@@ -154,7 +154,7 @@ export default function TokenUsagePage() {
                             contradicting the number beside it. Zero stays
                             zero. */}
                         <div
-                          className="h-[7px] w-full overflow-hidden rounded-full"
+                          className="col-span-2 row-start-2 md:col-span-1 md:row-start-auto h-[7px] w-full overflow-hidden rounded-full"
                           style={{ background: USAGE_RAMP[0] }}
                           aria-hidden
                         >
@@ -164,11 +164,11 @@ export default function TokenUsagePage() {
                           />
                         </div>
 
-                        <div className="md:text-right">
+                        <div className="col-start-2 row-start-1 text-right md:col-start-auto md:row-start-auto">
                           <div className="font-mono text-[13px] tabular-nums text-text">
                             {formatTokens(agent.totalTokens)}
                           </div>
-                          <div className="mt-0.5 font-mono text-[9px] tabular-nums text-text-subtle">
+                          <div className="mt-0.5 font-mono text-[11px] tabular-nums text-text-subtle">
                             {formatShare(share)}%{peak ? ` · peak ${formatTokens(peak.totalTokens)}` : ''}
                           </div>
                         </div>

@@ -341,7 +341,6 @@ function UpdateLabelRow({
 }) {
   return (
     <div className="group/update-row flex items-center gap-3">
-      <span className="w-14 shrink-0 font-sans text-[11px] text-text-subtle">Update</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">{children}</div>
       {action}
     </div>

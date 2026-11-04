@@ -60,17 +60,27 @@ function planLabel(value: string): string {
     .join(' ');
 }
 
+/** Keep decimal precision while dropping padding from provider balance strings. */
+function amountLabel(value: string | number): string {
+  const raw = String(value);
+  if (!/^-?\d+(?:\.\d+)?$/.test(raw)) return raw;
+  const [integer, fraction] = raw.split('.');
+  const grouped = integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const decimals = fraction?.replace(/0+$/, '');
+  return decimals ? `${grouped}.${decimals}` : grouped;
+}
+
 /** Format a non-Plan extra row value (balances, credits, …) */
 export function extraValue(e: ProviderUsageExtra): string {
   if (e.unlimited) return '∞';
   if (e.balance !== undefined) {
-    return e.currency ? `${e.balance} ${e.currency}` : String(e.balance);
+    return e.currency ? `${amountLabel(e.balance)} ${e.currency}` : amountLabel(e.balance);
   }
   if (e.limit !== undefined && e.used !== undefined) {
     const remaining = e.limit - e.used;
-    return e.currency ? `${remaining} ${e.currency}` : String(remaining);
+    return e.currency ? `${amountLabel(remaining)} ${e.currency}` : amountLabel(remaining);
   }
-  if (e.limit !== undefined) return e.currency ? `${e.limit} ${e.currency}` : String(e.limit);
+  if (e.limit !== undefined) return e.currency ? `${amountLabel(e.limit)} ${e.currency}` : amountLabel(e.limit);
   return '—';
 }
 

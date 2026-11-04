@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { AlertTriangle, Check, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, X } from 'lucide-react';
 import {
   fetchLinearSetup,
   fetchLinearStatus,
@@ -218,7 +218,7 @@ export function LinearRow({
             aria-haspopup="dialog"
             aria-label={`${rowAction} Linear`}
             onClick={() => setOpen(true)}
-            className="ml-auto inline-flex min-h-11 shrink-0 items-center rounded-sm px-2.5 font-sans text-[12px] font-medium text-accent transition-colors hover:bg-surface-elevated hover:text-accent-hover focus-visible:outline focus-visible:outline-accent md:min-h-8"
+            className="ml-auto inline-flex min-h-[44px] shrink-0 items-center rounded-sm px-2.5 font-sans text-[12px] font-medium text-accent transition-colors hover:bg-surface-elevated hover:text-accent-hover focus-visible:outline focus-visible:outline-accent md:min-h-8"
           >
             {rowAction}
           </button>
@@ -351,7 +351,7 @@ function LinearDialogBody({
         <a
           href="/settings/server#public-url"
           aria-label="Change public address"
-          className="inline-flex min-h-11 items-center underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
+          className="inline-flex min-h-[44px] items-center underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted md:min-h-0"
         >
           Change
         </a>
@@ -362,7 +362,7 @@ function LinearDialogBody({
           type="button"
           disabled={busy}
           onClick={() => void onRemove()}
-          className="inline-flex min-h-11 items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-health-error md:min-h-0"
+          className="inline-flex min-h-[44px] items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-health-error md:min-h-0"
         >
           Disconnect from Linear instead
         </button>
@@ -419,6 +419,8 @@ function ConnectedView({
   const [confirming, setConfirming] = useState(false);
   const now = useNow();
   const listener = data.listenerStatus;
+  const authorizationNeedsAttention = data.needsReauthorization || data.reauthorizing || Boolean(data.lastError) || data.clientRejected;
+  const reauthorize = <ReauthorizeForm key={`${data.installationId}:${data.clientSecretSaved}`} data={data} busy={busy} onAuthorize={onReauthorize} />;
   // Local receiver state only. The public address has its own check in Server
   // settings; "Last event" is the evidence that Linear reaches this machine.
   const events =
@@ -499,11 +501,9 @@ function ConnectedView({
           value={data.lastSignedWebhookAt ? formatRelativeShort(data.lastSignedWebhookAt, now) : 'None yet'}
           title={data.lastSignedWebhookAt ? shortIso(data.lastSignedWebhookAt) : undefined}
         />
-        <Fact label="Client ID" value={data.clientId ?? '—'} mono wide />
-        <ClientSecretFact agentId={agentId} data={data} disabled={busy} onChanged={onChanged} />
       </dl>
 
-      <ReauthorizeForm key={`${data.installationId}:${data.clientSecretSaved}`} data={data} busy={busy} onAuthorize={onReauthorize} />
+      {authorizationNeedsAttention && reauthorize}
 
       {data.signatureFailures ? (
         <p className="font-sans text-[12px] leading-relaxed text-health-warn-ink">
@@ -512,13 +512,26 @@ function ConnectedView({
         </p>
       ) : null}
 
-      <p className="font-sans text-[12px] leading-relaxed text-text-subtle">
-        No “Received by Anima.” in Linear after a mention? Check the{' '}
-        <a href="/settings/server#public-url" className="underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted">
-          public address
-        </a>
-        , and the app’s webhook URL and event subscriptions in Linear.
-      </p>
+      <details open={data.clientRejected || undefined} className="group/connection border-t border-border-soft pt-3">
+        <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 py-3 font-sans text-[12px] text-text-muted hover:text-text md:min-h-0 md:py-1 [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/connection:rotate-90" aria-hidden="true" />
+          Connection details
+        </summary>
+        <div className="mt-3 space-y-4">
+          <dl className="grid grid-cols-2 overflow-hidden rounded-sm border border-border-soft">
+            <Fact label="Client ID" value={data.clientId ?? '—'} mono wide />
+            <ClientSecretFact agentId={agentId} data={data} disabled={busy} onChanged={onChanged} />
+          </dl>
+          {!authorizationNeedsAttention && reauthorize}
+          <p className="font-sans text-[12px] leading-relaxed text-text-subtle">
+            No “Received by Anima.” after a mention? Check the{' '}
+            <a href="/settings/server#public-url" className="underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted">
+              public address
+            </a>
+            , webhook URL and event subscriptions in Linear.
+          </p>
+        </div>
+      </details>
 
       {error && (
         <p role="alert" className="font-sans text-[12px] text-health-error">
@@ -536,7 +549,7 @@ function ConnectedView({
               variant="outline"
               disabled={busy}
               onClick={() => void onRemove()}
-              className="h-11 border-health-error/40 px-3 text-[13px] text-health-error hover:bg-health-error-soft/60 md:h-9"
+              className="h-[44px] border-health-error/40 px-3 text-[13px] text-health-error hover:bg-health-error-soft/60 md:h-9"
             >
               {busy ? 'Disconnecting…' : 'Disconnect'}
             </Button>
@@ -544,7 +557,7 @@ function ConnectedView({
               variant="ghost"
               disabled={busy}
               onClick={() => setConfirming(false)}
-              className="h-11 px-3 text-[13px] font-normal md:h-9"
+              className="h-[44px] px-3 text-[13px] font-normal md:h-9"
             >
               Keep
             </Button>
@@ -554,13 +567,13 @@ function ConnectedView({
             type="button"
             disabled={busy}
             onClick={() => setConfirming(true)}
-            className="inline-flex min-h-11 items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-health-error md:min-h-0"
+            className="inline-flex min-h-[44px] items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-health-error md:min-h-0"
           >
             Disconnect
           </button>
         )}
         {!confirming && (
-          <Button onClick={onClose} className="h-11 px-5 text-[13px] md:h-9">
+          <Button onClick={onClose} className="h-[44px] px-5 text-[13px] md:h-9">
             Done
           </Button>
         )}
@@ -612,7 +625,7 @@ function ReauthorizeForm({
           {data.needsReauthorization
             ? 'Authorize again in Linear to grant the current permissions.'
             : 'The current permissions have been granted.'}{' '}
-          Your task and reply records are kept.
+          Task and reply records are kept.
         </p>
       </div>
       {data.reauthorizing && (
@@ -656,7 +669,7 @@ function ReauthorizeForm({
           type="submit"
           variant="outline"
           disabled={busy || !data.installationId}
-          className="h-11 px-3 text-[13px] md:h-9"
+          className="h-[44px] px-3 text-[13px] md:h-9"
         >
           {starting ? 'Opening Linear…' : askingSecret ? 'Authorize in Linear' : 'Authorize again'}
         </Button>
@@ -670,7 +683,7 @@ function ReauthorizeForm({
               setSecret('');
               setError('');
             }}
-            className="h-11 px-3 text-[13px] md:h-9"
+            className="h-[44px] px-3 text-[13px] md:h-9"
           >
             Cancel
           </Button>
@@ -756,7 +769,7 @@ function ClientSecretFact({
                 setMessage(null);
                 setEditing(true);
               }}
-              className="inline-flex min-h-11 shrink-0 items-center font-sans text-[12px] text-text-muted underline decoration-text-subtle/50 underline-offset-2 hover:text-text disabled:opacity-50 md:min-h-0"
+              className="inline-flex min-h-[44px] shrink-0 items-center font-sans text-[12px] text-text-muted underline decoration-text-subtle/50 underline-offset-2 hover:text-text disabled:opacity-50 md:min-h-0"
             >
               {action}
             </button>
@@ -782,7 +795,7 @@ function ClientSecretFact({
               From the app’s page in Linear. Linear checks it before Anima stores it on this machine.
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="submit" disabled={saving || disabled || !value.trim()} className="h-11 px-4 text-[13px] md:h-9">
+              <Button type="submit" disabled={saving || disabled || !value.trim()} className="h-[44px] px-4 text-[13px] md:h-9">
                 {saving ? 'Checking…' : 'Save'}
               </Button>
               <Button
@@ -794,7 +807,7 @@ function ClientSecretFact({
                   setValue('');
                   setMessage(null);
                 }}
-                className="h-11 px-3 text-[13px] font-normal md:h-9"
+                className="h-[44px] px-3 text-[13px] font-normal md:h-9"
               >
                 Cancel
               </Button>
@@ -854,7 +867,7 @@ function ReadError({ what, refresh = false, onRetry }: { what: string; refresh?:
   return (
     <p role="alert" className="font-sans text-[13px] text-health-error">
       Could not {refresh ? 'refresh' : 'read'} {what}.{' '}
-      <button type="button" onClick={onRetry} className="inline-flex min-h-11 items-center px-1 underline md:min-h-8">
+      <button type="button" onClick={onRetry} className="inline-flex min-h-[44px] items-center px-1 underline md:min-h-8">
         Retry
       </button>
     </p>

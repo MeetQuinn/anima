@@ -397,7 +397,7 @@ function RuntimeModal({
             onClick={requestClose}
             disabled={busy}
             aria-label="Close"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
+            className="flex size-[44px] md:size-8 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
           >
             <X className="h-4 w-4" />
           </button>
@@ -408,11 +408,12 @@ function RuntimeModal({
           <div className={groupRow}>
             <div className={railLabel}>Provider</div>
             <div className="space-y-2.5">
-              {/* Mobile: three equal columns; md+: content-sized inline row. */}
-              <div className="grid grid-cols-3 items-center gap-2 md:flex md:flex-wrap">
+              {/* Stack fields on phones so model names and menu arrows stay readable. */}
+              <div className="grid grid-cols-1 items-center gap-2 md:flex md:flex-wrap">
                 <Select value={draftKind} onValueChange={handleKindChange}>
                   <SelectTrigger
-                    className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-36"
+                    className="!h-[44px] w-full font-sans text-[13px] md:!h-8 md:w-36"
+                    aria-label="Provider"
                     disabled={busy}
                   >
                     {providerKindLabel(draftKind, providerOptions)}
@@ -427,7 +428,7 @@ function RuntimeModal({
                           key={opt.kind}
                           value={opt.kind}
                           disabled={!providerSelectable(opt)}
-                          className="font-serif text-[14px]"
+                          className="font-sans text-[13px]"
                         >
                           {opt.label}
                           {unavailableLabel ? ` · ${unavailableLabel}` : ''}
@@ -438,14 +439,15 @@ function RuntimeModal({
                 </Select>
                 <Select value={draftModel} onValueChange={handleModelChange}>
                   <SelectTrigger
-                    className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-48"
+                    className="!h-[44px] w-full font-sans text-[13px] md:!h-8 md:w-48"
+                    aria-label="Model"
                     disabled={busy}
                   >
                     {providerValueLabel(draftModel)}
                   </SelectTrigger>
                   <SelectContent>
                     {draftModelOptions.map((opt) => (
-                      <SelectItem key={opt} value={opt} className="font-serif text-[14px]">
+                      <SelectItem key={opt} value={opt} className="font-sans text-[13px]">
                         {providerValueLabel(opt)}
                       </SelectItem>
                     ))}
@@ -459,7 +461,8 @@ function RuntimeModal({
                     }}
                   >
                     <SelectTrigger
-                      className="!h-[44px] w-full font-serif text-[14px] md:!h-8 md:w-28"
+                      className="!h-[44px] w-full font-sans text-[13px] md:!h-8 md:w-28"
+                      aria-label="Reasoning effort"
                       disabled={busy}
                     >
                       {draftEffort ? (
@@ -470,7 +473,7 @@ function RuntimeModal({
                     </SelectTrigger>
                     <SelectContent>
                       {draftEffortOptions.map((opt) => (
-                        <SelectItem key={opt} value={opt} className="font-serif text-[14px]">
+                        <SelectItem key={opt} value={opt} className="font-sans text-[13px]">
                           {providerValueLabel(opt)}
                         </SelectItem>
                       ))}
@@ -549,7 +552,7 @@ function RuntimeModal({
                                 current.filter((candidate) => candidate.id !== row.id),
                               );
                           }}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-40"
+                          className="flex size-[44px] md:size-7 shrink-0 items-center justify-center rounded-sm text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-40"
                         >
                           {row.deleted ? (
                             <Undo2 className="h-3.5 w-3.5" />
@@ -571,7 +574,7 @@ function RuntimeModal({
                 type="button"
                 disabled={busy}
                 onClick={addEnvRow}
-                className="inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted transition-colors hover:text-text disabled:opacity-40"
+                className="inline-flex min-h-[44px] md:min-h-8 items-center gap-1.5 font-sans text-[12px] text-text-muted transition-colors hover:text-text disabled:opacity-40"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add variable

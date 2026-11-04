@@ -244,12 +244,12 @@ export function TeamRow({
               if (!open && !committingRef.current) setEditing(false);
             }}
           >
-            <SelectTrigger className="h-8 w-52 font-serif text-[14px]" disabled={busy}>
+            <SelectTrigger className="h-[44px] w-52 font-sans text-[13px] md:h-8" disabled={busy}>
               {currentName}
             </SelectTrigger>
             <SelectContent>
               {teams.map((t) => (
-                <SelectItem key={t.id} value={t.id} className="font-serif text-[14px]">
+                <SelectItem key={t.id} value={t.id} className="font-sans text-[13px]">
                   {t.name}
                 </SelectItem>
               ))}
