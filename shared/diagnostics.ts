@@ -1,10 +1,12 @@
 import type { AgentPlatformLabel, AgentTransportKind } from './agent-transports.js';
+import type { LinearListenerStatus, LinearStatus } from './linear.js';
 import type { AgentSessionSummary, AgentStatusSummary } from './snapshot.js';
 
 export interface AgentDiagnosticsBundle {
   agent: AgentDiagnosticsAgent;
   generatedAt: string;
   healthEvidence?: AgentHealthEvidenceHistory;
+  linear?: AgentDiagnosticsLinear;
   logs: AgentDiagnosticsLogs;
   recentActivity: AgentDiagnosticsActivity[];
   recovery: {
@@ -39,6 +41,7 @@ export interface AgentDiagnosticsAgent {
   };
   transports: {
     feishu: AgentDiagnosticsTransport;
+    linear: AgentDiagnosticsTransport;
     slack: AgentDiagnosticsTransport;
   };
 }
@@ -47,6 +50,25 @@ export interface AgentDiagnosticsTransport {
   configured: boolean;
   connected: boolean;
 }
+
+// Local Linear records only: states, times and counts. Never IDs, tokens, the
+// workspace name or request content.
+export type AgentDiagnosticsLinear =
+  | { available: false }
+  | {
+      available: true;
+      clientRejected?: boolean;
+      clientSecretSaved?: boolean;
+      lastError?: string;
+      lastSignedWebhookAt?: string;
+      listener: LinearListenerStatus['state'];
+      listenerReason?: LinearListenerStatus['reason'];
+      operations: Record<string, number>;
+      receipts: Record<string, number>;
+      signatureFailures: number;
+      state: LinearStatus['state'];
+      unansweredSessions?: number;
+    };
 
 export interface AgentDiagnosticsServer {
   animaHome: string;

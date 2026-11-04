@@ -226,3 +226,34 @@ test('the agent status carries Linear health for the sidebar: listener, rejected
   await agentStore.update((agent) => ({ ...agent, linear: undefined }));
   assert.equal(await linear(), undefined, 'An agent without Linear has no Linear health');
 }));
+
+test('copied diagnostics summarize Linear by state and count, without identifiers, tokens or request text', async () => withTempAnimaHome(async (home) => {
+  const { buildAgentDiagnostics } = await import('../diagnostics/agent-diagnostics.service.js');
+  const { service, store, agentStore } = await seedLinear(home);
+  await service.receive(created(), install);
+  await store.update((file) => ({ ...file, lastSignedWebhookAt: '2026-11-04T00:40:00.000Z', lastError: 'Refresh failed for lin_oauth_syntheticsecret0123456789' }));
+  const bundle = await buildAgentDiagnostics('scout');
+  assert.deepEqual(bundle.agent.transports.linear, { configured: true, connected: true });
+  const linear = bundle.linear;
+  assert.ok(linear?.available);
+  assert.equal(linear.state, 'connected');
+  assert.equal(linear.listener, 'unknown');
+  assert.equal(linear.lastSignedWebhookAt, '2026-11-04T00:40:00.000Z');
+  assert.equal(linear.signatureFailures, 0);
+  assert.equal(linear.clientSecretSaved, true);
+  assert.deepEqual(Object.values(linear.receipts), [1]);
+  assert.match(Object.keys(linear.receipts)[0]!, /^request\//);
+  assert.match(linear.lastError!, /<redacted-token>/);
+  const copied = JSON.stringify(bundle);
+  for (const value of [install.accessToken, install.refreshToken, install.clientSecret!, install.signingSecret, install.clientId,
+    install.organizationId, install.appUserId, install.workspaceName!, created().agentSession.id, 'Synthetic request body', 'syntheticsecret']) {
+    assert.ok(!copied.includes(value), 'The copy leaves out Linear identifiers, secrets and request text');
+  }
+
+  await writeFile(join(home, 'agents', 'scout', 'linear.json'), '{');
+  assert.deepEqual((await buildAgentDiagnostics('scout')).linear, { available: false }, 'An unreadable Linear store does not block the copy');
+  await agentStore.update((agent) => ({ ...agent, linear: undefined }));
+  const without = await buildAgentDiagnostics('scout');
+  assert.equal(without.linear, undefined);
+  assert.deepEqual(without.agent.transports.linear, { configured: false, connected: false });
+}));

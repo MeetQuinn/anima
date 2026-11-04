@@ -203,7 +203,8 @@ action menu controls the local runtime:
   memory, notes, and config remain. Do not use Restart to solve provider authentication or quota
   failures.
 - **Copy diagnostics** copies a support-oriented snapshot of the agent state, including Slack
-  connection status. It includes up to 20 confirmed stalled-work observations, retained after recovery. These record queue and worker
+  connection status. With Linear connected, it adds the Linear connection and listener state and
+  counts of Linear requests and replies by state, without IDs, credentials or request text. It includes up to 20 confirmed stalled-work observations, retained after recovery. These record queue and worker
   IDs, process checks, and the startup grace decision, without message bodies or credentials.
   Identical observations are not repeated until recovery or a change in the observed state.
   Capture happens when status is read; it is not a continuous fault recorder. If the history

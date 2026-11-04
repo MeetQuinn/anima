@@ -10,6 +10,8 @@ import type { AgentDiagnosticsActivity, AgentDiagnosticsBundle, AgentDiagnostics
 import type { Activity } from '../../shared/activity.js';
 import type { AgentRuntimeHealthSummary, AgentSessionSummary, AgentStatusSummary } from '../../shared/snapshot.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { LinearIdentityService } from '../linear/identity.service.js';
+import { LinearStore } from '../storage/schema/linear.store.js';
 import { activityServiceForAgent } from '../activities/activity.service.js';
 import { resolveAnimaHome } from '../anima-home.js';
 import { nowIso } from '../ids.js';
@@ -24,12 +26,13 @@ const LOG_TAIL_READ_LIMIT = 240;
 
 export async function buildAgentDiagnostics(agentId: string): Promise<AgentDiagnosticsBundle> {
   const agent = await defaultAgentRegistryService.serviceFor(agentId).getConfig();
-  const [serverInfo, statuses, session, recentActivity, logs] = await Promise.all([
+  const [serverInfo, statuses, session, recentActivity, logs, linear] = await Promise.all([
     defaultSystemService.serverInfo(),
     defaultRuntimeService.listStatuses(),
     defaultAgentRegistryService.serviceFor(agentId).getSession().catch(() => undefined),
     safeRecentActivity(agentId),
     safeLogTail(agentId),
+    agent.linear ? safeLinear(agentId) : undefined,
   ]);
   const status = statuses.find((candidate) => candidate.agentId === agentId)
     ?? await defaultRuntimeService.getStatus(agentId);
@@ -41,6 +44,7 @@ export async function buildAgentDiagnostics(agentId: string): Promise<AgentDiagn
       (events) => ({ available: true, cappedAt: HEALTH_EVIDENCE_CAP, events }),
       () => ({ available: false, cappedAt: HEALTH_EVIDENCE_CAP, events: [] }),
     ),
+    ...(linear ? { linear } : {}),
     logs: {
       cappedAt: LOG_LINE_CAP,
       lines: logs,
@@ -103,6 +107,10 @@ function safeAgent(agent: AgentConfig): AgentDiagnosticsBundle['agent'] {
         configured: Boolean(agent.feishu.appId || agent.feishu.avatarUrl || agent.feishu.botOpenId),
         connected: agent.feishu.connected === true,
       },
+      linear: {
+        configured: Boolean(agent.linear),
+        connected: agent.linear?.connected === true,
+      },
       slack: {
         configured: Boolean(
           agent.slack.appId
@@ -115,6 +123,38 @@ function safeAgent(agent: AgentConfig): AgentDiagnosticsBundle['agent'] {
       },
     },
   };
+}
+
+// Counts by kind and state stand in for the records, which hold IDs and request text.
+async function safeLinear(agentId: string): Promise<NonNullable<AgentDiagnosticsBundle['linear']>> {
+  try {
+    const [status, file] = await Promise.all([
+      new LinearIdentityService(agentId).status(),
+      new LinearStore(agentId).read(),
+    ]);
+    return {
+      available: true,
+      ...(status.clientRejected ? { clientRejected: true } : {}),
+      ...(status.clientSecretSaved !== undefined ? { clientSecretSaved: status.clientSecretSaved } : {}),
+      ...(status.lastError ? { lastError: scrubLogLine(status.lastError) } : {}),
+      ...(status.lastSignedWebhookAt ? { lastSignedWebhookAt: status.lastSignedWebhookAt } : {}),
+      listener: status.listenerStatus?.state ?? 'unknown',
+      ...(status.listenerStatus?.reason ? { listenerReason: status.listenerStatus.reason } : {}),
+      operations: countByKindAndState(Object.values(file.operations)),
+      receipts: countByKindAndState(Object.values(file.receipts)),
+      signatureFailures: status.signatureFailures,
+      state: status.state,
+      ...(status.unansweredSessions ? { unansweredSessions: status.unansweredSessions } : {}),
+    };
+  } catch {
+    return { available: false };
+  }
+}
+
+function countByKindAndState(records: { kind: string; state: string }[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const { kind, state } of records) counts[`${kind}/${state}`] = (counts[`${kind}/${state}`] ?? 0) + 1;
+  return counts;
 }
 
 function safeSession(session: AgentSessionSummary): AgentDiagnosticsBundle['session'] {
