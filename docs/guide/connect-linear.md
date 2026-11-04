@@ -214,6 +214,12 @@ When the initial prompt identifies the app itself as the delegator, Anima sends
 **Received by Anima** and links the session without waking the agent again. Later human
 prompts in that session wake it normally. If the origin cannot be confirmed, the session
 follows normal intake.
+Agents can attach screenshots, logs and other local files with
+`anima linear reply --to <reply_to> --file <path>`; repeat `--file` for several files.
+Anima uploads them to Linear's private storage and includes links in the reply.
+A caption is optional. If an upload fails, the reply is not posted; files uploaded
+before the failure may remain in storage.
+
 For longer work, the agent can send progress with `anima linear reply --kind thought`
 and send its final response in a later turn, for example after background work finishes.
 

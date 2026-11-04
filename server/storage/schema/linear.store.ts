@@ -16,6 +16,8 @@ const Installation = z.object({
   workspaceName: z.string().trim().min(1).max(256).optional(),
   // The app user's display name in Linear; installations made before it was recorded have none.
   appName: z.string().trim().min(1).max(256).optional(),
+  // Reuse private assets for identical file replies so session retry hashes stay stable.
+  uploadedFiles: z.record(z.string(), z.string().url()).optional(),
   refreshToken: z.string(), expiresAt: z.number(), revoked: z.boolean(),
 });
 export type LinearInstallation = z.infer<typeof Installation>;

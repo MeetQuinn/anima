@@ -3,6 +3,7 @@ import { buildSchema, parse, validate } from 'graphql';
 // A bounded contract fixture, checked against Linear's public schema on Oct10;
 // users, delegate and agentSessions fields checked on Nov 3; IDComparator.in and
 // User.avatarUrl (do-not-contact lookups) on Nov 4.
+// fileUpload / UploadFile checked through live introspection on Nov 4.
 // Unlike substring-only mocks, this rejects malformed queries and union selections.
 const schema = buildSchema(`
   scalar JSONObject
@@ -19,6 +20,7 @@ const schema = buildSchema(`
     agentActivity(id: String!): AgentActivity!
   }
   type Mutation {
+    fileUpload(contentType: String!, filename: String!, size: Int!): UploadPayload!
     issueCreate(input: IssueCreateInput!): IssuePayload!
     commentCreate(input: CommentCreateInput!): CommentPayload!
     issueUpdate(id: String!, input: IssueUpdateInput!): Success!
@@ -27,6 +29,9 @@ const schema = buildSchema(`
     agentSessionCreateOnIssue(input: AgentSessionCreateOnIssue!): SessionPayload!
     agentSessionCreateOnComment(input: AgentSessionCreateOnComment!): SessionPayload!
   }
+  type UploadPayload { success: Boolean!, uploadFile: UploadFile }
+  type UploadFile { uploadUrl: String!, assetUrl: String!, headers: [UploadHeader!]! }
+  type UploadHeader { key: String!, value: String! }
   type User { id: ID!, app: Boolean!, name: String!, displayName: String!, url: String!, avatarUrl: String }
   type UserConnection { nodes: [User!]!, pageInfo: PageInfo! }
   type Organization { id: ID!, name: String! }
