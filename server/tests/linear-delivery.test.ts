@@ -90,6 +90,32 @@ test('a child mention carries its exact body and a bounded thread root, without 
   assert.doesNotMatch(prompt, /SNAPSHOT DESCRIPTION|UNRELATED THREAD|OLDER REPLY|ROOT TAIL/);
 }));
 
+for (const [label, origin] of [
+  ['null origin', null], ['null team', { type: 'Organization', team: null }],
+  ['malformed origin', { type: 42 }], ['malformed team', { type: 'Team', team: { name: 42 } }],
+] as const) test(`decorative guidance metadata never rejects its body: ${label}`, async () => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  const event = created();
+  event.guidance = [{ body: 'Keep this guidance even without a label.', origin }] as unknown as typeof event.guidance;
+  await assert.doesNotReject(async () => service.receive(verified(event), install), 'Decorative metadata must not reject a signed session');
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear');
+  assert.match(item.text, /Keep this guidance even without a label\./);
+}));
+
+test('previous comments prove a known session thread without repeating its root', async () => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  const event = created();
+  event.previousComments = [{ id: randomUUID(), body: 'Old thread root', userId: randomUUID() },
+    { id: randomUUID(), body: 'The agent has already replied', userId: install.appUserId }];
+  event.agentSession.comment = { id: randomUUID(), body: '@scout continue', userId: randomUUID() };
+  event.agentSession.commentId = event.agentSession.comment.id;
+  await service.receive(verified(event), install);
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear');
+  assert.equal(item.text, '@scout continue');
+}));
+
 test('old queued inputs recover their event type without borrowing the requester as speaker', () => {
   const old = LinearInboxItem.parse({ id: `linear:${install.id}:prompted:${randomUUID()}`, kind: 'linear', installationId: install.id, organizationId: install.organizationId,
     sessionId, humanRequested: true, actorName: 'Legacy requester', text: 'Legacy request', receivedAt: '2026-10-03T01:02:03Z',

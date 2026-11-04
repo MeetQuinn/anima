@@ -34,7 +34,8 @@ export const LinearWebhook = z.discriminatedUnion('type', [
     createdAt: Time.optional(), previousComments: z.array(Comment).nullish(),
     appUserId: Id, agentSession: Session, promptContext: z.string().max(200_000).nullish(), agentActivity: Prompt.optional(),
     guidance: z.array(z.object({ body: z.string().max(50_000),
-      origin: z.object({ type: z.string(), team: z.object({ name: z.string() }).optional() }).optional(),
+      // Labels are decorative; malformed metadata must not discard the request.
+      origin: z.object({ type: z.string(), team: z.object({ name: z.string() }).nullish().catch(undefined) }).nullish().catch(undefined),
     })).max(100).nullish(),
   }),
   Common.extend({ type: z.literal('OAuthApp'), action: z.literal('revoked') }),

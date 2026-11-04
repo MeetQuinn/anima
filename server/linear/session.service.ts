@@ -17,7 +17,9 @@ import { linearCommentText, linearIssueKey } from './delivery-text.js';
 const Created = z.object({ agentActivityCreate: z.object({ success: z.literal(true), agentActivity: z.object({ id: z.string() }) }) });
 const ReadActivity = z.object({ agentActivity: z.object({ id: z.string(), agentSession: z.object({ id: z.string() }) }) });
 const SourceComment = z.object({ comment: z.object({ id: z.string(), issueId: z.string().nullable(), body: z.string(),
-  user: z.object({ id: z.string(), name: z.string() }).nullable(), parent: z.object({ id: z.string(), body: z.string() }).nullable(),
+  user: z.object({ id: z.string(), name: z.string() }).nullable(), parent: z.object({ id: z.string(), body: z.string(),
+    user: z.object({ id: z.string() }).nullable(), children: z.object({ nodes: z.array(z.object({ id: z.string() })) }),
+  }).nullable(),
 }) });
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
 const sessionFields = 'id appUser{id} creator{id} issue{id identifier title url} comment{id} status url';
@@ -160,15 +162,19 @@ export class LinearSessionService {
       let source: z.infer<typeof SourceComment>['comment'] | undefined;
       if (session.sourceCommentId && !knownReceipt) {
         ({ comment: source } = await this.identity.graphql(install.id,
-          'query($id:String!){comment(id:$id){id issueId body user{id name} parent{id body}}}',
-          { id: session.sourceCommentId }, SourceComment));
+          'query($id:String!,$app:ID!){comment(id:$id){id issueId body user{id name} parent{id body user{id} children(first:1,filter:{user:{id:{eq:$app}}}){nodes{id}}}}}',
+          { id: session.sourceCommentId, app: install.appUserId }, SourceComment));
         if (source.id !== session.sourceCommentId || source.issueId !== session.issueId) throw new Error('Linear session source comment mismatch.');
       }
       if (origin === 'mention') {
         // Linear can copy a child mention into a new session root. Its source
         // comment restores the original thread, without importing other replies.
         const previous = event.previousComments?.find((c) => c.id !== session.commentId);
-        text = linearCommentText(session.comment?.body ?? source?.body ?? '', source ? source.parent : previous);
+        const joinedThread = source
+          ? source.parent?.user?.id === install.appUserId || Boolean(source.parent?.children.nodes.length)
+          : event.previousComments?.some((c) => c.userId === install.appUserId);
+        const root = source ? source.parent : previous;
+        text = linearCommentText(session.comment?.body ?? source?.body ?? '', joinedThread ? undefined : root);
         if (source?.user) requester = { id: source.user.id, name: source.user.name };
       } else text = 'Read the issue description and comments through anima linear api to get the task.';
       // Guidance has its own structured webhook field, so omitting promptContext

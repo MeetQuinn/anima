@@ -126,6 +126,36 @@ test('delegation does not duplicate session prompts or change app mentions and j
   assert.ok((await queue.list()).every(isClaimableQueuedInboxItem));
 }));
 
+for (const membership of ['started', 'replied', 'unfamiliar'] as const) test(`comment replies include the root only for an unfamiliar thread: ${membership}`, async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  f.setDelegate(install.appUserId); f.setRootBody('Original thread root');
+  f.setThread({ rootAuthor: membership === 'started' ? install.appUserId : humanId, replied: membership === 'replied' });
+  // Several replies should not keep repeating a known root.
+  for (let n = 0; n < 2; n++) {
+    const event = notification(); event.notification.comment!.body = `New reply ${n}`;
+    await f.notifications.receive(verified(event), install);
+    const item = await queue.find(linearCommentItemId(install.id, event.notification.commentId!));
+    assert.ok(item?.kind === 'linear_notification' && isClaimableQueuedInboxItem(item));
+    if (membership === 'unfamiliar') assert.match(item.text, /Original thread root/);
+    else assert.equal(item.text, `New reply ${n}`);
+  }
+}));
+
+for (const membership of ['started', 'replied'] as const) test(`a copied mention in a known thread does not repeat its root: ${membership}`, async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  f.setRootBody('Original thread root');
+  f.setThread({ rootAuthor: membership === 'started' ? install.appUserId : humanId, replied: membership === 'replied' });
+  const event = sessionFor(notification());
+  event.agentSession.creatorId = humanId;
+  event.agentSession.sourceCommentId = event.agentSession.commentId;
+  event.agentSession.commentId = randomUUID();
+  event.agentSession.comment = { id: event.agentSession.commentId, body: '@scout continue', userId: humanId };
+  await f.service.receive(verified(event), install);
+  const [item] = await queue.list();
+  assert.ok(item?.kind === 'linear');
+  assert.equal(item.text, '@scout continue');
+}));
+
 for (const first of ['session', 'mention', 'held'] as const) test(`a copied child mention uses its source thread and delivers once, first=${first}`, async () => withTempAnimaHome(async (home) => {
   const f = await fixture(home), queue = new WakeQueueService('scout');
   const notificationEvent = notification(first === 'held' ? 'issueNewComment' : 'issueCommentMention');

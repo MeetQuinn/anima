@@ -103,7 +103,8 @@ export class LinearNotificationService {
           { id: n.commentId, app: install.appUserId }, CommentThread);
         if (comment.id !== n.commentId || comment.issueId !== n.issueId) throw new Error('Linear comment notification mismatch.');
         if (comment.agentSession?.appUser.id === install.appUserId || comment.parent?.agentSession?.appUser.id === install.appUserId) return;
-        text = linearCommentText(text, comment.parent);
+        const joinedThread = comment.parent?.user?.id === install.appUserId || Boolean(comment.parent?.children.nodes.length);
+        text = linearCommentText(text, joinedThread ? undefined : comment.parent);
         if (existing) {
           // Promote held context with its current body and root. Already delivered
           // comments remain deduplicated by the queue.
@@ -111,8 +112,7 @@ export class LinearNotificationService {
           await queue.releaseHeld(key, { ...item, id: key, text });
           return;
         }
-        wakes = n.type === 'issueCommentMention' || comment.parent?.user?.id === install.appUserId
-          || Boolean(comment.parent?.children.nodes.length)
+        wakes = n.type === 'issueCommentMention' || joinedThread
           || comment.user?.app === false && comment.issue?.delegate?.id === install.appUserId;
       }
     }

@@ -188,10 +188,12 @@ A Stop gets an end notice confirming the stop request, without claiming that ear
 actions or provider background work have been undone.
 
 New sessions carry the issue key, title, URL and triggering message. A delegation asks
-the agent to fetch the issue description and comments through the API. Replies include
-a short excerpt of the thread root (up to 2,000 characters); other discussion and the
-full issue description are not included. Sessions that deliver a new request retain
-workspace and team guidance. Follow-up session prompts carry the new message.
+the agent to fetch the issue description and comments through the API. Replies in threads
+the agent has not started or replied in include a short excerpt of the thread root
+(up to 2,000 characters). Replies in threads it joined carry only the new message.
+Other discussion and the full issue description are not included. Sessions that deliver
+a new request retain workspace and team guidance. Follow-up session prompts carry the
+new message.
 
 Anima filters overlapping notifications, self-authored activity
 and delivery retries. Permission-change
