@@ -74,7 +74,7 @@ function MsgAvatar({ author }: { author: Author }) {
 }
 
 // One message's content (text + files), avatar/byline handled by the group.
-function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId: string }) {
+export function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId: string }) {
   if (item.kind === 'message-in') {
     const text = inboundText(item.message).trim();
     const files = inboundFiles(item.message);
@@ -118,14 +118,13 @@ function MessageBody({ item, agentId }: { item: ActivityFeedItem; agentId: strin
       </>
     );
   }
-  if (item.kind === 'action-out') {
-    // A Linear write: something the agent did, not something it said, so it
-    // reads as an action line under the agent's byline, like a reaction. The
-    // label is the requested action; a completed call does not prove the change.
+  if (item.kind === 'linear-api') {
+    // API requests are actions rather than message bodies. Activity uses its
+    // dedicated row; keep a compact rendering for other conversation consumers.
     return (
       <span className="inline-flex min-w-0 items-center gap-1.5 font-sans text-[13px] text-text-muted">
         <SquarePen className="h-3.5 w-3.5 shrink-0 text-text-subtle" aria-hidden />
-        <span className="min-w-0 break-words">{item.label}</span>
+        <span className="min-w-0 break-words">{item.api.label}</span>
       </span>
     );
   }
@@ -307,6 +306,9 @@ export function messageGroupRowPropsEqual(
     a.surface?.channelId !== b.surface?.channelId ||
     a.surface?.href !== b.surface?.href ||
     a.surface?.linkTitle !== b.surface?.linkTitle ||
+    a.surface?.issueKey !== b.surface?.issueKey ||
+    a.surface?.issueTitle !== b.surface?.issueTitle ||
+    a.surface?.platform !== b.surface?.platform ||
     a.startTs !== b.startTs ||
     a.items.length !== b.items.length
   )

@@ -46,6 +46,7 @@ import { groupByAuthor } from '@/lib/message-model';
 import { EmptyMessage } from '@/components/EmptyMessage';
 import { DayLabelPill, SystemEventRow } from '@/components/TimelineRows';
 import { MessageGroupRow } from '../conversation/SlackTimeline';
+import { LinearActivityGroup } from './LinearActivityGroup';
 import { StepRow, WorkingIndicator } from './AuditRows';
 import { useActivityCoverageAutoFetch } from './useActivityCoverageAutoFetch';
 import { useActivityFeeds } from './useActivityFeeds';
@@ -755,7 +756,9 @@ export default function Activity() {
       }
       return (
         <Fragment key={`${keyPrefix}:b:${bi}`}>
-          {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => (
+          {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => group.surface?.platform === 'linear' ? (
+            <LinearActivityGroup key={`${keyPrefix}:b:${bi}:${gi}`} group={group} agentId={agentId ?? ''} agentName={agent?.profile?.displayName} />
+          ) : (
             <MessageGroupRow
               key={`${keyPrefix}:b:${bi}:${gi}`}
               group={group}

@@ -411,8 +411,7 @@ describe('Linear API tool steps', () => {
     const completed = { ...activity({ ...payload, outcome: 'request_completed' }, 'tool.call.completed'), activityId: 'completed' };
     const feed = buildActivityFeed({ events: [started, completed] }, false);
     expect(feed).toHaveLength(1);
-    // A completed write is an outbound action; everything else stays a step.
-    expect(feed[0]?.kind).toBe(operation === 'mutation' ? 'action-out' : 'step');
+    expect(feed[0]?.kind).toBe('linear-api');
     expect(isNarrativeStep(completed)).toBe(true);
     expect(activityRow(completed).title).toBe('Linear API');
     expect(activityRow(started).title).toBe('Linear API');
@@ -483,5 +482,36 @@ describe('Linear API tool steps', () => {
   it.each([undefined, [], 'issueUpdate', [42]])('keeps the operation label for records without field names: %j', (fields) => {
     expect(linearApi(fields).target).toBe('Mutation');
     expect(linearApi(fields, { operation: 'query', issueKey: 'ANI-11' }).target).toBe('Query');
+  });
+});
+
+describe('Linear API result interpretation', () => {
+  const row = (summary: unknown, extra: Record<string, unknown> = {}) => {
+    const [item] = buildActivityFeed({ events: [activity({ tool: 'anima.linear.api', operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-30', outcome: 'request_completed', summary, ...extra }, 'tool.call.completed')] });
+    if (item?.kind !== 'linear-api') throw new Error('expected API row');
+    return item.api;
+  };
+
+  it.each([undefined, {}, { success: 'true' }, { stateName: 'Done' }])('does not infer confirmation from a returned request or state: %j', (summary) => {
+    expect(row(summary)).toMatchObject({ label: 'Update ANI-30', state: 'unconfirmed' });
+    expect(row(summary).detail).toBeUndefined();
+  });
+
+  it('distinguishes reported failure from a failed request with unknown effects', () => {
+    expect(row({ success: false })).toMatchObject({ state: 'unsuccessful', label: 'Update ANI-30' });
+    const [item] = buildActivityFeed({ events: [activity({ tool: 'anima.linear.api', operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-30', failure: 'network', error: 'PRIVATE_ERROR' }, 'tool.call.failed')] });
+    expect(item).toMatchObject({ kind: 'linear-api', api: { state: 'failed', result: 'Request failed; the remote outcome is unknown (network error)' } });
+    expect(JSON.stringify(item)).not.toContain('PRIVATE_ERROR');
+  });
+
+  it('reports only the requested changed fields, not every field returned with the issue', () => {
+    expect(row({ success: true, changes: ['title'], stateName: 'Done' })).toMatchObject({ state: 'confirmed', detail: 'Title updated' });
+    expect(row({ success: true, changes: ['status', 'delegate'], stateName: 'Done', delegateName: null })).toMatchObject({ detail: 'Status → Done · Delegate → None' });
+  });
+
+  it('reports a read state and an explicit zero count as observations rather than changes', () => {
+    expect(row({ found: true, stateName: 'Done' }, { operation: 'query', fields: ['issue'] })).toMatchObject({ label: 'Read ANI-30', state: 'read', detail: 'Status: Done' });
+    expect(row({ resultCount: 0, hasNextPage: false }, { operation: 'query', fields: ['issues'], issueKey: undefined })).toMatchObject({ label: 'List issues', state: 'read', detail: '0 items returned' });
+    expect(row({}, { operation: 'query', fields: ['issues'] }).detail).toBeUndefined();
   });
 });

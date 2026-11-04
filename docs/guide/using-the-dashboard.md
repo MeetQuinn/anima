@@ -105,6 +105,13 @@ Activity combines the messages that woke an agent with the work that followed. E
 to inspect tool calls, file actions, messages, and errors. The current run stays open and follows
 new activity while it is running.
 
+Linear entries show the issue key and available title above a short timeline. Labels distinguish
+delegations, comments, progress, questions and results when that information was recorded. API
+reads and writes appear as action rows; expand **Details** for the operation and its recorded result.
+A completed request is not proof that a change happened. Confirmed changes use Linear's returned
+result, while failed or unconfirmed requests stay explicit. Older records may have only a generic
+label because their issue or result was not recorded.
+
 Use this page to answer:
 
 - What request is the agent handling?

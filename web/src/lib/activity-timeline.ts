@@ -69,7 +69,7 @@ export function buildActivityConversationItems(
   if (!activitiesData) return [];
   return buildActivityFeed(activitiesData, false).filter(
     (item) =>
-      (item.kind === 'system-event' && item.eventKind === 'held') || item.kind === 'action-out',
+      (item.kind === 'system-event' && item.eventKind === 'held') || item.kind === 'linear-api',
   );
 }
 

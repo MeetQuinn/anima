@@ -8,6 +8,7 @@ import { shortenModelLabel, subagentDelegationLabel } from '@/lib/activity-feed'
 import type { Activity as ActivityRecord } from '@shared/activity';
 import { ChevronRight } from 'lucide-react';
 import { MessageOutRow, FileOutRow } from './MessageRows';
+import { LinearApiAction } from './LinearActivityGroup';
 import { SystemEventRow } from '@/components/TimelineRows';
 
 // ---------------------------------------------------------------------------
@@ -271,6 +272,8 @@ function SubagentStreamSection({
         const t = clockHM(child.timestamp);
         if (child.kind === 'message-out')
           return <MessageOutRow key={i} item={child} time={t} />;
+        if (child.kind === 'linear-api')
+          return <div key={i} className="py-1"><LinearApiAction item={child} author={stream.name ?? 'Subagent'} /></div>;
         if (child.kind === 'file-out')
           return <FileOutRow key={i} item={child} time={t} agentId="" />;
         if (child.kind === 'reaction-out')
