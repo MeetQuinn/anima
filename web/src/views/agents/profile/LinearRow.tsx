@@ -9,6 +9,7 @@ import {
   installLinear,
   openLinearAuthorization,
   removeLinear,
+  reauthorizeLinear,
   saveLinearClientSecret,
 } from '@/api/linear';
 import { refreshAgentData } from '@/api/agents';
@@ -18,7 +19,7 @@ import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import { formatRelativeShort, shortIso } from '@/lib/format';
 import { Field } from './Primitives';
-import { LinearClientSecretRequest, type LinearClientSecretResult, type LinearInstallRequest, type LinearStatus } from '@shared/linear';
+import { LinearClientSecretRequest, LinearReauthorizeRequest, type LinearClientSecretResult, type LinearInstallRequest, type LinearStatus } from '@shared/linear';
 import { inputClass, LinearConnectSteps, notACredentialField } from './LinearConnectSteps';
 
 // The receiver's address is a config.json setting (linearWebhook), not a dashboard one.
@@ -35,6 +36,8 @@ const knownInstallErrors = new Set([
   'Set the Anima public URL in Server settings and refresh the connection form.',
   'Use a separate Linear app for each agent.',
   'Remove the installed identity before replacing it.',
+  'Linear connection changed. Refresh the page and try again.',
+  'Enter this app’s Client secret to authorize again.',
 ]);
 
 type Notice = { title: string; body?: string };
@@ -142,6 +145,21 @@ export function LinearRow({
       setBusy(false);
     }
   }
+  async function reauthorize(input: LinearReauthorizeRequest) {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await reauthorizeLinear(agentId, input);
+      openLinearAuthorization(result.authorizationUrl);
+    } catch (err) {
+      setError(
+        err instanceof Error && knownInstallErrors.has(err.message)
+          ? err.message
+          : 'Authorization could not start. Refresh the page and try again.',
+      );
+      setBusy(false);
+    }
+  }
   async function remove() {
     setBusy(true);
     setError('');
@@ -188,6 +206,9 @@ export function LinearRow({
                       : (notice?.title ?? 'Needs attention')}
               </p>
             )}
+            {connected && data.needsReauthorization && (
+              <p className="mt-0.5 font-sans text-[12px] text-health-warn-ink">Authorize again for new permissions</p>
+            )}
             {!attention && unanswered > 0 && (
               <p className="mt-0.5 font-sans text-[12px] text-health-warn-ink">{unansweredTitle(unanswered)}</p>
             )}
@@ -214,6 +235,7 @@ export function LinearRow({
             busy={busy}
             error={error}
             onInstall={install}
+            onReauthorize={reauthorize}
             onRemove={remove}
             onClose={close}
           />
@@ -232,6 +254,7 @@ function LinearDialogBody({
   busy,
   error,
   onInstall,
+  onReauthorize,
   onRemove,
   onClose,
 }: {
@@ -243,6 +266,7 @@ function LinearDialogBody({
   busy: boolean;
   error: string;
   onInstall: (input: LinearInstallRequest) => Promise<void>;
+  onReauthorize: (input: LinearReauthorizeRequest) => Promise<void>;
   onRemove: () => Promise<void>;
   onClose: () => void;
 }) {
@@ -276,6 +300,7 @@ function LinearDialogBody({
         busy={busy}
         error={error}
         onRemove={onRemove}
+        onReauthorize={onReauthorize}
         onClose={onClose}
         onChanged={async () => (await status.refetch()).data}
       />
@@ -376,6 +401,7 @@ function ConnectedView({
   data,
   busy,
   error,
+  onReauthorize,
   onRemove,
   onClose,
   onChanged,
@@ -385,6 +411,7 @@ function ConnectedView({
   data: LinearStatus;
   busy: boolean;
   error: string;
+  onReauthorize: (input: LinearReauthorizeRequest) => Promise<void>;
   onRemove: () => Promise<void>;
   onClose: () => void;
   onChanged: () => Promise<LinearStatus | undefined>;
@@ -476,6 +503,8 @@ function ConnectedView({
         <ClientSecretFact agentId={agentId} data={data} disabled={busy} onChanged={onChanged} />
       </dl>
 
+      <ReauthorizeForm key={`${data.installationId}:${data.clientSecretSaved}`} data={data} busy={busy} onAuthorize={onReauthorize} />
+
       {data.signatureFailures ? (
         <p className="font-sans text-[12px] leading-relaxed text-health-warn-ink">
           {data.signatureFailures} request{data.signatureFailures === 1 ? '' : 's'} claiming this app failed
@@ -523,6 +552,7 @@ function ConnectedView({
         ) : (
           <button
             type="button"
+            disabled={busy}
             onClick={() => setConfirming(true)}
             className="inline-flex min-h-11 items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-health-error md:min-h-0"
           >
@@ -536,6 +566,117 @@ function ConnectedView({
         )}
       </footer>
     </div>
+  );
+}
+
+function ReauthorizeForm({
+  data,
+  busy,
+  onAuthorize,
+}: {
+  data: LinearStatus;
+  busy: boolean;
+  onAuthorize: (input: LinearReauthorizeRequest) => Promise<void>;
+}) {
+  const [askingSecret, setAskingSecret] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [secret, setSecret] = useState('');
+  const [error, setError] = useState('');
+  const id = useId();
+  const notice = data.lastError ? failureNotice(data.lastError) : null;
+  async function authorize(event: FormEvent) {
+    event.preventDefault();
+    if (!data.clientSecretSaved && !askingSecret) {
+      setAskingSecret(true);
+      return;
+    }
+    const input: LinearReauthorizeRequest = { installationId: data.installationId! };
+    if (!data.clientSecretSaved) input.clientSecret = secret;
+    if (!LinearReauthorizeRequest.safeParse(input).success) {
+      setError('Paste the Client secret exactly as Linear shows it.');
+      return;
+    }
+    setSecret('');
+    setError('');
+    setStarting(true);
+    try { await onAuthorize(input); } finally { setStarting(false); }
+  }
+  return (
+    <form
+      onSubmit={(event) => void authorize(event)}
+      className="space-y-3 rounded-sm border border-border-soft p-3.5"
+    >
+      <div className="space-y-1">
+        <h4 className="font-sans text-[13px] font-medium text-text">Permissions</h4>
+        <p className="font-sans text-[12px] leading-relaxed text-text-muted">
+          {data.needsReauthorization
+            ? 'Authorize again in Linear to grant the current permissions.'
+            : 'The current permissions have been granted.'}{' '}
+          Your task and reply records are kept.
+        </p>
+      </div>
+      {data.reauthorizing && (
+        <p role="status" className="font-sans text-[12px] text-text-muted">
+          Authorization is pending in Linear. You can start again if that page was closed.
+        </p>
+      )}
+      {notice && (
+        <div role="alert" className="space-y-1 font-sans text-[12px] text-health-error">
+          <p>{notice.title}</p>
+          {notice.body && <p>{notice.body}</p>}
+        </div>
+      )}
+      {askingSecret && !data.clientSecretSaved && (
+        <div className="space-y-2">
+          <label htmlFor={id} className="block font-sans text-[12px] text-text-muted">
+            Client secret
+          </label>
+          <input
+            id={id}
+            autoFocus
+            value={secret}
+            disabled={busy}
+            onChange={(event) => setSecret(event.target.value)}
+            className={inputClass}
+            {...notACredentialField}
+          />
+          <p className="font-sans text-[12px] leading-relaxed text-text-subtle">
+            This older connection has no saved Client secret. Copy it from this app’s page in
+            Linear.
+          </p>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="font-sans text-[12px] text-health-error">
+          {error}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="submit"
+          variant="outline"
+          disabled={busy || !data.installationId}
+          className="h-11 px-3 text-[13px] md:h-9"
+        >
+          {starting ? 'Opening Linear…' : askingSecret ? 'Authorize in Linear' : 'Authorize again'}
+        </Button>
+        {askingSecret && (
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              setAskingSecret(false);
+              setSecret('');
+              setError('');
+            }}
+            className="h-11 px-3 text-[13px] md:h-9"
+          >
+            Cancel
+          </Button>
+        )}
+      </div>
+    </form>
   );
 }
 

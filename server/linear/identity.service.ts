@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { withFileLock } from '../storage/lock.js';
-import { DEFAULT_LINEAR_LISTENER, LinearInstallRequest, type LinearClientSecretResult, type LinearStatus } from '../../shared/linear.js';
+import { DEFAULT_LINEAR_LISTENER, LINEAR_OAUTH_SCOPES, LinearCallbackUrl, LinearInstallRequest, LinearReauthorizeRequest, type LinearClientSecretResult, type LinearStatus } from '../../shared/linear.js';
 import { defaultAgentRegistryService } from '../agents/agent.service.js';
 import { AgentStore } from '../storage/schema/agent.store.js';
 import { serverConfigStore } from '../storage/schema/server.store.js';
@@ -82,6 +82,8 @@ export class LinearIdentityService {
       result.clientId = file.installation.clientId;
       result.installationId = file.installation.id;
       result.clientSecretSaved = Boolean(file.installation.clientSecret);
+      result.needsReauthorization = !LINEAR_OAUTH_SCOPES.every((scope) => file.installation!.grantedScopes?.includes(scope));
+      result.reauthorizing = file.pending?.reauthorizeInstallationId === file.installation.id && file.pending.expiresAt > Date.now();
       if (file.installation.clientRejected && !file.installation.revoked) result.clientRejected = true;
       result.organizationId = file.installation.organizationId;
       result.appUserId = file.installation.appUserId;
@@ -107,7 +109,9 @@ export class LinearIdentityService {
       if (unanswered) result.unansweredSessions = unanswered;
     }
     if (file.lastError) result.lastError = file.lastError;
-    else if (file.pending && file.pending.expiresAt <= Date.now()) result.lastError = 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.';
+    else if (file.pending && file.pending.expiresAt <= Date.now()) result.lastError = file.pending.reauthorizeInstallationId
+      ? 'The authorization attempt expired or is being completed. Authorize again if it did not finish.'
+      : 'Installation expired or is being completed. Remove it and prepare again if authorization did not finish.';
     const listener = (await serverConfigStore.read()).linearWebhook ?? DEFAULT_LINEAR_LISTENER;
     result.listener = listener;
     result.listenerStatus = { state: 'unknown' };
@@ -149,14 +153,25 @@ export class LinearIdentityService {
       if (file.installation && !file.installation.revoked) throw new Error('Remove the installed identity before replacing it.');
       return { ...file, pending, lastError: undefined };
     });
-    const url = new URL('https://linear.app/oauth/authorize');
-    url.search = new URLSearchParams({
-      client_id: pending.clientId, redirect_uri: pending.callbackUrl, response_type: 'code',
-      actor: 'app', scope: 'read,write,app:assignable,app:mentionable,customer:write,initiative:write,timeSchedule:write',
-      state: pending.id, code_challenge_method: 'S256',
-      code_challenge: createHash('sha256').update(pending.verifier).digest('base64url'),
-    }).toString();
-    return { authorizationUrl: url.toString() };
+    return { authorizationUrl: authorizationUrl(pending) };
+  }
+
+  async reauthorize(input: LinearReauthorizeRequest, callbackUrl: string, binding: string, returnUrl?: string): Promise<{ authorizationUrl: string }> {
+    const request = LinearReauthorizeRequest.parse(input);
+    LinearCallbackUrl.parse(callbackUrl);
+    await defaultAgentRegistryService.serviceFor(this.agentId).getConfig();
+    const file = await this.store.update((current) => {
+      const installation = current.installation;
+      if (!installation || installation.revoked || installation.id !== request.installationId) throw new Error('Linear connection changed. Refresh the page and try again.');
+      const clientSecret = installation.clientSecret ?? request.clientSecret;
+      if (!clientSecret) throw new Error('Enter this app’s Client secret to authorize again.');
+      return { ...current, lastError: undefined, pending: {
+        id: randomBytes(32).toString('base64url'), reauthorizeInstallationId: installation.id,
+        clientId: installation.clientId, clientSecret, signingSecret: installation.signingSecret,
+        callbackUrl, returnUrl, binding, verifier: randomBytes(32).toString('base64url'), expiresAt: Date.now() + 10 * 60_000,
+      } };
+    });
+    return { authorizationUrl: authorizationUrl(file.pending!, true) };
   }
 
   async finish(state: string, code: string | undefined, binding: string): Promise<'connected' | 'declined'> {
@@ -189,11 +204,22 @@ export class LinearIdentityService {
         ...(pending.clientSecret ? { clientSecret: pending.clientSecret } : {}),
         organizationId: identity.organization.id, appUserId: identity.viewer.id, workspaceName: identity.organization.name,
         ...(appName && appName.length <= 256 ? { appName } : {}),
+        grantedScopes: tokens.scope,
         accessToken: tokens.access_token, refreshToken: tokens.refresh_token,
         expiresAt: Date.now() + tokens.expires_in * 1000, revoked: false,
       };
       await this.store.update(async (current) => {
         if (current.pending?.id !== state || current.pending.expiresAt !== 0) throw new Error('Linear installation was removed or replaced.');
+        if (pending.reauthorizeInstallationId) {
+          const previous = current.installation;
+          if (!previous || previous.revoked || previous.id !== pending.reauthorizeInstallationId
+            || previous.clientId !== pending.clientId || previous.organizationId !== identity.organization.id
+            || previous.appUserId !== identity.viewer.id) throw new Error('Linear reauthorization identity mismatch.');
+          return { ...current, pending: undefined, lastError: undefined, installation: { ...previous,
+            clientSecret: previous.clientSecret ?? pending.clientSecret, clientRejected: undefined, grantedScopes: tokens.scope,
+            accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: installation.expiresAt,
+          } };
+        }
         await new AgentStore(this.agentId).update((agent) => ({ ...agent, linear: {
           connected: true, clientId: installation.clientId, organizationId: installation.organizationId, appUserId: installation.appUserId,
         } }));
@@ -245,7 +271,7 @@ export class LinearIdentityService {
         const tokens = await this.client.token({ grant_type: 'refresh_token', client_id: install.clientId,
           ...(install.clientSecret ? { client_secret: install.clientSecret } : {}), refresh_token: install.refreshToken });
         token = tokens.access_token;
-        return { ...file, installation: { ...install, accessToken: token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000, clientRejected: undefined } };
+        return { ...file, installation: { ...install, grantedScopes: tokens.scope ?? install.grantedScopes, accessToken: token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000, clientRejected: undefined } };
       } catch (error) {
         // invalid_client keeps the grant: the refresh token still works once
         // Linear accepts the app's credentials (e.g. a client secret added later).
@@ -293,7 +319,7 @@ export class LinearIdentityService {
         }
         refreshed = true;
         result = 'saved';
-        return { ...file, installation: { ...install, clientSecret, clientRejected: undefined,
+        return { ...file, installation: { ...install, clientSecret, clientRejected: undefined, grantedScopes: tokens.scope ?? install.grantedScopes,
           accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000 } };
       });
     } catch {
@@ -362,4 +388,15 @@ export interface LinearCredentials {
   expiresAt: string;
   organizationId: string;
   appUserId: string;
+}
+
+function authorizationUrl(pending: { clientId: string; callbackUrl: string; id: string; verifier: string }, consent = false): string {
+  const url = new URL('https://linear.app/oauth/authorize');
+  url.search = new URLSearchParams({
+    client_id: pending.clientId, redirect_uri: pending.callbackUrl, response_type: 'code',
+    actor: 'app', scope: LINEAR_OAUTH_SCOPES.join(','), state: pending.id, code_challenge_method: 'S256',
+    code_challenge: createHash('sha256').update(pending.verifier).digest('base64url'),
+  }).toString();
+  if (consent) url.searchParams.set('prompt', 'consent');
+  return url.toString();
 }

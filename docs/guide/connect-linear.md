@@ -50,11 +50,17 @@ schedules. Linear does not allow the `admin` scope for app identities; see its
 [app permissions](https://linear.app/developers/agents) and
 [OAuth scopes](https://linear.app/developers/oauth-2-0-authentication).
 
-To add these scopes to an existing connection, open the agent's Linear dialog and
-select **Disconnect**, then connect the same app again. Copy its Client ID, Client
-secret and Webhook signing secret from the app's page in Linear, and have a Linear
-workspace admin approve the authorization. Disconnect clears pending Linear requests
-and retry records, so do this only when the agent has no unfinished Linear requests.
+To add these scopes to an existing connection, open **Linear → Manage** on the agent's
+profile and choose **Authorize again**. Anima reuses the saved app credentials. Older
+connections without a stored Client secret ask you to copy it from the same app's
+page in Linear. A Linear workspace admin approves the authorization.
+
+Choose the same workspace and app identity. Anima rejects a different app, workspace
+or app user. Successful authorization replaces the tokens while keeping task, reply,
+retry and uploaded-file records. Declining or abandoning the attempt does not
+remove the connection. The dashboard prompts for authorization when the recorded
+permissions do not cover the current set, including older connections whose
+permissions were not recorded.
 
 ### Public address
 

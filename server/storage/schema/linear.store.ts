@@ -18,10 +18,12 @@ const Installation = z.object({
   appName: z.string().trim().min(1).max(256).optional(),
   // Reuse private assets for identical file replies so session retry hashes stay stable.
   uploadedFiles: z.record(z.string(), z.string().url()).optional(),
+  grantedScopes: z.array(z.string()).optional(),
   refreshToken: z.string(), expiresAt: z.number(), revoked: z.boolean(),
 });
 export type LinearInstallation = z.infer<typeof Installation>;
 const PendingOAuth = z.object({
+  reauthorizeInstallationId: z.string().optional(),
   id: z.string(), clientId: z.string(), signingSecret: z.string(), clientSecret: z.string().optional(),
   callbackUrl: z.string(), returnUrl: z.string().url().optional(), verifier: z.string(), binding: z.string(), expiresAt: z.number(),
 });
