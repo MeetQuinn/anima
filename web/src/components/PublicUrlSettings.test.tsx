@@ -78,7 +78,8 @@ it('without a dashboard password or a dashboard answer, protection remains uncon
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false }));
   mount();
   await screen.findByText(/No dashboard password\. Access protection is unconfirmed/);
-  expect(screen.getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
+  const command = within(screen.getByRole('status')).getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin');
+  expect(command.closest('details')).toBeNull();
 });
 
 const WARNING = 'Anyone can open the dashboard at this address';
@@ -136,7 +137,9 @@ it.each([
   const status = screen.getByRole('status');
   expect(status.textContent).toContain(`The dashboard check ${seen}; access protection is unconfirmed.`);
   expect(status.textContent).toMatch(UNCONFIRMED);
-  expect(status.textContent).toContain('Use a sign-in gateway or set a dashboard password.');
+  expect(status.textContent).toContain('Use a sign-in gateway or set a dashboard password on this machine:');
+  const command = within(status).getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin');
+  expect(command.closest('details')).toBeNull();
   expect(screen.getByText('Setup and access protection').closest('details')?.open).toBe(false);
   expect(status.textContent).not.toMatch(/asked for sign-in|Keep/);
   expect(screen.queryByRole('alert')).toBeNull();
@@ -178,7 +181,7 @@ it('a failed read offers a retry instead of an empty form', async () => {
   await screen.findByRole('textbox', { name: 'Public address' });
 });
 
-it('edits a saved address on demand, cancels without saving, and returns to the saved value', async () => {
+it.each(['Cancel', 'Escape'])('edits a saved address on demand, cancels with %s, and returns to the saved value', async (cancel) => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.save.mockResolvedValue({ publicUrl: 'https://new.example.com' });
   mount();
@@ -191,7 +194,8 @@ it('edits a saved address on demand, cancels without saving, and returns to the 
   expect(input.value).toBe('https://anima.example.com');
   expect(save().disabled).toBe(true);
   fireEvent.change(input, { target: { value: 'https://discard.example.com' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  if (cancel === 'Escape') fireEvent.keyDown(input, { key: 'Escape' });
+  else fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(api.save).not.toHaveBeenCalled();
   expect(screen.queryByRole('textbox')).toBeNull();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit public address' }));

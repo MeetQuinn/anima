@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { AlertTriangle, Check, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, X } from 'lucide-react';
 import {
   fetchLinearSetup,
   fetchLinearStatus,
@@ -512,8 +512,9 @@ function ConnectedView({
         </p>
       ) : null}
 
-      <details open={data.clientRejected || undefined} className="border-t border-border-soft pt-3">
-        <summary className="min-h-[44px] cursor-pointer py-3 font-sans text-[12px] md:min-h-0 md:py-1 text-text-muted hover:text-text">
+      <details open={data.clientRejected || undefined} className="group/connection border-t border-border-soft pt-3">
+        <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 py-3 font-sans text-[12px] text-text-muted hover:text-text md:min-h-0 md:py-1 [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/connection:rotate-90" aria-hidden="true" />
           Connection details
         </summary>
         <div className="mt-3 space-y-4">

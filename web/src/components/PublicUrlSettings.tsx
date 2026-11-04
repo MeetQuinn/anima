@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Loader2, Pencil, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Loader2, Pencil, ShieldAlert } from 'lucide-react';
 import { PublicUrl, type PublicUrlCheck } from '@shared/public-url';
 import { checkPublicUrl, fetchPublicUrl, publicUrlCheckKey, publicUrlKey, savePublicUrl } from '@/api/public-url';
 import { linearSetupKey } from '@/api/linear';
@@ -191,7 +191,8 @@ function protection(check: PublicUrlCheck) {
   return (
     <>
       No dashboard password. {seen ? `The dashboard check ${seen}; access protection is unconfirmed.` : 'Access protection is unconfirmed.'}{' '}
-      Use a sign-in gateway or set a dashboard password.
+      Use a sign-in gateway or set a dashboard password on this machine:
+      <code className="block break-words font-mono text-[11px]">{SET_PASSWORD_COMMAND}</code>
     </>
   );
 }
@@ -344,8 +345,9 @@ export default function PublicUrlSettings() {
       )}
       {query.data?.publicUrl && <PublicAddressCheck publicUrl={query.data.publicUrl} />}
       {query.data && (
-        <details open={!query.data.publicUrl} className="group border-t border-border-soft pt-3">
-          <summary className="min-h-[44px] cursor-pointer py-3 font-sans text-[12px] md:min-h-0 md:py-1 text-text-muted hover:text-text">
+        <details open={!query.data.publicUrl} className="group/setup border-t border-border-soft pt-3">
+          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 py-3 font-sans text-[12px] text-text-muted hover:text-text md:min-h-0 md:py-1 [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/setup:rotate-90" aria-hidden="true" />
             Setup and access protection
           </summary>
           <div className="mt-2 space-y-3">
