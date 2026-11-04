@@ -717,3 +717,13 @@ it('keeps the connected view for pending or failed reauthorization and removes t
   expect(within(dialog).queryByRole('alert')).toBeNull();
   expect(within(dialog).getByText(/The current permissions have been granted/)).toBeTruthy();
 });
+
+it.each([
+  ['initial', connected, 'D'],
+  ['none', base, ''],
+] as const)('shows the workspace as a %s tile like the other connections', async (kind, status, text) => {
+  api.status.mockResolvedValue(status);
+  mount();
+  await waitFor(() => expect(document.querySelector('[data-tile]')?.getAttribute('data-tile')).toBe(kind));
+  expect(document.querySelector('[data-tile]')?.textContent).toBe(text);
+});
