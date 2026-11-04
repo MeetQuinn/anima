@@ -6,7 +6,7 @@ import type { Command } from 'commander';
 import { z } from 'zod';
 import { resolveAgentIdFrom } from '../cli/shared.js';
 import { resolveAnimaReferencePaths } from '../runtime/anima-reference.js';
-import { readStdin, resolveToolItemId } from './tool-context.js';
+import { readStdin, readOptionalStdin, resolveToolItemId } from './tool-context.js';
 import { LinearActivityKind } from '../../shared/linear.js';
 import { LinearIdentityService } from '../linear/identity.service.js';
 import { LinearCommentService, LinearCommentCreate, LinearCommentReply, type LinearCreatedComment } from '../linear/comment.service.js';
@@ -15,6 +15,7 @@ import { formatLinearReplyTarget, parseLinearReplyTarget } from '../linear/reply
 import { withToolActivity } from './tool-context.js';
 import { runLinearApi } from './linear-api.js';
 import { assertLinearContactAllowed } from '../linear/contact-policy.js';
+import { LinearReplyFilesService, prepareLinearReplyFiles, linearReplyWithFiles } from '../linear/reply-files.service.js';
 
 function identityFor(agent: string | undefined): LinearIdentityService {
   const id = resolveAgentIdFrom(agent);
@@ -28,8 +29,28 @@ function serviceFor(agent: string | undefined): LinearSessionService {
 
 const ReplyBody = z.string().trim().min(1).max(100_000);
 
-async function sendSessionActivity(agent: string | undefined, tool: string, sessionId: string, kind: LinearActivityKind, body: string): Promise<void> {
+async function replyBody(files: string[]): Promise<string> {
+  const text = files.length ? (await readOptionalStdin() ?? '') : await readStdin();
+  return (files.length ? z.string().trim().max(100_000) : ReplyBody).parse(text);
+}
+
+async function prepareReply(identity: LinearIdentityService, tool: string, body: string, paths: string[]): Promise<string> {
+  if (!paths.length) return body;
+  const files = await prepareLinearReplyFiles(paths);
+  // Catch mentions in both the caption and filenames before uploading; the final
+  // composed body is checked again immediately before the reply audit/write.
+  await assertLinearContactAllowed({ identity, tool, markdown: [body, ...files.map((file) => file.name)].join('\n') });
+  const uploaded = await withToolActivity({
+    audit: { agentId: identity.agentId }, effectType: 'linear.file.upload',
+    basePayload: { tool: 'anima.linear.upload', platform: 'linear', fileCount: files.length },
+    op: async () => ({ result: await new LinearReplyFilesService(identity).upload(files) }),
+  });
+  return ReplyBody.parse(linearReplyWithFiles(body, uploaded));
+}
+
+async function sendSessionActivity(agent: string | undefined, tool: string, sessionId: string, kind: LinearActivityKind, body: string, files: string[] = []): Promise<void> {
   const service = serviceFor(agent);
+  body = await prepareReply(service.identity, tool, body, files);
   await assertLinearContactAllowed({ identity: service.identity, tool, payload: { channelKind: 'linear_session', channel: sessionId }, markdown: body });
   const result = await withToolActivity({
     audit: { agentId: service.agentId }, effectType: 'linear.activity.create',
@@ -48,8 +69,9 @@ async function sendSessionActivity(agent: string | undefined, tool: string, sess
 }
 
 async function sendComment(agent: string | undefined, tool: string, basePayload: { text: string; channel?: string; threadTs?: string }, id: string,
-  create: (service: LinearCommentService) => Promise<LinearCreatedComment>): Promise<LinearCreatedComment> {
+  create: (service: LinearCommentService, body: string) => Promise<LinearCreatedComment>, files: string[] = []): Promise<LinearCreatedComment> {
   const identity = identityFor(agent);
+  basePayload = { ...basePayload, text: await prepareReply(identity, tool, basePayload.text, files) };
   const { text, ...target } = basePayload;
   await assertLinearContactAllowed({ identity, tool, payload: { channelKind: 'linear_issue', ...target }, markdown: text });
   console.error(`Linear comment id: ${id}. If the result is unknown, inspect this id before retrying.`);
@@ -58,7 +80,7 @@ async function sendComment(agent: string | undefined, tool: string, basePayload:
     basePayload: { tool, platform: 'linear', channelKind: 'linear_issue', ...basePayload },
     onCompletedAuditError: () => console.error('Linear accepted the comment; local audit is degraded. Do not resend.'),
     op: async () => {
-      const comment = await create(new LinearCommentService(identity));
+      const comment = await create(new LinearCommentService(identity), text);
       return { result: comment, completedPayload: {
         channel: comment.issueId, issueKey: comment.issue.identifier, issueTitle: comment.issue.title,
         messageId: comment.id, permalink: comment.issue.url, threadTs: comment.parentId ?? comment.id,
@@ -102,6 +124,7 @@ export function registerLinearCommands(program: Command): void {
       console.log(JSON.stringify(result, null, 2));
     });
   linear.command('reply').description('Reply where a Linear envelope points; Markdown body on stdin.')
+    .option('--file <path>', 'attach a local file (repeatable); optional Markdown caption on stdin', (path: string, files: string[]) => [...files, path], [])
     .requiredOption('--to <reply_to>', 'reply_to from the envelope: session:<uuid>, comment:<uuid> or issue:<id>')
     .option('--kind <kind>', 'response, thought (progress), elicitation (question) or error', 'response')
     .option('--id <uuid>', 'comment and issue targets: stable comment UUID; generated and printed before sending if omitted')
@@ -112,14 +135,14 @@ export function registerLinearCommands(program: Command): void {
       if (target.kind === 'session' && opts.id) throw new Error('--id applies to comment and issue targets; Anima deduplicates session replies itself.');
       // A comment is permanent and notifies the thread; progress belongs only in a work session.
       if (target.kind !== 'session' && kind === 'thought') throw new Error('Progress updates go only to work sessions. In a comment thread or issue, reply with your result or question.');
-      const body = ReplyBody.parse(await readStdin());
-      if (target.kind === 'session') { await sendSessionActivity(opts.agent, 'anima.linear.reply', target.id, kind, body); return; }
+      const body = await replyBody(opts.file);
+      if (target.kind === 'session') { await sendSessionActivity(opts.agent, 'anima.linear.reply', target.id, kind, body, opts.file); return; }
       const id = z.string().uuid().parse(opts.id ?? randomUUID());
       const comment = target.kind === 'comment'
         ? await sendComment(opts.agent, 'anima.linear.reply', { threadTs: target.id, text: body }, id,
-          (service) => service.reply(LinearCommentReply.parse({ id, commentId: target.id, body })))
+          (service, body) => service.reply(LinearCommentReply.parse({ id, commentId: target.id, body })), opts.file)
         : await sendComment(opts.agent, 'anima.linear.reply', { channel: target.id, text: body }, id,
-          (service) => service.comment(LinearCommentCreate.parse({ id, issueId: target.id, body })));
+          (service, body) => service.comment(LinearCommentCreate.parse({ id, issueId: target.id, body })), opts.file);
       console.log(`Linear accepted comment ${comment.id}: ${comment.url}`);
     });
   // Earlier names for the same writes. Hidden so agents learn one reply command.

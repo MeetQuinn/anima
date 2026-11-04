@@ -63,6 +63,7 @@ const groups = {
     'linear-delivery.test.js',
     'linear-setup.test.js',
     'linear-actions.test.js',
+    'linear-reply-files.test.js',
     'linear-intake.test.js',
     'linear-notifications.test.js',
     'linear-listener-status.test.js',

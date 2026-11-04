@@ -49,6 +49,24 @@ anima linear reply --to <reply_to> <<'REPLY'
 REPLY
 ```
 
+Attach local files with repeatable `--file` options. A Markdown caption on stdin is
+optional when files are present:
+
+```sh
+anima linear reply --to <reply_to> --file ./screenshot.png --file ./trace.log <<'REPLY'
+The screenshot and trace show the failure.
+REPLY
+```
+
+Anima uploads the files to Linear's private storage and appends them to the reply:
+images use Markdown image embeds; other files use links.
+It checks every local file before uploading and checks the final body against the
+host's do-not-contact list. Uploads and the reply are separate effects: if an upload
+fails, no reply is posted, but earlier files may already be in storage. Identical
+files (same name and contents) reuse their asset links for this installation, keeping
+session reply retries deduplicated. After an uncertain reply, inspect it before retrying;
+keep the caption, files and comment `--id` unchanged. Do not resend to repair an audit warning.
+
 Pass `reply_to` unchanged; never invent or rewrite a target. Your plain model output is
 not a Linear reply.
 

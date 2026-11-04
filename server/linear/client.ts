@@ -13,6 +13,17 @@ type LinearTokens = z.infer<typeof Tokens>;
 export class LinearClient {
   constructor(private readonly fetcher: typeof fetch = fetch) {}
 
+  async uploadFile(url: string, signedHeaders: { key: string; value: string }[], file: Blob): Promise<void> {
+    // The signed URL authenticates this request. Never forward the OAuth token,
+    // follow a redirect, or expose storage response bodies / fetch error causes.
+    try {
+      const headers = new Headers({ 'content-type': file.type, 'cache-control': 'public, max-age=31536000' });
+      for (const { key, value } of signedHeaders) headers.set(key, value);
+      const response = await this.fetcher(url, { method: 'PUT', headers, body: file, redirect: 'error', signal: AbortSignal.timeout(120_000) });
+      if (!response.ok) throw new Error('Upload rejected');
+    } catch { throw new Error('Linear file upload failed. No reply was posted; some files may already have uploaded.'); }
+  }
+
   async token(form: Record<string, string>): Promise<LinearTokens> {
     let response: Response;
     try {
