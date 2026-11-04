@@ -73,6 +73,8 @@ export interface AgentMessageRecord {
   dmUserId?: string;
   files?: AgentMessageFile[];
   isEdit?: boolean;
+  issueKey?: string;
+  issueTitle?: string;
   kind: AgentMessageKind;
   messageId: string;
   messageTs?: string;

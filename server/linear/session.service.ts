@@ -18,7 +18,7 @@ import { linearIssueKey } from './delivery-text.js';
 const Created = z.object({ agentActivityCreate: z.object({ success: z.literal(true), agentActivity: z.object({ id: z.string() }) }) });
 const ReadActivity = z.object({ agentActivity: z.object({ id: z.string(), agentSession: z.object({ id: z.string() }) }) });
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
-const sessionFields = 'id appUser{id} creator{id} issue{id} comment{id} status url';
+const sessionFields = 'id appUser{id} creator{id} issue{id identifier title url} comment{id} status url';
 const SessionOrigin = z.object({ agentSession: z.object({
   id: z.string().uuid(), appUser: z.object({ id: z.string() }), creator: z.object({ id: z.string() }).nullable(),
   issue: z.object({ id: z.string() }).nullable(), createdAt: z.string().datetime({ offset: true }),
@@ -27,9 +27,13 @@ const SessionOrigin = z.object({ agentSession: z.object({
   })).max(1) }),
 }) });
 const SessionDetails = z.object({ id: z.string().uuid(), appUser: z.object({ id: z.string() }),
-  creator: z.object({ id: z.string() }).nullable(), issue: z.object({ id: z.string() }).nullable(),
+  creator: z.object({ id: z.string() }).nullable(),
+  issue: z.object({ id: z.string(), identifier: z.string(), title: z.string(), url: z.string() }).nullable(),
   comment: z.object({ id: z.string() }).nullable(), status: z.string(), url: z.string().url().nullable(),
 });
+type SessionReply = Pick<LinearReceipt, 'issueId' | 'issueKey' | 'issueTitle' | 'issueUrl'> & {
+  activityId: string; bookkeeping: 'recorded' | 'degraded';
+};
 
 // Linear retries a delivery for at most a few hours, so a finished receipt has done its
 // deduplication long before 30 days. Without a limit, linear.json kept every receipt
@@ -192,6 +196,7 @@ export class LinearSessionService {
     }
     if (session.issueId) item.issueId = session.issueId;
     if (session.issue?.url) item.issueUrl = session.issue.url;
+    if (session.issue?.title) item.issueTitle = session.issue.title;
     const issueKey = linearIssueKey(session.issue?.identifier, session.issue?.url);
     if (issueKey) item.issueKey = issueKey;
     // A notification can win delivery before Linear creates/reports a session.
@@ -235,6 +240,9 @@ export class LinearSessionService {
         if (commentDelivered) receipt.commentItemId = commentItemId;
         if (session.commentId) receipt.commentId = session.commentId;
         if (item.issueId) receipt.issueId = item.issueId;
+        if (item.issueKey) receipt.issueKey = item.issueKey;
+        if (item.issueTitle) receipt.issueTitle = item.issueTitle;
+        if (item.issueUrl) receipt.issueUrl = item.issueUrl;
         receipts[key] = receipt;
       }
       return { ...current, ...withoutExpiredReceipts(receipts, current.operations, Date.parse(receivedAt)), lastSignedWebhookAt: receivedAt };
@@ -343,13 +351,13 @@ export class LinearSessionService {
     if (results.some((r) => r.status === 'rejected')) throw new Error('Linear run ended; one or more final notices could not be confirmed.');
   }
 
-  async respond(sessionId: string, kind: LinearActivityKind, body: string, runItemId?: string, terminal?: 'stopped' | 'failed'): Promise<{ activityId: string; bookkeeping: 'recorded' | 'degraded' }> {
+  async respond(sessionId: string, kind: LinearActivityKind, body: string, runItemId?: string, terminal?: 'stopped' | 'failed'): Promise<SessionReply> {
     return this.sessionLock(sessionId, () => this.respondLocked(sessionId, kind, body, runItemId, terminal));
   }
 
   private async respondLocked(sessionId: string, kind: LinearActivityKind, body: string, runItemId?: string,
     terminal?: 'stopped' | 'failed',
-  ): Promise<{ activityId: string; bookkeeping: 'recorded' | 'degraded' }> {
+  ): Promise<SessionReply> {
     const install = await this.knownSession(sessionId, runItemId, !terminal);
     let file = await this.identity.store.read();
     // Resolve earlier unknown effects before a newer input can change the retry key.
@@ -360,6 +368,14 @@ export class LinearSessionService {
       }
     }
     file = await this.identity.store.read();
+    // Receipts outlive their queued items. Reuse the latest known display fields,
+    // including when a follow-up omits them, without a per-reply API lookup.
+    const issue: Pick<SessionReply, 'issueId' | 'issueKey' | 'issueTitle' | 'issueUrl'> = {};
+    for (const receipt of Object.values(file.receipts).filter((r) => r.sessionId === sessionId).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))) {
+      for (const field of ['issueId', 'issueKey', 'issueTitle', 'issueUrl'] as const) {
+        if (receipt[field]) issue[field] = receipt[field];
+      }
+    }
     const hash = contentHash(kind, body);
     const candidates = Object.entries(file.receipts).filter(([, r]) => r.sessionId === sessionId && claimable(r, terminal));
     const itemIds: string[] = [];
@@ -374,20 +390,20 @@ export class LinearSessionService {
     if (!itemIds.length) {
       const accepted = Object.values(file.operations).find((op) => op.sessionId === sessionId && op.kind === 'activity'
         && op.state === 'accepted' && op.contentHash === hash && op.ownerRunId === runItemId);
-      if (accepted) return { activityId: accepted.id, bookkeeping: 'recorded' };
+      if (accepted) return { ...issue, activityId: accepted.id, bookkeeping: 'recorded' };
       throw new Error('No accepted input owned by this run for this Linear session.');
     }
     const key = contentHash(hash, JSON.stringify(itemIds));
     const previous = file.operations[key];
-    if (previous?.state === 'accepted') return { activityId: previous.id, bookkeeping: 'recorded' };
+    if (previous?.state === 'accepted') return { ...issue, activityId: previous.id, bookkeeping: 'recorded' };
     const operation: LinearOperation = { id: randomUUID(), sessionId, kind: 'activity', state: 'sending', itemIds, contentHash: hash, activityKind: kind };
     if (runItemId) operation.ownerRunId = runItemId;
     if (terminal) operation.terminal = terminal;
     await this.saveOperation(install.id, key, operation);
     try { await this.createActivity(install.id, sessionId, operation.id, kind, body, false); }
     catch (error) { await this.recordWriteFailure(install.id, key, operation, error); throw error; }
-    try { await this.acceptOperation(install.id, key, operation); return { activityId: operation.id, bookkeeping: 'recorded' }; }
-    catch { return { activityId: operation.id, bookkeeping: 'degraded' }; }
+    try { await this.acceptOperation(install.id, key, operation); return { ...issue, activityId: operation.id, bookkeeping: 'recorded' }; }
+    catch { return { ...issue, activityId: operation.id, bookkeeping: 'degraded' }; }
   }
 
   async tick(): Promise<void> {
@@ -577,7 +593,12 @@ export class LinearSessionService {
       // Opened by the agent's own turn: no run will start for it, so it already awaits the agent's reply.
       const receipt: LinearReceipt = { kind: 'request', state: 'awaiting', sessionId: session.id, receivedAt: nowIso(), itemId: key,
         runItemId: owner, acknowledgement: 'accepted', acknowledgementId: randomUUID() };
-      if (session.issue) receipt.issueId = session.issue.id;
+      if (session.issue) {
+        receipt.issueId = session.issue.id;
+        receipt.issueKey = session.issue.identifier;
+        receipt.issueTitle = session.issue.title;
+        receipt.issueUrl = session.issue.url;
+      }
       return { ...file, receipts: { ...file.receipts, [key]: receipt } };
     });
   }

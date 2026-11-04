@@ -33,7 +33,11 @@ async function sendSessionActivity(agent: string | undefined, tool: string, sess
     onCompletedAuditError: () => console.error('Linear accepted the activity; local audit is degraded. Do not resend.'),
     op: async () => {
       const result = await service.respond(sessionId, kind, body, await resolveToolItemId({ agent: service.agentId }));
-      return { result, completedPayload: { messageId: result.activityId, bookkeeping: result.bookkeeping } };
+      return { result, completedPayload: {
+        channel: result.issueId ?? sessionId, channelKind: result.issueId ? 'linear_issue' : 'linear_session',
+        issueKey: result.issueKey, issueTitle: result.issueTitle, permalink: result.issueUrl,
+        messageId: result.activityId, bookkeeping: result.bookkeeping,
+      } };
     },
   });
   console.log(`Linear accepted activity ${result.activityId}; bookkeeping=${result.bookkeeping}.`);
@@ -49,7 +53,10 @@ async function sendComment(agent: string | undefined, tool: string, basePayload:
     onCompletedAuditError: () => console.error('Linear accepted the comment; local audit is degraded. Do not resend.'),
     op: async () => {
       const comment = await create(new LinearCommentService(identity));
-      return { result: comment, completedPayload: { channel: comment.issueId, messageId: comment.id, permalink: comment.url, threadTs: comment.parentId ?? comment.id } };
+      return { result: comment, completedPayload: {
+        channel: comment.issueId, issueKey: comment.issue.identifier, issueTitle: comment.issue.title,
+        messageId: comment.id, permalink: comment.issue.url, threadTs: comment.parentId ?? comment.id,
+      } };
     },
   });
 }
@@ -130,7 +137,9 @@ export function registerLinearCommands(program: Command): void {
           console.error(`Linear session id: ${session.id}`);
           const progress = await service.respond(session.id, 'thought', body, runItemId);
           return { result: { requestId, session, replyTo: formatLinearReplyTarget({ kind: 'session', id: session.id }), progress }, completedPayload: {
-            channel: session.id, threadTs: session.id, permalink: session.url, messageId: progress.activityId, bookkeeping: progress.bookkeeping,
+            channel: session.issue?.id ?? session.id, channelKind: session.issue ? 'linear_issue' : 'linear_session', threadTs: session.id,
+            issueKey: session.issue?.identifier, issueTitle: session.issue?.title, permalink: session.issue?.url,
+            messageId: progress.activityId, bookkeeping: progress.bookkeeping,
           } };
         },
       });

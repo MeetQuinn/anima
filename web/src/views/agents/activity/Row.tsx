@@ -5,6 +5,12 @@ import type { SurfaceChip } from '@/lib/activity-feed';
 export const COLOR_OUTBOUND = 'var(--color-activity-outbound)';
 
 export function SurfaceText({ chip }: { chip: SurfaceChip }) {
+  if (chip.href) return (
+    <a href={chip.href} target="_blank" rel="noreferrer" title={chip.linkTitle}
+      onClick={(e) => e.stopPropagation()} className="font-sans text-text-muted hover:underline">
+      {chip.label}
+    </a>
+  );
   // channel/thread/dm labels already carry their kind marker in text
   // (`#prod` / `@handle`); a leading icon doubles it (the `# #prod` bug).
   // Icon only for kinds with no in-text marker.

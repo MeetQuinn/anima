@@ -75,6 +75,7 @@ export class LinearNotificationService {
       if (await queue.has(key)) return;
       item.issueId = n.issue.id;
       item.issueUrl = n.issue.url;
+      item.issueTitle = n.issue.title;
       item.sourceTime = n.updatedAt;
       if (n.actorId) item.actorId = n.actorId;
       if (n.commentId) item.commentId = n.commentId;

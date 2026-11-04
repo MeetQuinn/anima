@@ -153,7 +153,7 @@ describe('activity timeline builders', () => {
     expect(days.flatMap(([, entries]) => entries.map((entry) => entry.type))).toEqual(['conv', 'conv', 'conv']);
     const { resolveAuthor, resolveSurface } = buildActivityAuthorResolvers({ agent: undefined, agentId: 'nora' });
     expect(resolveAuthor(items[1]!).isAgent).toBe(true);
-    expect(resolveSurface(items[1]!)).toEqual({ key: 'channel:ANI-5', chip: { kind: 'channel', label: 'ANI-5' } });
+    expect(resolveSurface(items[1]!)).toEqual({ key: 'linear:ANI-5', chip: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5' } });
   });
 
   it('builds narrative step items and suppresses started rows with matching failure rows', () => {

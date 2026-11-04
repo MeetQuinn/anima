@@ -56,6 +56,7 @@ const Receipt = z.preprocess(migrateReceipt, z.object({
   // The request to publish while it is received; dropped once it no longer needs delivery.
   item: LinearInboxItem.optional(),
   sessionId: z.string(), issueId: z.string().optional(), receivedAt: z.string(),
+  issueKey: z.string().optional(), issueTitle: z.string().optional(), issueUrl: z.string().optional(),
   commentId: z.string().optional(),
   // A comment notification already delivered this request before its session
   // arrived. Keep the association for Stop, without a second reply obligation.

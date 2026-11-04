@@ -16,7 +16,8 @@ const issueId = randomUUID(), rootId = randomUUID(), replyId = randomUUID();
 function details() {
   const id = randomUUID();
   return { id, appUser: { id: install.appUserId }, creator: null as { id: string } | null,
-    issue: { id: issueId }, comment: { id: rootId }, status: 'active', url: `https://linear.app/synthetic/agent-session/${id}` };
+    issue: { id: issueId, identifier: 'SYN-1', title: 'Proactive issue', url: 'https://linear.app/synthetic/issue/SYN-1' },
+    comment: { id: rootId }, status: 'active', url: `https://linear.app/synthetic/agent-session/${id}` };
 }
 class Sessions extends FakeLinear {
   sessions = new Map<string, ReturnType<typeof details>>();
@@ -160,7 +161,9 @@ test('registered CLI starts a session with progress and records its session surf
   assert.equal(result.replyTo, `session:${result.session.id}`, 'Later replies use the same target form as an envelope');
   assert.ok(diagnostics.some((line) => line.includes(result.requestId))); assert.ok(diagnostics.some((line) => line.includes(result.session.id)));
   const messages = (await messageServiceForAgent('scout').list()).entries;
-  assert.ok(messages.some((m) => m.platform === 'linear' && m.channelKind === 'linear_session' && m.threadTs === result.session.id && m.text === 'Started voluntarily'));
+  assert.ok(messages.some((m) => m.platform === 'linear' && m.channelKind === 'linear_issue' && m.channelId === issueId
+    && m.threadTs === result.session.id && m.text === 'Started voluntarily' && m.issueKey === 'SYN-1'
+    && m.issueTitle === 'Proactive issue' && m.permalink === result.session.issue.url));
 }));
 
 test('automation created events remain eligible, even on the same target during our creation', async () => withTempAnimaHome(async (home) => {

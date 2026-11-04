@@ -111,6 +111,8 @@ function messageMatchesKeywords(entry: AgentMessageRecord, keywords: string[]): 
     entry.channelName,
     entry.dmHandle,
     entry.dmUserId,
+    entry.issueKey,
+    entry.issueTitle,
     entry.messageTs,
     entry.platform,
     entry.reminderId,

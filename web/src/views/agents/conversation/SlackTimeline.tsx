@@ -211,6 +211,15 @@ const SURFACE_CHIP_BASE =
   'shrink-0 truncate rounded-sm bg-surface-raised px-1.5 py-px font-sans text-[10px] text-text-subtle';
 
 function GroupSurfaceChip({ chip, agentId }: { chip: SurfaceChip; agentId: string }) {
+  if (chip.href) {
+    return (
+      <a href={chip.href} target="_blank" rel="noreferrer" title={`${chip.label} — ${chip.linkTitle}`}
+        aria-label={`${chip.linkTitle}: ${chip.label}`}
+        className="min-w-0 truncate rounded-sm bg-surface-raised px-1.5 py-px font-sans text-[10px] text-text-subtle underline-offset-2 hover:text-accent hover:underline focus-visible:ring-1 focus-visible:ring-accent">
+        {chip.label}
+      </a>
+    );
+  }
   if (!chip.channelId || !agentId) {
     return <span className={SURFACE_CHIP_BASE}>{chip.label}</span>;
   }
@@ -296,6 +305,8 @@ export function messageGroupRowPropsEqual(
     a.surfaceKey !== b.surfaceKey ||
     a.surface?.label !== b.surface?.label ||
     a.surface?.channelId !== b.surface?.channelId ||
+    a.surface?.href !== b.surface?.href ||
+    a.surface?.linkTitle !== b.surface?.linkTitle ||
     a.startTs !== b.startTs ||
     a.items.length !== b.items.length
   )
@@ -322,7 +333,7 @@ function MessageGroupRowImpl({
       <MsgAvatar author={group.author} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="truncate font-sans text-[13px] font-semibold text-text">
+          <span className={`truncate font-sans text-[13px] font-semibold text-text${group.surface?.href ? ' max-w-[40%] shrink-0' : ''}`}>
             {group.author.name}
           </span>
           <span
