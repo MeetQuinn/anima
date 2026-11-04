@@ -65,5 +65,38 @@ test('anything outside the documented shape shows Linear\'s context exactly', ()
     '<issue identifier="SYN-1"><title>T</title></issue><other-thread><note>x</note></other-thread>',
     '<issue identifier="SYN-1"><title>T</title></issue><guidance><rule>x</rule></guidance>',
     '   ',
+    // One of each element that is not a list: a second would overwrite or drop the first.
+    '<issue identifier="SYN-1"><title>T</title><description>Before </description><description> After</description></issue>',
+    '<issue identifier="SYN-1"><title>T</title><title>U</title></issue>',
+    '<issue identifier="SYN-1"><title>T</title><parent-issue identifier="SYN-0"><description>A</description><description>B</description></parent-issue></issue>',
+    '<issue identifier="SYN-1"><title>T</title></issue><issue identifier="SYN-2"><title>U</title></issue>',
+    '<issue identifier="SYN-1"><title>T</title></issue><user-request>A</user-request><user-request>B</user-request>',
+    // The team is left out only while it is the documented empty element.
+    '<issue identifier="SYN-1"><title>T</title><team name="Engineering">New context</team></issue>',
+    // Undocumented or repeated attributes.
+    '<issue identifier="SYN-1" state="Blocked"><title>T</title></issue>',
+    '<issue identifier="SYN-1"><title lang="en">T</title></issue>',
+    '<issue identifier="SYN-1"><title>T</title></issue><other-thread><comment author="Ada" role="owner">x</comment></other-thread>',
+    '<issue identifier="SYN-1"><title>T</title></issue><other-thread><comment author="Ada" author="Ben">x</comment></other-thread>',
+    '<issue identifier="SYN-1"><title>T</title></issue><guidance><guidance-rule origin="team" project-name="P">x</guidance-rule></guidance>',
   ]) assert.equal(linearSessionDisplayText(context), context, context);
+});
+
+test('a comment time is shortened only when it names its zone, the same in every server zone', () => {
+  const context = '<issue identifier="SYN-1"><title>T</title></issue><other-thread>'
+    + '<comment author="Ada" created-at="2026-01-08 16:33:12">No zone.</comment>'
+    + '<comment author="Ben" created-at="2026-11-04T08:14:27+08:00">Offset.</comment>'
+    + '<comment author="Cy" created-at="2026-11-04 00:15:00Z">UTC.</comment>'
+    + '</other-thread>';
+  const expected = '**SYN-1 · T**\n\nAnother thread on the issue:\nAda (2026-01-08 16:33:12): No zone.\n\nBen (2026-11-04T00:14Z): Offset.\n\nCy (2026-11-04T00:15Z): UTC.';
+  const zone = process.env.TZ;
+  try {
+    for (const tz of ['Asia/Shanghai', 'UTC', 'America/Los_Angeles']) {
+      process.env.TZ = tz;
+      assert.equal(linearSessionDisplayText(context), expected, tz);
+    }
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+  }
 });
