@@ -44,6 +44,10 @@ function verified<T extends LinearWebhook>(event: T): T {
 async function fixture(home: string) {
   const seeded = await seedLinear(home);
   let app: string | null = null, fail = false;
+  let delegate: string | null = null;
+  let author: { id: string; app: boolean; name: string } | null = { id: humanId, app: false, name: 'Synthetic teammate' };
+  let rootBody = '';
+  const rootId = randomUUID();
   // The thread root's author and whether this app has replied in that thread.
   // null: a top-level comment with no thread above it.
   let thread: { rootAuthor: string | null; replied: boolean } | null = { rootAuthor: humanId, replied: false };
@@ -54,18 +58,155 @@ async function fixture(home: string) {
     calls.push(query);
     if (query.includes('comment(id:')) {
       if (fail) throw new Error('Synthetic unavailable');
-      assert.equal(variables.app, install.appUserId);
-      const parent = thread || app ? { agentSession: app ? { appUser: { id: app } } : null,
+      if (query.includes('children(')) assert.equal(variables.app, install.appUserId);
+      const parent = thread || app ? { id: rootId, body: rootBody, agentSession: app ? { appUser: { id: app } } : null,
         user: thread?.rootAuthor ? { id: thread.rootAuthor } : null, children: { nodes: thread?.replied ? [{ id: randomUUID() }] : [] } } : null;
-      return Response.json({ data: { comment: { id: variables.id, issueId, agentSession: null, parent } } });
+      return Response.json({ data: { comment: { id: variables.id, issueId, body: '@scout', user: author,
+        issue: { delegate: delegate ? { id: delegate } : null }, agentSession: null, parent } } });
     }
     return seeded.fake.fetch(url, init);
   };
   const identity = new LinearIdentityService('scout', new LinearClient(fetcher), seeded.store);
-  return { ...seeded, identity, notifications: new LinearNotificationService(identity), calls, fetcher,
+  return { ...seeded, identity, service: new LinearSessionService(identity), notifications: new LinearNotificationService(identity), calls, fetcher, rootId,
     setSession: (id: string | null) => { app = id; }, setFailure: (value: boolean) => { fail = value; },
+    setDelegate: (id: string | null) => { delegate = id; }, setAuthor: (value: typeof author) => { author = value; },
+    setRootBody: (value: string) => { rootBody = value; },
     setThread: (value: typeof thread) => { thread = value; } };
 }
+
+test('human comments wake on the current delegated issue, including top-level and unrelated threads', async (t) => withTempAnimaHome(async (home) => {
+  const f = await fixture(home); t.mock.method(globalThis, 'fetch', f.fetcher);
+  const prompts: string[] = [];
+  const runtime = { kind: 'synthetic', async run(input: AgentRuntimeInput) { prompts.push(input.prompt); return { text: 'Noted' }; },
+    async appendToActiveRun() { return { accepted: false }; }, async close() {} };
+  const queue = new WakeQueueService('scout');
+  const runner = await startRunningAgent({ agentId: 'scout', agentRuntime: runtime, animaHome: home, stateDir: home,
+    homePath: (await f.agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
+  try {
+    f.setDelegate(install.appUserId);
+    for (const thread of [null, { rootAuthor: humanId, replied: false }]) {
+      f.setThread(thread);
+      const event = notification();
+      await f.notifications.receive(verified(event), install);
+      await assert.doesNotReject(() => waitFor(() => prompts.some((p) => p.includes(`comment_id=${event.notification.commentId}`))),
+        'A human comment on the delegated issue must start a worker run');
+      await waitFor(async () => (await queue.list()).length === 0);
+      await f.notifications.receive(verified(event), install);
+    }
+    assert.equal(prompts.length, 2);
+    // Check again for every comment: losing the delegation stops the extra wakes.
+    for (const delegate of [null, randomUUID()]) {
+      f.setDelegate(delegate);
+      await f.notifications.receive(verified(notification()), install);
+    }
+    f.setDelegate(install.appUserId);
+    f.setAuthor({ id: randomUUID(), app: true, name: 'Other app' });
+    await f.notifications.receive(verified(notification()), install);
+    f.setAuthor(null);
+    await f.notifications.receive(verified(notification()), install);
+    for (const type of ['issueStatusChanged', 'issueUnassignedFromYou']) await f.notifications.receive(verified(notification(type)), install);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(prompts.length, 2);
+    const held = await queue.list(); assert.equal(held.length, 6); assert.ok(held.every(isHeldInboxItem));
+    assert.deepEqual((await f.store.read()).receipts, {}); assert.equal(f.fake.posts.length, 0);
+  } finally { await runner.stop(); }
+}));
+
+test('delegation does not duplicate session prompts or change app mentions and joined-thread replies', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  f.setDelegate(install.appUserId);
+  f.setSession(install.appUserId);
+  await f.notifications.receive(verified(notification()), install);
+  assert.equal((await queue.list()).length, 0);
+  f.setSession(null); f.setThread(null); f.setAuthor({ id: randomUUID(), app: true, name: 'Other app' });
+  await f.notifications.receive(verified(notification('issueCommentMention')), install);
+  f.setThread({ rootAuthor: humanId, replied: true });
+  await f.notifications.receive(verified(notification()), install);
+  assert.equal((await queue.list()).length, 2);
+  assert.ok((await queue.list()).every(isClaimableQueuedInboxItem));
+}));
+
+for (const membership of ['started', 'replied', 'unfamiliar'] as const) test(`comment replies include the root only for an unfamiliar thread: ${membership}`, async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  f.setDelegate(install.appUserId); f.setRootBody('Original thread root');
+  f.setThread({ rootAuthor: membership === 'started' ? install.appUserId : humanId, replied: membership === 'replied' });
+  // Several replies should not keep repeating a known root.
+  for (let n = 0; n < 2; n++) {
+    const event = notification(); event.notification.comment!.body = `New reply ${n}`;
+    await f.notifications.receive(verified(event), install);
+    const item = await queue.find(linearCommentItemId(install.id, event.notification.commentId!));
+    assert.ok(item?.kind === 'linear_notification' && isClaimableQueuedInboxItem(item));
+    if (membership === 'unfamiliar') assert.match(item.text, /Original thread root/);
+    else assert.equal(item.text, `New reply ${n}`);
+  }
+}));
+
+for (const membership of ['started', 'replied'] as const) test(`a copied mention in a known thread does not repeat its root: ${membership}`, async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  f.setRootBody('Original thread root');
+  f.setThread({ rootAuthor: membership === 'started' ? install.appUserId : humanId, replied: membership === 'replied' });
+  const event = sessionFor(notification());
+  event.agentSession.creatorId = humanId;
+  event.agentSession.sourceCommentId = event.agentSession.commentId;
+  event.agentSession.commentId = randomUUID();
+  event.agentSession.comment = { id: event.agentSession.commentId, body: '@scout continue', userId: humanId };
+  await f.service.receive(verified(event), install);
+  const [item] = await queue.list();
+  assert.ok(item?.kind === 'linear');
+  assert.equal(item.text, '@scout continue');
+}));
+
+for (const first of ['session', 'mention', 'held'] as const) test(`a copied child mention uses its source thread and delivers once, first=${first}`, async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const notificationEvent = notification(first === 'held' ? 'issueNewComment' : 'issueCommentMention');
+  notificationEvent.notification.comment!.body = '@scout';
+  notificationEvent.notification.parentCommentId = f.rootId;
+  f.setRootBody('Please investigate the actual problem.');
+  const session = sessionFor(notificationEvent);
+  session.agentSession.creatorId = humanId; session.agentSession.creator = { name: 'Synthetic teammate' };
+  session.agentSession.sourceCommentId = notificationEvent.notification.commentId;
+  session.agentSession.commentId = randomUUID();
+  session.agentSession.comment = { id: session.agentSession.commentId, body: '@scout', userId: humanId };
+  session.promptContext = '<issue><description>DO NOT DELIVER THIS SNAPSHOT</description></issue>';
+  session.guidance = [{ body: 'Only-session guidance' }];
+  if (first !== 'session') await f.notifications.receive(verified(notificationEvent), install);
+  await f.service.receive(verified(session), install);
+  await f.notifications.receive(verified(notificationEvent), install);
+  f.setFailure(true); // A retry publishes the durable request without needing the source again.
+  await f.service.receive(verified(session), install);
+  f.setFailure(false);
+  const items = await queue.list(); assert.equal(items.length, 1);
+  const item = items[0]!; assert.ok(isClaimableQueuedInboxItem(item));
+  assert.equal(item.kind, first === 'mention' ? 'linear_notification' : 'linear');
+  assert.match(item.text, /^@scout\n\nThread root/);
+  assert.match(item.text, /Please investigate the actual problem\./);
+  assert.doesNotMatch(item.text, /DO NOT DELIVER THIS SNAPSHOT/);
+  if (first === 'mention') assert.doesNotMatch(item.text, /Only-session guidance/, 'A late linked session does not redeliver guidance');
+  else assert.match(item.text, /Only-session guidance/);
+  assert.equal(Object.values((await f.store.read()).receipts)[0]?.commentId, notificationEvent.notification.commentId);
+  // Stop can name only the copied session root; the durable receipt still reaches the source request.
+  const stop = prompted(session.agentSession.id, true);
+  stop.agentSession.commentId = session.agentSession.commentId;
+  stop.agentSession.issueId = issueId;
+  await f.service.receive(verified(stop), install);
+  assert.equal((await queue.list()).length, 0);
+  assert.ok(Object.values((await f.store.read()).receipts).every(isStopped));
+}));
+
+test('a failed or mismatched source-comment lookup cannot deliver a copied root as the new request', async () => withTempAnimaHome(async (home) => {
+  const f = await fixture(home), queue = new WakeQueueService('scout');
+  const event = sessionFor(notification());
+  event.agentSession.creatorId = humanId;
+  event.agentSession.sourceCommentId = randomUUID();
+  f.setFailure(true);
+  await assert.rejects(f.service.receive(verified(event), install), /Linear request failed/);
+  f.setFailure(false); event.agentSession.issueId = randomUUID();
+  await assert.rejects(f.service.receive(verified(event), install), /source comment mismatch/);
+  assert.equal((await queue.list()).length, 0); assert.deepEqual((await f.store.read()).receipts, {});
+  event.agentSession.issueId = issueId;
+  await f.service.receive(verified(event), install);
+  assert.equal((await queue.list()).length, 1);
+}));
 
 test('app notifications authenticate resources and enqueue once across retries, settlement and service recreation', async (t) => withTempAnimaHome(async (home) => {
   const f = await fixture(home); t.mock.method(globalThis, 'fetch', f.fetcher);
@@ -222,7 +363,7 @@ function permissionChange(): Extract<LinearWebhook, { type: 'PermissionChange' }
     addedTeamIds: [randomUUID()], removedTeamIds: [] };
 }
 
-test('only requests addressed to the agent wake it; other Linear events wait for its next run', async (t) => withTempAnimaHome(async (home) => {
+test('comments on undelegated issues and other context wait unless the agent is mentioned or has joined the thread', async (t) => withTempAnimaHome(async (home) => {
   const f = await fixture(home); t.mock.method(globalThis, 'fetch', f.fetcher);
   const prompts: string[] = [];
   const runtime = { kind: 'synthetic', async run(input: AgentRuntimeInput) { prompts.push(input.prompt); return { text: 'Noted' }; },

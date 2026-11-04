@@ -147,7 +147,9 @@ test('revocation and session/type consistency are enforced using signed identity
 for (const matching of [false, true]) test(`unsigned claims use a bounded small journal, matching=${matching}`, async (t) => withTempAnimaHome(async (home) => {
   const { service, fake, agentStore, store, identity } = await seedLinear(home);
   t.mock.method(globalThis, 'fetch', fake.fetch);
-  const event = created(); event.promptContext = 'Synthetic large context. '.repeat(3000);
+  const event = created();
+  event.agentSession.comment = { id: randomUUID(), userId: randomUUID(), body: 'Synthetic large request. '.repeat(3000) };
+  event.agentSession.commentId = event.agentSession.comment.id;
   await service.receive(event, install); await service.tick();
   const realNow = Date.now.bind(Date); let offset = 0; t.mock.method(Date, 'now', () => realNow() + offset);
   const port = await unusedPort(); await new ServerConfigStore().update((c) => ({ ...c, linearWebhook: { host: '127.0.0.1', port } }));

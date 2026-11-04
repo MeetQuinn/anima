@@ -10,7 +10,7 @@ const User = z.object({ id: Id, name: z.string().max(512), avatarUrl: AvatarUrl 
 const Comment = z.object({ id: Id.optional(), body: z.string().max(100_000), userId: Id.nullish() });
 const Common = z.object({ organizationId: Id, oauthClientId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/), webhookTimestamp: z.number().finite() });
 const Session = z.object({
-  id: Id, appUserId: Id, organizationId: Id, issueId: Id.nullish(), commentId: Id.nullish(), url: z.string().url().nullish(),
+  id: Id, appUserId: Id, organizationId: Id, issueId: Id.nullish(), commentId: Id.nullish(), sourceCommentId: Id.nullish(), url: z.string().url().nullish(),
   createdAt: Time.optional(),
   // The identifier only names the issue in the prompt; an odd one is dropped, never rejected.
   issue: z.object({ id: Id, identifier: z.string().nullish().catch(undefined), title: z.string(), description: z.string().nullish(), url: z.string().url().nullish() }).nullish(),
@@ -32,7 +32,11 @@ const Notification = z.object({
 export const LinearWebhook = z.discriminatedUnion('type', [
   Common.extend({ type: z.literal('AgentSessionEvent'), action: z.enum(['created', 'prompted']),
     createdAt: Time.optional(), previousComments: z.array(Comment).nullish(),
-    appUserId: Id, agentSession: Session, promptContext: z.string().max(200_000).nullish(), agentActivity: Prompt.optional(), guidance: z.array(z.object({ body: z.string().max(50_000) })).max(100).nullish(),
+    appUserId: Id, agentSession: Session, promptContext: z.string().max(200_000).nullish(), agentActivity: Prompt.optional(),
+    guidance: z.array(z.object({ body: z.string().max(50_000),
+      // Labels are decorative; malformed metadata must not discard the request.
+      origin: z.object({ type: z.string(), team: z.object({ name: z.string() }).nullish().catch(undefined) }).nullish().catch(undefined),
+    })).max(100).nullish(),
   }),
   Common.extend({ type: z.literal('OAuthApp'), action: z.literal('revoked') }),
   Common.extend({ type: z.literal('AppUserNotification'), action: z.string().min(1), appUserId: Id, notification: Notification }),

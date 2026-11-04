@@ -48,51 +48,75 @@ test('a follow-up identifies its actual author and source time instead of attrib
   assert.throws(() => verified(event), /author mismatch/);
 }));
 
-for (const promptContext of [undefined, '', ' \n\t']) test(`missing or blank initial context keeps prior thread meaning: ${JSON.stringify(promptContext)}`, async () => withTempAnimaHome(async (home) => {
+for (const promptContext of [undefined, '', ' \n\t', '<issue><description>SNAPSHOT DESCRIPTION</description></issue>']) test(`a delegation asks the agent to fetch the task and retains structured guidance: ${JSON.stringify(promptContext)}`, async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
   const event = created(); event.promptContext = promptContext;
-  const commentId = randomUUID(), authorId = randomUUID(), issueId = randomUUID();
+  const issueId = randomUUID();
   event.agentSession.issueId = issueId;
-  event.agentSession.issue = { id: issueId, title: 'Choose an approach', description: 'Preserve existing data.' };
-  event.agentSession.commentId = commentId;
-  event.agentSession.comment = { id: commentId, body: 'Compare two approaches.' };
-  event.previousComments = [event.agentSession.comment, { id: randomUUID(), body: 'Option two changes only the copy.', userId: authorId }];
-  event.guidance = [{ body: 'Keep the public API stable.' }];
+  event.agentSession.issue = { id: issueId, identifier: 'SYN-12', title: 'Choose an approach', description: 'ISSUE DESCRIPTION', url: 'https://linear.app/synthetic/issue/SYN-12/choose' };
+  event.agentSession.comment = { id: randomUUID(), body: 'This thread is for an agent session with scout.', userId: null };
+  event.previousComments = [{ id: randomUUID(), body: 'UNRELATED THREAD' }];
+  event.guidance = [{ body: 'Keep the public API stable.', origin: { type: 'Organization' } },
+    { body: 'Open a PR per change.', origin: { type: 'Team', team: { name: 'Engineering' } } }];
   await service.receive(verified(event), install);
   const [item] = await new WakeQueueService('scout').list();
-  const prompt = buildCodeAgentDeliveryPrompt(item!);
-  // The session's thread root has no author, as Linear writes it for a delegation.
-  assert.match(prompt, /^Linear conversation update:\n\nSynthetic requester delegated an issue to you:\nChoose an approach\n/);
-  assert.match(prompt, /wake=delegated /); assert.doesNotMatch(prompt, /context=|Partial initial context|requester_id=/);
-  assert.match(prompt, /Preserve existing data/); assert.match(prompt, /Option two changes only the copy/);
-  assert.match(prompt, new RegExp(`user_id=${authorId}`));
-  assert.match(prompt, /Keep the public API stable/);
-  assert.equal(prompt.split('Compare two approaches.').length - 1, 1, 'The root comment also present in previousComments is shown once');
+  assert.ok(item?.kind === 'linear');
+  const prompt = buildCodeAgentDeliveryPrompt(item);
+  assert.match(prompt, /title="Choose an approach" url=https:\/\/linear.app\/synthetic\/issue\/SYN-12\/choose/);
+  assert.match(prompt, /Synthetic requester delegated SYN-12 to you:/);
+  assert.match(prompt, /Read the issue description and comments through anima linear api to get the task/);
+  assert.match(prompt, /Guidance \(Organization\):\nKeep the public API stable\./);
+  assert.match(prompt, /Guidance \(Team: Engineering\):\nOpen a PR per change\./);
+  assert.doesNotMatch(prompt, /ISSUE DESCRIPTION|SNAPSHOT DESCRIPTION|UNRELATED THREAD|This thread is for|<issue>/);
+  assert.match(prompt, /wake=delegated /);
+  assert.equal(messageFromInboxItem(item)?.text, item.text, 'History records the concise delivery');
 }));
 
-test('partial context keeps earlier thread comments before the triggering reply', async () => withTempAnimaHome(async (home) => {
+test('a child mention carries its exact body and a bounded thread root, without other context', async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
-  const event = created(); event.promptContext = undefined;
-  const root = { id: randomUUID(), body: 'FIRST: compare the options.' };
-  const reply = { id: randomUUID(), body: 'SECOND: option two changes the copy.' };
-  event.previousComments = [root, reply, root];
-  event.agentSession.comment = { id: randomUUID(), body: 'THIRD: use option two.' };
+  const event = created();
+  event.promptContext = '<issue><description>SNAPSHOT DESCRIPTION</description></issue><other-thread>UNRELATED THREAD</other-thread>';
+  const root = { id: randomUUID(), body: 'ROOT REQUEST ' + 'x'.repeat(2100) + 'ROOT TAIL' };
+  event.previousComments = [root, { id: randomUUID(), body: 'OLDER REPLY' }];
+  event.agentSession.comment = { id: randomUUID(), body: '  @scout\nPlease check.  ', userId: randomUUID() };
   event.agentSession.commentId = event.agentSession.comment.id;
   await service.receive(verified(event), install);
   const [item] = await new WakeQueueService('scout').list();
   const prompt = buildCodeAgentDeliveryPrompt(item!);
-  assert.ok(prompt.indexOf('FIRST:') < prompt.indexOf('SECOND:'));
-  assert.ok(prompt.indexOf('SECOND:') < prompt.indexOf('THIRD:'));
-  assert.equal(prompt.split('FIRST:').length - 1, 1);
+  assert.match(prompt, /mentioned you/);
+  assert.match(prompt, /  @scout\nPlease check\.  /);
+  assert.match(prompt, new RegExp(`Thread root \\[comment_id=${root.id}\\]:`));
+  assert.match(prompt, /ROOT REQUEST/); assert.match(prompt, /Truncated; read the comment through anima linear api/);
+  assert.doesNotMatch(prompt, /SNAPSHOT DESCRIPTION|UNRELATED THREAD|OLDER REPLY|ROOT TAIL/);
 }));
 
-test('a supplied full context stays intact and old queued inputs recover their event type without borrowing the requester as speaker', async () => withTempAnimaHome(async (home) => {
+for (const [label, origin] of [
+  ['null origin', null], ['null team', { type: 'Organization', team: null }],
+  ['malformed origin', { type: 42 }], ['malformed team', { type: 'Team', team: { name: 42 } }],
+] as const) test(`decorative guidance metadata never rejects its body: ${label}`, async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
-  const event = created(); event.promptContext = '  Full supplied context\nwith its original indentation.';
+  const event = created();
+  event.guidance = [{ body: 'Keep this guidance even without a label.', origin }] as unknown as typeof event.guidance;
+  await assert.doesNotReject(async () => service.receive(verified(event), install), 'Decorative metadata must not reject a signed session');
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear');
+  assert.match(item.text, /Keep this guidance even without a label\./);
+}));
+
+test('previous comments prove a known session thread without repeating its root', async () => withTempAnimaHome(async (home) => {
+  const { service } = await seedLinear(home);
+  const event = created();
+  event.previousComments = [{ id: randomUUID(), body: 'Old thread root', userId: randomUUID() },
+    { id: randomUUID(), body: 'The agent has already replied', userId: install.appUserId }];
+  event.agentSession.comment = { id: randomUUID(), body: '@scout continue', userId: randomUUID() };
+  event.agentSession.commentId = event.agentSession.comment.id;
   await service.receive(verified(event), install);
   const [item] = await new WakeQueueService('scout').list();
-  assert.match(buildCodeAgentDeliveryPrompt(item!), /  Full supplied context\nwith its original indentation\./);
-  assert.doesNotMatch(buildCodeAgentDeliveryPrompt(item!), /Partial initial context/);
+  assert.ok(item?.kind === 'linear');
+  assert.equal(item.text, '@scout continue');
+}));
+
+test('old queued inputs recover their event type without borrowing the requester as speaker', () => {
   const old = LinearInboxItem.parse({ id: `linear:${install.id}:prompted:${randomUUID()}`, kind: 'linear', installationId: install.id, organizationId: install.organizationId,
     sessionId, humanRequested: true, actorName: 'Legacy requester', text: 'Legacy request', receivedAt: '2026-10-03T01:02:03Z',
     handling: { status: 'queued', createdAt: '2026-10-03T01:02:03Z', updatedAt: '2026-10-03T01:02:03Z' } });
@@ -107,13 +131,13 @@ test('a supplied full context stays intact and old queued inputs recover their e
   // A created session from before origins were stored counts as a delegation; its key comes from the URL.
   old.id = `linear:${install.id}:created:${sessionId}`;
   old.issueUrl = 'https://linear.app/synthetic/issue/SYN-7/legacy-title';
-  assert.match(buildCodeAgentDeliveryPrompt(old), /^Linear conversation update:\n\n\[issue=SYN-7\] Legacy requester delegated SYN-7 to you:\nLegacy request\n\n/);
+  assert.match(buildCodeAgentDeliveryPrompt(old), /^Linear conversation update:\n\n\[issue=SYN-7 url=https:\/\/linear.app\/synthetic\/issue\/SYN-7\/legacy-title\] Legacy requester delegated SYN-7 to you:\nLegacy request\n\n/);
   assert.match(buildCodeAgentDeliveryPrompt(old), /issue=SYN-7 wake=delegated /);
-  assert.doesNotMatch(buildCodeAgentDeliveryPrompt(old), /Issue: |https:/);
+  assert.doesNotMatch(buildCodeAgentDeliveryPrompt(old), /Issue: /);
   old.id = 'unclassified-legacy-item';
   assert.match(buildCodeAgentDeliveryPrompt(old), /wake=followup /);
   assert.doesNotMatch(buildCodeAgentDeliveryPrompt(old), /Requested by|delegated|context=snapshot|Legacy requester/);
-}));
+});
 
 test('every Linear envelope names one reply target: the session, the thread root, or the issue', () => {
   const at = '2026-10-03T01:02:03Z', issueId = randomUUID(), root = randomUUID(), reply = randomUUID();
@@ -215,7 +239,7 @@ for (const [origin, creator, wake, line] of [
   ['delegation', false, 'delegated', 'SYN-12 was delegated to you:'],
   ['mention', true, 'mention', 'Synthetic requester mentioned you on SYN-12:'],
   ['mention', false, 'mention', 'You were mentioned on SYN-12:'],
-] as const) test(`a created session (${origin}, creator=${creator}) opens with who asked, then Linear's context unchanged; people read it rendered`, async () => withTempAnimaHome(async (home) => {
+] as const) test(`a created session (${origin}, creator=${creator}) carries who asked and the concise request`, async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
   const event = created(), issueId = randomUUID(), rootId = randomUUID();
   event.agentSession.createdAt = '2026-11-03T17:02:58.123Z';
@@ -231,10 +255,10 @@ for (const [origin, creator, wake, line] of [
   assert.ok(item?.kind === 'linear');
   assert.equal(item.origin, origin); assert.equal(item.issueKey, 'SYN-12');
   item.handling.queuedAt = '2026-11-03T17:03:00.000Z';
-  assert.equal(buildCodeAgentDeliveryPrompt(item), `Linear conversation update:\n\n[issue=SYN-12 time=2026-11-03T17:02:58Z] ${line}\n`
-    + `  <issue identifier="SYN-12">\n<title>Synthetic</title>\n</issue>\n\n`
+  assert.equal(buildCodeAgentDeliveryPrompt(item), `Linear conversation update:\n\n[issue=SYN-12 title="Synthetic" url=https://linear.app/synthetic/issue/SYN-12/synthetic time=2026-11-03T17:02:58Z] ${line}\n`
+    + `${origin === 'mention' ? '@scout please look' : 'Read the issue description and comments through anima linear api to get the task.'}\n\n`
     + `Wake trigger:\n[platform=linear reply_to=session:${sessionId} issue=SYN-12 wake=${wake} queued_at=2026-11-03T17:03:00Z]`);
-  assert.equal(messageFromInboxItem(item)?.text, '**SYN-12 · Synthetic**', 'The dashboard and history show the rendering');
+  assert.equal(messageFromInboxItem(item)?.text, item.text, 'The dashboard and history show the concise delivery');
 }));
 
 test('a follow-up names its issue and author so it reads on its own', async () => withTempAnimaHome(async (home) => {

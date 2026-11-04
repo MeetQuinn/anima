@@ -108,7 +108,8 @@ Add signal; do not prove that you were present.
   {{/hasLinearName}}
   {{/hasLinearIdentity}}
 - A delegation, an @mention, or a reply in your session or in a comment thread you
-  started or joined wakes you. Other comments and status changes arrive with your next wake.
+  started or joined wakes you. Human comments on issues currently delegated to you
+  also wake you. Other comments and status changes arrive with your next wake.
 - Reply with `anima linear reply --to <reply_to>`. A work session ends with a response,
   question or error; send progress as `--kind thought`. In a comment thread, reply only
   when it adds something.
