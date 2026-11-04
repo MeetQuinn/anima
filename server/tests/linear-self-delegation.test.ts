@@ -14,7 +14,7 @@ function origin() {
   const createdAt = '2026-11-03T16:48:45.464Z';
   return { id: randomUUID(), appUser: { id: install.appUserId }, creator: null as { id: string } | null,
     issue: { id: randomUUID() }, comment: { id: randomUUID() }, createdAt,
-    activities: { nodes: [{ createdAt, promptAuthor: { id: install.appUserId } as { id: string } | null,
+    activities: { nodes: [{ createdAt, promptAuthor: { id: install.appUserId } as { id: string; name?: string } | null,
       content: { type: 'prompt' } as { type?: string } }] } };
 }
 class Delegations extends FakeLinear {
@@ -128,6 +128,29 @@ for (const [name, change] of Object.entries(uncertainOrigins)) test(`created sti
   change(fake); await service.receive(event, install); await service.tick();
   assert.equal((await new WakeQueueService('scout').list()).length, 1);
   assert.deepEqual(fake.posts.map((p) => p.content.body), ['Received by Anima.']);
+}));
+
+test('another agent\'s delegation names that agent, as a person\'s would', async () => withTempAnimaHome(async (home) => {
+  const fake = new Delegations(), { service } = await seedLinear(home, fake), event = fake.event();
+  const delegator = randomUUID();
+  fake.origin.activities.nodes[0]!.promptAuthor = { id: delegator, name: 'Synthetic lead' };
+  await service.receive(event, install); await service.tick();
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear');
+  assert.equal(item.actorId, delegator); assert.equal(item.actorName, 'Synthetic lead');
+  assert.equal(item.origin, 'delegation');
+}));
+
+for (const [name, change] of Object.entries({
+  'automation has no prompt author': (f: Delegations) => { f.origin.activities.nodes[0]!.promptAuthor = null; },
+  'a later prompt': (f: Delegations) => { f.origin.activities.nodes[0]!.promptAuthor = { id: randomUUID(), name: 'Later' }; f.origin.activities.nodes[0]!.createdAt = '2026-11-03T16:49:45.464Z'; },
+  'API failure': (f: Delegations) => { f.failOrigin = true; },
+})) test(`an unproven delegator is left out: ${name}`, async () => withTempAnimaHome(async (home) => {
+  const fake = new Delegations(), { service } = await seedLinear(home, fake), event = fake.event();
+  change(fake); await service.receive(event, install); await service.tick();
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item?.kind === 'linear');
+  assert.equal(item.actorId, undefined); assert.equal(item.actorName, undefined);
 }));
 
 test('human delegation is unchanged and does not need a remote origin lookup', async () => withTempAnimaHome(async (home) => {

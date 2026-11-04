@@ -70,6 +70,7 @@ const groups = {
     'linear-proactive-session.test.js',
     'linear-runtime.test.js',
     'linear-user-directory.test.js',
+    'linear-prompt-context.test.js',
     'log-tail.test.js',
     'input-trace.test.js',
     'history-pagination.test.js',

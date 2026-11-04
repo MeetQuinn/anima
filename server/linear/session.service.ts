@@ -23,7 +23,7 @@ const SessionOrigin = z.object({ agentSession: z.object({
   id: z.string().uuid(), appUser: z.object({ id: z.string() }), creator: z.object({ id: z.string() }).nullable(),
   issue: z.object({ id: z.string() }).nullable(), createdAt: z.string().datetime({ offset: true }),
   activities: z.object({ nodes: z.array(z.object({ createdAt: z.string().datetime({ offset: true }),
-    promptAuthor: z.object({ id: z.string() }).nullable(), content: z.object({ type: z.string().optional() }),
+    promptAuthor: z.object({ id: z.string(), name: z.string().max(512).optional() }).nullable(), content: z.object({ type: z.string().optional() }),
   })).max(1) }),
 }) });
 const SessionDetails = z.object({ id: z.string().uuid(), appUser: z.object({ id: z.string() }),
@@ -138,6 +138,7 @@ export class LinearSessionService {
     const eventId = event.action === 'created' ? session.id : event.agentActivity!.id;
     const key = `linear:${install.id}:${event.action}:${eventId}`;
     let selfDelegated = false;
+    let requester: { id: string; name?: string } | undefined;
     // A missing creator also describes automation and other agents. First check
     // exact results from our own proactive creation, including a racing response.
     if (event.action === 'created' && !session.creatorId) {
@@ -160,7 +161,7 @@ export class LinearSessionService {
         return;
       }
       if (!file.receipts[key] && session.issueId) {
-        selfDelegated = await this.isSelfDelegated(install, session.id, session.issueId);
+        ({ selfDelegated, requester } = await this.sessionOrigin(install, session.id, session.issueId));
       }
     }
     const stopped = event.agentActivity?.signal === 'stop';
@@ -181,8 +182,10 @@ export class LinearSessionService {
     } else {
       item.contextSource = hasPromptContext ? 'prompt_context' : 'fallback';
       item.sourceTime = session.createdAt ?? event.createdAt;
-      if (session.creatorId) item.actorId = session.creatorId;
-      if (session.creator?.name) item.actorName = session.creator.name;
+      // Linear leaves out the creator when an agent delegated; the opening prompt names it.
+      const actorId = session.creatorId ?? requester?.id, actorName = session.creator?.name ?? requester?.name;
+      if (actorId) item.actorId = actorId;
+      if (actorName) item.actorName = actorName;
       // Every session has a thread. Linear writes the root of a delegated session's thread
       // itself, so that comment has no author; an @mention opens the session in a person's thread.
       item.origin = session.comment?.userId ? 'mention' : 'delegation';
@@ -535,17 +538,24 @@ export class LinearSessionService {
     if (created.agentActivityCreate.agentActivity.id !== id) throw new Error('Linear returned a different activity id; inspect the session.');
   }
 
-  private async isSelfDelegated(install: LinearInstallation, sessionId: string, issueId: string): Promise<boolean> {
-    // The initial prompt names the actual delegator even when creator is null.
-    // Require creation-time evidence: a later own prompt cannot prove who opened it.
+  /**
+   * Who opened a session Linear reported without a creator. The initial prompt names the
+   * actual delegator, which may be this agent itself or another agent. Require creation-time
+   * evidence: a later prompt cannot prove who opened it.
+   */
+  private async sessionOrigin(install: LinearInstallation, sessionId: string, issueId: string): Promise<{ selfDelegated: boolean; requester?: { id: string; name?: string } }> {
     const result = await this.identity.graphql(install.id,
-      'query($id:String!){agentSession(id:$id){id appUser{id} creator{id} issue{id} createdAt activities(last:1,orderBy:createdAt){nodes{createdAt promptAuthor{id} content{... on AgentActivityPromptContent{type}}}}}}',
+      'query($id:String!){agentSession(id:$id){id appUser{id} creator{id} issue{id} createdAt activities(last:1,orderBy:createdAt){nodes{createdAt promptAuthor{id name} content{... on AgentActivityPromptContent{type}}}}}}',
       { id: sessionId }, SessionOrigin).catch(() => undefined);
-    if (!result) return false; // An unavailable origin must never discard new work.
+    if (!result) return { selfDelegated: false }; // An unavailable origin must never discard new work.
     const session = result.agentSession, first = session.activities.nodes[0];
-    return session.id === sessionId && session.appUser.id === install.appUserId && !session.creator
-      && session.issue?.id === issueId && first?.content.type === 'prompt'
-      && first.promptAuthor?.id === install.appUserId && Date.parse(first.createdAt) === Date.parse(session.createdAt);
+    const opening = session.id === sessionId && session.appUser.id === install.appUserId && !session.creator
+      && session.issue?.id === issueId && first?.content.type === 'prompt' && first.promptAuthor
+      && Date.parse(first.createdAt) === Date.parse(session.createdAt);
+    if (!opening) return { selfDelegated: false };
+    const author = first.promptAuthor!;
+    if (author.id === install.appUserId) return { selfDelegated: true };
+    return { selfDelegated: false, requester: { id: author.id, ...(author.name ? { name: author.name } : {}) } };
   }
 
   private async sessionDetails(install: LinearInstallation, sessionId: string): Promise<z.infer<typeof SessionDetails>> {
