@@ -157,7 +157,7 @@ export function ProviderUnit({
       </button>
 
       {open && (
-        <div className="mt-2 space-y-3 pl-[42px]">
+        <div className="mt-2 space-y-3 md:pl-[58px]">
           {(needsAttention || updateOffer) && (
             <div className="space-y-1.5">
               {installing && <p className="font-sans text-[11px] text-text-muted">Installing…</p>}
@@ -355,9 +355,10 @@ export function ProviderUnit({
 function UsageCard({ now, usage }: { now: Date; usage: ProviderUsageRow }) {
   const isAvailable = usage.status === 'available';
   const errorMessage = providerUsageErrorMessage(usage);
-  const { plan, rest } = splitExtras(usage.extras);
+  const { plan: usagePlan, rest } = splitExtras(usage.extras);
   const name = usage.account;
   const connection = usage.connection;
+  const plan = connection?.method === 'subscription' && usagePlan === 'Subscription' ? null : usagePlan;
 
   return (
     <div className="rounded-md border border-border-soft bg-surface-raised px-3.5 py-3 shadow-lift">

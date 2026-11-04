@@ -250,7 +250,7 @@ export default function ProvidersPage() {
       <div className="py-5">
         {usageData?.providers.some((row) => row.connection) && (
           <p className="mb-5 font-sans text-[11px] leading-relaxed text-text-subtle">
-            Connections reflect this machine’s CLI settings and service environment. Agent overrides and custom launchers may differ. Configured does not verify connectivity.
+            Machine defaults; agent overrides may differ. “Configured” does not verify connectivity.
           </p>
         )}
               {usageLoading || cliLoading ? (

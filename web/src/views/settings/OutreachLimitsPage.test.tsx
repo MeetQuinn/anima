@@ -67,7 +67,7 @@ describe('Outreach limits page', () => {
     expect(screen.getByText('1 person')).toBeTruthy();
     expect(screen.getByText('0 people')).toBeTruthy();
     expect(screen.queryByText('T456')).toBeNull();
-    expect(screen.getByText('No one listed. Agents may contact anyone in this workspace.')).toBeTruthy();
+    expect(screen.getByText('No one listed.')).toBeTruthy();
     expect(screen.queryByRole('list', { name: 'Do-not-contact members · Second' })).toBeNull();
 
     // Search opens only inside the block whose + was pressed.

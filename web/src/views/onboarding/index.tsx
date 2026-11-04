@@ -558,22 +558,20 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
       {/* hero lives outside the card now — see shell below */}
 
       {/* ---- Card header row ---- */}
-      <div className="flex items-center justify-between border-b border-border-soft px-6 py-4">
-        <div className="flex items-center gap-3">
-          {/* Very weak escape hatch back to the platform choice. Only on the
-              first numbered step during first-run — that's the one step whose
-              "back" target (the platform fork) has no step dot. Platform is a
-              remembered global choice, so this stays deliberately faint. */}
-          {step === 'agent' && firstRun && (
-            <button
-              onClick={() => setStep('platform')}
-              className="-ml-1.5 flex h-7 w-7 items-center justify-center rounded-sm text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
-              title="Back to platform"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-          )}
-          {/* Step indicator — hidden on the platform fork (a pre-step choice) */}
+      <div className="flex items-start justify-between gap-3 border-b border-border-soft px-6 py-4">
+        <div className="min-w-0 space-y-3">
+          <div className="flex items-center gap-2">
+            {step === 'agent' && firstRun && (
+              <button
+                onClick={() => setStep('platform')}
+                className="-ml-1.5 flex size-[44px] md:size-7 items-center justify-center rounded-sm text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
+                title="Back to platform"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            )}
+            <span className="font-serif text-[18px] font-semibold leading-tight text-text">{stepTitle}</span>
+          </div>
           {!onPlatformFork && (
             <div className="flex items-center gap-1">
               {numberedSteps.map((entry, index) => (
@@ -592,14 +590,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
               ))}
             </div>
           )}
-          {/* Step title */}
-          <span className="font-serif text-[15px] font-semibold text-text">{stepTitle}</span>
         </div>
         {/* X close — hidden on first-run before any agent is created (no destination behind it) */}
         {(!firstRun || createdAgentId) && (
           <button
             onClick={() => void handleClose()}
-            className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
+            className="-mt-3 flex size-[44px] shrink-0 md:-mt-1 md:size-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-elevated hover:text-text"
             title="Close"
           >
             <X className="h-4 w-4" />
@@ -628,7 +624,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                   if (e.key === 'Enter') void handleCreate();
                 }}
                 placeholder="e.g. Aria"
-                className="w-full rounded-sm border border-border-soft bg-surface px-3 py-2 font-serif text-[15px] text-text placeholder:text-text-subtle focus:border-accent focus:outline-none"
+                className="h-[44px] w-full rounded-sm border border-border-soft bg-surface px-3 py-2 font-sans text-[13px] leading-5 md:h-10 text-text placeholder:text-text-subtle focus:border-accent focus:outline-none"
               />
               {nameTouched && !derivedId && (
                 <p className="font-sans mt-1 text-[11px] text-health-error">
@@ -650,7 +646,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                   if (e.key === 'Enter') void handleCreate();
                 }}
                 placeholder="e.g. Full-stack developer"
-                className="w-full rounded-sm border border-border-soft bg-surface px-3 py-2 font-serif text-[15px] text-text placeholder:text-text-subtle focus:border-accent focus:outline-none"
+                className="h-[44px] w-full rounded-sm border border-border-soft bg-surface px-3 py-2 font-sans text-[13px] leading-5 md:h-10 text-text placeholder:text-text-subtle focus:border-accent focus:outline-none"
               />
             </div>
 
@@ -676,7 +672,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                     value={providerKind}
                     onValueChange={(v) => handleProviderChange(v as ProviderCatalogEntry['kind'])}
                   >
-                    <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
+                    <SelectTrigger className="!h-[44px] w-full font-sans text-[13px] md:!h-10">
                       <SelectValue>{(v: string) => displayProvider(v)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
@@ -708,7 +704,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                       );
                     }}
                   >
-                    <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
+                    <SelectTrigger className="!h-[44px] w-full font-sans text-[13px] md:!h-10">
                       <SelectValue>{(v: string) => providerValueLabel(v)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
@@ -726,7 +722,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                         if (v) setEffort(v);
                       }}
                     >
-                      <SelectTrigger className="!h-auto w-full py-2 font-serif text-[15px]">
+                      <SelectTrigger className="!h-[44px] w-full font-sans text-[13px] md:!h-10">
                         <SelectValue>{(v: string) => displayEffort(v)}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>

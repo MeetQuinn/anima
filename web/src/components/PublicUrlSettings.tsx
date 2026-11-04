@@ -1,6 +1,6 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Loader2, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Pencil, ShieldAlert } from 'lucide-react';
 import { PublicUrl, type PublicUrlCheck } from '@shared/public-url';
 import { checkPublicUrl, fetchPublicUrl, publicUrlCheckKey, publicUrlKey, savePublicUrl } from '@/api/public-url';
 import { linearSetupKey } from '@/api/linear';
@@ -14,10 +14,12 @@ import { Button } from '@/components/ui/button';
 export function PublicAddressForm({
   initial,
   onSaved,
+  onCancel,
   autoFocus = false,
 }: {
   initial?: string;
   onSaved?: (publicUrl: string) => void;
+  onCancel?: () => void;
   autoFocus?: boolean;
 }) {
   const client = useQueryClient();
@@ -53,8 +55,18 @@ export function PublicAddressForm({
   const inputId = useId();
   const errorId = `${inputId}-error`;
   return (
-    <form noValidate onSubmit={(event) => void save(event)} className="space-y-2">
-      <label htmlFor={inputId} className="block font-sans text-[12px] text-text-muted">
+    <form
+      noValidate
+      onSubmit={(event) => void save(event)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && onCancel && !busy) {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+      className="space-y-2"
+    >
+      <label htmlFor={inputId} className="sr-only">
         Public address
       </label>
       <div className="flex flex-col gap-2 md:flex-row">
@@ -75,11 +87,18 @@ export function PublicAddressForm({
             setSaved(false);
             setError('');
           }}
-          className="h-11 w-full min-w-0 rounded-sm border border-border-soft bg-surface-raised px-3 font-mono text-[13px] text-text outline-none placeholder:font-sans placeholder:text-text-subtle focus-visible:border-accent aria-invalid:border-health-error/60 disabled:opacity-60 md:h-10 md:flex-1"
+          className="h-[44px] w-full min-w-0 rounded-sm border border-border-soft bg-surface-raised px-3 font-mono text-[13px] text-text outline-none placeholder:font-sans placeholder:text-text-subtle focus-visible:border-accent aria-invalid:border-health-error/60 disabled:opacity-60 md:h-10 md:flex-1"
         />
-        <Button type="submit" disabled={busy || unchanged || !value.trim()} className="h-11 px-5 text-[13px] md:h-10">
-          {busy ? 'Saving…' : 'Save'}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="submit" disabled={busy || unchanged || !value.trim()} className="h-[44px] flex-1 px-5 md:h-10 md:flex-none">
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+          {onCancel && (
+            <Button type="button" variant="outline" disabled={busy} onClick={onCancel} className="h-[44px] flex-1 px-4 md:h-10 md:flex-none">
+              Cancel
+            </Button>
+          )}
+        </div>
       </div>
       {error && (
         <p id={errorId} role="alert" className="font-sans text-[12px] text-health-error">
@@ -101,9 +120,8 @@ export const SET_PASSWORD_COMMAND = 'npx -y @meetquinn/animactl@latest dashboard
 export function PublicAddressGuidance() {
   return (
     <p className="max-w-prose font-serif text-[13px] leading-relaxed text-text-muted">
-      Forward the whole address to this dashboard, for example with a Cloudflare Tunnel to the address you
-      open it at on this machine. Anyone who can open the address then reaches the dashboard, so put a
-      sign-in gateway such as Cloudflare Access in front of it or set a dashboard password. With a gateway, let{' '}
+      Forward the whole address to this dashboard, for example with a Cloudflare Tunnel. Protect it with
+      a sign-in gateway such as Cloudflare Access or a dashboard password. With a gateway, let{' '}
       <span className="font-mono text-[12px] text-text">/webhooks/</span> through: Linear can’t sign in. Linear
       apps created before this version post to <span className="font-mono text-[12px] text-text">/webhook</span>;
       let that through too, or change their webhook URL.
@@ -126,10 +144,6 @@ function failureText(check: PublicUrlCheck): string {
       return `Anima couldn’t reach itself at this address${http}. Check that your tunnel is running and forwards to this dashboard.`;
   }
 }
-
-const SET_PASSWORD = (
-  <code className="block break-words font-mono text-[11px] text-text-muted">{SET_PASSWORD_COMMAND}</code>
-);
 
 /**
  * Shown when the check opened the dashboard through the address without signing
@@ -169,17 +183,15 @@ const redirected = (status: number) => status >= 300 && status < 400;
  * redirect, an error or an unexpected page, leaves the question open.
  */
 function protection(check: PublicUrlCheck) {
-  if (check.passwordSet) return 'A dashboard password is set. The dashboard asks for it wherever it opens.';
+  if (check.passwordSet) return 'Dashboard password enabled.';
   const status = check.dashboard?.status;
   const seen = status === undefined ? undefined : redirected(status) ? `was redirected (HTTP ${status})` : `got HTTP ${status}`;
   if (status !== undefined && asksFirst(status))
-    return `No dashboard password is set. When Anima opened the dashboard through this address without signing in, something in front of it asked for sign-in or refused (HTTP ${status}).`;
+    return `No dashboard password. The address asked for sign-in or refused access (HTTP ${status}).`;
   return (
     <>
-      No dashboard password is set.{' '}
-      {seen && `The dashboard check ${seen}, which doesn’t show whether the dashboard is open at this address. `}
-      If the whole address is forwarded here, anyone who opens it gets the dashboard unless a sign-in gateway
-      in front of it asks first. To have the dashboard ask too, set a password on this machine: {SET_PASSWORD}
+      No dashboard password. {seen ? `The dashboard check ${seen}; access protection is unconfirmed.` : 'Access protection is unconfirmed.'}{' '}
+      Use a sign-in gateway or set a dashboard password.
     </>
   );
 }
@@ -228,7 +240,7 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
       {result.reachable ? (
         <div role="status" className="space-y-1 font-sans text-[12px] leading-relaxed">
           <p className="flex flex-wrap items-center gap-x-1.5 text-health-ok">
-            <Check className="size-3.5" aria-hidden="true" /> Reachable. Requests to this address arrive at this Anima.
+            <Check className="size-3.5" aria-hidden="true" /> Address reaches this Anima.
             <span className="text-text-subtle">{again}</span>
           </p>
           {!open && <p className="max-w-prose text-text-subtle">{protection(result)}</p>}
@@ -250,6 +262,16 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
 }
 
 export default function PublicUrlSettings() {
+  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  useEffect(() => {
+    if (!editing && returnFocus.current) {
+      editButton.current?.focus();
+      returnFocus.current = false;
+    }
+  }, [editing]);
   const query = useQuery({ queryKey: publicUrlKey, queryFn: fetchPublicUrl, retry: false });
   return (
     <section id="public-url" aria-labelledby="public-url-title" className="space-y-4">
@@ -258,8 +280,7 @@ export default function PublicUrlSettings() {
           Public address
         </h3>
         <p className="max-w-prose font-serif text-[13px] leading-relaxed text-text-muted">
-          One HTTPS address for this Anima. Integrations like Linear build their webhook and callback URLs
-          from it.
+          Shared by all agents for integration webhooks and callbacks.
         </p>
       </div>
       {query.isPending && (
@@ -280,16 +301,63 @@ export default function PublicUrlSettings() {
         </p>
       )}
       {query.data && (
-        <PublicAddressForm initial={query.data.publicUrl} />
+        query.data.publicUrl && !editing ? (
+          <div className="flex items-start justify-between gap-3">
+            <code className="min-w-0 break-all py-2 font-mono text-[13px] leading-5 text-text">
+              {query.data.publicUrl}
+            </code>
+            <Button
+              ref={editButton}
+              variant="outline"
+              aria-label="Edit public address"
+              onClick={() => {
+                setSaved(false);
+                returnFocus.current = true;
+                setEditing(true);
+              }}
+              className="h-[44px] gap-1.5 px-3 md:h-9"
+            >
+              <Pencil className="size-3.5" aria-hidden="true" /> Edit
+            </Button>
+          </div>
+        ) : (
+          <PublicAddressForm
+            initial={query.data.publicUrl}
+            autoFocus={editing}
+            onCancel={query.data.publicUrl ? () => setEditing(false) : undefined}
+            onSaved={() => {
+              setSaved(true);
+              setEditing(false);
+            }}
+          />
+        )
       )}
-      {query.data?.publicUrl && <PublicAddressCheck publicUrl={query.data.publicUrl} />}
-      {query.data && <PublicAddressGuidance />}
-      {query.data?.publicUrl && (
+      {query.data?.publicUrl && editing && (
         <p className="max-w-prose font-sans text-[12px] leading-relaxed text-text-subtle">
-          If you change the address, also update the webhook and callback URLs in Linear apps you
-          already created.
+          If you change this address, update existing Linear apps’ webhook and callback URLs too.
         </p>
       )}
+      {saved && !editing && (
+        <p role="status" className="flex items-center gap-1.5 font-sans text-[12px] text-health-ok">
+          <Check className="size-3.5" aria-hidden="true" /> Saved for all agents
+        </p>
+      )}
+      {query.data?.publicUrl && <PublicAddressCheck publicUrl={query.data.publicUrl} />}
+      {query.data && (
+        <details open={!query.data.publicUrl} className="group border-t border-border-soft pt-3">
+          <summary className="min-h-[44px] cursor-pointer py-3 font-sans text-[12px] md:min-h-0 md:py-1 text-text-muted hover:text-text">
+            Setup and access protection
+          </summary>
+          <div className="mt-2 space-y-3">
+            <PublicAddressGuidance />
+            <div className="space-y-1 font-sans text-[12px] text-text-muted">
+              <p>Set a dashboard password on this machine:</p>
+              <code className="block break-words font-mono text-[11px]">{SET_PASSWORD_COMMAND}</code>
+            </div>
+          </div>
+        </details>
+      )}
+
     </section>
   );
 }

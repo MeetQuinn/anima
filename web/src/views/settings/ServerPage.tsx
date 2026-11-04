@@ -112,7 +112,7 @@ export default function ServerPage() {
 
           {/* Meta — Version + Home as a key-value list. Extend with more rows. */}
           <div className="py-5">
-            <dl className="grid grid-cols-[72px_1fr] gap-x-4 gap-y-5">
+            <dl className="grid grid-cols-1 gap-x-4 gap-y-2 md:grid-cols-[72px_minmax(0,1fr)] md:gap-y-5">
               <MetaRow label="Version">
                 {buildLine && (
                   <div className="min-w-0 break-all font-mono text-[12px] text-text">
@@ -148,7 +148,7 @@ export default function ServerPage() {
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <>
-      <dt className="pt-0.5 font-sans text-[10px] font-medium uppercase tracking-widest text-text-subtle">
+      <dt className="pt-0.5 [&:not(:first-child)]:mt-3 md:[&:not(:first-child)]:mt-0 font-sans text-[10px] font-medium uppercase tracking-widest text-text-subtle">
         {label}
       </dt>
       <dd className="min-w-0">{children}</dd>

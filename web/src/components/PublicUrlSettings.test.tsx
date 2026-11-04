@@ -55,27 +55,29 @@ it('validates a global origin, saves it normalized, refreshes the Linear setup a
   expect(api.save).toHaveBeenLastCalledWith('https://anima.example.com');
   await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['linear', 'setup'] }));
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ['server', 'public-url-check'] });
-  expect((input as HTMLInputElement).value).toBe('https://anima.example.com');
-  expect(save().disabled).toBe(true);
+  expect(screen.queryByRole('textbox', { name: 'Public address' })).toBeNull();
+  expect(screen.getByText('https://anima.example.com')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Edit public address' })).toBeTruthy();
 });
 
 it('a saved address is checked: one forwarding target, and what to update after changing it', async () => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   mount();
-  await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
+  await screen.findByText(/Address reaches this Anima\./);
   expect(api.check).toHaveBeenCalledTimes(1);
-  expect(screen.getByText('A dashboard password is set. The dashboard asks for it wherever it opens.')).toBeTruthy();
+  expect(screen.getByText('Dashboard password enabled.')).toBeTruthy();
   expect(screen.getByText(/Forward the whole address to this dashboard/)).toBeTruthy();
   expect(screen.queryByText('/api/linear/oauth/callback')).toBeNull();
-  expect(screen.getByText(/also update the webhook and callback URLs/)).toBeTruthy();
-  expect(save().disabled).toBe(true);
+  expect(screen.queryByText(/update existing Linear apps’ webhook and callback URLs/)).toBeNull();
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(screen.getByText('Setup and access protection').closest('details')?.open).toBe(false);
 });
 
-it('without a dashboard password and no answer for the dashboard path, the check says a forwarded address is open unless a gateway asks first', async () => {
+it('without a dashboard password or a dashboard answer, protection remains unconfirmed', async () => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false }));
   mount();
-  await screen.findByText(/No dashboard password is set\. If the whole address is forwarded here, anyone who opens it gets the\s+dashboard unless a sign-in gateway/);
+  await screen.findByText(/No dashboard password\. Access protection is unconfirmed/);
   expect(screen.getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
 });
 
@@ -92,23 +94,23 @@ it('warns prominently when Anima opened the dashboard through the address withou
   expect(within(alert).getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
   // Still reachable, and no line beside it says what protects the dashboard.
   const status = screen.getByRole('status');
-  expect(status.textContent).toContain('Reachable. Requests to this address arrive at this Anima.');
+  expect(status.textContent).toContain('Address reaches this Anima.');
   expect(status.textContent).not.toMatch(/password|gateway|couldn’t open/);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
 });
 
-const UNCONFIRMED = /If the whole address is forwarded here, anyone who opens it gets the\s+dashboard unless a sign-in gateway/;
+const UNCONFIRMED = /protection is unconfirmed/i;
 
 it.each([
-  [{ passwordSet: true, dashboard: { open: false, status: 401 } }, 'A dashboard password is set. The dashboard asks for it wherever it opens.'],
-  [{ passwordSet: true, dashboard: { open: false, status: 502 } }, 'A dashboard password is set. The dashboard asks for it wherever it opens.'],
-  [{ passwordSet: false, dashboard: { open: false, status: 401 } }, 'something in front of it asked for sign-in or refused (HTTP 401).'],
-  [{ passwordSet: false, dashboard: { open: false, status: 403 } }, 'something in front of it asked for sign-in or refused (HTTP 403).'],
+  [{ passwordSet: true, dashboard: { open: false, status: 401 } }, 'Dashboard password enabled.'],
+  [{ passwordSet: true, dashboard: { open: false, status: 502 } }, 'Dashboard password enabled.'],
+  [{ passwordSet: false, dashboard: { open: false, status: 401 } }, 'The address asked for sign-in or refused access (HTTP 401).'],
+  [{ passwordSet: false, dashboard: { open: false, status: 403 } }, 'The address asked for sign-in or refused access (HTTP 403).'],
 ])('no warning, and what asked first, when the dashboard did not open at the address: %o', async (result, message) => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, ...result }));
   mount();
-  await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
+  await screen.findByText(/Address reaches this Anima\./);
   const status = screen.getByRole('status');
   expect(status.textContent).toContain(message);
   expect(status.textContent).not.toMatch(UNCONFIRMED);
@@ -130,11 +132,12 @@ it.each([
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false, dashboard: { open: false, status: code } }));
   mount();
-  await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
+  await screen.findByText(/Address reaches this Anima\./);
   const status = screen.getByRole('status');
-  expect(status.textContent).toContain(`The dashboard check ${seen}, which doesn’t show whether the dashboard is open at this address.`);
+  expect(status.textContent).toContain(`The dashboard check ${seen}; access protection is unconfirmed.`);
   expect(status.textContent).toMatch(UNCONFIRMED);
-  expect(within(status).getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
+  expect(status.textContent).toContain('Use a sign-in gateway or set a dashboard password.');
+  expect(screen.getByText('Setup and access protection').closest('details')?.open).toBe(false);
   expect(status.textContent).not.toMatch(/asked for sign-in|Keep/);
   expect(screen.queryByRole('alert')).toBeNull();
 });
@@ -162,7 +165,7 @@ it.each([
   expect(alert.textContent).toContain('Not reachable yet');
   expect(alert.textContent).toContain(message);
   fireEvent.click(within(alert).getByRole('button', { name: 'Check again' }));
-  await screen.findByText(/Reachable\. Requests to this address arrive at this Anima\./);
+  await screen.findByText(/Address reaches this Anima\./);
 });
 
 it('a failed read offers a retry instead of an empty form', async () => {
@@ -173,4 +176,34 @@ it('a failed read offers a retry instead of an empty form', async () => {
   expect(screen.queryByText(/private-read-error/)).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await screen.findByRole('textbox', { name: 'Public address' });
+});
+
+it('edits a saved address on demand, cancels without saving, and returns to the saved value', async () => {
+  api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
+  api.save.mockResolvedValue({ publicUrl: 'https://new.example.com' });
+  mount();
+  const edit = await screen.findByRole('button', { name: 'Edit public address' });
+  expect(screen.queryByRole('textbox')).toBeNull();
+  fireEvent.click(edit);
+  let input = screen.getByRole('textbox', { name: 'Public address' }) as HTMLInputElement;
+  expect(document.activeElement).toBe(input);
+  expect(screen.getByText(/update existing Linear apps’ webhook and callback URLs/)).toBeTruthy();
+  expect(input.value).toBe('https://anima.example.com');
+  expect(save().disabled).toBe(true);
+  fireEvent.change(input, { target: { value: 'https://discard.example.com' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(api.save).not.toHaveBeenCalled();
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit public address' }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Edit public address' }));
+  input = screen.getByRole('textbox', { name: 'Public address' }) as HTMLInputElement;
+  expect(input.value).toBe('https://anima.example.com');
+  fireEvent.change(input, { target: { value: 'https://new.example.com/' } });
+  fireEvent.click(save());
+  await screen.findByText('Saved for all agents');
+  expect(api.save).toHaveBeenCalledWith('https://new.example.com');
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(screen.getByText('https://new.example.com')).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit public address' }));
 });

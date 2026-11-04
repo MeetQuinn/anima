@@ -218,7 +218,7 @@ function WorkspaceBlock({ workspace, platformLabel }: { workspace: ContactWorksp
         </ul>
       ) : (
         <p className="mt-1.5 border-t border-border-soft pb-1 pt-2.5 text-[12px] text-text-subtle">
-          No one listed. Agents may contact anyone in this workspace.
+          No one listed.
         </p>
       )}
       {notice && (

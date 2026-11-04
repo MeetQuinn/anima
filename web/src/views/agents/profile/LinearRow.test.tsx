@@ -149,7 +149,7 @@ it('shows whether Linear can reach the public address while connecting', async (
   expect(alert.textContent).toContain('A sign-in page or access rule answered (HTTP 302). Let /webhooks/ through it');
   api.check.mockResolvedValueOnce({ publicUrl: setup.publicUrl, reachable: true, status: 200, passwordSet: true, checkedAt: '2026-11-03T00:00:01Z' });
   fireEvent.click(within(alert).getByRole('button', { name: 'Check again' }));
-  await within(dialog).findByText(/Reachable\. Requests to this address arrive at this Anima\./);
+  await within(dialog).findByText(/Address reaches this Anima\./);
   expect(api.check).toHaveBeenCalledTimes(2);
 });
 
@@ -215,7 +215,7 @@ it('keeps setup behind the row and contains and restores keyboard focus on dismi
     const dialog = await openDialog();
     expect(document.activeElement).toBe(dialog);
     await screen.findByRole('link', { name: 'Create app in Linear' });
-    await within(dialog).findByText(/Reachable\./);
+    await within(dialog).findByText(/Address reaches this Anima\./);
     fireEvent.keyDown(dialog, { key: 'Tab' });
     expect(document.activeElement).toBe(closeButton());
     fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
@@ -376,6 +376,10 @@ it('connected: OAuth success is done, with facts, no delivery-test gate, and a c
   expect(fact('Local listener').textContent).toBe('Listening');
   expect(fact('Last event').textContent).not.toBe('None yet');
   expect(fact('Last event').getAttribute('title')).toBeTruthy();
+  const details = within(dialog).getByText('Connection details').closest('details')!;
+  expect(details.open).toBe(false);
+  expect(within(dialog).getByText('Local listener').closest('details')).toBeNull();
+  fireEvent.click(within(dialog).getByText('Connection details'));
   expect(fact('Client ID').textContent).toBe('synthetic-client');
   // Stored and accepted: nothing to do, so no action is offered.
   expect(fact('Client secret').textContent).toBe('Stored on this machine');
@@ -410,6 +414,7 @@ it.each([
   await screen.findByText('Not receiving events');
   const dialog = await openDialog('Manage');
   const alert = within(dialog).getByRole('alert');
+  expect(alert.closest('details')).toBeNull();
   expect(alert.textContent).toContain('Anima can’t receive Linear events');
   expect(alert.textContent).toContain(message);
   expect(within(alert).queryByRole('link')).toBeNull();
@@ -431,7 +436,7 @@ it.each([
   expect(screen.queryByRole('alert')).toBeNull();
   expect(dialog.textContent).not.toMatch(/\bport\b/i);
   expect(dialog.textContent).toContain(
-    'Check the public address, and the app’s webhook URL and event subscriptions in Linear.',
+    'Check the public address, webhook URL and event subscriptions in Linear.',
   );
   expect(within(dialog).getByRole('link', { name: 'public address' }).getAttribute('href')).toBe('/settings/server#public-url');
 });
@@ -655,6 +660,7 @@ it('reauthorizes a connected app with stored credentials and shows missing permi
   await screen.findByText('Authorize again for new permissions');
   const dialog = await openDialog('Manage');
   expect(within(dialog).queryByLabelText('Client secret')).toBeNull();
+  expect(within(dialog).getByRole('button', { name: 'Authorize again' }).closest('details')).toBeNull();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize again' }));
   await waitFor(() => expect(api.open).toHaveBeenCalledWith(authorizationUrl));
   expect(api.reauthorize).toHaveBeenCalledWith('scout', { installationId: 'installation-1' });
@@ -672,6 +678,7 @@ it('asks only a legacy connection for the missing secret and clears it after sub
   mount();
   await screen.findByText('Demo workspace');
   const dialog = await openDialog('Manage');
+  expect(within(dialog).getByRole('button', { name: 'Authorize again' }).closest('details')).toBeNull();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize again' }));
   const input = within(dialog).getByLabelText('Client secret') as HTMLInputElement;
   fireEvent.change(input, { target: { value: 'has space' } });
