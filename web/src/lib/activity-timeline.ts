@@ -1,5 +1,5 @@
 import { dateKey } from '@/lib/format';
-import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem } from '@/lib/activity-feed';
+import { buildActivityFeed, buildMessageFeed, type ActivityFeedItem, type SurfaceChip } from '@/lib/activity-feed';
 import { isNarrativeStep } from '@/lib/activities';
 import { isMessageItem } from '@/lib/message-model';
 import type { Activity as ActivityRecord, AgentActivityFeedPage } from '@shared/activity';
@@ -224,6 +224,34 @@ export function buildTimelineByDay(
   }
   result.sort(([a], [b]) => a.localeCompare(b));
   return result;
+}
+
+// Task context spans author groups and tool folds. Unidentified API calls keep
+// their own metadata; their position never assigns them to the surrounding issue.
+export function buildLinearIssueHeadings(days: [string, TimelineEntry[]][]): Map<ActivityFeedItem, SurfaceChip> {
+  const headings = new Map<ActivityFeedItem, SurfaceChip>();
+  for (const [, entries] of days) {
+    let current: SurfaceChip | undefined;
+    for (const entry of entries) {
+      if (entry.type !== 'conv') continue;
+      const item = entry.item;
+      if (item.kind === 'system-event') continue;
+      const surface = 'surface' in item ? item.surface : undefined;
+      if (surface?.platform !== 'linear') {
+        current = undefined;
+        continue;
+      }
+      if (!surface.issueKey) continue;
+      if (!current || surface.issueKey !== current.issueKey) {
+        current = { ...surface };
+        headings.set(item, current);
+      } else {
+        if (!current.issueTitle && surface.issueTitle) current.issueTitle = surface.issueTitle;
+        if (!current.href && surface.href) current.href = surface.href;
+      }
+    }
+  }
+  return headings;
 }
 
 export function oldestConversationTimestamp(conversationItems: ActivityFeedItem[]): number | null {

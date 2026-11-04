@@ -4,6 +4,7 @@ import { buildSchema, parse, validate } from 'graphql';
 // users, delegate and agentSessions fields checked on Nov 3; IDComparator.in and
 // User.avatarUrl (do-not-contact lookups) on Nov 4.
 // fileUpload / UploadFile and issueUpdate / agentSessionUpdate payloads checked through live introspection on Nov 4.
+// IssueArchivePayload, DeletePayload and their mutation arguments checked on Nov 4.
 // Unlike substring-only mocks, this rejects malformed queries and union selections.
 const schema = buildSchema(`
   scalar JSONObject
@@ -24,6 +25,10 @@ const schema = buildSchema(`
     issueCreate(input: IssueCreateInput!): IssuePayload!
     commentCreate(input: CommentCreateInput!): CommentPayload!
     issueUpdate(id: String!, input: IssueUpdateInput!): IssuePayload!
+    issueArchive(id: String!, trash: Boolean): IssueArchivePayload!
+    issueUnarchive(id: String!): IssueArchivePayload!
+    issueDelete(id: String!, permanentlyDelete: Boolean): IssueArchivePayload!
+    commentDelete(id: String!): DeletePayload!
     agentActivityCreate(input: AgentActivityCreateInput!): ActivityPayload!
     agentSessionUpdate(id: String!, input: AgentSessionUpdateInput!): SessionPayload!
     agentSessionCreateOnIssue(input: AgentSessionCreateOnIssue!): SessionPayload!
@@ -43,6 +48,8 @@ const schema = buildSchema(`
   type PageInfo { hasNextPage: Boolean!, endCursor: String }
   type IssueSearchPayload { nodes: [Issue!]!, pageInfo: PageInfo! }
   type IssuePayload { success: Boolean!, issue: Issue }
+  type IssueArchivePayload { lastSyncId: Float!, success: Boolean!, entity: Issue }
+  type DeletePayload { lastSyncId: Float!, success: Boolean!, entityId: String! }
   type CommentPayload { success: Boolean!, comment: Comment }
   type Comment { id: ID!, issueId: String, agentSession: AgentSession, body: String!, url: String!, createdAt: String!, issue: Issue, parent: Comment, user: User, children(first: Int, after: String, filter: CommentFilter): CommentConnection! }
   input CommentFilter { user: UserFilter, parent: NullableCommentFilter }

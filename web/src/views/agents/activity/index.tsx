@@ -23,6 +23,7 @@ import { buildActivityAuthorResolvers } from '@/lib/activity-authors';
 import {
   activityCoverageDecision,
   buildBlocks,
+  buildLinearIssueHeadings,
   buildTimelineByDay,
   currentTurnHasStep as buildCurrentTurnHasStep,
   latestCurrentItemActivity as buildLatestCurrentItemActivity,
@@ -608,6 +609,7 @@ export default function Activity() {
     () => buildTimelineByDay(conversationItems, stepItems),
     [conversationItems, stepItems],
   );
+  const linearIssueHeadings = useMemo(() => buildLinearIssueHeadings(timelineByDay), [timelineByDay]);
 
   // The live run's trailing steps are the last fold in the latest day. While the
   // run is current we force that fold open (auto-expand); when currentItemId
@@ -757,7 +759,7 @@ export default function Activity() {
       return (
         <Fragment key={`${keyPrefix}:b:${bi}`}>
           {groupByAuthor(block.items, resolveAuthor, resolveSurface).map((group, gi) => group.surface?.platform === 'linear' ? (
-            <LinearActivityGroup key={`${keyPrefix}:b:${bi}:${gi}`} group={group} agentId={agentId ?? ''} agentName={agent?.profile?.displayName} />
+            <LinearActivityGroup key={`${keyPrefix}:b:${bi}:${gi}`} group={group} heading={linearIssueHeadings.get(group.items[0]!.item)} agentId={agentId ?? ''} agentName={agent?.profile?.displayName} />
           ) : (
             <MessageGroupRow
               key={`${keyPrefix}:b:${bi}:${gi}`}

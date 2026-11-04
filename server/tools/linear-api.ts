@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { activityServiceForAgent, type ActivityService } from '../activities/activity.service.js';
-import type { LinearIdentityService } from '../linear/identity.service.js';
+import { linearRequestNotSent, type LinearIdentityService } from '../linear/identity.service.js';
 import { assertLinearContactAllowed } from '../linear/contact-policy.js';
 import { resolveToolItemId } from './tool-context.js';
 import { describeLinearApi, summarizeLinearApi } from '../linear/api-summary.js';
@@ -31,8 +31,9 @@ export async function runLinearApi(identity: LinearIdentityService, input: ApiIn
   let result: unknown;
   try { result = await identity.request(input.query, input.variables, z.unknown(), input.operationName); }
   catch (error) {
-    const failed = { ...payload, status: 'failed', outcome: 'unknown' } as Record<string, unknown>;
-    if (error instanceof LinearApiError) {
+    const notSent = linearRequestNotSent(error);
+    const failed = { ...payload, status: 'failed', outcome: notSent ? 'not_sent' : 'unknown' } as Record<string, unknown>;
+    if (!notSent && error instanceof LinearApiError) {
       if (error.failure) failed.failure = error.failure;
       if (error.status) failed.httpStatus = error.status;
     }

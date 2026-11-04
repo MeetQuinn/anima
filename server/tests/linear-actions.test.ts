@@ -551,6 +551,10 @@ test('API display summaries follow selected schema paths and preserve the exact 
       result: { issue: { identifier: 'ANI-31', title: 'PRIVATE_WRONG_ISSUE' } }, summary: undefined,
     },
     {
+      query: 'query { issue(id:"ANI-30") { identifier url } }', variables: {},
+      result: { issue: { identifier: 'ANI-30', url: 'https://linear.app/example/issue/ANI-31' } }, summary: { issueKey: 'ANI-30', found: true },
+    },
+    {
       query: 'mutation { first:issueUpdate(id:"ANI-30",input:{stateId:"PRIVATE_A"}) { success } second:issueUpdate(id:"ANI-31",input:{stateId:"PRIVATE_B"}) { success } }',
       variables: {}, result: { first: { success: true }, second: { success: false } }, summary: undefined,
     },
@@ -584,4 +588,48 @@ test('API display summaries follow selected schema paths and preserve the exact 
   }
   assert.equal(calls, cases.length, 'display metadata performs no lookups or retries');
   assert.equal((await messageServiceForAgent('scout').list()).entries.length, 0);
+}));
+
+for (const failure of ['invalid_grant', 'server_error', 'unreadable', 'network'] as const) {
+  test(`API audit distinguishes unsent requests from token endpoint failures: ${failure}`, async () => withTempAnimaHome(async (home) => {
+    const fake = new FakeLinear();
+    const { identity, store } = await seedLinear(home, fake);
+    await store.update(file => ({ ...file, installation: { ...file.installation!, expiresAt: 0 } }));
+    fake.refreshFailure = failure;
+    await assert.rejects(runLinearApi(identity, { query: 'mutation { issueArchive(id:"ANI-30") { success } }', variables: {} }));
+    const rows = await activityServiceForAgent('scout').readAll();
+    assert.equal(fake.tokenCalls, 1);
+    assert.equal(fake.calls.length, 0, 'No GraphQL request leaves the client');
+    assert.deepEqual(rows.map(row => row.type), ['tool.call.started', 'tool.call.failed']);
+    assert.equal(rows[1]!.payload?.outcome, 'not_sent');
+    assert.equal(rows[1]!.payload?.failure, undefined);
+    assert.equal(rows[1]!.payload?.httpStatus, undefined);
+    assert.doesNotMatch(JSON.stringify(rows), /private|sentinel|token/i);
+  }));
+}
+
+test('archive and delete summaries follow their schema payloads, including aliased entity fields', async () => withTempAnimaHome(async (home) => {
+  let calls = 0;
+  const fake = new FakeLinear();
+  fake.fetch = async (_url, init) => {
+    calls++;
+    const { query } = JSON.parse(String(init?.body));
+    assert.deepEqual(linearQueryErrors(query), []);
+    const comment = query.includes('commentDelete');
+    return Response.json({ data: { action: comment ? { ok: true, entityId: 'PRIVATE_COMMENT_ID' }
+      : { ok: true, object: { key: issue.identifier, heading: issue.title, link: issue.url } } } });
+  };
+  const { identity } = await seedLinear(home, fake);
+  for (const field of ['issueArchive', 'issueUnarchive', 'issueDelete', 'commentDelete']) {
+    const selected = field === 'commentDelete' ? 'entityId' : 'object:entity { key:identifier heading:title link:url }';
+    const query = `mutation($id:String!) { action:${field}(id:$id) { ok:success ${selected} } }`;
+    await runLinearApi(identity, { query, variables: { id: issue.id } });
+    const last = (await activityServiceForAgent('scout').readAll()).at(-1)!;
+    assert.deepEqual(last.payload?.summary, field === 'commentDelete' ? { success: true }
+      : { success: true, issueKey: issue.identifier, issueTitle: issue.title, issueUrl: issue.url });
+    assert.doesNotMatch(JSON.stringify(last), /PRIVATE_|object|heading/);
+  }
+  assert.equal(calls, 4);
+  assert.ok(linearQueryErrors('mutation { issueArchive(id:"ANI-30") { issue { identifier } } }').length > 0);
+  assert.ok(linearQueryErrors('mutation { commentDelete(id:"comment") { comment { issue { identifier } } } }').length > 0);
 }));

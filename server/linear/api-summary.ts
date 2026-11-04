@@ -15,9 +15,9 @@ export type LinearApiOperation = {
 const FIELD_NAME = /^[_A-Za-z][_0-9A-Za-z]{0,63}$/;
 const ISSUE_ID_ARGUMENT = new Set(['issue', 'issueUpdate', 'issueArchive', 'issueUnarchive', 'issueDelete']);
 const ISSUE_INPUT_ARGUMENT = new Set(['commentCreate', 'attachmentLinkURL', 'agentSessionCreateOnIssue']);
-const ISSUE_RESULT_PATHS: Record<string, string[]> = {
-  issue: [], issueCreate: ['issue'], issueUpdate: ['issue'], issueArchive: ['issue'], issueUnarchive: ['issue'], issueDelete: ['issue'],
-  comment: ['issue'], commentCreate: ['comment', 'issue'], commentUpdate: ['comment', 'issue'], commentDelete: ['comment', 'issue'],
+const ISSUE_RESULT_PATHS: Record<string, string[] | null> = {
+  issue: [], issueCreate: ['issue'], issueUpdate: ['issue'], issueArchive: ['entity'], issueUnarchive: ['entity'], issueDelete: ['entity'],
+  comment: ['issue'], commentCreate: ['comment', 'issue'], commentUpdate: ['comment', 'issue'], commentDelete: null,
   agentSession: ['issue'], agentSessionCreateOnIssue: ['agentSession', 'issue'], agentSessionCreateOnComment: ['agentSession', 'issue'], agentSessionUpdate: ['agentSession', 'issue'],
   agentActivityCreate: ['agentActivity', 'agentSession', 'issue'], attachmentLinkURL: ['attachment', 'issue'],
 };

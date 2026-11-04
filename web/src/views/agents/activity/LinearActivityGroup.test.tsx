@@ -18,12 +18,24 @@ it('shows task identity and separates progress from a result using recorded type
     linearKind: linearKind as 'thought' | 'response', platform: 'linear', issueKey: 'ANI-30', issueTitle: 'Clear activity', timestamp,
     source: { kind: 'activity' as const, id: String(index) },
   })) });
-  render(<LinearActivityGroup group={group(items)} agentId="ada" agentName="Ada" />);
+  render(<LinearActivityGroup group={group(items)} heading={surface} agentId="ada" agentName="Ada" />);
   expect(screen.getByRole('link', { name: 'Open ANI-30 in Linear' }).getAttribute('href')).toBe(surface.href);
   expect(screen.getByText('Clear activity')).toBeTruthy();
   expect(screen.getByText('progress update')).toBeTruthy();
   expect(screen.getByText('sent a result')).toBeTruthy();
   expect(screen.getByText('The body says Done but this is progress')).toBeTruthy();
+});
+
+it('omits repeated task headings while retaining each row and author', () => {
+  const item: ActivityFeedItem = { kind: 'message-out', text: 'Second author group', platform: 'linear', timestamp, surface, isEdit: false };
+  const props = { group: group([item]), agentId: 'ada' };
+  const { container, rerender } = render(<LinearActivityGroup {...props} heading={surface} />);
+  expect(screen.getByText('Clear activity')).toBeTruthy();
+  rerender(<LinearActivityGroup {...props} />);
+  expect(container.querySelector('header')).toBeNull();
+  expect(screen.queryByText('Clear activity')).toBeNull();
+  expect(screen.getByText('Ada')).toBeTruthy();
+  expect(screen.getByText('Second author group')).toBeTruthy();
 });
 
 it('keeps missing semantic information generic rather than deriving it from the body', () => {
@@ -56,4 +68,24 @@ describe('API request details', () => {
     render(<LinearActivityGroup group={group(items)} agentId="ada" />);
     expect(screen.getByText('· Failed, outcome unknown').closest('summary')).toBeTruthy();
   });
+});
+
+it('shows an unsent request without borrowing token failure metadata or claiming a remote outcome', () => {
+  const items = buildActivityFeed({ events: [{ activityId: 'unsent', createdAt: timestamp, type: 'tool.call.failed', payload: {
+    tool: 'anima.linear.api', operation: 'mutation', fields: ['issueUpdate'], outcome: 'not_sent', httpStatus: 400, failure: 'network',
+  } }] });
+  const { container } = render(<LinearActivityGroup group={group(items)} agentId="ada" />);
+  expect(screen.getByText('· Not sent').closest('summary')).toBeTruthy();
+  expect(screen.getByText('Request not sent')).toBeTruthy();
+  expect(container.textContent).not.toMatch(/HTTP|network|outcome unknown/);
+  expect(container.querySelector('header')).toBeNull();
+});
+
+it.each([['issueLabelCreate', 'mutation'], ['workflowStates', 'query']])('does not say a recorded but undisplayed field was missing: %s', (field, operation) => {
+  const items = buildActivityFeed({ events: [{ activityId: 'other', createdAt: timestamp, type: 'tool.call.completed', payload: {
+    tool: 'anima.linear.api', operation, fields: [field],
+  } }] });
+  const { container } = render(<LinearActivityGroup group={group(items)} agentId="ada" />);
+  expect(container.querySelector('code')?.textContent).toBe(operation);
+  expect(container.textContent).not.toContain('field not recorded');
 });

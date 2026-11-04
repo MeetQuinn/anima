@@ -105,11 +105,14 @@ Activity combines the messages that woke an agent with the work that followed. E
 to inspect tool calls, file actions, messages, and errors. The current run stays open and follows
 new activity while it is running.
 
-Linear entries show the issue key and available title above a short timeline. Labels distinguish
+Linear entries show the issue key and available title once per continuous task sequence, across
+author changes and tool steps. Another issue, a non-Linear message or a new day starts a new
+heading. API calls without a recorded issue keep their own labels without adding task headings. Labels distinguish
 delegations, comments, progress, questions and results when that information was recorded. API
 reads and writes appear as action rows; expand **Details** for the operation and its recorded result.
 A completed request is not proof that a change happened. Confirmed changes use Linear's returned
-result, while failed or unconfirmed requests stay explicit. Older records may have only a generic
+result, while failed or unconfirmed requests stay explicit. A request known not to have been sent
+is labeled **Not sent**. Older records may have only a generic
 label because their issue or result was not recorded.
 
 Use this page to answer:

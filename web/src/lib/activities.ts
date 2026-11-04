@@ -163,7 +163,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (normalized === 'anima.linear.api' && payload['failureKind'] === undefined) {
     const label = linearApiLabel(payload);
     if (activity.type === 'tool.call.failed') return {
-      title: 'Linear API failed', target: `${label} · outcome unknown`, color: COLOR_FAILURE, kind: 'failure',
+      title: 'Linear API failed', target: `${label} · ${payload['outcome'] === 'not_sent' ? 'not sent' : 'outcome unknown'}`, color: COLOR_FAILURE, kind: 'failure',
     };
     // A short title, like other tool steps, leaves room for the action on a phone.
     return tool_('Linear API', label);
@@ -712,7 +712,7 @@ export interface LinearApiDisplay {
   label: string;
   detail?: string;
   result: string;
-  state: 'read' | 'confirmed' | 'unconfirmed' | 'unsuccessful' | 'failed' | 'returned';
+  state: 'read' | 'confirmed' | 'unconfirmed' | 'unsuccessful' | 'not-sent' | 'failed' | 'returned';
   operation: string;
   fields: string[];
   issueKey?: string;
@@ -740,14 +740,15 @@ export function linearApiDisplay(activity: ActivityRecord): LinearApiDisplay {
   const fallback = operation === 'mutation' ? 'Change Linear data' : operation === 'query' ? 'Read Linear data' : 'Linear request';
   let label = fields.length ? linearApiLabel(labelPayload) : fallback;
   const failed = activity.type === 'tool.call.failed';
-  const confirmed = operation === 'mutation' && summary?.success === true && single && Object.hasOwn(CONFIRMED_ACTIONS, single);
+  const confirmed = !failed && operation === 'mutation' && summary?.success === true && single && Object.hasOwn(CONFIRMED_ACTIONS, single);
   if (confirmed) label = CONFIRMED_ACTIONS[single]!.replace('{key}', issueKey ?? 'issue');
-  const state: LinearApiDisplay['state'] = failed ? 'failed' : confirmed ? 'confirmed'
+  const state: LinearApiDisplay['state'] = failed ? payload['outcome'] === 'not_sent' ? 'not-sent' : 'failed' : confirmed ? 'confirmed'
     : operation === 'mutation' ? summary?.success === false ? 'unsuccessful' : 'unconfirmed'
     : operation === 'query' ? 'read' : 'returned';
   const display: LinearApiDisplay = { label, state, operation, fields: fields.filter((field) => Object.hasOwn(LINEAR_API_ACTIONS, field)),
     result: state === 'confirmed' ? 'Linear confirmed the change' : state === 'unsuccessful' ? 'Linear reported that the change was unsuccessful'
       : state === 'unconfirmed' ? 'Request completed; the change was not confirmed'
+      : state === 'not-sent' ? 'Request not sent'
       : state === 'failed' ? operation === 'query' ? 'Read request failed' : 'Request failed; the remote outcome is unknown'
       : state === 'read' ? 'Query returned' : 'Request completed',
   };
@@ -770,7 +771,7 @@ export function linearApiDisplay(activity: ActivityRecord): LinearApiDisplay {
     }
   }
   if (details.length) display.detail = details.join(' · ');
-  if (failed) {
+  if (state === 'failed') {
     const status = payload['httpStatus'];
     if (typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599) display.result += ` (HTTP ${status})`;
     else if (payload['failure'] === 'network') display.result += ' (network error)';
