@@ -8,7 +8,8 @@ export type LinearOAuthError = z.infer<typeof OAuthErrorCode>;
 export class LinearApiError extends Error {
   constructor(message: string, readonly revoked = false, readonly status?: number, readonly failure?: 'network' | 'http' | 'response', readonly oauthError?: LinearOAuthError) { super(message); }
 }
-const Tokens = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() });
+const GrantedScopes = z.union([z.string().transform((value) => value.split(/\s+/).filter(Boolean)), z.array(z.string())]);
+const Tokens = z.object({ scope: GrantedScopes.optional(), access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() });
 type LinearTokens = z.infer<typeof Tokens>;
 export class LinearClient {
   constructor(private readonly fetcher: typeof fetch = fetch) {}

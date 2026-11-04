@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const LINEAR_OAUTH_SCOPES = ['read', 'write', 'app:assignable', 'app:mentionable', 'customer:write', 'initiative:write', 'timeSchedule:write'] as const;
+
 export const LinearConfig = z.object({
   connected: z.boolean(),
   clientId: z.string(),
@@ -37,6 +39,12 @@ export const LinearInstallRequest = z.object({
 }).strict();
 export type LinearInstallRequest = z.infer<typeof LinearInstallRequest>;
 
+export const LinearReauthorizeRequest = z.object({
+  installationId: z.string().min(1).max(256),
+  clientSecret: LinearClientSecret.optional(),
+}).strict();
+export type LinearReauthorizeRequest = z.infer<typeof LinearReauthorizeRequest>;
+
 /** Adds the client secret to an installation made before Anima stored it. */
 export const LinearClientSecretRequest = z.object({
   installationId: z.string().min(1).max(256),
@@ -72,6 +80,9 @@ export interface LinearStatus {
   clientSecretSaved?: boolean;
   /** Linear answered invalid_client when refreshing this installation's token. */
   clientRejected?: boolean;
+  /** The recorded grant does not cover the current scope set (or is unknown). */
+  needsReauthorization?: boolean;
+  reauthorizing?: boolean;
   organizationId?: string;
   appUserId?: string;
   workspaceName?: string;

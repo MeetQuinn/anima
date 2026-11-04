@@ -8,6 +8,7 @@ import { LinearRow } from './LinearRow';
 const api = vi.hoisted(() => ({
   status: vi.fn(),
   install: vi.fn(),
+  reauthorize: vi.fn(),
   remove: vi.fn(),
   refresh: vi.fn(),
   setup: vi.fn(),
@@ -20,6 +21,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/linear', () => ({
   fetchLinearStatus: api.status,
   installLinear: api.install,
+  reauthorizeLinear: api.reauthorize,
   removeLinear: api.remove,
   fetchLinearSetup: api.setup,
   linearSetupKey: ['linear', 'setup'],
@@ -644,4 +646,67 @@ it('a save whose answer is lost shows what was actually stored', async () => {
   expect(within(dialog).queryByRole('alert')).toBeNull();
   expect(dialog.textContent).not.toMatch(/Couldn’t save|Nothing was (stored|saved)/);
   expect(dialog.textContent).not.toContain('private-failure-sentinel');
+});
+
+it('reauthorizes a connected app with stored credentials and shows missing permissions on the row', async () => {
+  api.status.mockResolvedValue({ ...connected, needsReauthorization: true });
+  api.reauthorize.mockResolvedValue({ authorizationUrl });
+  mount();
+  await screen.findByText('Authorize again for new permissions');
+  const dialog = await openDialog('Manage');
+  expect(within(dialog).queryByLabelText('Client secret')).toBeNull();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize again' }));
+  await waitFor(() => expect(api.open).toHaveBeenCalledWith(authorizationUrl));
+  expect(api.reauthorize).toHaveBeenCalledWith('scout', { installationId: 'installation-1' });
+  expect(api.remove).not.toHaveBeenCalled();
+  expect(closeButton().disabled).toBe(true);
+});
+
+it('asks only a legacy connection for the missing secret and clears it after submitting', async () => {
+  api.status.mockResolvedValue({
+    ...connected,
+    clientSecretSaved: false,
+    needsReauthorization: true,
+  });
+  api.reauthorize.mockRejectedValue(new Error('private-server-sentinel'));
+  mount();
+  await screen.findByText('Demo workspace');
+  const dialog = await openDialog('Manage');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize again' }));
+  const input = within(dialog).getByLabelText('Client secret') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'has space' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize in Linear' }));
+  expect(api.reauthorize).not.toHaveBeenCalled();
+  fireEvent.change(input, { target: { value: 'synthetic-client-secret' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize in Linear' }));
+  await within(dialog).findByText('Authorization could not start. Refresh the page and try again.');
+  expect(api.reauthorize).toHaveBeenCalledWith('scout', {
+    installationId: 'installation-1',
+    clientSecret: 'synthetic-client-secret',
+  });
+  expect(input.value).toBe('');
+  expect(dialog.textContent).not.toContain('private-server-sentinel');
+  expect(api.remove).not.toHaveBeenCalled();
+  expect(closeButton().disabled).toBe(false);
+});
+
+it('keeps the connected view for pending or failed reauthorization and removes the permission prompt after success', async () => {
+  api.status.mockResolvedValue({ ...connected, needsReauthorization: true, reauthorizing: true });
+  const client = mount();
+  await screen.findByText('Demo workspace');
+  const dialog = await openDialog('Manage');
+  expect(within(dialog).getByText(/Authorization is pending in Linear/)).toBeTruthy();
+  api.status.mockResolvedValue({
+    ...connected,
+    needsReauthorization: true,
+    lastError: 'Linear authorization was declined. Prepare authorization again when ready.',
+  });
+  await refetch(client, ['agent', 'scout', 'linear']);
+  expect(await within(dialog).findByText('Authorization was declined in Linear')).toBeTruthy();
+  expect(within(dialog).getByRole('heading', { name: 'Connected to Demo workspace' })).toBeTruthy();
+  api.status.mockResolvedValue({ ...connected, needsReauthorization: false });
+  await refetch(client, ['agent', 'scout', 'linear']);
+  await waitFor(() => expect(screen.queryByText('Authorize again for new permissions')).toBeNull());
+  expect(within(dialog).queryByRole('alert')).toBeNull();
+  expect(within(dialog).getByText(/The current permissions have been granted/)).toBeTruthy();
 });

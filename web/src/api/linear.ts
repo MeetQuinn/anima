@@ -1,10 +1,12 @@
 import type { LinearSetup } from '@shared/linear-setup';
-import type { LinearClientSecretRequest, LinearClientSecretResult, LinearInstallRequest, LinearStatus } from '@shared/linear';
+import type { LinearClientSecretRequest, LinearClientSecretResult, LinearInstallRequest, LinearReauthorizeRequest, LinearStatus } from '@shared/linear';
 import { apiRequest, jsonInit } from './client';
 
 export const fetchLinearStatus = (id: string): Promise<LinearStatus> => apiRequest(`/api/agents/${encodeURIComponent(id)}/linear`);
 export const installLinear = (id: string, input: LinearInstallRequest): Promise<{ authorizationUrl: string }> =>
   apiRequest(`/api/agents/${encodeURIComponent(id)}/linear/install`, jsonInit('POST', input));
+export const reauthorizeLinear = (id: string, input: LinearReauthorizeRequest): Promise<{ authorizationUrl: string }> =>
+  apiRequest(`/api/agents/${encodeURIComponent(id)}/linear/reauthorize`, jsonInit('POST', input));
 /** Proves the secret with Linear and stores it with the refreshed tokens; the result says which. */
 export const saveLinearClientSecret = (id: string, input: LinearClientSecretRequest): Promise<{ result: LinearClientSecretResult }> =>
   apiRequest(`/api/agents/${encodeURIComponent(id)}/linear/client-secret`, jsonInit('POST', input));
