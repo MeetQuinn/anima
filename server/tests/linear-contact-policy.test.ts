@@ -150,6 +150,21 @@ test('api mutations are refused for assigneeId, subscriberIds, bodyData mention 
   assert.equal(fake.lookups, 6, 'one name lookup per refusal; none for the read or the plain write');
 }));
 
+test('an api document that cannot be classified as a read is checked like a write', async (t) => fixture(t, async ({ fake, stdin, cli, failures }) => {
+  const unclassified = [
+    // Unparseable: the closing brace is missing.
+    { query: `mutation { issueUpdate(id:"SYN-1",input:{delegateId:"${listed.id}"}) { success }` },
+    // Two operations and no operationName: none is selected.
+    { query: `query A { viewer { id } } mutation B { issueUpdate(id:"SYN-1",input:{delegateId:"${listed.id}"}) { success } }` },
+  ];
+  for (const document of unclassified) {
+    stdin(JSON.stringify(document));
+    await assert.rejects(cli('api'), /Not sent\. nicholas \([0-9a-f-]{36}\) is on/, document.query);
+  }
+  assert.equal(fake.mutations(), 0);
+  assert.deepEqual((await failures()).map((r) => [r.operation, r.failureKind]), [['unknown', 'do-not-contact'], ['unknown', 'do-not-contact']]);
+}));
+
 test('no list for the organization: no lookup and no refusal', async (t) => fixture(t, async ({ fake, stdin, cli, setList, failures }) => {
   for (const lists of [undefined, {}, { [install.organizationId]: [] }, { [randomUUID()]: [listed.id] }]) {
     await setList(lists);
