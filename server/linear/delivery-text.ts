@@ -1,4 +1,14 @@
 import { LINEAR_ISSUE_KEY } from '../../shared/linear-issue-key.js';
+import { renderEnvelope } from '../messages/envelope.js';
+
+/** A short thread root keeps a child mention such as "@agent" intelligible. */
+export function linearCommentText(body: string, root?: { id?: string; body: string } | null): string {
+  if (!root?.body) return body;
+  const excerpt = root.body.slice(0, 2000);
+  const more = root.body.length > excerpt.length ? '\n[Truncated; read the comment through anima linear api for more.]' : '';
+  const envelope = renderEnvelope([{ key: 'comment_id', value: root.id }]);
+  return `${body}\n\nThread root${envelope === '[]' ? '' : ` ${envelope}`}:\n${excerpt}${more}`;
+}
 
 /** The issue key, such as `ANI-12`, from the payload's identifier or else the issue URL. */
 export function linearIssueKey(identifier: string | null | undefined, url?: string | null): string | undefined {

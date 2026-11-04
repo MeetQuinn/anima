@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { LinearNotificationInboxItem } from '../../shared/inbox.js';
+import { isHeldInboxItem, type LinearNotificationInboxItem } from '../../shared/inbox.js';
 import { wakeQueueServiceForAgent } from './wake-queue.service.js';
 import { nowIso } from '../ids.js';
 import type { LinearInstallation } from '../storage/schema/linear.store.js';
@@ -8,16 +8,18 @@ import { LinearIdentityService } from '../linear/identity.service.js';
 import type { LinearWebhook } from '../linear/webhook.js';
 import { linearCommentItemId, withLinearCommentLock } from './linear-comment-delivery.js';
 import { isStopped, sessionStopped } from '../linear/receipt-state.js';
-import { linearIssueKey, linearNotificationEvent } from '../linear/delivery-text.js';
+import { linearCommentText, linearIssueKey, linearNotificationEvent } from '../linear/delivery-text.js';
 
 const Session = z.object({ appUser: z.object({ id: z.string() }) }).nullable();
 const CommentThread = z.object({ comment: z.object({ id: z.string(), issueId: z.string().nullable(),
-  agentSession: Session, parent: z.object({ agentSession: Session, user: z.object({ id: z.string() }).nullable(),
+  user: z.object({ id: z.string(), app: z.boolean() }).nullable(),
+  issue: z.object({ delegate: z.object({ id: z.string() }).nullable() }).nullable(),
+  agentSession: Session, parent: z.object({ id: z.string(), body: z.string(), agentSession: Session, user: z.object({ id: z.string() }).nullable(),
     children: z.object({ nodes: z.array(z.object({ id: z.string() })) }) }).nullable(),
 }) });
-// The thread root, whether this app wrote it, and whether this app replied in it.
-const COMMENT_THREAD_QUERY = `query($id:String!,$app:ID!){comment(id:$id){id issueId agentSession{appUser{id}}
-  parent{agentSession{appUser{id}} user{id} children(first:1,filter:{user:{id:{eq:$app}}}){nodes{id}}}}}`;
+// Resolve the current delegate with the comment author and thread membership.
+const COMMENT_THREAD_QUERY = `query($id:String!,$app:ID!){comment(id:$id){id issueId user{id app} issue{delegate{id}} agentSession{appUser{id}}
+  parent{id body agentSession{appUser{id}} user{id} children(first:1,filter:{user:{id:{eq:$app}}}){nodes{id}}}}}`;
 const COMMENT_TYPES = new Set(['issueNewComment', 'issueCommentMention']);
 const DELIVERED_TYPES = new Set([...COMMENT_TYPES, 'issueUnassignedFromYou', 'issueStatusChanged']);
 
@@ -47,8 +49,8 @@ export class LinearNotificationService {
     });
     let key: string;
     let text: string;
-    // Only a request addressed to the agent wakes it: a mention, or a reply in a
-    // thread it started or joined. Other events wait for its next run.
+    // Mentions, joined threads and human comments on delegated issues wake the
+    // agent. Other events wait for its next run.
     let wakes = false;
     const item: LinearNotificationInboxItem = {
       id: '', kind: 'linear_notification', installationId: install.id, organizationId: install.organizationId,
@@ -83,19 +85,15 @@ export class LinearNotificationService {
       if (n.actor?.name) item.actorName = n.actor.name;
       const issueKey = linearIssueKey(n.issue.identifier, n.issue.url);
       if (issueKey) item.issueKey = issueKey;
-      // A comment is only what its author wrote; the envelope names the issue.
+      // Start with the author's new message; the envelope names the issue.
       text = COMMENT_TYPES.has(n.type) ? n.comment?.body ?? '' : linearNotificationEvent(n.type, issueKey) ?? '';
       if (COMMENT_TYPES.has(n.type) && n.commentId) {
         key = linearCommentItemId(install.id, n.commentId);
-        if (await queue.has(key)) {
-          // An earlier notification for this comment may still be held. A mention
-          // replaces it with the request as it now reads and wakes the agent; a
-          // delivered comment stays deduplicated.
-          if (n.type === 'issueCommentMention') {
-            await this.identity.authorizedInstallation(install.id);
-            await queue.releaseHeld(key, { ...item, id: key, text });
-          }
-          return;
+        const existing = await queue.has(key);
+        if (existing) {
+          if (n.type !== 'issueCommentMention') return;
+          const queued = await queue.find(key);
+          if (!queued || !isHeldInboxItem(queued)) return;
         }
         if (Object.values((await this.identity.store.read()).receipts).some((r) => r.commentId === n.commentId)) return;
         // Replies in this app's work session arrive as immutable AgentActivity
@@ -105,8 +103,17 @@ export class LinearNotificationService {
           { id: n.commentId, app: install.appUserId }, CommentThread);
         if (comment.id !== n.commentId || comment.issueId !== n.issueId) throw new Error('Linear comment notification mismatch.');
         if (comment.agentSession?.appUser.id === install.appUserId || comment.parent?.agentSession?.appUser.id === install.appUserId) return;
+        text = linearCommentText(text, comment.parent);
+        if (existing) {
+          // Promote held context with its current body and root. Already delivered
+          // comments remain deduplicated by the queue.
+          await this.identity.authorizedInstallation(install.id);
+          await queue.releaseHeld(key, { ...item, id: key, text });
+          return;
+        }
         wakes = n.type === 'issueCommentMention' || comment.parent?.user?.id === install.appUserId
-          || Boolean(comment.parent?.children.nodes.length);
+          || Boolean(comment.parent?.children.nodes.length)
+          || comment.user?.app === false && comment.issue?.delegate?.id === install.appUserId;
       }
     }
     item.id = key;

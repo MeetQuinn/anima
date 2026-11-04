@@ -12,11 +12,13 @@ import { LinearIdentityService, linearRequestNotSent } from './identity.service.
 import { awaitsAcknowledgement, claimable, closeReceipt, endRun, isActiveRequest, isOpenRequest, isStopped, startReceipt, stopReceipt } from './receipt-state.js';
 import { LinearApiError } from './client.js';
 import type { LinearWebhook } from './webhook.js';
-import { renderEnvelope } from '../messages/envelope.js';
-import { linearIssueKey } from './delivery-text.js';
+import { linearCommentText, linearIssueKey } from './delivery-text.js';
 
 const Created = z.object({ agentActivityCreate: z.object({ success: z.literal(true), agentActivity: z.object({ id: z.string() }) }) });
 const ReadActivity = z.object({ agentActivity: z.object({ id: z.string(), agentSession: z.object({ id: z.string() }) }) });
+const SourceComment = z.object({ comment: z.object({ id: z.string(), issueId: z.string().nullable(), body: z.string(),
+  user: z.object({ id: z.string(), name: z.string() }).nullable(), parent: z.object({ id: z.string(), body: z.string() }).nullable(),
+}) });
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
 const sessionFields = 'id appUser{id} creator{id} issue{id identifier title url} comment{id} status url';
 const SessionOrigin = z.object({ agentSession: z.object({
@@ -39,25 +41,6 @@ type SessionReply = Pick<LinearReceipt, 'issueId' | 'issueKey' | 'issueTitle' | 
 // deduplication long before 30 days. Without a limit, linear.json kept every receipt
 // of every session ever seen.
 const FINISHED_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
-
-function fallbackContext(event: Extract<LinearWebhook, { type: 'AgentSessionEvent' }>): string {
-  const session = event.agentSession;
-  const comments: NonNullable<typeof event.previousComments> = [];
-  const trigger = session.comment ? { ...session.comment, id: session.comment.id ?? session.commentId ?? undefined } : undefined;
-  for (const comment of event.previousComments ?? []) {
-    if (!comment.id || comment.id !== trigger?.id && !comments.some((previous) => previous.id === comment.id)) comments.push(comment);
-  }
-  if (trigger) comments.push(trigger);
-  const thread = comments.map((comment) => {
-    const envelope = renderEnvelope([
-      { key: 'comment_id', value: comment.id },
-      { key: 'user_id', value: comment.userId },
-    ]);
-    return `${envelope === '[]' ? '' : `${envelope} `}${comment.body}`;
-  }).join('\n\n');
-  const guidance = event.guidance?.map((g) => g.body).join('\n\n');
-  return [session.issue?.title, session.issue?.description, thread, guidance ? `Guidance:\n${guidance}` : ''].filter(Boolean).join('\n\n');
-}
 
 /** Drops receipts finished more than 30 days ago, then operations whose session has no receipt left. */
 function withoutExpiredReceipts(receipts: Record<string, LinearReceipt>, operations: Record<string, LinearOperation>, now: number) {
@@ -127,7 +110,7 @@ export class LinearSessionService {
   }
 
   async receive(event: Extract<LinearWebhook, { type: 'OAuthApp' | 'AgentSessionEvent' }>, install: LinearInstallation): Promise<void> {
-    const commentId = event.type === 'AgentSessionEvent' && event.agentSession.commentId;
+    const commentId = event.type === 'AgentSessionEvent' && (event.agentSession.sourceCommentId ?? event.agentSession.commentId);
     if (commentId) return withLinearCommentLock(this.identity, commentId, () => this.receiveLocked(event, install));
     return this.receiveLocked(event, install);
   }
@@ -141,6 +124,7 @@ export class LinearSessionService {
     const session = event.agentSession;
     const eventId = event.action === 'created' ? session.id : event.agentActivity!.id;
     const key = `linear:${install.id}:${event.action}:${eventId}`;
+    const knownReceipt = (await this.identity.store.read()).receipts[key];
     let selfDelegated = false;
     let requester: { id: string; name?: string } | undefined;
     // A missing creator also describes automation and other agents. First check
@@ -169,9 +153,32 @@ export class LinearSessionService {
       }
     }
     const stopped = event.agentActivity?.signal === 'stop';
-    const hasPromptContext = Boolean(event.promptContext?.trim());
-    const text = event.action === 'prompted' ? event.agentActivity!.body ?? event.agentActivity!.content?.body ?? ''
-      : hasPromptContext ? event.promptContext! : fallbackContext(event);
+    const origin = session.comment?.userId || session.sourceCommentId ? 'mention' : 'delegation';
+    let text: string;
+    if (event.action === 'prompted') text = event.agentActivity!.body ?? event.agentActivity!.content?.body ?? '';
+    else {
+      let source: z.infer<typeof SourceComment>['comment'] | undefined;
+      if (session.sourceCommentId && !knownReceipt) {
+        ({ comment: source } = await this.identity.graphql(install.id,
+          'query($id:String!){comment(id:$id){id issueId body user{id name} parent{id body}}}',
+          { id: session.sourceCommentId }, SourceComment));
+        if (source.id !== session.sourceCommentId || source.issueId !== session.issueId) throw new Error('Linear session source comment mismatch.');
+      }
+      if (origin === 'mention') {
+        // Linear can copy a child mention into a new session root. Its source
+        // comment restores the original thread, without importing other replies.
+        const previous = event.previousComments?.find((c) => c.id !== session.commentId);
+        text = linearCommentText(session.comment?.body ?? source?.body ?? '', source ? source.parent : previous);
+        if (source?.user) requester = { id: source.user.id, name: source.user.name };
+      } else text = 'Read the issue description and comments through anima linear api to get the task.';
+      // Guidance has its own structured webhook field, so omitting promptContext
+      // does not discard workspace or team instructions.
+      const guidance = event.guidance?.map((g) => {
+        const label = g.origin?.type === 'Team' ? `Team: ${g.origin.team?.name ?? 'unknown'}` : g.origin?.type ?? 'Linear';
+        return `Guidance (${label}):\n${g.body}`;
+      });
+      text = [text, ...guidance ?? []].filter(Boolean).join('\n\n');
+    }
     const item: LinearInboxItem = {
       id: key, kind: 'linear', installationId: install.id, organizationId: install.organizationId,
       sessionId: session.id, action: event.action, text, receivedAt,
@@ -184,15 +191,14 @@ export class LinearSessionService {
       if (activity.userId ?? activity.user?.id) item.actorId = activity.userId ?? activity.user!.id;
       if (activity.user?.name) item.actorName = activity.user.name;
     } else {
-      item.contextSource = hasPromptContext ? 'prompt_context' : 'fallback';
       item.sourceTime = session.createdAt ?? event.createdAt;
       // Linear leaves out the creator when an agent delegated; the opening prompt names it.
-      const actorId = session.creatorId ?? requester?.id, actorName = session.creator?.name ?? requester?.name;
+      const actorId = requester?.id ?? session.creatorId, actorName = requester?.name ?? session.creator?.name;
       if (actorId) item.actorId = actorId;
       if (actorName) item.actorName = actorName;
       // Every session has a thread. Linear writes the root of a delegated session's thread
       // itself, so that comment has no author; an @mention opens the session in a person's thread.
-      item.origin = session.comment?.userId ? 'mention' : 'delegation';
+      item.origin = origin;
     }
     if (session.issueId) item.issueId = session.issueId;
     if (session.issue?.url) item.issueUrl = session.issue.url;
@@ -202,8 +208,9 @@ export class LinearSessionService {
     // A notification can win delivery before Linear creates/reports a session.
     // Associate the late session with that comment so Stop still reaches it,
     // without enqueueing a second request or inventing a session reply obligation.
-    const commentItemId = session.commentId && (event.action === 'created' || stopped)
-      ? linearCommentItemId(install.id, session.commentId) : undefined;
+    const commentId = session.sourceCommentId ?? session.commentId;
+    const commentItemId = commentId && (event.action === 'created' || stopped)
+      ? linearCommentItemId(install.id, commentId) : undefined;
     const queue = wakeQueueServiceForAgent(this.agentId);
     const existing = commentItemId ? await queue.find(commentItemId) : undefined;
     const heldComment = event.action === 'created' && !stopped && existing !== undefined && isHeldInboxItem(existing);
@@ -238,7 +245,7 @@ export class LinearSessionService {
           if (heldComment) receipt.heldCommentItemId = commentItemId;
         }
         if (commentDelivered) receipt.commentItemId = commentItemId;
-        if (session.commentId) receipt.commentId = session.commentId;
+        if (commentId) receipt.commentId = commentId;
         if (item.issueId) receipt.issueId = item.issueId;
         if (item.issueKey) receipt.issueKey = item.issueKey;
         if (item.issueTitle) receipt.issueTitle = item.issueTitle;

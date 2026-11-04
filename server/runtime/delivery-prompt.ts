@@ -157,6 +157,8 @@ function buildLinearDeliveryPrompt(event: LinearInboxItem | LinearNotificationIn
   const key = event.issueKey ?? linearIssueKey(undefined, event.issueUrl);
   const source = renderEnvelope([
     { key: 'issue', value: key },
+    { key: 'title', value: created ? event.issueTitle : undefined, quoted: true },
+    { key: 'url', value: created ? event.issueUrl : undefined },
     { key: 'activity_id', value: session ? event.activityId : undefined },
     { key: 'comment_id', value: session ? undefined : event.commentId },
     { key: 'time', value: event.sourceTime ? envelopeTime(event.sourceTime) : undefined },

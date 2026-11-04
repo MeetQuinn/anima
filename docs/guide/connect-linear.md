@@ -167,10 +167,13 @@ inbox notifications. They share the agent's main context and do not require a
 delegation or an open work session. The agent can reply with an ordinary comment
 or decide that no response is needed.
 
-Only requests addressed to the agent wake it: a mention, a work session, or a
-reply in a comment thread the agent started or replied in. Other notifications
-are context: other new comments, status changes, unassignment and team-access
-changes. If the agent is working, they join that work; otherwise they wait and
+A mention, a work session, or a reply in a comment thread the agent started or joined
+wakes it. Human comments also wake the agent when the issue is currently delegated to
+it, including new top-level comments and replies in other threads. Anima checks the
+current delegate when each comment arrives. App comments do not wake through delegation
+alone; direct mentions from other apps and replies in joined threads still wake.
+Other new comments, status changes, unassignment and team-access changes are context.
+If the agent is working, they join that work; otherwise they wait and
 arrive the next time it wakes. Waiting context does not count as queued work and
 does not hold up a restart. If a mention or a work session later addresses a waiting
 comment, the agent wakes for that request instead. A direct comment mention can also wake the
@@ -183,6 +186,13 @@ running work. That receipt does not claim completion; subsequent replies stay in
 comment thread, without automatic session progress or a second reply obligation.
 A Stop gets an end notice confirming the stop request, without claiming that earlier
 actions or provider background work have been undone.
+
+New sessions carry the issue key, title, URL and triggering message. A delegation asks
+the agent to fetch the issue description and comments through the API. Replies include
+a short excerpt of the thread root (up to 2,000 characters); other discussion and the
+full issue description are not included. Sessions that deliver a new request retain
+workspace and team guidance. Follow-up session prompts carry the new message.
+
 Anima filters overlapping notifications, self-authored activity
 and delivery retries. Permission-change
 notifications report added and removed team access. Reactions do not wake

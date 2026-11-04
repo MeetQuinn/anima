@@ -1,7 +1,7 @@
 /**
  * Linear's `promptContext` is markup written for models: the issue, the thread that
- * opened the session, other threads and guidance, each in its own element. Agents get it
- * unchanged. People read this rendering in the dashboard instead: the issue and its
+ * opened the session, other threads and guidance, each in its own element. Earlier inbox
+ * items stored it unchanged. People read those items in the dashboard as the issue and its
  * threads as Markdown, without the markup, Linear's boilerplate request or guidance.
  *
  * Only the documented shape is rendered: known elements, known attributes, and one of each
