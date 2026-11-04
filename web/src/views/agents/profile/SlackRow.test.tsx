@@ -113,3 +113,23 @@ it.each([
   await waitFor(() => expect(tile()?.getAttribute('data-tile')).toBe('initial'));
   expect(tile()?.textContent).toBe('D');
 });
+
+it('stays open while the new token saves, so a failed save is still shown', async () => {
+  api.manifest.mockResolvedValue({ ...upToDate, agentVersion: 3, needsUpdate: true });
+  let fail: (error: Error) => void = () => undefined;
+  api.upgrade.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Review Slack' }));
+  fireEvent.change(screen.getByPlaceholderText(/Bot User OAuth Token/), { target: { value: 'xoxb-synthetic' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(api.upgrade).toHaveBeenCalled());
+
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  expect((screen.getByRole('button', { name: 'Close Slack settings' }) as HTMLButtonElement).disabled).toBe(true);
+
+  fail(new Error('invalid_auth'));
+  expect(await within(screen.getByRole('dialog')).findByText('invalid_auth')).toBeTruthy();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+});

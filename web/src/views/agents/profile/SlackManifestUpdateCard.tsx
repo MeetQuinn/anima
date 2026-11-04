@@ -17,9 +17,11 @@ interface Props {
   agentId: string;
   /** Start expanded, e.g. inside the Slack dialog the user opened to review it. */
   defaultOpen?: boolean;
+  /** Told while the new token is being saved, so a dialog can hold itself open. */
+  onSavingChange?: (saving: boolean) => void;
 }
 
-export function SlackManifestUpdateCard({ agentId, defaultOpen = false }: Props) {
+export function SlackManifestUpdateCard({ agentId, defaultOpen = false, onSavingChange }: Props) {
   const { data } = useQuery({
     queryKey: queryKeys.agentSlackManifestUpdate(agentId),
     queryFn: () => fetchAgentSlackManifestUpdate(agentId),
@@ -52,6 +54,7 @@ export function SlackManifestUpdateCard({ agentId, defaultOpen = false }: Props)
   async function saveUpgrade() {
     if (!botToken.trim() || saving) return;
     setSaving(true);
+    onSavingChange?.(true);
     setError(null);
     try {
       await upgradeAgentSlackManifest(agentId, { botToken: botToken.trim() });
@@ -62,6 +65,7 @@ export function SlackManifestUpdateCard({ agentId, defaultOpen = false }: Props)
       setError(extractError(err));
     } finally {
       setSaving(false);
+      onSavingChange?.(false);
     }
   }
 

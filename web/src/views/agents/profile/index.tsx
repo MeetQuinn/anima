@@ -393,16 +393,16 @@ export default function Profile() {
           <AgentUsageSection agentId={agentId} />
         </Section>
 
-        {/* ── SLACK (connect flow only - the connected state lives as a Setup
-            row above) ─────────────────────────────────────────────────────── */}
+        {/* ── SLACK (connect flow only - the connected state is a row in
+            Connections above) ─────────────────────────────────────────────── */}
         {showSlackSetup && !slackConnected && (
           <Section title="Slack">
             <SlackConnectStepper agentId={agentId} onConnect={() => refreshAgentData(agentId)} />
           </Section>
         )}
 
-        {/* ── FEISHU (connect flow only - the connected state lives as a Setup
-            row above) ─────────────────────────────────────────────────────── */}
+        {/* ── FEISHU (connect flow only - the connected state is a row in
+            Connections above) ─────────────────────────────────────────────── */}
         {showFeishuSetup && !feishuConnected && (
           <Section title="Feishu">
             <FeishuConnectStepper

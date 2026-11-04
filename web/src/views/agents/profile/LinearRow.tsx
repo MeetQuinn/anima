@@ -790,7 +790,6 @@ function ClientSecretFact({
   );
 }
 
-
 function Loading() {
   return (
     <p role="status" className="font-sans text-[13px] text-text-muted">
@@ -809,4 +808,3 @@ function ReadError({ what, refresh = false, onRetry }: { what: string; refresh?:
     </p>
   );
 }
-

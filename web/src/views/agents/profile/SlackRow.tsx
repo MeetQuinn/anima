@@ -22,6 +22,8 @@ export function SlackRow({
 }) {
   const [open, setOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [savingToken, setSavingToken] = useState(false);
+  const busy = syncing || savingToken;
   const [syncError, setSyncError] = useState('');
   // Same query as the update card in the dialog, so the row knows about a
   // pending app update without a second request.
@@ -32,10 +34,10 @@ export function SlackRow({
   const updateAvailable = Boolean(manifest.data?.needsUpdate);
   const handle = `@${agentId}`;
   const close = useCallback(() => {
-    if (syncing) return;
+    if (busy) return;
     setSyncError('');
     setOpen(false);
-  }, [syncing]);
+  }, [busy]);
 
   async function syncAvatar() {
     if (syncing) return;
@@ -63,7 +65,7 @@ export function SlackRow({
         onAction={() => setOpen(true)}
       />
       {open && (
-        <ConnectionDialog platform="Slack" busy={syncing} onClose={close}>
+        <ConnectionDialog platform="Slack" busy={busy} onClose={close}>
           <div className="space-y-5">
             <ConnectionHeader title={`Connected to ${workspaceName || 'Slack'}`}>
               Mention {agentName} in a channel or send it a direct message.
@@ -72,7 +74,7 @@ export function SlackRow({
               <Fact label="Bot" value={handle} />
               <Fact label="App ID" value={appId || '—'} mono />
             </dl>
-            <SlackManifestUpdateCard agentId={agentId} defaultOpen />
+            <SlackManifestUpdateCard agentId={agentId} defaultOpen onSavingChange={setSavingToken} />
             {syncError && (
               <p role="alert" className="font-sans text-[12px] text-health-error">
                 {syncError}
