@@ -18,23 +18,23 @@ sources. There is no third list: edit a table, or the test reds.
 
 #### Emitters
 
-| module                                          | writes                             |
-| ----------------------------------------------- | ---------------------------------- |
-| `server/agents/agent.service.ts`                | agent lifecycle                    |
-| `server/asks/interactive-ask.service.ts`        | `anima ask` prompts and answers    |
-| `server/inbox/attention-suggestion-activity.ts` | attention suggestions              |
-| `server/inbox/reminder-subscriber.ts`           | preflight error/recovery attention |
-| `server/inbox/slack-subscriber.ts`              | subscription changes from Slack    |
-| `server/inbox/subscription.service.ts`          | subscription changes from the CLI  |
-| `server/memory/memory-coherence-outcome.ts`     | memory pass outcomes               |
-| `server/reminders/reminder.activity.ts`         | reminder schedule, fire, cancel    |
-| `server/runtime/activity.ts`                    | turns, messages, provider events   |
-| `server/runtime/send-hold.ts`                   | send-hold HELD local completed     |
-| `server/messages/contact-policy.service.ts`     | do-not-contact send refusal        |
-| `server/linear/contact-policy.ts`               | Linear do-not-contact refusal      |
-| `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations         |
-| `server/tools/linear-api.ts`                    | Linear API request metadata        |
-| `server/tools/tool-context.ts`                  | tool steps                         |
+| module                                          | writes                                                   |
+| ----------------------------------------------- | -------------------------------------------------------- |
+| `server/agents/agent.service.ts`                | agent lifecycle                                          |
+| `server/asks/interactive-ask.service.ts`        | `anima ask` prompts and answers                          |
+| `server/inbox/attention-suggestion-activity.ts` | attention suggestions                                    |
+| `server/inbox/reminder-subscriber.ts`           | preflight error/recovery attention                       |
+| `server/inbox/slack-subscriber.ts`              | subscription changes from Slack                          |
+| `server/inbox/subscription.service.ts`          | subscription changes from the CLI                        |
+| `server/memory/memory-coherence-outcome.ts`     | memory pass outcomes                                     |
+| `server/reminders/reminder.activity.ts`         | reminder schedule, fire, cancel                          |
+| `server/runtime/activity.ts`                    | turns, messages, provider events                         |
+| `server/runtime/send-hold.ts`                   | send-hold HELD local completed                           |
+| `server/messages/contact-policy.service.ts`     | do-not-contact send refusal                              |
+| `server/linear/contact-policy.ts`               | Linear do-not-contact refusal                            |
+| `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations                               |
+| `server/tools/linear-api.ts`                    | Linear API request metadata and bounded result summaries |
+| `server/tools/tool-context.ts`                  | tool steps                                               |
 
 #### Readers
 
@@ -93,6 +93,12 @@ projection of it.
 | **Conversation** | The timeline (messages + per-message step folds) | What a human reads to follow what the agent _did_: its output, the files/commands/searches it touched, the messages it sent, reminders, subscriptions, failures.                                                                                                                                            |
 | **Audit**        | Persisted only (no UI surface today)             | Diagnostics worth having when inspecting but noise in the narrative: session/usage stats, rate limits, retries, model reroutes, provider warnings, low-level lifecycle. Kept in `activity.jsonl`; the feed builder can expose them (`showHidden`), but since the single-timeline rework no UI control does. |
 | **Hidden**       | Never rendered                                   | Raw streaming/protocol frames, per-token deltas, `*.system.init`, `*.context.stats`, sanitized reasoning, legacy duplicate event names. Most of these are dropped before storage by design; if an old row exists, the UI never draws it.                                                                    |
+
+Linear API requests use compact action rows in the timeline, including reads and failures.
+Their issue heading and result come from recorded metadata, with **Details** for the operation
+and outcome. Only an explicit successful mutation result confirms a change; a completed request
+alone remains unconfirmed. Session message labels preserve the recorded progress, question,
+response or error kind, and older messages keep generic labels.
 
 The former "Show all steps" and "Failed only" controls were retired with the single-timeline
 rework: Conversation steps now fold behind a per-message `▸ N steps` disclosure, and failure rows

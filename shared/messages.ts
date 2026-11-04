@@ -75,6 +75,7 @@ export interface AgentMessageRecord {
   isEdit?: boolean;
   issueKey?: string;
   issueTitle?: string;
+  linearKind?: 'delegation' | 'mention' | 'comment' | 'prompt' | 'session' | 'session-started' | 'notification' | 'thought' | 'elicitation' | 'response' | 'error';
   kind: AgentMessageKind;
   messageId: string;
   messageTs?: string;

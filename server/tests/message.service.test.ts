@@ -9,6 +9,7 @@ import { WakeQueueService } from '../inbox/wake-queue.service.js';
 import { messageServiceForAgent } from '../messages/message.service.js';
 import { MessageStore } from '../storage/schema/message.store.js';
 import type { AgentMessageRecord } from '../../shared/messages.js';
+import type { LinearInboxItem, LinearNotificationInboxItem } from '../../shared/inbox.js';
 import { withToolActivity } from '../tools/tool-context.js';
 import { withAnimaHome } from './anima-home.js';
 import { makeSlackEvent } from './helpers/slack.js';
@@ -383,3 +384,46 @@ function dmMessage(input: { messageId: string; timestamp: string; channelId: str
     dmUserId: input.dmUserId,
   };
 }
+
+
+test('Linear message types survive ledger projection without guessing delegation or message intent', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-linear-message-kinds-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const service = messageServiceForAgent('scout');
+      const receivedAt = '2026-11-04T12:00:00.000Z';
+      const base: LinearInboxItem = {
+        kind: 'linear', id: 'base', installationId: 'installation', organizationId: 'organization', sessionId: 'session',
+        text: 'Keep the exact message body, even if it says Done.', receivedAt,
+        handling: { status: 'queued', createdAt: receivedAt, updatedAt: receivedAt, queuedAt: receivedAt },
+      };
+      const inbound = [
+        { ...base, id: 'delegation', action: 'created' as const, origin: 'delegation' as const },
+        { ...base, id: 'mention', action: 'created' as const, origin: 'mention' as const },
+        { ...base, id: 'prompt', action: 'prompted' as const },
+        { ...base, id: 'old-session' },
+      ];
+      for (const item of inbound) await service.recordInboxItem(item);
+      const comment: LinearNotificationInboxItem = {
+        kind: 'linear_notification', id: 'comment', installationId: 'installation', organizationId: 'organization',
+        text: base.text, receivedAt, handling: base.handling, notificationType: 'created', commentId: 'comment-id',
+      };
+      await service.recordInboxItem(comment);
+      await service.recordInboxItem({ ...comment, id: 'notification', commentId: undefined });
+      for (const kind of ['thought', 'elicitation', 'response', 'error']) {
+        await service.recordOutboxActivity({ activityId: `out-${kind}`, type: 'external.effect.completed', createdAt: receivedAt,
+          payload: { tool: 'anima.linear.reply', platform: 'linear', effect: 'linear.activity.create', status: 'completed', kind, text: base.text } });
+      }
+      await service.recordOutboxActivity({ activityId: 'out-comment', type: 'external.effect.completed', createdAt: receivedAt,
+        payload: { tool: 'anima.linear.reply', platform: 'linear', effect: 'linear.comment.create', status: 'completed', text: base.text } });
+      const records = (await service.list()).entries;
+      assert.deepEqual(Object.fromEntries(records.map((record) => [record.source.id, record.linearKind])), {
+        delegation: 'delegation', mention: 'mention', prompt: 'prompt', 'old-session': 'session', comment: 'comment', notification: 'notification',
+        'out-thought': 'thought', 'out-elicitation': 'elicitation', 'out-response': 'response', 'out-error': 'error', 'out-comment': 'comment',
+      });
+      assert.ok(records.every((record) => record.text === base.text));
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

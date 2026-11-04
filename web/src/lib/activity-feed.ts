@@ -12,7 +12,7 @@ import {
   isHeldSendStatus,
 } from '@shared/outbound-effects';
 import { isRuntimeEventNoise } from '@shared/runtime-event-noise';
-import { linearApiSubjectKey, linearWriteLabel } from './activities';
+import { linearApiDisplay, type LinearApiDisplay } from './activities';
 
 // Hidden by default. Toggled on by "show all steps".
 //   - runtime.* are spawn-lifecycle plumbing
@@ -33,12 +33,12 @@ interface RecentOutboundText {
   timestampMs: number;
 }
 
-type CompletedOutboundEffectProjection =
+type ActivityProjection =
   | {
       action: 'emit';
       item: Extract<
         ActivityFeedItem,
-        { kind: 'action-out' | 'file-out' | 'message-out' | 'reaction-out' | 'system-event' }
+        { kind: 'linear-api' | 'file-out' | 'message-out' | 'reaction-out' | 'system-event' }
       >;
       rememberText: boolean;
     }
@@ -90,6 +90,8 @@ export interface SurfaceChip {
   href?: string;
   linkTitle?: string;
   issueKey?: string;
+  issueTitle?: string;
+  platform?: string;
 }
 
 export interface OutboundFile {
@@ -129,6 +131,7 @@ export type ActivityFeedItem =
       // Link to the message's platform, when the backend recorded it.
       permalink?: string;
       platform?: string;
+      linearKind?: AgentMessageRecord['linearKind'];
       timestamp: string;
       surface: SurfaceChip;
       isEdit: boolean;
@@ -165,12 +168,9 @@ export type ActivityFeedItem =
       threadTs?: string;
     }
   | {
-      // A write the agent made through the Linear API: create, update, comment,
-      // delegate, start a session. It acts on other people's work, so it sits
-      // with replies instead of folding into steps. The audit keeps no query
-      // text, variables or result, so `label` is the requested action only.
-      kind: 'action-out';
-      label: string;
+      // API reads and writes have their own request/outcome row, not a message.
+      kind: 'linear-api';
+      api: LinearApiDisplay;
       timestamp: string;
       surface: SurfaceChip;
     }
@@ -288,8 +288,8 @@ export function buildActivityFeed(
     // External message/file/reaction effects → outbound feed items. The
     // (tool, effect) → kind decision lives in the shared classifier so the
     // web feed and the server's ledger projection can never drift.
-    if (activity.type === 'tool.call.completed' || activity.type === 'external.effect.completed') {
-      const projection = projectCompletedOutboundEffect(activity);
+    if (activity.type === 'tool.call.completed' || activity.type === 'external.effect.completed' || (activity.type === 'tool.call.failed' && activity.payload?.['tool'] === 'anima.linear.api' && activity.payload?.['failureKind'] === undefined)) {
+      const projection = projectRecordedAction(activity);
       if (projection.action === 'emit') {
         items.push(projection.item);
         if (projection.rememberText) rememberOutboundText(recentOutboundTexts, activity);
@@ -442,7 +442,7 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
       continue;
     }
     if (message.kind === 'message') {
-      items.push({
+      const item: Extract<ActivityFeedItem, { kind: 'message-out' }> = {
         kind: 'message-out',
         text: message.text,
         platform: message.platform,
@@ -452,7 +452,9 @@ export function buildMessageFeed(messagePage: AgentMessageHistoryPage): Activity
         isEdit: message.isEdit === true,
         ...(message.messageTs ? { messageTs: message.messageTs } : {}),
         ...(message.threadTs ? { threadTs: message.threadTs } : {}),
-      });
+      };
+      if (message.linearKind) item.linearKind = message.linearKind;
+      items.push(item);
       continue;
     }
     if (message.kind === 'file') {
@@ -499,7 +501,7 @@ function activityFeedSortRank(item: ActivityFeedItem): number {
     item.kind === 'message-out' ||
     item.kind === 'file-out' ||
     item.kind === 'reaction-out' ||
-    item.kind === 'action-out'
+    item.kind === 'linear-api'
   )
     return 1;
   if (item.kind === 'step' && item.activity.type === 'runtime.completed') return 3;
@@ -528,9 +530,9 @@ function outboundFilesFromPayload(uploads: unknown): OutboundFile[] {
   });
 }
 
-function projectCompletedOutboundEffect(
+function projectRecordedAction(
   activity: ActivityRecord,
-): CompletedOutboundEffectProjection {
+): ActivityProjection {
   const payload = activity.payload ?? {};
   const tool = typeof payload['tool'] === 'string' ? payload['tool'] : undefined;
   const effect = typeof payload['effect'] === 'string' ? payload['effect'] : undefined;
@@ -595,21 +597,15 @@ function projectCompletedOutboundEffect(
   if (tool === 'anima.reminder.fire') {
     return { action: 'suppress' };
   }
-  // A completed write. A failed one stays a failure step, as a failed Slack
-  // send does, and reads stay folded steps.
-  if (tool === 'anima.linear.api' && payload['operation'] === 'mutation') {
-    const key = linearApiSubjectKey(payload);
-    const surface: SurfaceChip = { kind: 'channel', label: key ?? 'Linear' };
-    if (key) surface.issueKey = key;
+  if (tool === 'anima.linear.api') {
+    const api = linearApiDisplay(activity);
+    const surface: SurfaceChip = { kind: 'channel', label: api.issueKey ?? 'Linear', platform: 'linear' };
+    if (api.issueKey) surface.issueKey = api.issueKey;
+    if (api.issueTitle) surface.issueTitle = api.issueTitle;
+    if (api.issueUrl) { surface.href = api.issueUrl; surface.linkTitle = 'Open in Linear'; }
     return {
       action: 'emit',
-      item: {
-        kind: 'action-out',
-        label: linearWriteLabel(payload),
-        timestamp: activity.createdAt,
-        // The audit knows an issue only by its key; no title or link.
-        surface,
-      },
+      item: { kind: 'linear-api', api, timestamp: activity.createdAt, surface },
       rememberText: false,
     };
   }
@@ -649,11 +645,11 @@ function surfaceChipForInboundMessage(message: AgentMessageRecord): SurfaceChip 
     if (message.issueKey) {
       const label = message.issueTitle ? `${message.issueKey} · ${message.issueTitle}` : message.issueKey;
       return { kind: message.threadTs ? 'thread' : 'channel', label: message.threadTs ? `${label} · thread` : label,
-        issueKey: message.issueKey, href: message.permalink, linkTitle: 'Open in Linear' };
+        issueKey: message.issueKey, issueTitle: message.issueTitle, platform: 'linear', href: message.permalink, linkTitle: 'Open in Linear' };
     }
-    if (message.channelKind === 'linear_issue') return { kind: message.threadTs ? 'thread' : 'channel', label: 'Linear issue' };
-    if (message.channelKind === 'linear_workspace') return { kind: 'channel', label: 'Linear workspace' };
-    return { kind: 'thread', label: 'Linear session' };
+    if (message.channelKind === 'linear_issue') return { kind: message.threadTs ? 'thread' : 'channel', label: 'Linear issue', platform: 'linear' };
+    if (message.channelKind === 'linear_workspace') return { kind: 'channel', label: 'Linear workspace', platform: 'linear' };
+    return { kind: 'thread', label: 'Linear session', platform: 'linear' };
   }
   if (message.platform === 'feishu') return surfaceChipForFeishuMessage(message);
   return surfaceChipForSlackMessage(message);
@@ -798,11 +794,11 @@ function outboundSurfaceChip(fields: OutboundSurfaceFields): SurfaceChip {
     if (fields.issueKey) return {
       kind: payloadThreadTs ? 'thread' : 'channel',
       label: fields.issueTitle ? `${fields.issueKey} · ${fields.issueTitle}` : fields.issueKey,
-      issueKey: fields.issueKey, href: fields.permalink || undefined, linkTitle: 'Open in Linear',
+      issueKey: fields.issueKey, issueTitle: fields.issueTitle || undefined, platform: 'linear', href: fields.permalink || undefined, linkTitle: 'Open in Linear',
     };
-    if (payloadChannelKind === 'linear_issue') return { kind: payloadThreadTs ? 'thread' : 'channel', label: 'Linear issue' };
-    if (payloadChannelKind === 'linear_workspace') return { kind: 'channel', label: 'Linear workspace' };
-    return { kind: 'thread', label: 'Linear session' };
+    if (payloadChannelKind === 'linear_issue') return { kind: payloadThreadTs ? 'thread' : 'channel', label: 'Linear issue', platform: 'linear' };
+    if (payloadChannelKind === 'linear_workspace') return { kind: 'channel', label: 'Linear workspace', platform: 'linear' };
+    return { kind: 'thread', label: 'Linear session', platform: 'linear' };
   }
   if (platform === 'feishu') {
     const kind = payloadChannelKind || (payloadChannel.startsWith('oc_') ? 'group' : 'chat');
@@ -943,9 +939,10 @@ function buildChildFeedItems(
     // shared classifier).
     if (
       activity.type === 'tool.call.completed' ||
-      activity.type === 'external.effect.completed'
+      activity.type === 'external.effect.completed' ||
+      (activity.type === 'tool.call.failed' && activity.payload?.['tool'] === 'anima.linear.api' && activity.payload?.['failureKind'] === undefined)
     ) {
-      const projection = projectCompletedOutboundEffect(activity);
+      const projection = projectRecordedAction(activity);
       if (projection.action === 'emit') {
         items.push(projection.item);
         if (projection.rememberText) rememberOutboundText(recentOutboundTexts, activity);

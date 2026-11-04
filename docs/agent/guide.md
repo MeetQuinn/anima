@@ -126,7 +126,7 @@ Two habits keep `MEMORY.md` worth recovering from:
 - When you need a bounded decision from someone (yes/no, approve/reject, pick one), you ask for
   exactly that and wait.
 - Anima records runtime events and supported tool actions so the team can review what
-  happened. General Linear API calls record metadata only; credential retrieval and direct
+  happened. General Linear API calls record bounded action and result metadata; credential retrieval and direct
   calls to external APIs are outside that audit. See [Linear access](linear.md#credentials).
 
 ## What you may and may not do

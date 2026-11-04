@@ -21,6 +21,7 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
     messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.issueId ?? item.organizationId,
     channelKind: item.issueId ? 'linear_issue' : 'linear_workspace', source: { id: item.id, kind: 'inbox' },
     issueKey: item.issueKey, issueTitle: item.issueTitle,
+    linearKind: item.commentId ? 'comment' : 'notification',
     threadTs: item.parentCommentId ?? item.commentId, permalink: item.issueUrl, text: item.text, timestamp: item.receivedAt,
   };
   if (item.kind === 'linear') return {
@@ -28,6 +29,7 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
     messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.issueId ?? item.sessionId,
     channelKind: item.issueId ? 'linear_issue' : 'linear_session', threadTs: item.sessionId, source: { id: item.id, kind: 'inbox' },
     issueKey: item.issueKey, issueTitle: item.issueTitle, permalink: item.issueUrl,
+    linearKind: item.action === 'prompted' ? 'prompt' : item.origin ?? (item.action === 'created' ? 'session-started' : 'session'),
     // The agent gets Linear's context for models; people read it rendered.
     text: item.contextSource === 'prompt_context' ? linearSessionDisplayText(item.text) : item.text, timestamp: item.receivedAt,
   };
@@ -247,12 +249,22 @@ function choiceResponseMessage(item: ChoiceResponseInboxItem): AgentMessageRecor
   };
 }
 
+function linearMessageKind(payload: Record<string, unknown>): AgentMessageRecord['linearKind'] {
+  if (payload.platform !== 'linear') return undefined;
+  switch (payload.kind) {
+    case 'thought': case 'elicitation': case 'response': case 'error': return payload.kind;
+  }
+  if (payload.effect === 'linear.comment.create' || payload.tool === 'anima.linear.comment') return 'comment';
+  if (payload.effect === 'linear.session.start') return 'session-started';
+  return undefined;
+}
+
 function baseOutboxMessage(
   activity: Activity,
   payload: Record<string, unknown>,
   entry: Pick<AgentMessageRecord, 'kind' | 'text'> & Partial<AgentMessageRecord>,
 ): AgentMessageRecord {
-  return {
+  const record: AgentMessageRecord = {
     channelId: stringField(payload, 'channel'),
     channelDisplayName: stringField(payload, 'channelDisplayName'),
     channelKind: stringField(payload, 'channelKind'),
@@ -271,6 +283,9 @@ function baseOutboxMessage(
     timestamp: activity.createdAt,
     ...entry,
   };
+  const kind = linearMessageKind(payload);
+  if (kind) record.linearKind = kind;
+  return record;
 }
 
 function slackActorLabel(item: SlackInboxItem): string {

@@ -24,7 +24,7 @@ describe('Linear issue links', () => {
     const groups = groupByAuthor([...messages, ...actions], resolveAuthor, resolveSurface);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.surfaceKey).toBe('linear:ANI-21');
-    expect(groups[0]!.items.map(({ item }) => item.kind)).toEqual(['message-out', 'action-out']);
+    expect(groups[0]!.items.map(({ item }) => item.kind)).toEqual(['message-out', 'linear-api']);
   });
   it('groups an issue by its key despite a new title or a different thread', () => {
     const feed = buildMessageFeed({ entries: [record, { ...record, messageId: 'second', issueTitle: 'Renamed', threadTs: 'comment-root' },

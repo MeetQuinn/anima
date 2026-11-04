@@ -6,6 +6,7 @@ import {
   atomRank,
   buildBlocks,
   buildConversationItems,
+  buildLinearIssueHeadings,
   buildStepItems,
   buildTimelineByDay,
   currentTurnHasStep,
@@ -148,12 +149,12 @@ describe('activity timeline builders', () => {
       { entries: [message('m1', '2026-07-04T10:00:00.000Z'), message('m2', '2026-07-04T10:01:00.000Z')] },
       { events: [write] },
     );
-    expect(items.map((item) => item.kind)).toEqual(['message-in', 'action-out', 'message-in']);
+    expect(items.map((item) => item.kind)).toEqual(['message-in', 'linear-api', 'message-in']);
     const days = buildTimelineByDay(items, buildStepItems({ events: [write] }));
     expect(days.flatMap(([, entries]) => entries.map((entry) => entry.type))).toEqual(['conv', 'conv', 'conv']);
     const { resolveAuthor, resolveSurface } = buildActivityAuthorResolvers({ agent: undefined, agentId: 'nora' });
     expect(resolveAuthor(items[1]!).isAgent).toBe(true);
-    expect(resolveSurface(items[1]!)).toEqual({ key: 'linear:ANI-5', chip: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5' } });
+    expect(resolveSurface(items[1]!)).toEqual({ key: 'linear:ANI-5', chip: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5', platform: 'linear' } });
   });
 
   it('builds narrative step items and suppresses started rows with matching failure rows', () => {
@@ -366,5 +367,52 @@ describe('activity author builders', () => {
       key: 'channel:#ops',
       chip: { kind: 'channel', label: '#ops', channelId: 'C1' },
     });
+  });
+});
+
+describe('Linear task headings', () => {
+  const at = (minute: number, day = 4) => `2026-11-${String(day).padStart(2, '0')}T10:${String(minute).padStart(2, '0')}:00.000Z`;
+  const linear = (minute: number, key?: string, day = 4): ActivityFeedItem => ({
+    kind: 'linear-api', timestamp: at(minute, day), surface: { kind: 'channel', platform: 'linear', issueKey: key, label: key ?? 'Linear' },
+    api: { label: 'Read issue', state: 'read', operation: 'query', fields: ['issue'], result: 'Query returned', issueKey: key },
+  });
+  const reply = (minute: number, key: string): ActivityFeedItem => ({
+    kind: 'message-out', text: 'A reply', platform: 'linear', timestamp: at(minute), isEdit: false,
+    surface: { kind: 'channel', platform: 'linear', issueKey: key, issueTitle: `Task ${key}`, href: `https://linear.app/demo/issue/${key}`, label: key },
+  });
+
+  it('keeps one task heading across author changes, gaps, tool folds and unidentified API rows', () => {
+    const start = linear(0, 'ANI-30');
+    const incoming = { ...messageIn('in', at(1)), surface: { kind: 'thread' as const, platform: 'linear', issueKey: 'ANI-30', label: 'ANI-30' } };
+    const unknown = linear(3);
+    const answer = reply(20, 'ANI-30');
+    const reminder: ActivityFeedItem = { kind: 'system-event', eventKind: 'reminder', label: 'Reminder', body: 'Check progress', timestamp: at(4) };
+    const items = [start, incoming, unknown, reminder, answer];
+    const before = JSON.stringify(items);
+    const headings = buildLinearIssueHeadings(buildTimelineByDay(items, [step('tool', 'tool.call.started', at(2), { tool: 'codex.shell' })]));
+    expect([...headings.keys()]).toEqual([start]);
+    expect(headings.get(start)).toMatchObject({ issueKey: 'ANI-30', issueTitle: 'Task ANI-30', href: 'https://linear.app/demo/issue/ANI-30' });
+    expect(JSON.stringify(items)).toBe(before);
+    expect(headings.has(unknown)).toBe(false);
+    expect('surface' in unknown && unknown.surface.issueKey).toBeUndefined();
+  });
+
+  it('starts a fresh heading on another issue, a non-Linear message, or a new day', () => {
+    const a = linear(0, 'ANI-30'), b = linear(1, 'ANI-31'), back = linear(2, 'ANI-30');
+    const slack = messageIn('slack', at(3));
+    const afterSlack = linear(4, 'ANI-30'), nextDay = linear(0, 'ANI-30', 5);
+    const headings = buildLinearIssueHeadings(buildTimelineByDay([a, b, back, slack, linear(3), afterSlack, nextDay], []));
+    expect([...headings.keys()]).toEqual([a, b, back, afterSlack, nextDay]);
+  });
+
+  it('does not manufacture task headings for standalone legacy API calls', () => {
+    const unknown = Array.from({ length: 30 }, (_, index) => linear(index));
+    expect(buildLinearIssueHeadings(buildTimelineByDay(unknown, [])).size).toBe(0);
+  });
+
+  it('recomputes the first loaded heading when older pages arrive without duplicating it', () => {
+    const newer = reply(10, 'ANI-30'), older = reply(0, 'ANI-30');
+    expect([...buildLinearIssueHeadings(buildTimelineByDay([newer], [])).keys()]).toEqual([newer]);
+    expect([...buildLinearIssueHeadings(buildTimelineByDay([newer, older], [])).keys()]).toEqual([older]);
   });
 });

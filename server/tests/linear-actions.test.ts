@@ -373,11 +373,11 @@ test('API audit keeps top-level schema field names and an exact issue key, never
   const cases: { query: string; variables?: Record<string, unknown>; operationName?: string; fields?: string[]; issueKey?: string }[] = [
     { query: 'query PRIVATE_NAME($id:String!) { PRIVATE_ALIAS: issue(id:$id) { PRIVATE_NESTED: title } }', variables: { id: 'ANI-11' }, fields: ['issue'], issueKey: 'ANI-11' },
     { query: 'mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success } }', variables: { id: 'ANI-11', input: { title: 'PRIVATE_TITLE' } }, fields: ['issueUpdate'], issueKey: 'ANI-11' },
-    // Only a whole top-level variable is an issue key; nothing nested, padded or embedded.
-    { query: 'mutation($input:CommentCreateInput!) { commentCreate(input:$input) { success } }', variables: { input: { issueId: 'ANI-11', body: 'PRIVATE_BODY ANI-12' } }, fields: ['commentCreate'] },
+    // Only the issue argument supplies the key; bodies and unrelated variables do not.
+    { query: 'mutation($input:CommentCreateInput!) { commentCreate(input:$input) { success } }', variables: { input: { issueId: 'ANI-11', body: 'PRIVATE_BODY ANI-12' } }, fields: ['commentCreate'], issueKey: 'ANI-11' },
     ...[' ANI-11', 'ANI-11 ', 'PRIVATE ANI-11', 'ANI-11 PRIVATE', 'ani-11', 'ANI-011', 'ANI-', ['ANI-11'], { id: 'ANI-11' }, 11].map((a) => (
       { query: 'query($a:String) { issue(id:$a) { id } }', variables: { a }, fields: ['issue'] })),
-    { query: 'query($a:String,$b:String) { issue(id:$a) { id } }', variables: { a: 'ANI-11', b: 'ANI-12' }, fields: ['issue'] },
+    { query: 'query($a:String,$b:String) { issue(id:$a) { id } }', variables: { a: 'ANI-11', b: 'ANI-12' }, fields: ['issue'], issueKey: 'ANI-11' },
     { query: 'query($a:String,$b:String) { issue(id:$a) { id } }', variables: { a: 'ANI-11', b: 'ANI-11' }, fields: ['issue'], issueKey: 'ANI-11' },
     { query: '{ PRIVATE_A: issue(id:"PRIVATE_LITERAL") { id } PRIVATE_B: issue(id:"PRIVATE_LITERAL_2") { id } }', fields: ['issue'] },
     { query: '{ a1: viewer { id } teams { nodes { id } } issues { nodes { id } } organization { id } comments { nodes { id } } searchIssues(term:"PRIVATE_TERM") { nodes { id } } issue(id:"x") { id } }', fields: ['viewer', 'teams', 'issues', 'organization', 'comments'] },
@@ -395,7 +395,7 @@ test('API audit keeps top-level schema field names and an exact issue key, never
     for (const row of rows) {
       assert.deepEqual(row.payload?.fields, input.fields, input.query);
       assert.equal(row.payload?.issueKey, input.issueKey, input.query);
-      for (const key of Object.keys(row.payload ?? {})) assert.ok(['callId', 'fields', 'issueKey', 'itemId', 'operation', 'outcome', 'platform', 'status', 'tool'].includes(key), key);
+      for (const key of Object.keys(row.payload ?? {})) assert.ok(['callId', 'fields', 'fieldCount', 'issueKey', 'itemId', 'operation', 'outcome', 'platform', 'status', 'tool'].includes(key), key);
     }
   }
   assert.doesNotMatch(JSON.stringify(await activityServiceForAgent('scout').readAll()), /PRIVATE|title|ANI-12|ani-11|ANI-011| ANI-11|ANI-11 /);
@@ -499,4 +499,137 @@ test('an agent can read paginated session context through the documented API, th
     && m.threadTs === sessionId && m.issueKey === issue.identifier && m.issueTitle === issue.title && m.permalink === issue.url));
   assert.deepEqual(fake.calls.slice(callsBeforeReply).map((call) => call.query.includes('agentActivityCreate')), [true], 'Display fields require no extra lookup, even after service recreation');
 
+}));
+
+test('API display summaries follow selected schema paths and preserve the exact call and result', async (t) => withTempAnimaHome(async (home) => {
+  const { identity } = await seedLinear(home);
+  const cases = [
+    {
+      query: 'mutation PRIVATE_OPERATION($id:String!,$input:IssueUpdateInput!) { PRIVATE_ALIAS: issueUpdate(id:$id,input:$input) { ok:success item:issue { key:identifier heading:title link:url state { label:name } description } } }',
+      variables: { id: issue.id, input: { stateId: 'PRIVATE_STATE_ID', description: 'PRIVATE_DESCRIPTION' } },
+      result: { PRIVATE_ALIAS: { ok: true, item: { key: 'ANI-30', heading: 'Reauthorize without disconnecting', link: 'https://linear.app/example/issue/ANI-30', state: { label: 'Done' }, description: 'PRIVATE_RESULT_BODY', token: 'PRIVATE_TOKEN' } } },
+      summary: { success: true, changes: ['status', 'description'], issueKey: 'ANI-30', issueTitle: 'Reauthorize without disconnecting', issueUrl: 'https://linear.app/example/issue/ANI-30', stateName: 'Done' },
+    },
+    {
+      query: 'query($id:String!) { issue(id:$id) { ...IssueDisplay } } fragment IssueDisplay on Issue { identifier title state { name } }',
+      variables: { id: issue.id }, result: { issue: { identifier: 'ANI-30', title: 'A readable task', state: { name: 'In Progress' }, description: 'PRIVATE_UNSELECTED' } },
+      summary: { found: true, issueKey: 'ANI-30', issueTitle: 'A readable task', stateName: 'In Progress' },
+    },
+    {
+      query: 'mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success } }',
+      variables: { id: issue.id, input: { stateId: 'PRIVATE_STATE' } }, result: { issueUpdate: { success: true, issue: { identifier: 'PRIVATE_UNSELECTED' } } },
+      summary: { success: true, changes: ['status'] },
+    },
+    {
+      query: 'mutation { issueUpdate(id:"ANI-30",input:{stateId:"PRIVATE_STATE"}) { success } }',
+      variables: {}, result: { issueUpdate: { success: false } }, summary: { issueKey: 'ANI-30', success: false, changes: ['status'] },
+    },
+    {
+      query: 'query($id:String! = "ANI-30") { issue(id:$id) { identifier } }',
+      variables: {}, result: { issue: null }, summary: { issueKey: 'ANI-30', found: false },
+    },
+    {
+      query: 'query { issue(id:"ANI-30") { title:description identifier:description } }',
+      variables: {}, result: { issue: { title: 'PRIVATE_DESCRIPTION', identifier: 'PRIVATE_DESCRIPTION' } }, summary: { issueKey: 'ANI-30', found: true },
+    },
+    {
+      query: 'mutation { issueUpdate(id:"ANI-30",input:{title:"PRIVATE_TITLE"}) { success:description } }',
+      variables: {}, result: { issueUpdate: { success: true } }, summary: { issueKey: 'ANI-30', changes: ['title'] },
+    },
+    {
+      query: 'query { issues { items:nodes { identifier description } more:pageInfo { hasMore:hasNextPage } } }',
+      variables: {}, result: { issues: { items: [{ identifier: 'ANI-1', description: 'PRIVATE_BODY' }, { identifier: 'ANI-2' }], more: { hasMore: true } } },
+      summary: { resultCount: 2, hasNextPage: true },
+    },
+    {
+      query: 'query { issue(id:"ANI-30") { identifier title url } }',
+      variables: {}, result: { issue: { identifier: 'ANI-30', title: 'A'.repeat(300) + '\u0000PRIVATE_TAIL', url: 'https://linear.app/example/issue/ANI-30?token=PRIVATE_TOKEN' } },
+      summary: { issueKey: 'ANI-30', found: true, issueTitle: 'A'.repeat(240) },
+    },
+    {
+      query: 'query { issue(id:"ANI-30") { identifier title } }', variables: {},
+      result: { issue: { identifier: 'ANI-31', title: 'PRIVATE_WRONG_ISSUE' } }, summary: undefined,
+    },
+    {
+      query: 'query { issue(id:"ANI-30") { identifier url } }', variables: {},
+      result: { issue: { identifier: 'ANI-30', url: 'https://linear.app/example/issue/ANI-31' } }, summary: { issueKey: 'ANI-30', found: true },
+    },
+    {
+      query: 'mutation { first:issueUpdate(id:"ANI-30",input:{stateId:"PRIVATE_A"}) { success } second:issueUpdate(id:"ANI-31",input:{stateId:"PRIVATE_B"}) { success } }',
+      variables: {}, result: { first: { success: true }, second: { success: false } }, summary: undefined,
+    },
+    {
+      query: 'mutation { otherMutation { success issue { identifier } } }', variables: {},
+      result: { otherMutation: { success: true, issue: { identifier: 'ANI-30' } } }, summary: undefined,
+    },
+    {
+      query: 'query Wanted { issue(id:"ANI-30") { identifier } } query Other { viewer { name } }', operationName: 'Wanted', variables: {},
+      result: { issue: { identifier: 'ANI-30' }, viewer: { name: 'PRIVATE_OTHER_RESULT' } }, summary: { issueKey: 'ANI-30', found: true },
+    },
+  ];
+  let calls = 0;
+  for (const entry of cases) {
+    const before = (await activityServiceForAgent('scout').readAll()).length;
+    t.mock.method(identity, 'request', async (query: string, variables: Record<string, unknown>, _schema: unknown, operationName?: string) => {
+      calls++;
+      assert.equal(query, entry.query);
+      assert.deepEqual(variables, entry.variables);
+      assert.equal(operationName, 'operationName' in entry ? entry.operationName : undefined);
+      return entry.result;
+    });
+    const result = await runLinearApi(identity, { query: entry.query, variables: entry.variables, operationName: 'operationName' in entry ? entry.operationName : undefined });
+    assert.equal(result, entry.result, 'the caller gets its original result object');
+    const rows = (await activityServiceForAgent('scout').readAll()).slice(before);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.payload?.summary, undefined);
+    assert.deepEqual(rows[1]!.payload?.summary, entry.summary, entry.query);
+    assert.equal(rows[1]!.payload?.outcome, 'request_completed');
+    assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_/);
+  }
+  assert.equal(calls, cases.length, 'display metadata performs no lookups or retries');
+  assert.equal((await messageServiceForAgent('scout').list()).entries.length, 0);
+}));
+
+for (const failure of ['invalid_grant', 'server_error', 'unreadable', 'network'] as const) {
+  test(`API audit distinguishes unsent requests from token endpoint failures: ${failure}`, async () => withTempAnimaHome(async (home) => {
+    const fake = new FakeLinear();
+    const { identity, store } = await seedLinear(home, fake);
+    await store.update(file => ({ ...file, installation: { ...file.installation!, expiresAt: 0 } }));
+    fake.refreshFailure = failure;
+    await assert.rejects(runLinearApi(identity, { query: 'mutation { issueArchive(id:"ANI-30") { success } }', variables: {} }));
+    const rows = await activityServiceForAgent('scout').readAll();
+    assert.equal(fake.tokenCalls, 1);
+    assert.equal(fake.calls.length, 0, 'No GraphQL request leaves the client');
+    assert.deepEqual(rows.map(row => row.type), ['tool.call.started', 'tool.call.failed']);
+    assert.equal(rows[1]!.payload?.outcome, 'not_sent');
+    assert.equal(rows[1]!.payload?.failure, undefined);
+    assert.equal(rows[1]!.payload?.httpStatus, undefined);
+    assert.doesNotMatch(JSON.stringify(rows), /private|sentinel|token/i);
+  }));
+}
+
+test('archive and delete summaries follow their schema payloads, including aliased entity fields', async () => withTempAnimaHome(async (home) => {
+  let calls = 0;
+  const fake = new FakeLinear();
+  fake.fetch = async (_url, init) => {
+    calls++;
+    const { query } = JSON.parse(String(init?.body));
+    assert.deepEqual(linearQueryErrors(query), []);
+    const comment = query.includes('commentDelete');
+    return Response.json({ data: { action: comment ? { ok: true, entityId: 'PRIVATE_COMMENT_ID' }
+      : { ok: true, object: { key: issue.identifier, heading: issue.title, link: issue.url } } } });
+  };
+  const { identity } = await seedLinear(home, fake);
+  for (const field of ['issueArchive', 'issueUnarchive', 'issueDelete', 'commentDelete']) {
+    const selected = field === 'commentDelete' ? 'entityId' : 'object:entity { key:identifier heading:title link:url }';
+    const query = `mutation($id:String!) { action:${field}(id:$id) { ok:success ${selected} } }`;
+    await runLinearApi(identity, { query, variables: { id: issue.id } });
+    const last = (await activityServiceForAgent('scout').readAll()).at(-1)!;
+    assert.deepEqual(last.payload?.summary, field === 'commentDelete' ? { success: true }
+      : { success: true, issueKey: issue.identifier, issueTitle: issue.title, issueUrl: issue.url });
+    assert.doesNotMatch(JSON.stringify(last), /PRIVATE_|object|heading/);
+  }
+  assert.equal(calls, 4);
+  assert.ok(linearQueryErrors('mutation { issueArchive(id:"ANI-30") { issue { identifier } } }').length > 0);
+  assert.ok(linearQueryErrors('mutation { commentDelete(id:"comment") { comment { issue { identifier } } } }').length > 0);
 }));

@@ -224,14 +224,16 @@ anima linear api <<'JSON'
 JSON
 ```
 
-Read the issue's state and its team's states, then change only `stateId`:
+Read the issue's state and its team's states, then change only `stateId`. Selecting the issue
+identifier, title, URL and resulting state also gives Activity a useful action summary; Anima
+does not add queries to fetch missing display fields:
 
 ```sh
 anima linear api <<'JSON'
-{"query":"query($id:String!,$after:String) { issue(id:$id) { id state { id name type } team { states(first:50,after:$after) { nodes { id name type position } pageInfo { hasNextPage endCursor } } } } }","variables":{"id":"ANI-123","after":null}}
+{"query":"query($id:String!,$after:String) { issue(id:$id) { id identifier title url state { id name type } team { states(first:50,after:$after) { nodes { id name type position } pageInfo { hasNextPage endCursor } } } } }","variables":{"id":"ANI-123","after":null}}
 JSON
 anima linear api <<'JSON'
-{"query":"mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success } }","variables":{"id":"ISSUE_UUID","input":{"stateId":"STATE_UUID"}}}
+{"query":"mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success issue { identifier title url state { name } } } }","variables":{"id":"ISSUE_UUID","input":{"stateId":"STATE_UUID"}}}
 JSON
 ```
 
@@ -242,7 +244,7 @@ anima linear api <<'JSON'
 {"query":"query($after:String) { viewer { id } users(filter:{app:{eq:true}},first:50,after:$after) { nodes { id name displayName url } pageInfo { hasNextPage endCursor } } }","variables":{"after":null}}
 JSON
 anima linear api <<'JSON'
-{"query":"mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success } }","variables":{"id":"ISSUE_UUID","input":{"delegateId":"USER_UUID"}}}
+{"query":"mutation($id:String!,$input:IssueUpdateInput!) { issueUpdate(id:$id,input:$input) { success issue { identifier title url delegate { name } } } }","variables":{"id":"ISSUE_UUID","input":{"delegateId":"USER_UUID"}}}
 JSON
 ```
 

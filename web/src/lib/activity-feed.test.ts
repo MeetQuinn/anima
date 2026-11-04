@@ -593,98 +593,98 @@ it('labels ordinary Linear issue and workspace activity separately from work ses
     expect(messages).toHaveLength(2);
     for (const row of messages) {
       if (row.kind !== 'message-in' && row.kind !== 'message-out') throw new Error('expected message');
-      expect(row.surface).toEqual({ kind, label });
+      expect(row.surface).toEqual({ kind, label, platform: 'linear' });
     }
     const [outbound] = buildActivityFeed({ nextCursor: null, events: [activityEvent('linear-comment', 'external.effect.completed', {
       platform: 'linear', channelKind, channel: 'linear-resource', threadTs, text: 'Synthetic discussion', effect: 'linear.comment.create',
     })] });
     if (outbound?.kind !== 'message-out') throw new Error('expected outgoing activity');
-    expect(outbound.surface).toEqual({ kind, label });
+    expect(outbound.surface).toEqual({ kind, label, platform: 'linear' });
   }
 });
 
-describe('Linear API writes', () => {
+describe('Linear API request rows', () => {
+  it('keeps child API failures as explicit outcome rows while contact refusals remain steps', () => {
+    const parent = activityEvent('parent', 'tool.call.started', { providerToolId: 'task', providerToolName: 'Task' });
+    const payload = { tool: 'anima.linear.api', operation: 'mutation', fields: ['issueUpdate'], parentToolCallId: 'task', subRunId: 'child' };
+    const events = [parent,
+      activityEvent('failed', 'tool.call.failed', payload),
+      activityEvent('refused', 'tool.call.failed', { ...payload, failureKind: 'do-not-contact' }),
+    ];
+    const [row] = buildActivityFeed({ events });
+    if (row?.kind !== 'step') throw new Error('expected parent step');
+    expect(row.subagentStreams?.[0]?.items).toMatchObject([
+      { kind: 'linear-api', api: { state: 'failed', result: 'Request failed; the remote outcome is unknown' } },
+      { kind: 'step', activity: { activityId: 'refused' } },
+    ]);
+  });
   const api = (id: string, type: string, extra: Record<string, unknown>, createdAt = '2026-11-04T01:00:00.000Z') =>
     activityEvent(id, type, { tool: 'anima.linear.api', platform: 'linear', callId: id, ...extra }, createdAt);
 
-  it('render completed writes as outbound actions with the issue as their place', () => {
-    const feed = buildActivityFeed({ nextCursor: null, events: [
-      api('w1-started', 'tool.call.started', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5', status: 'started' }),
-      api('w1', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5', status: 'completed', outcome: 'request_completed' }),
-      api('w2', 'tool.call.completed', { operation: 'mutation', fields: ['commentCreate'], issueKey: 'ANI-5', outcome: 'request_completed' }),
-      api('w3', 'tool.call.completed', { operation: 'mutation', fields: ['agentSessionCreateOnIssue'], issueKey: 'ANI-23', outcome: 'request_completed' }),
-      api('w4', 'tool.call.completed', { operation: 'mutation', fields: ['issueCreate'], issueKey: 'ANI-5', outcome: 'request_completed' }),
-    ] });
-    expect(feed).toEqual([
-      { kind: 'action-out', label: 'Update ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5' } },
-      { kind: 'action-out', label: 'Comment on ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5' } },
-      { kind: 'action-out', label: 'Start work session on ANI-23', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-23', issueKey: 'ANI-23' } },
-      // A key in a create request is the parent, not the place.
-      { kind: 'action-out', label: 'Create issue', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'Linear' } },
+  it('shows reads, writes and failures once in chronological order outside step folds', () => {
+    const events = [
+      api('r-start', 'tool.call.started', { operation: 'query', fields: ['issue'], issueKey: 'ANI-5' }),
+      api('r', 'tool.call.completed', { operation: 'query', fields: ['issue'], issueKey: 'ANI-5' }),
+      api('w', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5' }, '2026-11-04T01:00:01.000Z'),
+      api('f', 'tool.call.failed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5' }, '2026-11-04T01:00:02.000Z'),
+    ];
+    const feed = buildActivityConversationItems({ events });
+    expect(feed.map((item) => item.kind)).toEqual(['linear-api', 'linear-api', 'linear-api']);
+    expect(feed.map((item) => item.kind === 'linear-api' && [item.api.label, item.api.state])).toEqual([
+      ['Read ANI-5', 'read'], ['Update ANI-5', 'unconfirmed'], ['Update ANI-5', 'failed'],
     ]);
+    expect(buildStepItems({ events })).toEqual([]);
   });
 
-  it('keep reads and failed writes as steps', () => {
-    const events = [
-      api('r1', 'tool.call.completed', { operation: 'query', fields: ['issue'], issueKey: 'ANI-5', outcome: 'request_completed' }),
-      api('f1', 'tool.call.failed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5', outcome: 'unknown' }),
-    ];
-    const feed = buildActivityFeed({ nextCursor: null, events });
-    expect(feed.map((item) => item.kind)).toEqual(['step', 'step']);
-    expect(buildActivityConversationItems({ events })).toEqual([]);
-    expect(buildStepItems({ events }).map((step) => step.activity.activityId)).toEqual(['r1', 'f1']);
+  it('uses returned issue metadata and confirms only an explicit successful mutation', () => {
+    const [item] = buildActivityFeed({ events: [api('w', 'tool.call.completed', {
+      operation: 'mutation', fields: ['issueUpdate'], outcome: 'request_completed',
+      summary: { success: true, issueKey: 'ANI-5', issueTitle: 'Clear activity', issueUrl: 'https://linear.app/example/issue/ANI-5', changes: ['status'], stateName: 'Done' },
+    })] });
+    expect(item).toMatchObject({ kind: 'linear-api', api: { label: 'Updated ANI-5', detail: 'Status → Done', state: 'confirmed' },
+      surface: { issueKey: 'ANI-5', issueTitle: 'Clear activity', href: 'https://linear.app/example/issue/ANI-5', platform: 'linear' } });
   });
 
-  it('rank with outbound messages when they share an instant with a step', () => {
-    const feed = buildActivityFeed({ nextCursor: null, events: [
-      api('r1', 'tool.call.completed', { operation: 'query', fields: ['issue'] }),
-      api('w1', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5' }),
+  it('never treats a create input key as the created issue or guesses one subject for several calls', () => {
+    const feed = buildActivityFeed({ events: [
+      api('create', 'tool.call.completed', { operation: 'mutation', fields: ['issueCreate'], issueKey: 'ANI-5' }),
+      api('multiple', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], fieldCount: 2, issueKey: 'ANI-5', summary: { success: true, issueKey: 'ANI-5' } }),
     ] });
-    expect(feed.map((item) => item.kind)).toEqual(['action-out', 'step']);
+    expect(feed).toMatchObject([
+      { kind: 'linear-api', api: { label: 'Create issue', state: 'unconfirmed' }, surface: { label: 'Linear' } },
+      { kind: 'linear-api', api: { label: 'Update issue and more', state: 'unconfirmed' }, surface: { label: 'Linear' } },
+    ]);
+    expect(feed.every((row) => 'surface' in row && row.surface.issueKey === undefined)).toBe(true);
   });
 
-  it('move writes out of the folded steps and into the conversation', () => {
-    const events = [
-      api('r1', 'tool.call.completed', { operation: 'query', fields: ['issue'], issueKey: 'ANI-5' }, '2026-11-04T01:00:00.000Z'),
-      api('w1', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5' }, '2026-11-04T01:00:01.000Z'),
-    ];
-    expect(buildStepItems({ events }).map((step) => step.activity.activityId)).toEqual(['r1']);
-    expect(buildActivityConversationItems({ events })).toMatchObject([{ kind: 'action-out', label: 'Update ANI-5' }]);
-  });
-
-  it('carry nothing from the request beyond the action label and issue key', () => {
-    const [item] = buildActivityFeed({ nextCursor: null, events: [api('w1', 'tool.call.completed', {
+  it('keeps arbitrary request, response and prototype display strings out of rows', () => {
+    const [item] = buildActivityFeed({ events: [api('w', 'tool.call.completed', {
       operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5', outcome: 'request_completed',
       query: 'PRIVATE_QUERY', variables: { input: 'PRIVATE_VARIABLE' }, result: 'PRIVATE_RESULT', error: 'PRIVATE_ERROR', text: 'PRIVATE_TEXT',
-      channel: 'PRIVATE_CHANNEL', threadTs: 'PRIVATE_THREAD', permalink: 'https://linear.app/PRIVATE_LINK',
+      actionLabel: 'PRIVATE_LABEL', actionDetail: 'PRIVATE_DETAIL', issueTitle: 'PRIVATE_TITLE', permalink: 'https://linear.app/PRIVATE_LINK',
     })] });
-    expect(item).toEqual({ kind: 'action-out', label: 'Update ANI-5', timestamp: '2026-11-04T01:00:00.000Z', surface: { kind: 'channel', label: 'ANI-5', issueKey: 'ANI-5' } });
+    expect(item).toMatchObject({ kind: 'linear-api', api: { label: 'Update ANI-5', state: 'unconfirmed' }, surface: { label: 'ANI-5' } });
     expect(JSON.stringify(item)).not.toContain('PRIVATE_');
   });
 
-  it('read records from before field names and issue keys were kept', () => {
-    const feed = buildActivityFeed({ nextCursor: null, events: [
-      api('old-write', 'tool.call.completed', { operation: 'mutation' }, '2026-11-04T01:00:00.000Z'),
-      api('old-read', 'tool.call.completed', { operation: 'query' }, '2026-11-04T01:00:01.000Z'),
-      api('odd-write', 'tool.call.completed', { operation: 'mutation', fields: ['PRIVATE_FIELD'], issueKey: 'ANI-5' }, '2026-11-04T01:00:02.000Z'),
+  it('keeps old or unrecognized records generic without inventing a result or copying unknown names', () => {
+    const feed = buildActivityFeed({ events: [
+      api('old-write', 'tool.call.completed', { operation: 'mutation' }),
+      api('old-read', 'tool.call.completed', { operation: 'query' }),
+      api('odd-write', 'tool.call.completed', { operation: 'mutation', fields: ['PRIVATE_FIELD'], issueKey: 'ANI-5' }),
     ] });
     expect(feed).toMatchObject([
-      { kind: 'action-out', label: 'Change Linear data', surface: { kind: 'channel', label: 'Linear' } },
-      { kind: 'step' },
-      { kind: 'action-out', label: 'Change Linear data', surface: { kind: 'channel', label: 'Linear' } },
+      { kind: 'linear-api', api: { label: 'Change Linear data', state: 'unconfirmed' } },
+      { kind: 'linear-api', api: { label: 'Read Linear data', state: 'read' } },
+      { kind: 'linear-api', api: { label: 'Change Linear data', state: 'unconfirmed' } },
     ]);
-    expect(JSON.stringify(feed[2])).not.toContain('PRIVATE_');
+    expect(JSON.stringify(feed)).not.toContain('PRIVATE_');
   });
 
-  it('sit beside Linear replies, comments and session starts, which are already outbound messages', () => {
-    const feed = buildActivityFeed({ nextCursor: null, events: [
-      activityEvent('reply', 'tool.call.completed', { tool: 'anima.linear.reply', platform: 'linear', channelKind: 'linear_session', channel: 'session-uuid', threadTs: 'session-uuid', text: 'Done' }, '2026-11-04T01:00:00.000Z'),
-      activityEvent('comment', 'tool.call.completed', { tool: 'anima.linear.comment', platform: 'linear', channelKind: 'linear_issue', channel: 'issue-uuid', text: 'Looks good' }, '2026-11-04T01:00:01.000Z'),
-      activityEvent('start', 'tool.call.completed', { tool: 'anima.linear.start', platform: 'linear', channelKind: 'linear_session', text: 'Taking this' }, '2026-11-04T01:00:02.000Z'),
-      api('write', 'tool.call.completed', { operation: 'mutation', fields: ['issueUpdate'], issueKey: 'ANI-5' }, '2026-11-04T01:00:03.000Z'),
-    ] });
-    expect(feed.map((item) => item.kind)).toEqual(['message-out', 'message-out', 'message-out', 'action-out']);
-    expect(feed.map((item) => ('surface' in item ? item.surface.label : ''))).toEqual(['Linear session', 'Linear issue', 'Linear session', 'ANI-5']);
+  it('preserves contact-policy refusals as refusal steps rather than claiming an API call ran', () => {
+    const events = [api('refused', 'tool.call.failed', { operation: 'mutation', fields: ['issueUpdate'], failureKind: 'do-not-contact', error: 'Not sent.' })];
+    expect(buildActivityConversationItems({ events })).toEqual([]);
+    expect(buildStepItems({ events })).toHaveLength(1);
   });
 });
 
@@ -702,7 +702,7 @@ it.each([undefined, 'Show the issue'])('names and links Linear issue chips with 
     for (const row of rows) {
       if (row.kind !== 'message-in' && row.kind !== 'message-out') throw new Error('expected message');
       expect(row.surface).toEqual({ kind: threadTs ? 'thread' : 'channel',
-        label: row.kind === 'message-in' && threadTs ? `${label} · thread` : label, issueKey, href: permalink, linkTitle: 'Open in Linear' });
+        label: row.kind === 'message-in' && threadTs ? `${label} · thread` : label, issueKey, issueTitle, platform: 'linear', href: permalink, linkTitle: 'Open in Linear' });
     }
     for (const effect of ['linear.activity.create', 'linear.comment.create', 'linear.session.start']) {
       const [row] = buildActivityFeed({ events: [activityEvent(effect, 'external.effect.completed', {
@@ -710,7 +710,7 @@ it.each([undefined, 'Show the issue'])('names and links Linear issue chips with 
       })] });
       if (row?.kind !== 'message-out') throw new Error('expected outgoing activity');
       expect(row.platform).toBe('linear');
-      expect(row.surface).toEqual({ kind: threadTs ? 'thread' : 'channel', label, issueKey, href: permalink, linkTitle: 'Open in Linear' });
+      expect(row.surface).toEqual({ kind: threadTs ? 'thread' : 'channel', label, issueKey, issueTitle, platform: 'linear', href: permalink, linkTitle: 'Open in Linear' });
     }
   }
 });

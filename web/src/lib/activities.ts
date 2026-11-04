@@ -6,6 +6,7 @@
 import { formatTimeShort, formatTokens } from './format';
 import type { Activity as ActivityRecord } from '@shared/activity';
 import { LINEAR_ISSUE_KEY } from '@shared/linear-issue-key';
+import { LinearApiSummary } from '@shared/linear-api-summary';
 import {
   classifyOutboundEffect,
   heldSendActivityCopy,
@@ -162,7 +163,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (normalized === 'anima.linear.api' && payload['failureKind'] === undefined) {
     const label = linearApiLabel(payload);
     if (activity.type === 'tool.call.failed') return {
-      title: 'Linear API failed', target: `${label} · outcome unknown`, color: COLOR_FAILURE, kind: 'failure',
+      title: 'Linear API failed', target: `${label} · ${payload['outcome'] === 'not_sent' ? 'not sent' : 'outcome unknown'}`, color: COLOR_FAILURE, kind: 'failure',
     };
     // A short title, like other tool steps, leaves room for the action on a phone.
     return tool_('Linear API', label);
@@ -651,6 +652,7 @@ const LINEAR_API_ACTIONS: Record<string, string> = {
   issueCreate: 'Create issue',
   issueUpdate: 'Update {key}',
   issueArchive: 'Archive {key}',
+  issueUnarchive: 'Unarchive {key}',
   issueDelete: 'Delete {key}',
   comment: 'Read comment',
   comments: 'List comments',
@@ -660,6 +662,7 @@ const LINEAR_API_ACTIONS: Record<string, string> = {
   attachmentLinkURL: 'Link a URL to {key}',
   team: 'Read team',
   teams: 'List teams',
+  users: 'List users',
   viewer: 'Read own profile',
   agentSession: 'Read work session',
   agentSessionCreateOnIssue: 'Start work session on {key}',
@@ -686,7 +689,7 @@ function linearApiAction(field: string): string | undefined {
 export function linearApiSubjectKey(payload: Record<string, unknown>): string | undefined {
   const fields = linearApiFields(payload);
   const key = payload['issueKey'];
-  return fields.length === 1 && linearApiAction(fields[0]!)?.includes('{key}')
+  return (payload['fieldCount'] ?? fields.length) === 1 && linearApiAction(fields[0]!)?.includes('{key}')
     && typeof key === 'string' && LINEAR_ISSUE_KEY.test(key) ? key : undefined;
 }
 
@@ -702,13 +705,79 @@ function linearApiLabel(payload: Record<string, unknown>): string {
   const first = action
     ? action.replace('{key}', linearApiSubjectKey(payload) ?? 'issue')
     : operation === 'mutation' ? 'Change Linear data' : 'Read Linear data';
-  return fields.length > 1 ? `${first} and more` : first;
+  return Number(payload['fieldCount'] ?? fields.length) > 1 ? `${first} and more` : first;
 }
 
-/** The requested action of a completed Linear write, for its outbound row. */
-export function linearWriteLabel(payload: Record<string, unknown>): string {
-  // Records from before field names were kept say only that it was a write.
-  return linearApiFields(payload).length ? linearApiLabel(payload) : 'Change Linear data';
+export interface LinearApiDisplay {
+  label: string;
+  detail?: string;
+  result: string;
+  state: 'read' | 'confirmed' | 'unconfirmed' | 'unsuccessful' | 'not-sent' | 'failed' | 'returned';
+  operation: string;
+  fields: string[];
+  issueKey?: string;
+  issueTitle?: string;
+  issueUrl?: string;
+}
+
+const CONFIRMED_ACTIONS: Record<string, string> = {
+  issueCreate: 'Created {key}', issueUpdate: 'Updated {key}', issueArchive: 'Archived {key}', issueUnarchive: 'Unarchived {key}', issueDelete: 'Deleted {key}',
+  commentCreate: 'Commented on {key}', commentUpdate: 'Edited comment', commentDelete: 'Deleted comment',
+  attachmentLinkURL: 'Linked a URL to {key}', agentSessionCreateOnIssue: 'Started work session on {key}',
+  agentSessionCreateOnComment: 'Started work session on comment', agentSessionUpdate: 'Updated work session', agentActivityCreate: 'Posted session activity',
+};
+
+export function linearApiDisplay(activity: ActivityRecord): LinearApiDisplay {
+  const payload = activity.payload ?? {};
+  const fields = linearApiFields(payload).filter((field) => /^[_A-Za-z][_0-9A-Za-z]{0,63}$/.test(field)).slice(0, 5);
+  const count = typeof payload['fieldCount'] === 'number' ? payload['fieldCount'] : fields.length;
+  const operation = ['query', 'mutation', 'subscription'].includes(String(payload['operation'])) ? String(payload['operation']) : 'unknown';
+  const single = count === 1 ? fields[0] : undefined;
+  const parsed = single ? LinearApiSummary.safeParse(payload['summary']) : undefined;
+  const summary = parsed?.success ? parsed.data : undefined;
+  const issueKey = summary?.issueKey ?? linearApiSubjectKey(payload);
+  const labelPayload = { ...payload, fields, issueKey };
+  const fallback = operation === 'mutation' ? 'Change Linear data' : operation === 'query' ? 'Read Linear data' : 'Linear request';
+  let label = fields.length ? linearApiLabel(labelPayload) : fallback;
+  const failed = activity.type === 'tool.call.failed';
+  const confirmed = !failed && operation === 'mutation' && summary?.success === true && single && Object.hasOwn(CONFIRMED_ACTIONS, single);
+  if (confirmed) label = CONFIRMED_ACTIONS[single]!.replace('{key}', issueKey ?? 'issue');
+  const state: LinearApiDisplay['state'] = failed ? payload['outcome'] === 'not_sent' ? 'not-sent' : 'failed' : confirmed ? 'confirmed'
+    : operation === 'mutation' ? summary?.success === false ? 'unsuccessful' : 'unconfirmed'
+    : operation === 'query' ? 'read' : 'returned';
+  const display: LinearApiDisplay = { label, state, operation, fields: fields.filter((field) => Object.hasOwn(LINEAR_API_ACTIONS, field)),
+    result: state === 'confirmed' ? 'Linear confirmed the change' : state === 'unsuccessful' ? 'Linear reported that the change was unsuccessful'
+      : state === 'unconfirmed' ? 'Request completed; the change was not confirmed'
+      : state === 'not-sent' ? 'Request not sent'
+      : state === 'failed' ? operation === 'query' ? 'Read request failed' : 'Request failed; the remote outcome is unknown'
+      : state === 'read' ? 'Query returned' : 'Request completed',
+  };
+  if (issueKey) display.issueKey = issueKey;
+  if (summary?.issueTitle) display.issueTitle = summary.issueTitle;
+  if (summary?.issueUrl) display.issueUrl = summary.issueUrl;
+  const details: string[] = [];
+  if (!failed && summary) {
+    if (confirmed) {
+      for (const change of summary.changes ?? []) {
+        if (change === 'status' && summary.stateName) details.push(`Status → ${summary.stateName}`);
+        else if (change === 'assignee' && summary.assigneeName !== undefined) details.push(`Assignee → ${summary.assigneeName ?? 'Unassigned'}`);
+        else if (change === 'delegate' && summary.delegateName !== undefined) details.push(`Delegate → ${summary.delegateName ?? 'None'}`);
+        else details.push(`${change.charAt(0).toUpperCase()}${change.slice(1)} updated`);
+      }
+    } else if (operation === 'query') {
+      if (summary.found === false) details.push('Issue not found');
+      else if (summary.stateName) details.push(`Status: ${summary.stateName}`);
+      if (summary.resultCount !== undefined) details.push(`${summary.resultCount} ${summary.resultCount === 1 ? 'item' : 'items'} returned${summary.hasNextPage ? ' · more available' : ''}`);
+    }
+  }
+  if (details.length) display.detail = details.join(' · ');
+  if (state === 'failed') {
+    const status = payload['httpStatus'];
+    if (typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599) display.result += ` (HTTP ${status})`;
+    else if (payload['failure'] === 'network') display.result += ' (network error)';
+    else if (payload['failure'] === 'response') display.result += ' (invalid or rejected response)';
+  }
+  return display;
 }
 
 function tool_(title: string, target?: string, targetFull?: string): ActivityRow {

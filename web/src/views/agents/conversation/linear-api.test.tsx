@@ -8,8 +8,8 @@ import { MessageGroupRow } from './SlackTimeline';
 describe('Linear write rows in the conversation', () => {
   it('show the requested action under the agent byline with the issue as the place', () => {
     const write: ActivityFeedItem = {
-      kind: 'action-out',
-      label: 'Update ANI-5',
+      kind: 'linear-api',
+      api: { label: 'Update ANI-5', state: 'unconfirmed', result: 'Request completed; the change was not confirmed', operation: 'mutation', fields: ['issueUpdate'] },
       timestamp: '2026-11-04T01:00:00.000Z',
       surface: { kind: 'channel', label: 'ANI-5' },
     };
