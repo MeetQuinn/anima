@@ -13,6 +13,7 @@ import type {
   OnboardingInboxItem,
   SlackInboxItem,
 } from '../../shared/inbox.js';
+import { linearSessionDisplayText } from '../linear/prompt-context.js';
 
 export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | undefined {
   if (item.kind === 'linear_notification') return {
@@ -25,7 +26,8 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
     actor: item.actorName ?? 'Linear user', ...(item.actorId ? { actorUserId: item.actorId } : {}), direction: 'in', kind: 'message',
     messageId: messageIdForInboxItem(item), platform: 'linear', channelId: item.sessionId,
     channelKind: 'linear_session', threadTs: item.sessionId, source: { id: item.id, kind: 'inbox' },
-    text: item.text, timestamp: item.receivedAt,
+    // The agent gets Linear's context for models; people read it rendered.
+    text: item.contextSource === 'prompt_context' ? linearSessionDisplayText(item.text) : item.text, timestamp: item.receivedAt,
   };
   if (item.kind === 'slack') return slackInboxMessage(item);
   if (item.kind === 'feishu') return feishuInboxMessage(item);

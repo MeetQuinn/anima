@@ -14,6 +14,7 @@ import type { AgentRuntimeInput } from '../providers/contract.js';
 import { withTempAnimaHome, waitFor } from './helpers/harness.js';
 import { created, prompted, install, seedLinear, sessionId } from './helpers/linear.js';
 import { makeSlackEvent } from './helpers/slack.js';
+import { messageFromInboxItem } from '../messages/message.projection.js';
 
 function verified<T extends LinearWebhook>(event: T): T {
   const raw = Buffer.from(JSON.stringify(event));
@@ -214,7 +215,7 @@ for (const [origin, creator, wake, line] of [
   ['delegation', false, 'delegated', 'SYN-12 was delegated to you:'],
   ['mention', true, 'mention', 'Synthetic requester mentioned you on SYN-12:'],
   ['mention', false, 'mention', 'You were mentioned on SYN-12:'],
-] as const) test(`a created session (${origin}, creator=${creator}) opens with who asked, then Linear's context unchanged`, async () => withTempAnimaHome(async (home) => {
+] as const) test(`a created session (${origin}, creator=${creator}) opens with who asked, then Linear's context unchanged; people read it rendered`, async () => withTempAnimaHome(async (home) => {
   const { service } = await seedLinear(home);
   const event = created(), issueId = randomUUID(), rootId = randomUUID();
   event.agentSession.createdAt = '2026-11-03T17:02:58.123Z';
@@ -233,6 +234,7 @@ for (const [origin, creator, wake, line] of [
   assert.equal(buildCodeAgentDeliveryPrompt(item), `Linear conversation update:\n\n[issue=SYN-12 time=2026-11-03T17:02:58Z] ${line}\n`
     + `  <issue identifier="SYN-12">\n<title>Synthetic</title>\n</issue>\n\n`
     + `Wake trigger:\n[platform=linear reply_to=session:${sessionId} issue=SYN-12 wake=${wake} queued_at=2026-11-03T17:03:00Z]`);
+  assert.equal(messageFromInboxItem(item)?.text, '**SYN-12 · Synthetic**', 'The dashboard and history show the rendering');
 }));
 
 test('a follow-up names its issue and author so it reads on its own', async () => withTempAnimaHome(async (home) => {
