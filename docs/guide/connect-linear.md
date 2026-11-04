@@ -44,6 +44,13 @@ dashboard, for example with a Cloudflare Tunnel to `http://127.0.0.1:4174`. Set 
    mention it, check the public address in **Settings → Server**, and the app's webhook URL
    and event subscriptions in Linear.
 
+Authorization requests general read/write access, mention and delegation permissions,
+customer and initiative read/write access, and permission to create or modify time
+schedules. Existing connections need a new authorization to add these scopes. Linear
+does not allow the `admin` scope for app identities; see its
+[app permissions](https://linear.app/developers/agents) and
+[OAuth scopes](https://linear.app/developers/oauth-2-0-authentication).
+
 ### Public address
 
 Forward the whole public address to the loopback dashboard listener (`127.0.0.1` on the
