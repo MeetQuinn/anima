@@ -156,8 +156,9 @@ Prefer `api`: it refreshes credentials and keeps the token out of your tool outp
 When another program must call Linear itself, run it with
 `anima linear token -- <command> [args...]`. The program gets a fresh
 `LINEAR_ACCESS_TOKEN`, `LINEAR_ACCESS_TOKEN_EXPIRES_AT`, `LINEAR_ORGANIZATION_ID` and
-`LINEAR_APP_USER_ID`, and the command ends with its exit status. Nothing prints the
-token; never echo it or paste it into messages or files. `LINEAR_ACCESS_TOKEN` and
+`LINEAR_APP_USER_ID`, and the command ends with its exit status. Anima does not print the
+token, but the program shares your output: never let it print or echo the token, or
+paste it into messages or files. `LINEAR_ACCESS_TOKEN` and
 `LINEAR_ACCESS_TOKEN_EXPIRES_AT` in your own environment are a snapshot from when your run
 started. The dashboard shows each `api` call's operation and outcome, never its content;
 direct calls with the token are outside Anima's records.

@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { Command } from 'commander';
 import { z } from 'zod';
@@ -171,6 +173,33 @@ test('managed child environment gets a Linear token in the selected home; failur
   assert.equal(warnings.length, 1); assert.doesNotMatch(warnings.join(), /sentinel|refreshed/);
   assert.doesNotMatch(warnings.join(), /anima linear token/);
   assert.match(warnings.join(), /commands refresh them on demand/);
+}));
+
+test('the real token command keeps credentials off both output streams on every path', async () => withTempAnimaHome(async (home) => {
+  await seedLinear(home);
+  const cli = async (...args: string[]) => {
+    const child = spawn(process.execPath, [resolve('dist/server/cli/anima.js'), 'linear', '--agent', 'scout', 'token', ...args], {
+      env: { ...process.env, ANIMA_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { out += chunk; }); child.stderr.on('data', (chunk: string) => { out += chunk; });
+    const [status] = (await once(child, 'exit')) as [number | null];
+    for (const secret of [install.accessToken, install.refreshToken, install.clientSecret!, install.signingSecret]) {
+      assert.ok(!out.includes(secret), `token ${args.join(' ') || '(no program)'} printed a credential`);
+    }
+    return { status, out };
+  };
+  const bare = await cli();
+  assert.notEqual(bare.status, 0); assert.match(bare.out, /Name the program that needs the token/);
+  const envFile = join(home, 'cli-token-env.json');
+  const ok = await cli('--', process.execPath, '-e',
+    "require('node:fs').writeFileSync(process.argv[1], JSON.stringify({ token: process.env.LINEAR_ACCESS_TOKEN, refresh: process.env.LINEAR_REFRESH_TOKEN ?? null }))", envFile);
+  assert.equal(ok.status, 0);
+  assert.deepEqual(JSON.parse(await readFile(envFile, 'utf8')), { token: install.accessToken, refresh: null });
+  assert.equal((await cli('--', process.execPath, '-e', 'process.exit(42)')).status, 42);
+  const missing = await cli('--', join(home, 'no-such-program'));
+  assert.notEqual(missing.status, 0); assert.match(missing.out, /ENOENT/);
 }));
 
 test('registered Linear CLI comments proactively, records outbox, and audits API metadata without token or request content', async (t) => withTempAnimaHome(async (home) => {

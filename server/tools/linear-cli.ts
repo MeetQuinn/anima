@@ -75,12 +75,12 @@ export function registerLinearCommands(program: Command): void {
   // Tool output lands in the agent's transcript, so the token goes only into the
   // environment of the program that needs it. Neither it nor the call is recorded.
   // Arbitrary API calls record only fixed metadata, never their bodies.
-  linear.command('token').description('Run a program with a fresh LINEAR_ACCESS_TOKEN in its environment; the token is never printed.\nUse: anima linear token -- <command> [args...]')
+  linear.command('token').description('Run a program with a fresh LINEAR_ACCESS_TOKEN in its environment; Anima does not print it.\nUse: anima linear token -- <command> [args...]')
     .allowUnknownOption(true)
     .argument('[command...]')
     .action(async (commandArgs: string[], _options, command: Command) => {
       const [program, ...args] = commandArgs;
-      if (!program) throw new Error(`Name the program that needs the token: anima linear token -- <command> [args...]. It runs with ${TOKEN_ENV.join(', ')} set. The token is never printed.`);
+      if (!program) throw new Error(`Name the program that needs the token: anima linear token -- <command> [args...]. It runs with ${TOKEN_ENV.join(', ')} set. Anima does not print the token.`);
       const { accessToken, expiresAt, organizationId, appUserId } = await identityFor(command.optsWithGlobals().agent).credentials();
       const child = spawn(program, args, { stdio: 'inherit', env: { ...process.env,
         LINEAR_ACCESS_TOKEN: accessToken, LINEAR_ACCESS_TOKEN_EXPIRES_AT: expiresAt, LINEAR_ORGANIZATION_ID: organizationId, LINEAR_APP_USER_ID: appUserId,
