@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react';
-import { ChevronDown, ExternalLink, RotateCcw, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   fetchAgent,
   fetchAgentSession,
   refreshAgentData,
-  syncAgentAvatar,
-  syncAgentFeishuAvatar,
   updateAgentHome,
   updateAgentProfile,
   updateAgentProvider,
@@ -33,7 +31,8 @@ import { SessionSection } from './SessionStats';
 import { SlackConnectStepper } from './SlackConnectStepper';
 import { FeishuConnectStepper } from './FeishuConnectStepper';
 import { FeishuScopeStatusCard } from './FeishuScopeStatusCard';
-import { SlackManifestUpdateCard } from './SlackManifestUpdateCard';
+import { SlackRow } from './SlackRow';
+import { FeishuRow } from './FeishuRow';
 import { LinearRow } from './LinearRow';
 import { SkillsSection } from './SkillsSection';
 import { ProfileActionsRail } from './ActionsRail';
@@ -41,15 +40,6 @@ import { AgentUsageSection } from '@/components/token-usage/AgentUsageSection';
 import { OwnerPickerForm } from './OwnerPickerForm';
 import { agentFeishuConnected, agentHasConnectedTransport, agentSlackConnected } from '@shared/agent-transports';
 import type { AgentUpdateProviderRequest } from '@shared/agent-config';
-
-function FeishuMeta({ label, value }: { label: string; value?: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="chrome text-[10px] tracking-[0.1em] text-text-subtle">{label}</div>
-      <div className="mt-0.5 break-all font-mono text-[12px] text-text">{value || '—'}</div>
-    </div>
-  );
-}
 
 export default function Profile() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -90,15 +80,8 @@ export default function Profile() {
     enabled: !!agentId,
   });
 
-  // Avatar sync.
-  const [syncingAvatar, setSyncingAvatar] = useState(false);
-  const [syncingFeishuAvatar, setSyncingFeishuAvatar] = useState(false);
-
   // Owner picker (reset when agent changes via key prop on OwnerPickerForm).
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
-
-  // Feishu ledger-row details expand (App/Bot IDs, credentials note).
-  const [feishuDetailsOpen, setFeishuDetailsOpen] = useState(false);
 
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
   function flashApplyNotice(message = 'Saved. This agent will apply the change when the current item finishes.') {
@@ -171,32 +154,6 @@ export default function Profile() {
       if (Object.keys(provider).length > 0) await updateAgentProvider(agentId, provider);
       showApplyNoticeIfActive();
       refreshAgentData(agentId);
-    }
-  }
-
-  async function handleSyncAvatar() {
-    if (!agentId || syncingAvatar) return;
-    setSyncingAvatar(true);
-    try {
-      await syncAgentAvatar(agentId);
-      refreshAgentData(agentId);
-    } catch {
-      // silent — avatar sync is best-effort
-    } finally {
-      setSyncingAvatar(false);
-    }
-  }
-
-  async function handleSyncFeishuAvatar() {
-    if (!agentId || syncingFeishuAvatar) return;
-    setSyncingFeishuAvatar(true);
-    try {
-      await syncAgentFeishuAvatar(agentId);
-      refreshAgentData(agentId);
-    } catch {
-      // silent — avatar sync is best-effort
-    } finally {
-      setSyncingFeishuAvatar(false);
     }
   }
 
@@ -351,99 +308,30 @@ export default function Profile() {
                 <ReadonlyValue />
               )}
             </Field>
+          </div>
+        </Section>
 
-            {/* Slack connection as a ledger row, same language as the rest of
-              Setup - a connection is configuration, not a person, so it gets
-              no card and no face. The connect stepper (below) still gets its
-              own section when nothing is connected yet. */}
+        {/* ── CONNECTIONS ───────────────────────────────────────────────────── */}
+        {/* Where teammates reach this agent. One row per platform, same anatomy;
+          details and maintenance open from the row's single action. */}
+        <Section title="Connections">
+          <div className="divide-y divide-border-soft">
             {slackConnected && (
-              <Field label="Slack">
-                <div className="flex min-w-0 items-center gap-3">
-                  {/* No "Connected" chip - a row in the Setup ledger only exists
-                    when the connection does; the label would restate the row.
-                    Baseline-aligned: the handle and workspace run at different
-                    sizes, so centering the boxes made them look off-kilter. */}
-                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <span className="font-serif text-[15px] text-text">@{agent.id}</span>
-                    {agent.slack.workspaceName && (
-                      <>
-                        <span aria-hidden className="font-sans text-[13px] text-text-subtle">
-                          ·
-                        </span>
-                        <span className="font-sans text-[13px] text-text-muted">{agent.slack.workspaceName}</span>
-                      </>
-                    )}
-                  </div>
-                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
-                    {agent.slack.appId && (
-                      <a
-                        href={`https://api.slack.com/apps/${agent.slack.appId}/general`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Slack App Settings"
-                        className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 md:h-7 md:w-7"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    )}
-                    <button
-                      onClick={() => void handleSyncAvatar()}
-                      disabled={syncingAvatar}
-                      title="Sync avatar from Slack"
-                      className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 disabled:opacity-20 md:h-7 md:w-7"
-                    >
-                      <RotateCcw className={`h-3.5 w-3.5 ${syncingAvatar ? 'animate-spin' : ''}`} />
-                    </button>
-                  </div>
-                </div>
-              </Field>
+              <SlackRow
+                agentId={agentId}
+                agentName={agent.profile.displayName || agentId}
+                appId={agent.slack.appId}
+                workspaceName={agent.slack.workspaceName}
+                workspaceIconUrl={agent.slack.workspaceIconUrl}
+              />
             )}
-
-            {/* Feishu connection, same ledger-row language as Slack. The App/Bot
-              IDs and credentials note fold behind a Details toggle - present
-              when needed, silent otherwise. */}
             {feishuConnected && (
-              <Field label="Feishu">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <span className="break-all font-mono text-[13px] text-text">{agent.feishu.appId || '—'}</span>
-                    <button
-                      type="button"
-                      onClick={() => setFeishuDetailsOpen((open) => !open)}
-                      aria-expanded={feishuDetailsOpen}
-                      className="inline-flex items-center gap-1 font-sans text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted hover:decoration-text-muted/40"
-                    >
-                      <ChevronDown
-                        className={`h-3 w-3 transition-transform ${feishuDetailsOpen ? 'rotate-180' : ''}`}
-                      />
-                      {feishuDetailsOpen ? 'Hide details' : 'Details'}
-                    </button>
-                  </div>
-                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
-                    <button
-                      onClick={() => void handleSyncFeishuAvatar()}
-                      disabled={syncingFeishuAvatar}
-                      title="Sync avatar from Feishu"
-                      className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-subtle opacity-40 transition-all hover:bg-surface-elevated hover:opacity-100 disabled:opacity-20 md:h-7 md:w-7"
-                    >
-                      <RotateCcw className={`h-3.5 w-3.5 ${syncingFeishuAvatar ? 'animate-spin' : ''}`} />
-                    </button>
-                  </div>
-                </div>
-                {feishuDetailsOpen && (
-                  <div className="mt-3 space-y-3">
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <FeishuMeta label="Bot Open ID" value={agent.feishu.botOpenId} />
-                      <FeishuMeta label="Credentials" value="Configured" />
-                      <FeishuMeta label="Delivery" value="Long-lived connection" />
-                    </div>
-                    <p className="font-sans text-[12px] leading-relaxed text-text-muted">
-                      Feishu credentials are stored in the agent config and injected by Anima at runtime. Secret values
-                      are hidden in the dashboard.
-                    </p>
-                  </div>
-                )}
-              </Field>
+              <FeishuRow
+                agentId={agentId}
+                agentName={agent.profile.displayName || agentId}
+                appId={agent.feishu.appId}
+                botOpenId={agent.feishu.botOpenId}
+              />
             )}
             <LinearRow
               key={agentId}
@@ -453,11 +341,6 @@ export default function Profile() {
               initialOpen={linearReturn}
             />
           </div>
-          {slackConnected && (
-            <div className="mt-4">
-              <SlackManifestUpdateCard agentId={agentId} />
-            </div>
-          )}
           {feishuConnected && (
             <div className="mt-4">
               <FeishuScopeStatusCard agentId={agentId} />

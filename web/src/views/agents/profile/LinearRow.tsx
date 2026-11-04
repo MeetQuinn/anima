@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { AlertTriangle, Check, ChevronRight, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight } from 'lucide-react';
 import {
   fetchLinearSetup,
   fetchLinearStatus,
@@ -15,10 +14,9 @@ import {
 import { refreshAgentData } from '@/api/agents';
 import { Button } from '@/components/ui/button';
 import { PublicAddressCheck, PublicAddressForm, PublicAddressGuidance } from '@/components/PublicUrlSettings';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useNow } from '@/hooks/useNow';
 import { formatRelativeShort, shortIso } from '@/lib/format';
-import { Field } from './Primitives';
+import { ConnectionDialog, ConnectionHeader, ConnectionRow, Fact, type ConnectionNote } from './Connection';
 import { LinearClientSecretRequest, LinearReauthorizeRequest, type LinearClientSecretResult, type LinearInstallRequest, type LinearStatus } from '@shared/linear';
 import { inputClass, LinearConnectSteps, notACredentialField } from './LinearConnectSteps';
 
@@ -180,52 +178,33 @@ export function LinearRow({
   }, [busy]);
 
   const rowAction = connected ? 'Manage' : attention && data ? 'Review' : 'Connect';
+  const notes: ConnectionNote[] = [];
+  if (attention)
+    notes.push({
+      tone: 'error',
+      text: status.isError
+        ? 'Status unavailable'
+        : data?.listenerStatus?.state === 'failed'
+          ? 'Not receiving events'
+          : clientRejected
+            ? 'Credentials not accepted'
+            : (notice?.title ?? 'Needs attention'),
+    });
+  if (connected && data.needsReauthorization) notes.push({ tone: 'warn', text: 'Authorize again for new permissions' });
+  if (!attention && unanswered > 0) notes.push({ tone: 'warn', text: unansweredTitle(unanswered) });
   return (
     <>
-      <Field label="Linear">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="min-w-0">
-            {connected ? (
-              <p className="flex min-w-0 items-center gap-2 font-serif text-[15px] text-text">
-                <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-health-ok" />
-                <span className="break-words">{data.workspaceName ?? 'Connected'}</span>
-              </p>
-            ) : (
-              <p className="font-sans text-[13px] text-text-muted">
-                {status.isPending ? 'Loading…' : status.isError && !data ? 'Unavailable' : 'Not connected'}
-              </p>
-            )}
-            {attention && (
-              <p className="mt-0.5 font-sans text-[12px] text-health-error">
-                {status.isError
-                  ? 'Status unavailable'
-                  : data?.listenerStatus?.state === 'failed'
-                    ? 'Not receiving events'
-                    : clientRejected
-                      ? 'Credentials not accepted'
-                      : (notice?.title ?? 'Needs attention')}
-              </p>
-            )}
-            {connected && data.needsReauthorization && (
-              <p className="mt-0.5 font-sans text-[12px] text-health-warn-ink">Authorize again for new permissions</p>
-            )}
-            {!attention && unanswered > 0 && (
-              <p className="mt-0.5 font-sans text-[12px] text-health-warn-ink">{unansweredTitle(unanswered)}</p>
-            )}
-          </div>
-          <button
-            type="button"
-            aria-haspopup="dialog"
-            aria-label={`${rowAction} Linear`}
-            onClick={() => setOpen(true)}
-            className="ml-auto inline-flex min-h-[44px] shrink-0 items-center rounded-sm px-2.5 font-sans text-[12px] font-medium text-accent transition-colors hover:bg-surface-elevated hover:text-accent-hover focus-visible:outline focus-visible:outline-accent md:min-h-8"
-          >
-            {rowAction}
-          </button>
-        </div>
-      </Field>
+      <ConnectionRow
+        label="Linear"
+        connected={connected}
+        workspace={data?.workspaceName}
+        status={status.isPending ? 'Loading…' : status.isError && !data ? 'Unavailable' : 'Not connected'}
+        notes={notes}
+        action={rowAction}
+        onAction={() => setOpen(true)}
+      />
       {open && (
-        <LinearDialog busy={busy} onClose={close}>
+        <ConnectionDialog platform="Linear" busy={busy} onClose={close}>
           <LinearDialogBody
             agentId={agentId}
             agentName={agentName}
@@ -239,7 +218,7 @@ export function LinearRow({
             onRemove={remove}
             onClose={close}
           />
-        </LinearDialog>
+        </ConnectionDialog>
       )}
     </>
   );
@@ -433,27 +412,11 @@ function ConnectedView({
           : 'Not observed yet';
   return (
     <div className="space-y-5">
-      <header className="flex items-start gap-3.5">
-        {data.clientRejected ? (
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-health-error-soft text-health-error">
-            <AlertTriangle className="size-5" aria-hidden="true" />
-          </span>
-        ) : (
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-health-ok-soft text-health-ok">
-            <Check className="size-5" aria-hidden="true" />
-          </span>
-        )}
-        <div className="min-w-0 space-y-1">
-          <h3 className="break-words font-serif text-[20px] font-semibold leading-tight text-text">
-            Connected to {data.workspaceName ?? 'Linear'}
-          </h3>
-          <p className="font-serif text-[14px] leading-relaxed text-text-muted">
-            {data.clientRejected
-              ? `${agentName} can’t work in Linear until Linear accepts this app’s credentials.`
-              : `Mention ${agentName} in Linear or delegate an issue to it.`}
-          </p>
-        </div>
-      </header>
+      <ConnectionHeader problem={data.clientRejected} title={`Connected to ${data.workspaceName ?? 'Linear'}`}>
+        {data.clientRejected
+          ? `${agentName} can’t work in Linear until Linear accepts this app’s credentials.`
+          : `Mention ${agentName} in Linear or delegate an issue to it.`}
+      </ConnectionHeader>
 
       {listener?.state === 'failed' && (
         <div role="alert" className="flex gap-3 rounded-sm border border-health-error/25 bg-health-error-soft/50 px-3.5 py-3">
@@ -827,33 +790,6 @@ function ClientSecretFact({
   );
 }
 
-function Fact({
-  label,
-  value,
-  mono = false,
-  wide = false,
-  tone,
-  title,
-}: {
-  label: string;
-  value: string;
-  title?: string;
-  mono?: boolean;
-  wide?: boolean;
-  tone?: 'error';
-}) {
-  return (
-    <div className={`min-w-0 border-border-soft px-3.5 py-3 ${wide ? 'col-span-2 border-t' : 'even:border-l'}`}>
-      <dt className="font-sans text-[11px] tracking-wide text-text-subtle">{label}</dt>
-      <dd
-        title={title}
-        className={`mt-1 break-all ${mono ? 'font-mono text-[12px]' : 'font-serif text-[14px]'} ${tone === 'error' ? 'text-health-error' : 'text-text'}`}
-      >
-        {value}
-      </dd>
-    </div>
-  );
-}
 
 function Loading() {
   return (
@@ -874,47 +810,3 @@ function ReadError({ what, refresh = false, onRetry }: { what: string; refresh?:
   );
 }
 
-function LinearDialog({ busy, onClose, children }: { busy: boolean; onClose: () => void; children: ReactNode }) {
-  const { dialogRef, titleId, isTopmostDialog } = useDialogFocus(true);
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape' && isTopmostDialog()) onClose();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, isTopmostDialog]);
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-page/70 backdrop-blur-sm md:items-center md:p-4"
-      onClick={onClose}
-    >
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="flex h-full w-full flex-col border-border bg-surface shadow-deep md:h-auto md:max-h-[88dvh] md:max-w-[34rem] md:rounded-sm md:border"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border-soft px-5 py-2.5 md:px-6">
-          <h2 id={titleId} className="font-sans text-[12px] font-medium uppercase tracking-[0.08em] text-text-muted">
-            Linear
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            aria-label="Close Linear settings"
-            className="-mr-2 flex size-11 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-40 md:size-8"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-        <div className="min-h-0 overflow-y-auto px-5 py-6 md:px-6">{children}</div>
-      </div>
-    </div>,
-    document.body,
-  );
-}

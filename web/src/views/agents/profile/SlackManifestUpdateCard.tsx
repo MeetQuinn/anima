@@ -15,9 +15,11 @@ import { extractError } from './Primitives';
 
 interface Props {
   agentId: string;
+  /** Start expanded, e.g. inside the Slack dialog the user opened to review it. */
+  defaultOpen?: boolean;
 }
 
-export function SlackManifestUpdateCard({ agentId }: Props) {
+export function SlackManifestUpdateCard({ agentId, defaultOpen = false }: Props) {
   const { data } = useQuery({
     queryKey: queryKeys.agentSlackManifestUpdate(agentId),
     queryFn: () => fetchAgentSlackManifestUpdate(agentId),
@@ -28,9 +30,9 @@ export function SlackManifestUpdateCard({ agentId }: Props) {
   const [copyError, setCopyError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Collapsed by default: this is a one-time maintenance action, not a status
-  // the page should shout about. The single-line notice expands on demand.
-  const [open, setOpen] = useState(false);
+  // Collapsed unless the user opened it to review: this is a one-time
+  // maintenance action, not a status to shout about.
+  const [open, setOpen] = useState(defaultOpen);
 
   if (!data?.needsUpdate) return null;
 
