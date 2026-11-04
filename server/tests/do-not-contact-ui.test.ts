@@ -67,7 +67,7 @@ test('contact UI lists configured and disconnected workspaces without Slack call
   assert.equal(response.statusCode, 200);
   assert.equal(response.headers['cache-control'], 'no-store');
   assert.deepEqual(response.json().workspaces.map((w: { id: string }) => w.id).sort(), [team, 'TOTHER'].sort());
-  assert.deepEqual(response.json().workspaces.find((w: { id: string }) => w.id === 'TOTHER'), { id: 'TOTHER', name: 'TOTHER', memberIds: ['UOTHER'], canLookup: false });
+  assert.deepEqual(response.json().workspaces.find((w: { id: string }) => w.id === 'TOTHER'), { platform: 'slack', id: 'TOTHER', name: 'TOTHER', memberIds: ['UOTHER'], canLookup: false });
   assert.ok(!/xoxb|xapp|botToken|agentId/.test(response.body));
   assert.equal(calls.length, 0);
 }));

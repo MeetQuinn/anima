@@ -12,6 +12,7 @@ import { LinearSessionService } from '../linear/session.service.js';
 import { formatLinearReplyTarget, parseLinearReplyTarget } from '../linear/reply-target.js';
 import { withToolActivity } from './tool-context.js';
 import { runLinearApi } from './linear-api.js';
+import { assertLinearContactAllowed } from '../linear/contact-policy.js';
 
 function identityFor(agent: string | undefined): LinearIdentityService {
   const id = resolveAgentIdFrom(agent);
@@ -27,6 +28,7 @@ const ReplyBody = z.string().trim().min(1).max(100_000);
 
 async function sendSessionActivity(agent: string | undefined, tool: string, sessionId: string, kind: LinearActivityKind, body: string): Promise<void> {
   const service = serviceFor(agent);
+  await assertLinearContactAllowed({ identity: service.identity, tool, payload: { channelKind: 'linear_session', channel: sessionId }, markdown: body });
   const result = await withToolActivity({
     audit: { agentId: service.agentId }, effectType: 'linear.activity.create',
     basePayload: { tool, platform: 'linear', channelKind: 'linear_session', channel: sessionId, threadTs: sessionId, kind, text: body },
@@ -43,9 +45,11 @@ async function sendSessionActivity(agent: string | undefined, tool: string, sess
   console.log(`Linear accepted activity ${result.activityId}; bookkeeping=${result.bookkeeping}.`);
 }
 
-async function sendComment(agent: string | undefined, tool: string, basePayload: Record<string, unknown>, id: string,
+async function sendComment(agent: string | undefined, tool: string, basePayload: { text: string; channel?: string; threadTs?: string }, id: string,
   create: (service: LinearCommentService) => Promise<LinearCreatedComment>): Promise<LinearCreatedComment> {
   const identity = identityFor(agent);
+  const { text, ...target } = basePayload;
+  await assertLinearContactAllowed({ identity, tool, payload: { channelKind: 'linear_issue', ...target }, markdown: text });
   console.error(`Linear comment id: ${id}. If the result is unknown, inspect this id before retrying.`);
   return withToolActivity({
     audit: { agentId: identity.agentId }, effectType: 'linear.comment.create',
@@ -126,6 +130,7 @@ export function registerLinearCommands(program: Command): void {
       const requestId = z.string().uuid().parse(opts.requestId ?? randomUUID());
       const body = z.string().trim().min(1).max(100_000).parse(await readStdin());
       const service = serviceFor(opts.agent);
+      await assertLinearContactAllowed({ identity: service.identity, tool: 'anima.linear.start', payload: { channelKind: 'linear_session', requestId }, markdown: body });
       const runItemId = await resolveToolItemId({ agent: service.agentId });
       console.error(`Linear start request id: ${requestId}. If the result is unknown, inspect Linear before creating another session.`);
       const result = await withToolActivity({

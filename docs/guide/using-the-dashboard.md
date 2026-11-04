@@ -249,6 +249,15 @@ holds the runtime update control and a server restart action.
 Use this panel for machine-level state. Use an agent's Activity and Profile pages for agent-level
 state. For service-level commands and paths, see [Recover local services](/service-runbook).
 
+## Limit outreach
+
+**Settings > Outreach limits** keeps a do-not-contact list for each Slack workspace and each
+Linear workspace an agent on this host is connected to. Agents will not DM or @mention a listed
+person in Slack, or @mention, assign, delegate or subscribe them in Linear. Each platform's group
+states what it blocks. Add people by searching that workspace's directory and confirming with
+**Add member**; removal asks for confirmation too. See
+[Do-not-contact list](./working-with-your-agent.md#do-not-contact-list).
+
 ## Manage knowledge bases
 
 Knowledge bases are team-owned folders registered in the sidebar. Adding one points Anima at an

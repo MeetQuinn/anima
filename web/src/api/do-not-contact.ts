@@ -1,4 +1,4 @@
-import type { ContactDirectory, ContactWorkspace } from '@shared/do-not-contact';
+import type { ContactDirectory, ContactWorkspace, LinearContactDirectory } from '@shared/do-not-contact';
 import { apiRequest, jsonInit } from './client';
 
 export async function fetchContactWorkspaces(): Promise<ContactWorkspace[]> {
@@ -12,4 +12,12 @@ export function fetchContactDirectory(workspaceId: string): Promise<ContactDirec
 
 export function changeContactMember(workspaceId: string, userId: string, action: 'add' | 'remove'): Promise<{ ok: true }> {
   return apiRequest(`/api/do-not-contact/${encodeURIComponent(workspaceId)}/members`, jsonInit(action === 'add' ? 'POST' : 'DELETE', { userId }));
+}
+
+export function fetchLinearContactDirectory(organizationId: string): Promise<LinearContactDirectory> {
+  return apiRequest(`/api/do-not-contact/linear/${encodeURIComponent(organizationId)}/users`);
+}
+
+export function changeLinearContactMember(organizationId: string, userId: string, action: 'add' | 'remove'): Promise<{ ok: true }> {
+  return apiRequest(`/api/do-not-contact/linear/${encodeURIComponent(organizationId)}/members`, jsonInit(action === 'add' ? 'POST' : 'DELETE', { userId }));
 }

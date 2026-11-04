@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { LINEAR_ISSUE_KEY } from '../../shared/linear-issue-key.js';
 import { activityServiceForAgent, type ActivityService } from '../activities/activity.service.js';
 import type { LinearIdentityService } from '../linear/identity.service.js';
+import { assertLinearContactAllowed } from '../linear/contact-policy.js';
 import { resolveToolItemId } from './tool-context.js';
 
 type ApiInput = { query: string; variables: Record<string, unknown>; operationName?: string };
@@ -62,6 +63,8 @@ export async function runLinearApi(identity: LinearIdentityService, input: ApiIn
     ...await describeOperation(input),
   };
   if (itemId) payload.itemId = itemId;
+  // Reads cannot contact anyone. Anything else, including an unparseable document, is checked.
+  if (payload.operation !== 'query') await assertLinearContactAllowed({ identity, tool: 'anima.linear.api', payload, document: input });
   const activity: ActivityService = activityServiceForAgent(identity.agentId);
   try { await activity.record({ type: 'tool.call.started', payload: { ...payload, status: 'started' } }); }
   catch { throw new Error('Linear API audit could not be started; no request was sent.'); }

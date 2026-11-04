@@ -114,6 +114,9 @@ Find agents with the `users` query below; your own user is `viewer`.
   `url`, or `@` and its `displayName` such as `@nora`, in a `reply --to issue:ANI-123`
   body. Linear turns either into a mention, which wakes that agent.
 
+People on this host's do-not-contact list cannot be mentioned, assigned, delegated or
+subscribed through these commands; see [the guide](guide.md#what-you-may-and-may-not-do).
+
 ## API
 
 ```sh

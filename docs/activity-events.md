@@ -31,6 +31,7 @@ sources. There is no third list: edit a table, or the test reds.
 | `server/runtime/activity.ts`                    | turns, messages, provider events   |
 | `server/runtime/send-hold.ts`                   | send-hold HELD local completed     |
 | `server/messages/contact-policy.service.ts`     | do-not-contact send refusal        |
+| `server/linear/contact-policy.ts`               | Linear do-not-contact refusal      |
 | `server/slack-interactions/shortcut.service.ts` | Slack shortcut invocations         |
 | `server/tools/linear-api.ts`                    | Linear API request metadata        |
 | `server/tools/tool-context.ts`                  | tool steps                         |
