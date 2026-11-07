@@ -70,7 +70,7 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 ## Memory
 
-**`MEMORY.md`.** What an agent wakes up knowing after a context reset: who it is, what it is in the middle of, what to watch out for, and pointers into `notes/`. The provider session is short-term memory; `MEMORY.md` and `notes/` are what last. Chat, issues, and repositories are records the agent looks up rather than memorizes.
+**`MEMORY.md`.** What an agent wakes up knowing after a context reset: what it is in the middle of, what it has learned, what to watch out for, and pointers into `notes/`. Its identity comes from its name and role, not from this file. The provider session is short-term memory; `MEMORY.md` and `notes/` are what last. Chat, issues, and repositories are records the agent looks up rather than memorizes.
 
 **Dreaming.** The agent’s daily memory consolidation, what sleep does for a person: a scheduled ordinary private wake in which the agent looks back over what happened, writes down what is worth keeping (lessons, decisions, people’s preferences, verified rules) into `notes/` with a pointer in `MEMORY.md`, and lets go of the rest. Records are not commands by themselves; normal capabilities and judgment apply, so clearly valid unfinished session work may be finished first.
 

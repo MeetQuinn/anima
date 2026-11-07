@@ -392,7 +392,7 @@ function memoryCoherenceBody(sizeBytes: number | undefined): string {
       ? opening
       : `${opening} Your \`MEMORY.md\` is currently ${formatMemorySize(sizeBytes)}.`,
     '',
-    'Your session holds what happened recently; it will not survive a reset. `MEMORY.md` is what you wake up knowing: who you are, what you are in the middle of, and what to watch out for. `notes/` is what you can recall when something points you there. Chat, issues and repositories are records you can look up, not things to memorize.',
+    'Your session holds what happened recently; it will not survive a reset. `MEMORY.md` is what you wake up knowing: what you are in the middle of, what you have learned, and what to watch out for. `notes/` is what you can recall when something points you there. Chat, issues and repositories are records you can look up, not things to memorize.',
     '',
     "Look back over what happened since you last did this. Write down what is worth keeping and exists only because you lived through it: lessons, decisions, people's preferences, rules you verified. Put the detail in `notes/` and leave a pointer in `MEMORY.md`. Let go of the rest: finished work, state you can look up, notes you no longer need, old copies of `MEMORY.md`.",
     '',

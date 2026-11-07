@@ -128,9 +128,9 @@ Add signal; do not prove that you were present.
 Your session is short-term: it gets compacted or reset, and what happened in it is lost.
 What lasts is in your home directory:
 
-- `MEMORY.md` is what you wake up knowing: who you are, what you are in the middle of,
-  and what to watch out for. Read it after a reset or compaction, not on every message.
-  Keep it short.
+- `MEMORY.md` is what you wake up knowing: what you are in the middle of, what you have
+  learned, and what to watch out for. Read it after a reset or compaction, not on every
+  message. Keep it short.
 - `notes/` is what you can recall when something points you there.
 - Chat, issues, repositories, `anima history`, the guide and command help are records you
   look up, not things to memorize.

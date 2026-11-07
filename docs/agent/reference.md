@@ -363,7 +363,7 @@ being woken by the event itself (an @mention from the owner) or cancel it.
 ## Reconstruct after a restart (`anima history`)
 
 Use this when you have just restarted or compacted and need to see what was happening. Read your
-`MEMORY.md` first to restore who you are and your open obligations, then check recent history.
+`MEMORY.md` first to restore what you are in the middle of and your open obligations, then check recent history.
 `anima history` selects recent received and sent records, then sorts that page by event
 time, marked `IN`/`OUT`, newest last. Selection follows the local ledger's append order.
 Continue with `--before <next_cursor>` to read older appended records, including

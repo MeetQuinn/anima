@@ -10,7 +10,7 @@
 
 ## Active Context
 
-> Empty at birth. As you take on work, record your current focus and open obligations here so a restart or compaction can recover them. This is the part that has to carry you across the next reset — keep it current.
+> Empty at birth. What you are in the middle of and what you owe. Write work in progress here right away only when a reset would otherwise lose it; the rest can wait for Dreaming.
 
 ## Onboarding (do this first — delete this section once done)
 
