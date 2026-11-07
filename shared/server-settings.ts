@@ -60,7 +60,6 @@ export {
   ProviderRuntimeCommandsConfig,
 };
 
-export const DEFAULT_MEMORY_COHERENCE_CONSOLIDATION_THRESHOLD_BYTES = 20 * 1024;
 export const DEFAULT_MAX_CONCURRENT_AGENT_RUNS = 10;
 
 export const RuntimeConfig = z.object({
@@ -76,8 +75,7 @@ export const DashboardAuth = z.object({
 }).strict();
 export type DashboardAuth = z.infer<typeof DashboardAuth>;
 
-export const MemoryCoherenceConfig = z.object({
-  consolidationThresholdBytes: z.number().int().positive().optional(),
+const MemoryCoherenceFields = z.object({
   enabled: z.boolean().optional(),
   maxConcurrent: z.number().int().positive().max(100).optional(),
   scopeAgentIds: z.array(z.string().min(1)).optional(),
@@ -85,7 +83,16 @@ export const MemoryCoherenceConfig = z.object({
   windowDurationMinutes: z.number().int().positive().max(24 * 60).optional(),
   windowStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
 }).strict();
-export type MemoryCoherenceConfig = z.infer<typeof MemoryCoherenceConfig>;
+
+// `consolidationThresholdBytes` was removed when the memory pass dropped its
+// separate over-threshold mode. A leftover value is stripped before parse so an
+// older config.json still loads; unknown keys still fail under strict fields.
+export const MemoryCoherenceConfig = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { consolidationThresholdBytes: _removed, ...rest } = value as Record<string, unknown>;
+  return rest;
+}, MemoryCoherenceFields);
+export type MemoryCoherenceConfig = z.infer<typeof MemoryCoherenceFields>;
 
 /**
  * Cursor view (cut b) + pre-commit send hold (cut c). Default **on** after
