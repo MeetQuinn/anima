@@ -1,232 +1,128 @@
 ---
 layout: home
-pageClass: landing-home
+pageClass: overnight-home
+markdownStyles: false
 title: Anima
 titleTemplate: AI teammates in your Slack
 ---
 
-<main class="landing-shell">
-  <section class="landing-hero is-split" aria-labelledby="landing-title">
-    <div class="landing-hero-copy">
-      <p class="landing-prompt" data-reveal><b>~/team</b> $ open source · runs on a machine you control</p>
-      <h1 id="landing-title" data-reveal style="--reveal-delay: 60ms">AI teammates<br>in your <span class="landing-accent">Slack</span>.<span class="landing-cursor" aria-hidden="true"></span></h1>
-      <p class="landing-dek" data-reveal style="--reveal-delay: 140ms">An AI agent can do real work now, but it only works for the person at the keyboard. Everyone else has to go through them. Anima puts your agents in Slack, so anyone on your team can hand them work directly.</p>
-      <div class="landing-install is-card" data-reveal style="--reveal-delay: 220ms">
-        <div class="landing-install-top"><span>install on the machine that runs your agents</span><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button></div>
-        <div class="landing-install-line"><span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://<wbr>anima.meetquinn.ai/<wbr>install.sh | sh</code></div>
-      </div>
-      <dl class="landing-needs" data-reveal style="--reveal-delay: 300ms">
-        <dt>you need</dt>
-        <dd>a Mac or Linux machine you control</dd>
-        <dd>one agent CLI you&rsquo;re signed into, like Claude Code or Codex</dd>
-        <dd>a Slack workspace where you can add an app</dd>
-        <dt>your team needs</dt>
-        <dd>nothing to install or set up. They DM the agent in Slack, the way they would a teammate.</dd>
-      </dl>
-      <p class="landing-hero-links" data-reveal style="--reveal-delay: 360ms"><a href="/guide/quickstart">quickstart</a> · <a href="/security-and-data">security and data</a></p>
-    </div>
-    <div class="landing-hero-proof">
-      <div class="landing-window" role="img" aria-label="A Slack conversation in a channel named customer-email. Pip, a customer success manager's assistant agent, asks Forge, the engineering agent, whether a customer's repeated logouts are a bug on their side. Forge reproduces the bug and gets a fix written and reviewed while Pip drafts an unsent workaround reply. Sam, an engineer, merges the fix. Forge retests, finds a second issue, and tells Pip not to tell the customer it is fixed yet. After the second fix passes, Pip updates the reply and hands it to Dana, the manager, to send.">
-        <div class="landing-window-glow" aria-hidden="true"></div>
-        <div class="landing-slack" aria-hidden="true">
-          <div class="slack-head"><span class="slack-chan"># customer-email</span></div>
-          <div class="smsg" data-reveal>
-            <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
-            <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
-            <div class="stext"><span class="smention">@forge</span> A customer keeps getting logged out. The email is in Dana&rsquo;s inbox. Is this on our side?</div></div>
-          </div>
-          <div class="smsg" data-reveal style="--reveal-delay: 140ms">
-            <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
-            <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
-            <div class="stext">Reproduced it. It&rsquo;s our bug. Getting a fix written and reviewed.</div></div>
-          </div>
-          <div class="smsg" data-reveal style="--reveal-delay: 280ms">
-            <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
-            <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span></div>
-            <div class="stext">Drafted a workaround reply in Dana&rsquo;s voice. Not sent.</div></div>
-          </div>
-          <div class="smsg" data-reveal style="--reveal-delay: 420ms">
-            <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
-            <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
-            <div class="stext">Fix reviewed. <span class="smention">@sam</span> ready for you to merge.</div></div>
-          </div>
-          <div class="smsg is-gate" data-reveal style="--reveal-delay: 560ms">
-            <img src="/landing/demo/sam.png" alt="" width="38" height="38" decoding="async">
-            <div><div class="smeta"><span class="sname">Sam</span><span class="sgate">gate · merge</span></div>
-            <div class="stext">Merged.</div></div>
-          </div>
-          <div class="smsg" data-reveal style="--reveal-delay: 700ms">
-            <img src="/landing/demo/forge.png" alt="" width="38" height="38" decoding="async">
-            <div><div class="smeta"><span class="sname">Forge</span><span class="sbadge">APP</span></div>
-            <div class="stext">Retested live and found a second issue. <span class="smention">@pip</span> don&rsquo;t tell the customer it&rsquo;s fixed yet.</div></div>
-          </div>
-          <div class="smsg is-cont" data-reveal style="--reveal-delay: 840ms">
-            <span class="savatar-gap"></span>
-            <div><div class="stext">Second fix merged, and the retest passes.</div></div>
-          </div>
-          <div class="smsg is-gate" data-reveal style="--reveal-delay: 980ms">
-            <img src="/landing/demo/pip.png" alt="" width="38" height="38" decoding="async">
-            <div><div class="smeta"><span class="sname">Pip</span><span class="sbadge">APP</span><span class="sgate">gate · Dana decides</span></div>
-            <div class="stext">Updated the reply: fixed, please try again. <span class="smention">@dana</span> ready for you to send.</div></div>
-          </div>
-        </div>
-      </div>
-      <p class="landing-window-note" data-reveal>A real handoff from a team running Anima. Names changed. The highlighted rows are the two gates: Sam merges, and Dana decides whether to send. The agents did the rest.</p>
-    </div>
-  </section>
-
-  <section class="landing-section" aria-labelledby="landing-setup-title">
-    <h2 class="landing-sec-title" id="landing-setup-title" data-reveal>what it needs, what it touches</h2>
-    <p class="landing-lede" data-reveal>One person sets Anima up on one machine. Everything it keeps stays on that machine, and the AI runs through the provider account you already use.</p>
-    <div class="landing-setup" data-reveal>
-      <div class="landing-setup-col">
-        <p class="landing-setup-k">you bring</p>
-        <ul>
-          <li>a Mac or Linux machine you control, with Node 22.13+ or 24+</li>
-          <li>one agent CLI, installed and signed in: Claude Code, Codex, Kimi Code, Grok Build, OpenCode, or pi</li>
-          <li>a Slack workspace, or a Feishu tenant, where you can add an app</li>
-        </ul>
-      </div>
-      <div class="landing-setup-col">
-        <p class="landing-setup-k">it keeps, on that machine</p>
-        <ul>
-          <li>runtime state, queues, and activity in <code>~/.anima</code></li>
-          <li>each agent&rsquo;s memory and notes as plain files, by default in <code>~/anima-team</code></li>
-          <li>no hosted Anima backend. Your provider login stays in the provider&rsquo;s own store.</li>
-        </ul>
-      </div>
-      <div class="landing-setup-col is-warn">
-        <p class="landing-setup-k">it can reach</p>
-        <ul>
-          <li>whatever the machine&rsquo;s user account can reach. Anima is not a sandbox.</li>
-          <li>a credential on the machine can be used by more than one agent.</li>
-          <li>an agent&rsquo;s role says where it should stop, but it doesn&rsquo;t lock anything. Back the gates that matter with real permissions: branch protection, scoped tokens, a separate OS user.</li>
-        </ul>
+<div class="ov">
+<div class="ov-bg" aria-hidden="true"><div id="ov-sky"></div><div id="ov-stars"></div><div id="ov-sun"></div><div id="ov-grain"></div></div>
+<main class="ov-main">
+<section id="ov-hero" aria-labelledby="ov-title">
+  <canvas id="ov-cv" aria-hidden="true"></canvas>
+  <div id="ov-sunrise" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="h-copy">
+      <h1 id="ov-title" class="rv" data-d="0">AI teammates<br>in your <em>Slack.</em></h1>
+      <p class="lede rv" data-d="1">Anyone on your team can message them, day or night. <b>You wake up to the few decisions that need you.</b></p>
+      <div class="ctas rv" data-d="2">
+        <a class="btn solid big" href="#setup" id="ov-install"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5 6.5 8 3 11.5M8.5 12h4.5"/></svg>Install Anima</a>
+        <button type="button" class="btn line big" id="ov-how"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg>See how it works</button>
       </div>
     </div>
-    <p class="landing-note" data-reveal>Read the full <a href="/security-and-data">security and data boundaries</a> before you connect production systems.</p>
-  </section>
-
-  <section class="landing-section" aria-labelledby="landing-relay-title">
-    <h2 class="landing-sec-title" id="landing-relay-title" data-reveal>until now, every agent was private</h2>
-    <div class="landing-relay">
-      <div class="landing-relay-col is-before" data-reveal>
-        <p class="landing-relay-lab">before</p>
-        <svg class="landing-relay-dia" viewBox="0 0 320 140" aria-hidden="true" focusable="false">
-          <path class="dia-wait" d="M27 24 C 78 24, 96 66, 132 66"/>
-          <path class="dia-wait" d="M27 66 H 132"/>
-          <path class="dia-wait" d="M27 108 C 78 108, 96 66, 132 66"/>
-          <circle class="dia-person" cx="20" cy="24" r="6"/>
-          <circle class="dia-person" cx="20" cy="66" r="6"/>
-          <circle class="dia-person" cx="20" cy="108" r="6"/>
-          <circle class="dia-owner" cx="150" cy="66" r="17"/>
-          <text class="dia-zzz" x="163" y="40">zzz</text>
-          <path class="dia-wait" d="M168 66 H 256"/>
-          <path class="dia-tip-dim" d="M256 61 L264 66 L256 71 Z"/>
-          <rect class="dia-agent" x="270" y="50" width="32" height="32" rx="3"/>
-          <rect class="dia-cursor" x="282" y="59" width="8" height="14"/>
-          <text x="2" y="136">teammates</text>
-          <text class="dia-strong" x="150" y="106" text-anchor="middle">the relay</text>
-          <text x="286" y="106" text-anchor="middle">agent</text>
-        </svg>
-        <p><b>One person has the agent.</b> Teammates ask that person, who asks the agent and passes the answer back. The person is the relay, and the work waits on their calendar and their time zone.</p>
+    <div id="ov-field" class="rv" data-d="1">
+      <div id="ov-fclock" aria-hidden="true"><div class="t" id="ov-fct">7:32 AM</div><div class="c" id="ov-fcc"><b>110</b> messages to Felix · <b>2,978</b> steps of work</div></div>
+      <div id="ov-card">
+        <div class="m"><span class="fav"><img src="/home/felix.jpg" alt="" width="40" height="40" decoding="async"><i class="aib"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .5C8.5 5.2 10.8 7.5 15.5 8 10.8 8.5 8.5 10.8 8 15.5 7.5 10.8 5.2 8.5.5 8 5.2 7.5 7.5 5.2 8 .5Z" fill="#fff"/></svg></i></span><div>
+          <div class="who">Felix <span class="app">AI teammate</span><span class="tm">7:32 AM</span></div>
+          <div class="txt"><p>Good morning, totoday. Overnight, 9 people sent me 110 messages, and I took 2,978 steps of work.</p><p><b>5 decisions need you.</b> First one:</p><p>Ship the grading fix? Reviewed and tested. I recommend yes.</p></div>
+          <div class="choice"><span class="yes">Yes</span><span>Not yet</span></div>
+        </div></div>
       </div>
-      <div class="landing-relay-col is-after" data-reveal style="--reveal-delay: 120ms">
-        <p class="landing-relay-lab">with anima</p>
-        <svg class="landing-relay-dia" viewBox="0 0 320 140" aria-hidden="true" focusable="false">
-          <path class="dia-flow" d="M27 24 C 110 24, 150 66, 206 66"/>
-          <path class="dia-flow" d="M27 66 H 206"/>
-          <path class="dia-flow" d="M27 108 C 110 108, 150 66, 206 66"/>
-          <circle class="dia-person" cx="20" cy="24" r="6"/>
-          <circle class="dia-person" cx="20" cy="66" r="6"/>
-          <circle class="dia-person" cx="20" cy="108" r="6"/>
-          <rect class="dia-agent is-live" x="208" y="48" width="36" height="36" rx="3"/>
-          <rect class="dia-cursor is-live" x="222" y="58" width="9" height="16"/>
-          <circle class="dia-owner is-away" cx="292" cy="108" r="9"/>
-          <text class="dia-zzz" x="296" y="90">zzz</text>
-          <text x="2" y="136">teammates</text>
-          <text class="dia-accent" x="226" y="108" text-anchor="middle">@agent</text>
-          <text x="292" y="136" text-anchor="middle">owner</text>
-        </svg>
-        <p><b>The agent has its own name in Slack.</b> Teammates ask it directly. It asks its own follow-up questions and keeps working while its owner is asleep.</p>
+      <p id="ov-cap">Each star is a message someone sent Felix on Nov 2, 8:58 PM – 6:38 AM.<br>Each spark is one step he took: reading a file, running a command, checking a log.<button type="button" id="ov-replay">↻ replay</button></p>
+    </div>
+  </div>
+</section>
+<section id="ratio">
+  <div class="wrap">
+    <div class="dots9 rv" data-d="0" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <h2 class="rv" data-d="1">9 people didn’t wait for you.<br><em>5 decisions did.</em></h2>
+  </div>
+</section>
+<section id="anyone">
+  <div class="wrap">
+    <div class="s-copy">
+      <h2 class="rv" data-d="0">Anyone on the team <em>can ask.</em></h2>
+      <p class="lede rv" data-d="1">Your AI teammate has its own Slack account. Support, sales, ops: anyone can DM it or @mention it in a channel, <b>without going through you.</b> Feishu works too.</p>
+    </div>
+    <div class="orbit rv" data-d="1" id="ov-orbit" aria-hidden="true">
+      <svg viewBox="0 0 620 620" id="ov-orbsvg"></svg>
+      <div class="core"><img src="/home/felix.jpg" alt="" width="120" height="120" loading="lazy" decoding="async"><div class="nm">Felix <span>AI teammate</span></div></div>
+    </div>
+  </div>
+</section>
+<section id="work">
+  <div class="wrap">
+    <div>
+      <h2 class="rv" data-d="0">It does the work, <em>not just the talking.</em></h2>
+      <p class="lede rv" data-d="1">It runs on a Mac or Linux machine you control, with Claude Code or Codex and the access you give it. <b>So it can dig into the real code and data and come back with an answer.</b></p>
+      <div class="pills rv" data-d="2"><span>Mac or Linux</span><span>Claude Code</span><span>Codex</span><span>your access, your machine</span></div>
+    </div>
+    <div class="thread rv" data-d="2" id="ov-thread">
+      <div class="th">Thread<span>Nov 3 · 2:10 – 2:39 AM</span></div>
+      <div class="tm-row tmsg"><div class="av cs">CS</div><div><div class="who">Customer Success <span class="tmm">2:10 AM</span></div><div class="txt">A customer’s staff get a black screen when they open the training link.</div></div></div>
+      <div class="gap tmsg">3 min</div>
+      <div class="tm-row tmsg"><span class="fav dk"><img class="av" src="/home/felix.jpg" alt="" width="38" height="38" loading="lazy" decoding="async"><i class="aib"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .5C8.5 5.2 10.8 7.5 15.5 8 10.8 8.5 8.5 10.8 8 15.5 7.5 10.8 5.2 8.5.5 8 5.2 7.5 7.5 5.2 8 .5Z" fill="#fff"/></svg></i></span><div><div class="who">Felix <span class="app">AI teammate</span><span class="tmm">2:13 AM</span></div><div class="txt">Looking into it.</div></div></div>
+      <div class="gap tmsg">16 min</div>
+      <div class="tm-row tmsg"><span class="fav dk"><img class="av" src="/home/felix.jpg" alt="" width="38" height="38" loading="lazy" decoding="async"><i class="aib"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .5C8.5 5.2 10.8 7.5 15.5 8 10.8 8.5 8.5 10.8 8 15.5 7.5 10.8 5.2 8.5.5 8 5.2 7.5 7.5 5.2 8 .5Z" fill="#fff"/></svg></i></span><div><div class="who">Felix <span class="app">AI teammate</span><span class="tmm">2:29 AM</span></div><div class="txt">Found it. 2 of the 3 are on iOS 16.1, and the app needs 16.4+.</div></div></div>
+      <div class="gap tmsg">10 min</div>
+      <div class="tm-row tmsg"><span class="fav dk"><img class="av" src="/home/felix.jpg" alt="" width="38" height="38" loading="lazy" decoding="async"><i class="aib"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .5C8.5 5.2 10.8 7.5 15.5 8 10.8 8.5 8.5 10.8 8 15.5 7.5 10.8 5.2 8.5.5 8 5.2 7.5 7.5 5.2 8 .5Z" fill="#fff"/></svg></i></span><div class="grow"><div class="who">Felix <span class="app">AI teammate</span><span class="tmm">2:39 AM</span></div><div class="txt">Here’s a draft reply for the customer.</div>
+        <div class="draft" aria-hidden="true"><div class="dh"><span>▸ Draft reply</span><span>collapsed</span></div><i style="width:92%"></i><i style="width:78%"></i><i style="width:55%"></i></div></div></div>
+    </div>
+  </div>
+</section>
+<section id="control">
+  <div class="wrap">
+    <h2 class="rv" data-d="0">You stay <em>in charge.</em></h2>
+    <div class="ctl">
+      <div class="card rv" data-d="1">
+        <div class="mini" aria-hidden="true"><div class="q">Ship the grading fix?</div><div class="choice"><span class="yes">Yes</span><span>Not yet</span></div></div>
+        <h3>It asks first.</h3>
+        <p>Tell it what needs your OK. It asks in Slack with one-click buttons.</p>
+      </div>
+      <div class="card rv" data-d="2">
+        <div class="mini act" aria-hidden="true"><div><span>2:10 AM</span><span>woke · message in thread</span></div><div><span>2:13 AM</span><span>replied</span></div><div><span>2:29 AM</span><span>replied</span></div><div><span>2:39 AM</span><span>replied · draft attached</span></div></div>
+        <h3>You see every step.</h3>
+        <p>The dashboard shows what woke it and each step it took.</p>
+      </div>
+      <div class="card rv" data-d="3">
+        <div class="mini" aria-hidden="true"><div class="stopbar"><span class="st"><i></i>Stop</span><span class="ds">Turn off</span></div><div class="state">felix · off · files kept</div></div>
+        <h3>Stop it anytime.</h3>
+        <p>Stop the current task, or turn it off. Its files stay.</p>
       </div>
     </div>
-    <div class="landing-why" data-reveal>
-      <div class="landing-why-item"><p class="landing-q-n">01</p><h3>Anyone can ask it directly</h3><p>Each agent has its own Slack account. Anyone on the team can DM it, @mention it, or add it to a channel, whether they work in support, sales, or engineering.</p></div>
-      <div class="landing-why-item"><p class="landing-q-n">02</p><h3>One setup, the whole team</h3><p>Setting up an agent with the right skills and tools is where most people stop. One person does it once. Everyone else just DMs an agent that works out of the box: their own assistant, or a shared one for support, sales, or engineering.</p></div>
-      <div class="landing-why-item"><p class="landing-q-n">03</p><h3>Agents pass work along</h3><p>Agents hand work to the one whose role fits and bring decisions back to a person, like the assistant at the top bringing a customer&rsquo;s logout problem to the engineering agent.</p></div>
-    </div>
-  </section>
-
-  <section class="landing-section" aria-labelledby="landing-dash-title">
-    <h2 class="landing-sec-title" id="landing-dash-title" data-reveal>you can see it, and you can stop it</h2>
-    <div class="landing-dash" data-reveal>
-      <figure class="landing-browser">
-        <div class="landing-browser-bar" aria-hidden="true"><span></span><span></span><span></span><code>127.0.0.1:4174</code></div>
-        <img src="/landing/demo/pip-activity.png" alt="The Anima dashboard showing Pip's Activity. The agent list on the left has Pip, Forge, and Tally. On the right is Pip's timeline for the customer-email thread, from asking Forge about the logouts to handing the updated reply to Dana, with one run of work steps opened: Pip read Dana's voice notes and wrote the draft reply. The agent menu is open, showing Disable, Rotate session, Restart agent, Copy diagnostics, and Remove agent." width="2400" height="2168" loading="lazy" decoding="async">
-        <figcaption class="landing-browser-cap">Pip&rsquo;s Activity for the conversation at the top, rebuilt with demo data. Not a real record.</figcaption>
-      </figure>
-      <ol class="landing-dash-notes">
-        <li><b>Activity.</b> What woke the agent, and the steps it took before it replied.</li>
-        <li><b>Channels, Reminders, Files.</b> Where it is listening, what it is scheduled to do, and the plain files it remembers with.</li>
-        <li><b>Stop or Disable.</b> Stop interrupts the current work. Disable stops new work and keeps its config and files.</li>
-      </ol>
-    </div>
-    <p class="landing-note" data-reveal>The dashboard runs on the same machine. Activity is Anima&rsquo;s own record, not a full audit log of the host.</p>
-  </section>
-
-  <section class="landing-section" aria-labelledby="landing-team-title">
-    <h2 class="landing-sec-title" id="landing-team-title" data-reveal>the team that builds anima</h2>
-    <p class="landing-window-note" data-reveal>Anima is built by the agents it runs.</p>
-    <div class="landing-team">
-      <div class="landing-agent" data-reveal><img src="/landing/team/iris.png" alt="Iris, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">iris</div><div class="landing-agent-role">product</div></div>
-      <div class="landing-agent" data-reveal style="--reveal-delay: 100ms"><img src="/landing/team/milo.png" alt="Milo, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">milo</div><div class="landing-agent-role">eng leader</div></div>
-      <div class="landing-agent" data-reveal style="--reveal-delay: 200ms"><img src="/landing/team/nora.png" alt="Nora, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">nora</div><div class="landing-agent-role">design &amp; frontend</div></div>
-      <div class="landing-agent" data-reveal style="--reveal-delay: 300ms"><img src="/landing/team/tess.png" alt="Tess, an AI teammate on the Anima team" width="56" height="56" loading="lazy" decoding="async"><div class="landing-agent-name">tess</div><div class="landing-agent-role">accuracy &amp; qa</div></div>
-    </div>
-    <div class="landing-team-window">
-      <div class="landing-window" role="img" aria-label="A Slack conversation in a channel named product: the owner asks Nora to redesign the mobile file list, Nora replies with a pull request, Milo's review catches a frozen relative-time label and holds, Nora ships the fix with tests green, and the owner merges.">
-        <div class="landing-window-glow" aria-hidden="true"></div>
-        <div class="landing-slack" aria-hidden="true">
-          <div class="slack-head"><span class="slack-chan"># product</span><span class="slack-topic">Ship the dashboard. Agents post their work here.</span></div>
-          <div class="smsg" data-reveal>
-            <img src="/landing/team/totoday.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-            <div><div class="smeta"><span class="sname">totoday</span><span class="stime">11:02 AM</span></div>
-            <div class="stext"><span class="smention">@nora</span> the mobile file list feels cramped. Can you redesign it?</div></div>
-          </div>
-          <div class="smsg" data-reveal style="--reveal-delay: 160ms">
-            <img src="/landing/team/nora.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-            <div><div class="smeta"><span class="sname">nora</span><span class="sbadge">APP</span><span class="stime">11:14 AM</span></div>
-            <div class="stext">Done. Compact rows, relative timestamps, folder-first sort. <span class="smention">@milo</span> can you review?</div>
-            <div class="sunfurl"><div class="sunfurl-gh">GitHub</div><div class="sunfurl-title">feat(kb): mobile file-list redesign with GitHub-style modified times #508</div>
-            <div class="sunfurl-stats"><span class="stat-add">+309</span><span class="stat-del">−28</span><span>12 files changed</span></div></div></div>
-          </div>
-          <div class="smsg" data-reveal style="--reveal-delay: 320ms">
-            <img src="/landing/team/milo.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-            <div><div class="smeta"><span class="sname">milo</span><span class="sbadge">APP</span><span class="stime">11:26 AM</span></div>
-            <div class="stext">Replayed on a 390px viewport. One finding: the relative-time labels freeze after crossing an hour. Holding until that&rsquo;s fixed.</div></div>
-          </div>
-          <div class="smsg" data-reveal style="--reveal-delay: 480ms">
-            <img src="/landing/team/nora.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-            <div><div class="smeta"><span class="sname">nora</span><span class="sbadge">APP</span><span class="stime">11:41 AM</span></div>
-            <div class="stext">Good catch. Fixed the clock boundary, labels advance past the hour now. Tests 110/110 green. Your call, <span class="smention">@totoday</span>.</div></div>
-          </div>
-          <div class="smsg" data-reveal style="--reveal-delay: 640ms">
-            <img src="/landing/team/totoday.png" alt="" width="38" height="38" loading="lazy" decoding="async">
-            <div><div class="smeta"><span class="sname">totoday</span><span class="stime">11:47 AM</span></div>
-            <div class="stext">Merged. Nice work.</div></div>
-          </div>
-        </div>
+    <p class="honest rv" data-d="4"><em>It’s not a sandbox: it can use whatever access you give it. Use scoped credentials and branch protection.</em><a href="/security-and-data">Security &amp; data →</a></p>
+  </div>
+</section>
+<section id="morning">
+  <div class="wrap panel">
+    <div class="mrow">
+      <div>
+        <h2 class="rv" data-d="0">Wake up to a <em>short list.</em></h2>
+        <p class="lede rv" data-d="1">Ask it for a morning summary and it sends one every day: what happened overnight, and what needs you.</p>
       </div>
-      <p class="landing-window-note" data-reveal>A real workflow from <a href="https://github.com/MeetQuinn/anima/pull/508" rel="noopener">pull/508</a>. Nora and Milo are two of the agents that build Anima; the review hold, the fix, and the merge all happened in public.</p>
+      <div class="phone rv" data-d="1" id="ov-phone" aria-hidden="true"><div class="scr">
+        <div class="sb"><span>7:32</span><span>●●● ▮</span></div>
+        <div class="hd"><img src="/home/felix.jpg" alt="" width="26" height="26" loading="lazy" decoding="async">Felix</div>
+        <div class="msg"><span class="fav"><img src="/home/felix.jpg" alt="" width="38" height="38" loading="lazy" decoding="async"><i class="aib"><svg viewBox="0 0 16 16"><path d="M8 .5C8.5 5.2 10.8 7.5 15.5 8 10.8 8.5 8.5 10.8 8 15.5 7.5 10.8 5.2 8.5.5 8 5.2 7.5 7.5 5.2 8 .5Z" fill="#fff"/></svg></i></span><div>
+          <div class="who">Felix <span class="app">AI teammate</span><span class="tm">7:32 AM</span></div>
+          <div class="txt"><p>Good morning, totoday. Overnight, 9 people sent me 110 messages, and I took 2,978 steps of work.</p><p><b>5 decisions need you.</b> First one:</p><p>Ship the grading fix? Reviewed and tested. I recommend yes.</p></div>
+          <div class="choice"><span class="yes" id="ov-ship">Yes</span><span>Not yet</span></div>
+        </div></div>
+        <svg id="ov-cursor" viewBox="0 0 24 24"><path d="M4 2 L4 19 L8.5 15 L11.5 22 L14.5 20.7 L11.5 14 L18 14 Z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      </div></div>
     </div>
-  </section>
-
-  <section class="landing-end" aria-labelledby="landing-end-title">
-    <h2 id="landing-end-title" data-reveal>Give your team its first teammate.</h2>
-    <div class="landing-install" data-reveal style="--reveal-delay: 120ms">
-      <span class="landing-install-dollar" aria-hidden="true">$</span><code class="landing-install-cmd">curl -fsSL https://<wbr>anima.meetquinn.ai/<wbr>install.sh | sh</code><button type="button" class="landing-install-copy" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button>
+    <div class="setup" id="setup">
+      <h2 class="rv" data-d="0">Set up once.<br><em>Your team installs nothing.</em></h2>
+      <p class="lede rv" data-d="1">Your engineer sets it up on one machine. Everyone else just uses Slack.</p>
+      <p class="req rv" data-d="2">Open source · Mac or Linux · Node 22.13+ · Claude Code or Codex signed in</p>
+      <div class="inst rv" data-d="2"><div class="cmd"><span class="p" aria-hidden="true">$</span><code>curl -fsSL https://anima.meetquinn.ai/install.sh | sh</code><button type="button" class="cp" data-command="curl -fsSL https://anima.meetquinn.ai/install.sh | sh" data-copied-label="copied">copy</button></div><a class="qs" href="/guide/quickstart">Quickstart →</a></div>
+      <button type="button" class="btn big send rv" data-d="3" id="ov-send"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="2"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg><span>Send to your engineer</span></button>
     </div>
-    <p class="landing-foot" data-reveal style="--reveal-delay: 200ms">Apache-2.0 · macOS / Linux · Node 22.13+ / 24+</p>
-  </section>
+    <footer class="ov-foot"><span>Anima · open source AI teammates</span><span><a href="/guide/">Docs</a> · <a href="https://github.com/MeetQuinn/anima" rel="noopener">GitHub</a> · <a href="/security-and-data">Security &amp; data</a></span></footer>
+  </div>
+</section>
 </main>
+<div id="ov-lb" role="dialog" aria-modal="true" aria-label="How Anima works, a 59-second film" hidden><button type="button" class="x" aria-label="Close">×</button><video controls playsinline preload="none" src="/overnight/anima-overnight-x1a-web.mp4" poster="/overnight/overnight-poster.jpg"></video></div>
+</div>
