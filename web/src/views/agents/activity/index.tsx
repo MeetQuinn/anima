@@ -180,8 +180,8 @@ function StepFold({
 // A promoted lifecycle step rendered as a centred system line — same visual
 // family as the reminder/onboarding SystemEventRow, so non-chat lifecycle
 // signals read as special, not as steps. The icon keys off the step type
-// (runtime restart/stop → Power; memory-coherence pass → BrainCircuit), and a
-// failure outcome (e.g. "Memory coherence failed") tints the pill health-red.
+// (runtime restart/stop → Power; Dreaming → BrainCircuit), and a
+// failure outcome (e.g. "Dreaming failed") tints the pill health-red.
 function LifecycleLineRow({ step }: { step: Step }) {
   const row = activityRow(step.activity);
   const isMemory = step.activity.type === 'memory_coherence.outcome';

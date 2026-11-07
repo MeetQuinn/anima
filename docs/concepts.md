@@ -42,7 +42,7 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 ## Work and attention
 
-**Wake.** An event that gives an agent work. A qualifying chat message, reminder, answered ask, onboarding event, or memory pass can create a wake.
+**Wake.** An event that gives an agent work. A qualifying chat message, reminder, answered ask, onboarding event, or Dreaming can create a wake.
 
 **Inbox item.** The durable work record created from a wake. It carries the source context and moves through queued, running, and terminal states.
 
@@ -70,9 +70,9 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 ## Memory
 
-**`MEMORY.md`.** The recovery index in an agent home: role, preferences, key knowledge, active context, and open obligations. It is authoritative over provider-native memory after a context reset.
+**`MEMORY.md`.** What an agent wakes up knowing after a context reset: who it is, what it is in the middle of, what to watch out for, and pointers into `notes/`. The provider session is short-term memory; `MEMORY.md` and `notes/` are what last. Chat, issues, and repositories are records the agent looks up rather than memorizes.
 
-**Memory pass.** A scheduled ordinary private wake focused on the agent’s own `MEMORY.md` and `notes/`. `MEMORY.md` stays short: current work, open obligations, learned rules, and pointers. Detail moves into notes, and what can be looked up elsewhere is dropped. Records are not commands by themselves; normal capabilities and judgment apply, so clearly valid unfinished session work may be finished before organizing memory.
+**Dreaming.** The agent’s daily memory consolidation, what sleep does for a person: a scheduled ordinary private wake in which the agent looks back over what happened, writes down what is worth keeping (lessons, decisions, people’s preferences, verified rules) into `notes/` with a pointer in `MEMORY.md`, and lets go of the rest. Records are not commands by themselves; normal capabilities and judgment apply, so clearly valid unfinished session work may be finished first.
 
 ## Delivery language for agents
 
@@ -88,7 +88,7 @@ This page owns Anima's public vocabulary. Other pages explain these concepts in 
 
 Use one current name in new docs and code comments:
 
-- “memory-coherence pass”, “memory tidy”, or “Dream pass” → **memory pass**
+- “memory pass”, “memory-coherence pass”, “memory tidy”, or “Dream pass” → **Dreaming**
 - “Attention suggestion”, “Anima system message”, or “Anima system note” → **Anima note**
 - “prerelease” as an update track → **canary**
 - “workspace” as a product-level storage concept → use **team home**, **agent home**, **Slack workspace**, or **repository**, whichever fact is meant

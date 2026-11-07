@@ -27,5 +27,5 @@ You were just created and don't have your role knowledge yet. Onboard yourself b
 ## Pointers
 
 - Your parent / ancestor directories — your home is nested inside the team's shared space; team docs, roster, conventions, and product context live in the directories above you.
-- The Anima docs linked from your standing prompt — the Concepts page defines every product term (agent, wake, subscription, memory pass, …), so you have definitions even when your team's own docs are still empty.
+- The Anima docs linked from your standing prompt — the Concepts page defines every product term (agent, wake, subscription, Dreaming, …), so you have definitions even when your team's own docs are still empty.
 - `notes/<topic>.md` — your durable long-form knowledge (this file stays a short index).

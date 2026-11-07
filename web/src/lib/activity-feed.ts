@@ -179,7 +179,7 @@ export type ActivityFeedItem =
       // System-originated wake (reminder / onboarding) — not a message anyone
       // sent. Rendered as a centered, avatar-less system line so it reads as a
       // timeline annotation rather than competing with real conversation. The
-      // memory-coherence pass is NOT here: it is a `memory_coherence.outcome`
+      // Dreaming is NOT here: it is a `memory_coherence.outcome`
       // activity rendered in the tool-steps lane, never the conversation layer.
       kind: 'system-event';
       // `held` = send-hold non-send (not a failure). Neutral system line so it
