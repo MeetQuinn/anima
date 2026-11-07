@@ -1,15 +1,11 @@
 /*
   /how-it-works page styles — scoped under .how-it-works-page.
 
-  Same scoping discipline as landing.css: VitePress renders this page inside
-  .vp-doc, whose prose defaults (specificity 0,1,1) outrank bare .howit-* rules
-  (0,1,0). Nesting every rule under .how-it-works-page (the frontmatter
-  pageClass) raises them to (0,2,x) so this stylesheet wins and .vp-doc can't
-  bleed in. >>> ADD NEW RULES INSIDE THIS BLOCK <<<
-
-  Tokens are duplicated from landing.css on purpose: they live under the
-  .landing-home scope there, so they aren't in scope here. Keeping the palette
-  identical makes /how-it-works read as one piece with the home page.
+  VitePress renders this page inside .vp-doc, whose prose defaults
+  (specificity 0,1,1) outrank bare .howit-* rules (0,1,0). Nesting every rule
+  under .how-it-works-page (the frontmatter pageClass) raises them to (0,2,x)
+  so this stylesheet wins and .vp-doc can't bleed in.
+  >>> ADD NEW RULES INSIDE THIS BLOCK <<<
 */
 .how-it-works-page {
   --landing-ink: #1f1d1a;

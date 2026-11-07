@@ -3,9 +3,9 @@ import DefaultTheme from "vitepress/theme";
 import { h, nextTick, onBeforeUnmount, onMounted, watch } from "vue";
 import "./architecture.css";
 import "./docs-home.css";
-import "./landing.css";
+import "./overnight.css";
 import "./how-it-works.css";
-import { createRevealController } from "./reveal";
+import { createOvernightController } from "./overnight";
 
 const INSTALL_COMMAND = "curl -fsSL https://anima.meetquinn.ai/install.sh | sh";
 
@@ -75,29 +75,26 @@ export default {
         }
       };
 
-      // Landing scroll reveal (see reveal.ts for the safety contract). The
-      // Layout stays mounted across client-side navigation, so the reveal
-      // lifecycle must be route-driven: after every completed route change,
-      // re-arm against the nodes that exist now, or disarm off the landing
-      // page. Without this, returning to `/` via client navigation leaves
-      // `reveal-ready` armed for a tree the old observer never saw, hiding
-      // the whole page.
+      // Homepage engine (see overnight.ts). The Layout stays mounted across
+      // client-side navigation, so its lifecycle is route-driven: after every
+      // completed route change, start against the homepage tree that exists
+      // now, or stop when the current page isn't the homepage.
       const route = useRoute();
-      const reveal = createRevealController();
+      const overnight = createOvernightController();
       watch(
         () => route.path,
         () => {
-          void nextTick().then(() => reveal.refresh());
+          void nextTick().then(() => overnight.refresh());
         },
       );
 
       onMounted(() => {
         document.addEventListener("click", handleClick);
-        reveal.refresh();
+        overnight.refresh();
       });
       onBeforeUnmount(() => {
         document.removeEventListener("click", handleClick);
-        reveal.dispose();
+        overnight.dispose();
       });
 
       return () => h(DefaultTheme.Layout);

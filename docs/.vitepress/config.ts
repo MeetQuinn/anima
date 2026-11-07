@@ -21,6 +21,10 @@ export default defineConfig({
     ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
     ["link", { rel: "icon", type: "image/x-icon", href: "/favicon.ico" }],
     ["link", { rel: "apple-touch-icon", href: "/apple-touch-icon.png" }],
+    // Homepage first paint: hold the hero intro hidden until overnight.ts
+    // takes over, so the finished card doesn't flash before the night plays.
+    // overnight.css reveals it anyway after a few seconds if JS never starts.
+    ["script", {}, "document.documentElement.classList.add('ov-boot')"],
   ],
   lang: "en-US",
   lastUpdated: true,
