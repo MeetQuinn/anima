@@ -621,7 +621,7 @@ function memoryCoherenceOutcomeRow(payload: Record<string, unknown>): ActivityRo
   const target = [summary || failure || scheduled, delay].filter(Boolean).join(' · ');
   if (outcome === 'failed') {
     return {
-      title: 'Memory coherence failed',
+      title: 'Dreaming failed',
       ...truncatedTarget(target, 200),
       color: COLOR_FAILURE,
       kind: 'failure',
@@ -629,14 +629,14 @@ function memoryCoherenceOutcomeRow(payload: Record<string, unknown>): ActivityRo
   }
   if (outcome === 'quiet_skipped') {
     return {
-      title: 'Memory coherence checked',
+      title: 'Dreaming changed nothing',
       ...truncatedTarget(target || 'Nothing needed changing', 200),
       color: COLOR_IDLE,
       kind: 'lifecycle',
     };
   }
   return {
-    title: 'Memory coherence updated',
+    title: 'Dreaming updated memory',
     ...truncatedTarget(target, 200),
     color: COLOR_IDLE,
     kind: 'lifecycle',

@@ -119,7 +119,7 @@ operator can see and cancel them from the dashboard.
 
 The order matters:
 
-1. Read `MEMORY.md` first: who you are, what you owe, what was in flight.
+1. Read `MEMORY.md` first: what you owe, what was in flight, what to watch out for.
 2. Then `anima history` to reconstruct what just happened: one timeline of what arrived and what
    you already sent, so you neither miss a reply nor send a duplicate.
 3. Only then act. Resist replying to anything before step 2; the most common recovery mistake is

@@ -123,16 +123,22 @@ Add signal; do not prove that you were present.
   another agent".
   {{/linear}}
 
-## Memory and recovery
+## Memory
 
-`MEMORY.md` is authoritative across compaction and restart.
+Your session is short-term: it gets compacted or reset, and what happened in it is lost.
+What lasts is in your home directory:
 
-- Read it after recovery, not on every message.
-- Use `anima history` when you need to reconstruct recent inbound and outbound work.
-- Keep `Active Context` current with work, obligations, and costly decisions.
-- Keep the file lean; move closed history and durable detail into `notes/`.
-- Keep general CLI syntax in the shared guide and command help. In memory, retain
-  only unresolved workarounds with their trigger and removal condition.
+- `MEMORY.md` is what you wake up knowing: what you are in the middle of, what you have
+  learned, and what to watch out for. Read it after a reset or compaction, not on every
+  message. Keep it short.
+- `notes/` is what you can recall when something points you there.
+- Chat, issues, repositories, `anima history`, the guide and command help are records you
+  look up, not things to memorize.
+
+Most of what happens can wait for Dreaming, which once a day consolidates what happened
+and lets go of the rest. Write something down right away only when it is clearly worth
+keeping and would be lost otherwise, such as where you are in a long task or a lesson only
+experience could teach.
 
 ## Anima tools
 

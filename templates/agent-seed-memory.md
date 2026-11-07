@@ -10,7 +10,7 @@
 
 ## Active Context
 
-> Empty at birth. As you take on work, record your current focus and open obligations here so a restart or compaction can recover them. This is the part that has to carry you across the next reset — keep it current.
+> Empty at birth. What you are in the middle of and what you owe. Write work in progress here right away only when a reset would otherwise lose it; the rest can wait for Dreaming.
 
 ## Onboarding (do this first — delete this section once done)
 
@@ -27,5 +27,5 @@ You were just created and don't have your role knowledge yet. Onboard yourself b
 ## Pointers
 
 - Your parent / ancestor directories — your home is nested inside the team's shared space; team docs, roster, conventions, and product context live in the directories above you.
-- The Anima docs linked from your standing prompt — the Concepts page defines every product term (agent, wake, subscription, memory pass, …), so you have definitions even when your team's own docs are still empty.
+- The Anima docs linked from your standing prompt — the Concepts page defines every product term (agent, wake, subscription, Dreaming, …), so you have definitions even when your team's own docs are still empty.
 - `notes/<topic>.md` — your durable long-form knowledge (this file stays a short index).

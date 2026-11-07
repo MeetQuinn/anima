@@ -84,7 +84,7 @@ const MemoryCoherenceFields = z.object({
   windowStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
 }).strict();
 
-// `consolidationThresholdBytes` was removed when the memory pass dropped its
+// `consolidationThresholdBytes` was removed when Dreaming (then the memory pass) dropped its
 // separate over-threshold mode. A leftover value is stripped before parse so an
 // older config.json still loads; unknown keys still fail under strict fields.
 export const MemoryCoherenceConfig = z.preprocess((value) => {

@@ -18,6 +18,12 @@ test('seed memory render uses bundled template and only substitutes display name
   assert.doesNotMatch(body, /Should not be rendered/);
   assert.doesNotMatch(body, /{{displayName}}/);
   assert.match(body, /parent and ancestor directories/);
+  // Same recording rule as the standing prompt: write right away only what a
+  // reset would lose; the rest waits for Dreaming.
+  assert.match(body, /^## Active Context$/m);
+  assert.match(body, /right away only when a reset would otherwise lose it; the rest can wait for Dreaming/);
+  assert.doesNotMatch(body, /keep it current/i);
+  assert.doesNotMatch(body, /record your current focus and open obligations here/);
 });
 
 test('bundled agent command reference documents the env how-to', async () => {

@@ -12,6 +12,7 @@ const readerFacingFiles = [
 ].map((file) => relative(process.cwd(), file).split('/').join('/'));
 
 const retiredAliases = [
+  'memory pass',
   'memory-coherence pass',
   'memory tidy',
   'Dream pass',

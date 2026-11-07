@@ -51,30 +51,30 @@ modification time and size, so the first read after a save sees the new contents
   JSON. Your own formatting is not kept.
 - A leftover `providerAccounts` key from a removed feature is ignored and dropped on the next save.
 - A leftover `memoryCoherence.consolidationThresholdBytes` is ignored and dropped on the next save:
-  the memory pass no longer has a size threshold.
+  Dreaming has no size threshold.
 
-## Memory pass (`memoryCoherence`)
+## Dreaming (`memoryCoherence`)
 
-Once a day, each eligible agent gets a memory pass: an ordinary scheduled wake that asks it to keep
-`MEMORY.md` short by moving detail into `notes/`, and to tidy `notes/`, in its agent home (see
-[Concepts](./concepts.md)). Every pass asks the same thing whatever the file's size.
+Once a day, each eligible agent gets Dreaming: an ordinary scheduled wake in which it consolidates
+what happened into `MEMORY.md` and `notes/` in its agent home and lets go of the rest (see
+[Concepts](./concepts.md)). It asks the same thing whatever the file's size.
 An agent is eligible when it is enabled, has a connected transport (Slack, Feishu, or Linear), and
-can run. A pass is queued only when the agent's message history has a new entry since its last
-pass, so idle agents are skipped.
+can run. Dreaming is queued only when the agent's message history has a new entry since it last
+ran, so idle agents are skipped.
 
-Each agent gets a fixed slot inside the window, offset by a hash of its agent ID, so passes spread
-out. If the service was down at the slot, the pass is queued when it comes back. Only the most
-recent slot (today's or yesterday's) is caught up, and an agent gets at most one pass per local day.
+Each agent gets a fixed slot inside the window, offset by a hash of its agent ID, so the wakes spread
+out. If the service was down at the slot, Dreaming is queued when it comes back. Only the most
+recent slot (today's or yesterday's) is caught up, and an agent dreams at most once per local day.
 Outcomes appear in Activity as `memory_coherence.outcome` ([Activity events](./activity-events.md)).
 
 | Key                                     | Type               | Default         | What it does                                                                                                                                                                             |
 | --------------------------------------- | ------------------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memoryCoherence.enabled`               | boolean            | `true`          | Only `false` turns passes off.                                                                                                                                                           |
+| `memoryCoherence.enabled`               | boolean            | `true`          | Only `false` turns Dreaming off.                                                                                                                                                         |
 | `memoryCoherence.windowStart`           | `"HH:MM"`, 24-hour | `"05:00"`       | Start of the daily window.                                                                                                                                                               |
 | `memoryCoherence.windowDurationMinutes` | integer, 1 to 1440 | `120`           | Length of the window. Every agent's slot falls inside it.                                                                                                                                |
 | `memoryCoherence.timezone`              | IANA zone name     | `"agent-local"` | Zone for the window. `agent-local` means the agent service's system time zone (UTC if unknown). An invalid name stops scheduling and logs `Memory coherence scheduler reconcile failed`. |
-| `memoryCoherence.maxConcurrent`         | integer, 1 to 100  | `1`             | Most passes queued or running at once, across all eligible agents.                                                                                                                       |
-| `memoryCoherence.scopeAgentIds`         | array of agent IDs | `[]`            | Limits passes to the listed agents. Empty means every eligible agent.                                                                                                                    |
+| `memoryCoherence.maxConcurrent`         | integer, 1 to 100  | `1`             | Most Dreaming wakes queued or running at once, across all eligible agents.                                                                                                               |
+| `memoryCoherence.scopeAgentIds`         | array of agent IDs | `[]`            | Limits Dreaming to the listed agents. Empty means every eligible agent.                                                                                                                  |
 
 ## Slack conversation view and send hold (`cursorDelivery`)
 

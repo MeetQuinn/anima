@@ -93,7 +93,7 @@ The active statuses come from `shared/inbox.ts`: `queued`, `running`, `completed
 
 `WakeQueueService.takeNextRunnable` claims work for a worker. It recovers stale running work when the previous worker is no longer alive or the item is older than the stale-running threshold. `WakeQueueService.takeNextFollowup` claims same-session queued items for the currently active worker.
 
-`enqueue(item, { holdUntilRun: true })` is for context that must not wake the agent. When no agent work is running, the item is stored with `handling.heldAt`: it never starts a run, does not count as pending work or a restart blocker, and claiming agent work releases every held item, in the same update, into that run as follow-ups. That includes real work appended to a scheduled memory pass; the memory pass alone releases nothing. While agent work is running the item is queued normally. `releaseHeld(id, replacement)` atomically replaces a held item with the request that now addresses it (for example, a later mention of the same comment) and wakes the agent; delivered items are left alone. `withdrawHeld(id)` removes a held item and keeps its dedupe marker, for when another request supersedes it.
+`enqueue(item, { holdUntilRun: true })` is for context that must not wake the agent. When no agent work is running, the item is stored with `handling.heldAt`: it never starts a run, does not count as pending work or a restart blocker, and claiming agent work releases every held item, in the same update, into that run as follow-ups. That includes real work appended to a scheduled Dreaming wake; Dreaming alone releases nothing. While agent work is running the item is queued normally. `releaseHeld(id, replacement)` atomically replaces a held item with the request that now addresses it (for example, a later mention of the same comment) and wakes the agent; delivered items are left alone. `withdrawHeld(id)` removes a held item and keeps its dedupe marker, for when another request supersedes it.
 
 The wake signal is not the only scheduling mechanism. `server/runtime/runtime-worker.ts` subscribes with `onWake`, but it also has a fallback poll interval. The fallback covers stale-running crash recovery and cross-process enqueue cases.
 
@@ -107,7 +107,7 @@ While the provider is running, `server/runtime/followup-appender.ts` watches for
 
 The worker also owns abort and drain behavior. `server/runtime/active-run-control.ts` handles idle timeout, stop, and restart-drain requests. `server/runtime/active-item.ts` records the current audited item so agent-facing tools can resolve the item at call time.
 
-The [memory pass](/concepts#memory) uses the same queue and worker (its modules keep the historical `memory-coherence` name). `server/memory/memory-coherence-scheduler.ts` enqueues pass items, and `server/runtime/runtime-worker.ts` records before/after digests with `server/memory/memory-coherence-outcome.ts`.
+[Dreaming](/concepts#memory) uses the same queue and worker (its modules keep the historical `memory-coherence` name). `server/memory/memory-coherence-scheduler.ts` enqueues Dreaming items, and `server/runtime/runtime-worker.ts` records before/after digests with `server/memory/memory-coherence-outcome.ts`.
 
 ### 7. Provider runtimes
 

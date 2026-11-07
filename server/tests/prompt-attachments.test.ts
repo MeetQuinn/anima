@@ -639,10 +639,13 @@ test('buildAnimaRuntimeProfile keeps memory recovery guidance concise', () => {
     transports: { feishu: false, slack: true },
   });
   const prose = text.replace(/\s+/g, ' ');
-  assert.match(prose, /`MEMORY\.md` is authoritative across compaction and restart/);
-  assert.match(prose, /Read it after recovery, not on every message/);
-  assert.match(prose, /Keep `Active Context` current with work, obligations, and costly decisions/);
-  assert.match(prose, /Keep the file lean; move closed history and durable detail into `notes\/`/);
+  assert.match(prose, /Your session is short-term: it gets compacted or reset/);
+  assert.match(prose, /`MEMORY\.md` is what you wake up knowing/);
+  assert.match(prose, /Read it after a reset or compaction, not on every message\. Keep it short\./);
+  assert.match(prose, /`notes\/` is what you can recall when something points you there/);
+  assert.match(prose, /records you look up, not things to memorize/);
+  assert.match(prose, /Most of what happens can wait for Dreaming, which once a day consolidates what happened and lets go of the rest/);
+  assert.doesNotMatch(prose, /authoritative across compaction|Keep `Active Context` current/);
   assert.doesNotMatch(text, /an index, not a corpus/);
   assert.doesNotMatch(text, /section grows past a short paragraph/);
   assert.doesNotMatch(text, /working directory is your seat/i);

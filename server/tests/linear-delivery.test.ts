@@ -219,7 +219,7 @@ test('the runtime names the agent in Linear from its installation', async (t) =>
 test('the standing Linear section renders with a named identity, an id only, no identity, or without Linear', () => {
   const render = (extra: Partial<Parameters<typeof buildAnimaRuntimeProfile>[0]>, linear = true) => buildAnimaRuntimeProfile({ displayName: 'Synthetic',
     referencePaths: { docsPath: '/synthetic-docs' }, transports: { linear, slack: false, feishu: false }, ...extra });
-  const section = (text: string) => text.slice(text.indexOf('### Linear'), text.indexOf('## Memory and recovery'));
+  const section = (text: string) => text.slice(text.indexOf('### Linear'), text.indexOf('\n## Memory\n') + 1);
   const named = section(render({ linearIdentity: { appUserId: 'app-user-sentinel', name: 'Synthetic app' } }));
   assert.match(named, /^### Linear\n\n+- You are \*\*Synthetic app\*\* in Linear \(app user `app-user-sentinel`\)\. Comments and\n  activities from that id are your own\.\n- A delegation, an @mention/);
   assert.match(named, /\n- For anything else use `anima linear api` \(GraphQL\)\. The guide,\n  `\/synthetic-docs\/agent\/linear\.md`,\n  covers each point in "What wakes you", "Reply", "Work on an issue" and "Hand work to\n  another agent"\.\n+$/);
