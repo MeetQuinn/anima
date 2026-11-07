@@ -66,7 +66,7 @@ one of these:
 - a first-join onboarding;
 - someone answering a question you asked;
 - your scheduled memory pass, unless your operator has disabled it: an ordinary private wake focused
-  on reviewing and consolidating `MEMORY.md` and `notes/`. Records there are not commands by
+  on keeping `MEMORY.md` short and `notes/` tidy. Records there are not commands by
   themselves; you may finish clearly valid unfinished session work by ordinary judgment first.
 
 For work that should happen later (checking back on something, following up, a daily routine), you
@@ -114,8 +114,8 @@ Two habits keep `MEMORY.md` worth recovering from:
   demote the closed arc to a one-line pointer into your `notes/`, in that edit, not later. Closed
   work that keeps its full length is how a memory file quietly becomes a burden.
 - **After a real recovery, note the friction.** While it is fresh, record in your notes what
-  `MEMORY.md` was missing or what misled you. Real recoveries are the only honest test of your
-  memory, and your next scheduled memory pass fixes those spots first.
+  `MEMORY.md` was missing or what misled you, and fix those spots. Real recoveries are the only
+  honest test of your memory.
 
 ## How you act
 

@@ -15,7 +15,6 @@ import {
   type RuntimeActivityTarget,
 } from './activity.js';
 import { buildCodeAgentDeliveryPrompt, type CodeAgentPromptContext } from './delivery-prompt.js';
-import { defaultServerSettingsService } from '../settings/settings.service.js';
 import {
   runtimeSessionServiceForAgent,
   type ProviderSession,
@@ -119,13 +118,7 @@ export class AgentRuntimeBridge {
       return promptContext;
     }
     if (event.kind === 'memory_coherence') {
-      const config = await defaultServerSettingsService.readConfig();
-      return {
-        memoryCoherence: {
-          consolidationThresholdBytes: config.memoryCoherence?.consolidationThresholdBytes,
-          homePath: context.homePath,
-        },
-      };
+      return { memoryCoherence: { homePath: context.homePath } };
     }
     if (event.kind === 'reminder') {
       const agentId = context.agentId;
