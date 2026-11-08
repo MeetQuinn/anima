@@ -325,3 +325,20 @@ test('the client secret route is an authenticated same-origin write bound to the
     assert.deepEqual(fake.tokenRequests, [{ grant: 'refresh_token', clientSecret: true, verifier: false }]);
   } finally { await app.close(); }
 }));
+
+test('GraphQL error messages stay on the error for the agent, never in its message or serialized form', async () => {
+  const answer = (status: number, body: unknown): typeof fetch => async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const errors = [{ message: 'private-upstream-sentinel: Cannot query field "titel"' }, { message: 'second' }, { nope: true }];
+  for (const [status, body] of [[200, { data: null, errors }], [400, { errors }]] as const) {
+    const error = await new LinearClient(answer(status, body)).graphql('token', '{ x }', {}, z.unknown()).then(() => undefined, (caught: unknown) => caught);
+    assert.ok(error instanceof LinearApiError);
+    assert.deepEqual(error.graphqlErrors, ['private-upstream-sentinel: Cannot query field "titel"', 'second']);
+    assertNoPrivate(error.message);
+    assertNoPrivate(JSON.stringify(error));
+    assert.equal(error.failure, status === 200 ? 'response' : 'http');
+  }
+  // A failure without GraphQL errors carries none.
+  const plainFailure = await new LinearClient(answer(500, { errors })).graphql('token', '{ x }', {}, z.unknown()).then(() => undefined, (caught: unknown) => caught);
+  assert.ok(plainFailure instanceof LinearApiError);
+  assert.equal(plainFailure.graphqlErrors, undefined);
+});

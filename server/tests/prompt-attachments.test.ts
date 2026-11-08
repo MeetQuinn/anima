@@ -293,6 +293,47 @@ test('buildCodeAgentDeliveryPrompt renders scheduled reminders as the current ev
   assert.doesNotMatch(text, /Reply command|Recovery context/);
 });
 
+test('a recurring reminder wake says how it repeats and when it comes back', () => {
+  const event = makeReminderInboxItem({
+      reminderId: 'reminder-daily',
+      timestamp: '2026-05-18T08:00:00.000Z',
+  });
+  const reminder = {
+    createdAt: '2026-05-10T16:00:00.000Z',
+    firedCount: 8,
+    instructions: 'Post the standup summary.',
+    nextDueAt: '2026-05-19T08:00:00.000Z',
+    reminderId: 'reminder-daily',
+    schedule: { kind: 'daily' as const, repeatRule: 'daily@08:00', time: '08:00', timezone: 'UTC' },
+    status: 'scheduled' as const,
+    title: 'Standup summary',
+    updatedAt: '2026-05-18T08:00:00.000Z',
+  };
+  const text = buildCodeAgentDeliveryPrompt(event, { reminder });
+  assert.match(text, /^Scheduled reminder:\n\n\[reminder_id=reminder-daily time=2026-05-18T08:00:00Z scheduled=2026-05-18T08:00:00Z repeat=daily@08:00 tz=UTC next=2026-05-19T08:00:00Z\] Standup summary/);
+
+  const windowed = buildCodeAgentDeliveryPrompt(event, {
+    reminder: {
+      ...reminder,
+      schedule: {
+        intervalMs: 1_800_000,
+        kind: 'windowed_interval' as const,
+        repeatRule: 'every:30m',
+        timezone: 'Asia/Shanghai',
+        weekdays: ['mon', 'tue', 'wed', 'thu', 'fri'],
+        windowEnd: '18:00',
+        windowRule: 'mon-fri@09:00-18:00',
+        windowStart: '09:00',
+      },
+    },
+  });
+  assert.match(windowed, / repeat=every:30m window=mon-fri@09:00-18:00 tz=Asia\/Shanghai next=2026-05-19T08:00:00Z\]/);
+
+  // A cancelled reminder does not come back, so it shows no next time.
+  const cancelled = buildCodeAgentDeliveryPrompt(event, { reminder: { ...reminder, status: 'cancelled' as const } });
+  assert.match(cancelled, / repeat=daily@08:00 tz=UTC\] Standup summary/);
+});
+
 test('buildCodeAgentDeliveryPrompt renders reminder scheduled time separately from delivery time', () => {
   const event = makeReminderInboxItem({
       reminderId: 'reminder-test',

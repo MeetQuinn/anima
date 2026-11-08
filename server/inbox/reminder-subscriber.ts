@@ -17,6 +17,7 @@ import {
   tryBeginPreflight,
   type PreflightLastResult,
 } from '../reminders/preflight.js';
+import { preflightFailureDetail } from '../reminders/reminder.helper.js';
 import type { Reminder } from '../../shared/reminder.js';
 import type { ReminderInboxItem } from '../../shared/inbox.js';
 import { WakeQueueService } from './wake-queue.service.js';
@@ -375,6 +376,11 @@ export class ReminderInboxSubscriber {
     if (shouldNotify) {
       await this.recordPreflightErrorAttention(reminder, result);
     }
+    // The agent wrote the check, so it is the one who can fix it: tell it once when
+    // the check starts failing, not on every failed run.
+    if (!reminder.preflightError) {
+      await this.enqueuePreflightFailureWake(transition.reminder, result, completedAt);
+    }
     console.log(
       `reminder preflight errored reminderId=${reminder.reminderId} exit=${result.exitCode ?? '-'} timedOut=${Boolean(result.timedOut)} completedAt=${completedAt.toISOString()} notified=${shouldNotify}`,
     );
@@ -419,15 +425,45 @@ export class ReminderInboxSubscriber {
     );
   }
 
+  private async enqueuePreflightFailureWake(
+    reminder: Reminder,
+    result: PreflightLastResult,
+    completedAt: Date,
+  ): Promise<void> {
+    const receivedAt = completedAt.toISOString();
+    const event: ReminderInboxItem = {
+      id: `reminder:${reminder.reminderId}:preflight-error:${completedAt.getTime()}`,
+      kind: 'reminder',
+      receivedAt,
+      handling: {
+        createdAt: receivedAt,
+        queuedAt: receivedAt,
+        status: 'queued',
+        updatedAt: receivedAt,
+      },
+      preflightFailure: {
+        ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+        ...(result.signal ? { signal: result.signal } : {}),
+        ...(result.timedOut ? { timedOut: true } : {}),
+      },
+      reminderId: reminder.reminderId,
+      scheduledAt: result.scheduledAt,
+      title: reminder.title,
+    };
+    try {
+      await this.queue.enqueue(event);
+    } catch (error) {
+      console.error(
+        `reminder preflight error wake failed reminderId=${reminder.reminderId}: ${errorMessage(error)}`,
+      );
+    }
+  }
+
   private async recordPreflightErrorAttention(
     reminder: Reminder,
     result: { exitCode?: number; signal?: string; timedOut?: boolean },
   ): Promise<void> {
-    const detail = [
-      result.timedOut ? 'timed out' : undefined,
-      result.signal ? `signal ${result.signal}` : undefined,
-      result.exitCode !== undefined ? `exit ${result.exitCode}` : undefined,
-    ].filter(Boolean).join(', ') || 'errored';
+    const detail = preflightFailureDetail(result);
     await activityServiceForAgent(this.queue.agentId).record({
       type: 'anima.attention.suggestion',
       payload: {
@@ -436,7 +472,8 @@ export class ReminderInboxSubscriber {
         reminderId: reminder.reminderId,
         suggestion:
           `Reminder preflight-error on "${reminder.title}" (${reminder.reminderId}): ${detail}. `
-          + 'Needs attention — the agent was not woken. Fix the preflight command or cancel the reminder.',
+          + 'Needs attention — its instructions did not run. The agent is told when the check starts failing; '
+          + 'fix the preflight command or cancel the reminder.',
         title: reminder.title,
       },
     }).catch((error: unknown) => {

@@ -148,6 +148,8 @@ export function registerReminderCommands(program: Command): void {
   // Failure: human-readable error to stderr; exit 1.
   reminder
     .command('schedule')
+    // Agents reach for create/add first; let those words work.
+    .aliases(['create', 'add'])
     .description('Schedule a one-shot or recurring agent wake-up.')
     .option('--title <text>', 'short display label for the reminder')
     .option('--instructions <text>',
@@ -174,7 +176,8 @@ export function registerReminderCommands(program: Command): void {
       'interval must fit inside the same-day window span; overnight windows rejected (v1)')
     .option('--preflight <command>',
       'Run only when: shell command before the agent wakes (CWD = Agent Home)\n' +
-      'exit 0 = wake, exit 1 = skip; exit >=2 / signal / timeout = errored (Needs attention)\n' +
+      'exit 0 = wake, exit 1 = skip; exit >=2 / signal / timeout = errored (Needs attention;\n' +
+      'you get one wake saying so when it starts failing)\n' +
       'do not inline secrets — the command is persisted and shown in list/show/UI')
     .option('--preflight-timeout <duration>',
       'preflight timeout (default 30m, hard cap 24h); format: <n><s|m|h|d>\n' +

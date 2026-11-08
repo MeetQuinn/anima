@@ -6,7 +6,26 @@ const OAuthErrorCode = z.enum(['invalid_request', 'invalid_client', 'invalid_gra
 export type LinearOAuthError = z.infer<typeof OAuthErrorCode>;
 
 export class LinearApiError extends Error {
-  constructor(message: string, readonly revoked = false, readonly status?: number, readonly failure?: 'network' | 'http' | 'response', readonly oauthError?: LinearOAuthError) { super(message); }
+  /**
+   * Linear's own GraphQL error messages. They can quote private data, so they are only
+   * shown to the agent that ran the command: non-enumerable keeps them out of logged or
+   * serialized errors, and audits never read them.
+   */
+  declare readonly graphqlErrors?: string[];
+  constructor(message: string, readonly revoked = false, readonly status?: number, readonly failure?: 'network' | 'http' | 'response', readonly oauthError?: LinearOAuthError, graphqlErrors?: string[]) {
+    super(message);
+    if (graphqlErrors?.length) Object.defineProperty(this, 'graphqlErrors', { value: graphqlErrors, enumerable: false });
+  }
+}
+
+const MAX_GRAPHQL_ERRORS = 5;
+function graphqlErrorMessages(errors: unknown): string[] | undefined {
+  if (!Array.isArray(errors)) return undefined;
+  const messages = errors
+    .map((error) => (error && typeof error === 'object' ? (error as { message?: unknown }).message : undefined))
+    .filter((message): message is string => typeof message === 'string' && message.trim() !== '')
+    .slice(0, MAX_GRAPHQL_ERRORS);
+  return messages.length ? messages : undefined;
 }
 const GrantedScopes = z.union([z.string().transform((value) => value.split(/\s+/).filter(Boolean)), z.array(z.string())]);
 const Tokens = z.object({ scope: GrantedScopes.optional(), access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() });
@@ -56,11 +75,19 @@ export class LinearClient {
       });
     } catch { throw new LinearApiError('Linear request failed. If this request included a write, inspect its result before retrying; it may have succeeded.', false, undefined, 'network'); }
     if (response.status === 401) throw new LinearApiError('Linear request was unauthorized.', true, 401, 'http');
-    if (!response.ok) throw new LinearApiError('Linear request failed.', false, response.status, 'http');
+    if (!response.ok) {
+      // Linear answers a query it cannot validate with 400 and GraphQL errors in the body.
+      const errors = response.status === 400 ? graphqlErrorMessages(((await response.json().catch(() => undefined)) as { errors?: unknown } | undefined)?.errors) : undefined;
+      throw new LinearApiError('Linear request failed.', false, response.status, 'http', undefined, errors);
+    }
+    let errors: string[] | undefined;
     try {
       const body = z.object({ data: z.unknown(), errors: z.array(z.unknown()).optional() }).parse(await response.json());
-      if (body.errors?.length) throw new Error('GraphQL error');
+      if (body.errors?.length) {
+        errors = graphqlErrorMessages(body.errors);
+        throw new Error('GraphQL error');
+      }
       return schema.parse(body.data);
-    } catch { throw new LinearApiError('Linear returned an invalid or rejected result.', false, undefined, 'response'); }
+    } catch { throw new LinearApiError('Linear returned an invalid or rejected result.', false, undefined, 'response', undefined, errors); }
   }
 }

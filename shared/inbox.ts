@@ -186,6 +186,15 @@ export const ReminderInboxItem = InboxItemBase.extend({
   kind: z.literal('reminder'),
   /** Bounded preflight stdout evidence attached on succeeded gates (optional). */
   preflightEvidence: z.string().optional(),
+  /**
+   * Set on the one wake that tells the agent its preflight check started failing;
+   * the reminder's instructions did not run.
+   */
+  preflightFailure: z.object({
+    exitCode: z.number().optional(),
+    signal: z.string().optional(),
+    timedOut: z.boolean().optional(),
+  }).optional(),
   reminderId: z.string(),
   // The reminder's intended fire moment (nextDueAt at fire time), as opposed
   // to receivedAt (the poll tick that noticed it was due). Optional because

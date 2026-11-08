@@ -44,7 +44,9 @@ export function messageFromInboxItem(item: InboxItem): AgentMessageRecord | unde
       reminderId: item.reminderId,
       ...(item.title ? { reminderTitle: item.title } : {}),
       source: { id: item.id, kind: 'inbox' },
-      text: item.title ? `Reminder fired: ${item.title}` : 'Reminder fired',
+      text: item.preflightFailure
+        ? `Reminder check failed: ${item.title ?? item.reminderId}`
+        : item.title ? `Reminder fired: ${item.title}` : 'Reminder fired',
       timestamp: item.receivedAt,
     };
   }
