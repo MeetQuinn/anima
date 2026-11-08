@@ -38,7 +38,7 @@ type SubscriptionMuteOptions = Omit<z.infer<typeof SubscriptionMuteSchema>, 'cha
 
 // Input:   anima subscription mute --channel <id> [--thread-ts <ts>]
 // Input:   anima subscription mute --chat-id <oc_...>
-// Output:  muted successfully. channel=<ref>[, thread_ts=<ts>].
+// Output:  muted successfully. channel=<ref>[, thread_ts=<ts>]. Note: <mentions still wake you; how to undo>
 // Failure: human-readable error to stderr; exit 1.
 
 // Input:   anima subscription unmute --channel <id> [--thread-ts <ts>]
@@ -90,7 +90,10 @@ export async function runSubscriptionList(opts: PlacesOptions, deps?: Orientatio
 async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
   const resolved = await resolveSubscriptionTarget(opts, 'subscription mute');
   await muteSubscriptionForAgent(resolved.muteInput);
-  console.log(outcomeLine('muted', resolved.parts));
+  // Said at the moment of muting, so muting does not feel like it could cost a request.
+  console.log(outcomeLine('muted', resolved.parts, {
+    note: 'A direct mention still wakes you here. To undo, run anima subscription unmute with the same options.',
+  }));
 }
 
 async function subscriptionUnmute(opts: SubscriptionMuteOptions): Promise<void> {

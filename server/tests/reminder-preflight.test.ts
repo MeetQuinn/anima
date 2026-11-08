@@ -424,7 +424,7 @@ test('runner hands the agent startup env snapshot to a real preflight child', as
   });
 });
 
-test('end-to-end: preflight 0 wakes with evidence; 1 skips; 2 errors without queue item', async () => {
+test('end-to-end: preflight 0 wakes with evidence; 1 skips; 2 errors and tells the agent once', async () => {
   await withAgentHome(async (_homePath, agentId) => {
     const service = reminderServiceForAgent(agentId);
     const queue = new WakeQueueService(agentId);
@@ -487,7 +487,7 @@ test('end-to-end: preflight 0 wakes with evidence; 1 skips; 2 errors without que
     assert.equal(afterSkip?.firedCount, 0);
     assert.equal(afterSkip?.lastFiredAt, undefined);
 
-    // exit 2: error state, no queue
+    // exit 2: error state; one wake that says the check failed, without the instructions
     const err = await service.scheduleReminder({
       fireAt: '2020-01-03T00:00:00.000Z',
       instructions: 'should error',
@@ -509,7 +509,16 @@ test('end-to-end: preflight 0 wakes with evidence; 1 skips; 2 errors without que
     assert.equal(afterErr?.preflightLastResult?.status, 'errored');
     assert.equal(afterErr?.preflightLastResult?.exitCode, 7);
     assert.ok(afterErr?.preflightError, 'preflight-error attention state');
-    assert.equal((await queue.list()).length, beforeErr);
+    const failureWakes = (await queue.list()).filter((i) => i.kind === 'reminder' && i.reminderId === err.reminderId);
+    assert.equal((await queue.list()).length, beforeErr + 1);
+    assert.equal(failureWakes.length, 1);
+    assert.deepEqual((failureWakes[0] as { preflightFailure?: unknown }).preflightFailure, { exitCode: 7 });
+    const failurePrompt = buildCodeAgentDeliveryPrompt(failureWakes[0] as never, { reminder: afterErr });
+    assert.match(failurePrompt, /^Reminder check failed:\n\n\[reminder_id=/);
+    assert.match(failurePrompt, /failed \(exit 7\), so its instructions did not run\./);
+    assert.match(failurePrompt, /`anima reminder preflight --command 'exit 7'`/);
+    assert.match(failurePrompt, /This was a one-time reminder, so it will not run again/);
+    assert.doesNotMatch(failurePrompt, /should error/);
     assert.equal(afterErr?.firedCount, 0, 'errored check is not a fire');
     assert.equal(afterErr?.lastFiredAt, undefined);
 
@@ -678,6 +687,125 @@ test('schedule advances from completion time (no missed-tick catch-up)', async (
     // Next due must be strictly after completion (00:06), not 00:01.
     assert.equal(after.nextDueAt, '2020-01-01T00:06:00.000Z');
     assert.equal(after.firedCount, 0);
+  });
+});
+
+test('a failing preflight tells the agent once per failure, not on every failed run', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    type Commit = (reminder: unknown, result: unknown, completedAt: Date, expected: unknown) => Promise<void>;
+    const commit = (name: 'commitErroredPreflight' | 'commitDeclinedPreflight') =>
+      (subscriber as unknown as Record<string, Commit>)[name]!.bind(subscriber);
+    const rem = await service.scheduleReminder({
+      instructions: 'check the queue',
+      now: new Date(),
+      preflight: { command: 'exit 9' },
+      repeat: 'every:1h',
+      title: 'hourly gate',
+    });
+    const run = async (name: 'commitErroredPreflight' | 'commitDeclinedPreflight', at: string): Promise<void> => {
+      const live = (await service.findReminder(rem.reminderId))!;
+      const result = {
+        durationMs: 1,
+        endedAt: at,
+        exitCode: name === 'commitErroredPreflight' ? 9 : 1,
+        scheduledAt: live.nextDueAt!,
+        startedAt: at,
+        status: name === 'commitErroredPreflight' ? 'errored' as const : 'declined' as const,
+      };
+      const expected = { nextDueAt: live.nextDueAt, preflight: live.preflight, status: live.status, updatedAt: live.updatedAt };
+      await commit(name)(live, result, new Date(at), expected);
+    };
+    const failureWakes = async () => (await queue.list()).filter((i) =>
+      i.kind === 'reminder' && i.reminderId === rem.reminderId && 'preflightFailure' in i && i.preflightFailure);
+
+    await run('commitErroredPreflight', '2030-01-01T00:00:00.000Z');
+    assert.equal((await failureWakes()).length, 1, 'first failure tells the agent');
+    await run('commitErroredPreflight', '2030-01-01T01:00:00.000Z');
+    await run('commitErroredPreflight', '2030-01-01T02:00:00.000Z');
+    assert.equal((await failureWakes()).length, 1, 'repeat failures do not wake again');
+    await run('commitDeclinedPreflight', '2030-01-01T03:00:00.000Z');
+    await run('commitErroredPreflight', '2030-01-01T04:00:00.000Z');
+    assert.equal((await failureWakes()).length, 2, 'a new failure after a good run tells the agent again');
+
+    const reminder = (await service.findReminder(rem.reminderId))!;
+    const prompt = buildCodeAgentDeliveryPrompt((await failureWakes())[0] as never, { reminder });
+    assert.match(prompt, / repeat=every:1h next=\S+\] hourly gate\n/);
+    assert.match(prompt, /Fix the check or cancel the reminder\. You are told once when the check starts failing/);
+    assert.doesNotMatch(prompt, /check the queue/);
+
+    // Cancelled after the failure but before the wake is delivered: the wake says so.
+    const cancelled = await service.cancelReminder({ id: rem.reminderId });
+    const late = buildCodeAgentDeliveryPrompt((await failureWakes())[0] as never, { reminder: cancelled });
+    assert.match(late, /The reminder has since been cancelled, so it will not run again\.$/m);
+    assert.doesNotMatch(late, /one-time|Fix the check|schedule it again/);
+  });
+});
+
+test('a failure wake survives a failed enqueue, a missed publish, and a lost CAS', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    type Commit = (reminder: unknown, result: unknown, completedAt: Date, expected: unknown) => Promise<void>;
+    const commitErrored = (subscriber as unknown as Record<string, Commit>).commitErroredPreflight!.bind(subscriber);
+    const schedule = (title: string) => service.scheduleReminder({
+      fireAt: '2020-01-01T00:00:00.000Z',
+      instructions: 'do the work',
+      now: new Date('2019-12-31T00:00:00.000Z'),
+      preflight: { command: 'exit 9' },
+      title,
+    });
+    const versionOf = (live: Awaited<ReturnType<typeof schedule>>) =>
+      ({ nextDueAt: live.nextDueAt, preflight: live.preflight, status: live.status, updatedAt: live.updatedAt });
+    const fail = async (id: string, at: string, expected?: unknown): Promise<void> => {
+      const live = (await service.findReminder(id))!;
+      const result = { durationMs: 1, endedAt: at, exitCode: 9, scheduledAt: live.nextDueAt!, startedAt: at, status: 'errored' as const };
+      await commitErrored(live, result, new Date(at), expected ?? versionOf(live));
+    };
+    const wakesFor = async (id: string) => (await queue.list()).filter((i) =>
+      i.kind === 'reminder' && i.reminderId === id && 'preflightFailure' in i && i.preflightFailure);
+
+    // Enqueue fails: the reminder is left untouched, so the next run of the check tells the agent.
+    const a = await schedule('enqueue fails');
+    const enqueueStaged = queue.enqueueStaged.bind(queue);
+    queue.enqueueStaged = async () => { throw new Error('disk full'); };
+    await fail(a.reminderId, '2030-01-01T00:00:00.000Z');
+    queue.enqueueStaged = enqueueStaged;
+    const untouched = (await service.findReminder(a.reminderId))!;
+    assert.equal(untouched.status, 'scheduled');
+    assert.equal(untouched.preflightError, undefined);
+    assert.equal((await wakesFor(a.reminderId)).length, 0);
+    await fail(a.reminderId, '2030-01-01T00:01:00.000Z');
+    const retried = await wakesFor(a.reminderId);
+    assert.equal(retried.length, 1);
+    assert.equal(retried[0]!.handling.stagedAt, undefined, 'published');
+    assert.equal((await service.findReminder(a.reminderId))!.status, 'fired');
+
+    // Publish misses after the CAS: the staged wake is published on the next poll, even
+    // by a fresh subscriber after a restart.
+    const b = await schedule('publish misses');
+    const publishQueued = queue.publishQueued.bind(queue);
+    queue.publishQueued = async () => false;
+    await fail(b.reminderId, '2030-01-01T00:02:00.000Z');
+    queue.publishQueued = publishQueued;
+    assert.ok((await service.findReminder(b.reminderId))!.preflightError);
+    assert.ok((await wakesFor(b.reminderId))[0]!.handling.stagedAt, 'still staged');
+    const restarted = new ReminderInboxSubscriber(queue, service);
+    await (restarted as unknown as { reconcileStagedReminderWakes(now: Date): Promise<void> }).reconcileStagedReminderWakes(new Date());
+    const recovered = await wakesFor(b.reminderId);
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0]!.handling.stagedAt, undefined, 'published by reconcile');
+
+    // The CAS loses (the reminder changed while the check ran): nothing is published.
+    const c = await schedule('cas loses');
+    const stale = versionOf((await service.findReminder(c.reminderId))!);
+    await service.snoozeReminder({ by: '1h', id: c.reminderId });
+    await fail(c.reminderId, '2030-01-01T00:03:00.000Z', stale);
+    assert.equal((await wakesFor(c.reminderId)).length, 0);
+    assert.equal((await service.findReminder(c.reminderId))!.preflightError, undefined);
   });
 });
 

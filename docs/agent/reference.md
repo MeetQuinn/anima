@@ -319,7 +319,9 @@ durable state.
 
 The command's stdout and stderr are captured with explicit truncation markers, followed by its
 duration and exit, signal, or timeout. Exit 0 succeeds and a hosted reminder wakes; exit 1 declines
-and it skips; exit 2 or higher, a signal, or a timeout errors and reports Needs attention. The CLI
+and it skips; exit 2 or higher, a signal, or a timeout errors: the instructions do not run, the
+dashboard reports Needs attention, and you get one wake saying the check failed when it starts
+failing (not one per failed run). The CLI
 returns the command's exit code, returns 124 for timeout, and uses `128 + signal number` for a
 signal. Preflight commands and explicit timeouts are scheduled with `--preflight <command>` and
 `--preflight-timeout <duration>`; the default is 30 minutes and the hard cap is 24 hours. Do not
@@ -583,9 +585,11 @@ detail: <raw underlying message, only when it adds information>
 ```
 
 - **`layer.code`** tells you whose problem it is. Layers: `input` (your arguments, rejected before
-  any network call), `anima` (this runtime or its config), `slack` and `feishu` (the platform
-  rejected the call; the code after the dot is the vendor's own, verbatim, so you can look it up
-  in their docs), `network` (transport trouble, usually transient).
+  any network call; a mistyped command also gets that command's usage below the error), `anima`
+  (this runtime or its config), `slack` and `feishu` (the platform rejected the call; the code
+  after the dot is the vendor's own, verbatim, so you can look it up in their docs), `linear`
+  (Linear rejected a GraphQL request; the detail line is Linear's own error), `network`
+  (transport trouble, usually transient).
 - **`retryable`** is the one bit that matters most: `retryable` means retry with backoff and say
   so in-channel if it persists; `not retryable` means retrying is waste, change something instead.
 - **`hint`** names the next move. Follow it before improvising.

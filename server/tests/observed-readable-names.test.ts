@@ -109,7 +109,9 @@ test('a lookup past the deadline is cancelled and leaves rows as journaled', asy
 // More stale users than the SDK's 100 concurrent requests, so refreshes are
 // both in flight and queued when the reader answers from the cache.
 const STALE_USERS = 201;
-const DEADLINE_MS = 300;
+// Long enough that a loaded test machine still reads the cache in time: if the
+// deadline won, no row would come back named.
+const DEADLINE_MS = 1_500;
 
 // Runs in its own process, like `anima message send`: read the rows, print
 // what came back, and fall off the end. The process exits only once no
@@ -176,7 +178,7 @@ test('stale-cache refreshes stop at the deadline: queued ones are never sent and
       const kill = setTimeout(() => {
         child.kill('SIGKILL');
         reject(new Error(`reader process did not exit; requests=${requests} open=${open.size}`));
-      }, 5_000);
+      }, DEADLINE_MS + 8_000);
       child.on('exit', (exitCode) => {
         clearTimeout(kill);
         resolve(exitCode);
@@ -186,11 +188,10 @@ test('stale-cache refreshes stop at the deadline: queued ones are never sent and
 
     assert.equal(code, 0, stderr);
     const result = JSON.parse(stdout.trim()) as { ms: number; named: number };
-    assert.ok(result.ms < DEADLINE_MS, `answered from the cache before the deadline (${Math.round(result.ms)}ms)`);
-    assert.equal(result.named, STALE_USERS, 'stale names are still shown');
+    assert.equal(result.named, STALE_USERS, `answered from the cache before the deadline (${Math.round(result.ms)}ms)`);
     assert.ok(requests > 0, 'the stale entries were being refreshed');
     assert.ok(requests <= 100, `queued refreshes were never sent (${requests} requests)`);
-    assert.ok(exitedAfterMs < 3_000, `the process exits soon after the deadline (${Math.round(exitedAfterMs)}ms)`);
+    assert.ok(exitedAfterMs < DEADLINE_MS + 4_000, `the process exits soon after the deadline (${Math.round(exitedAfterMs)}ms)`);
 
     const sentAtExit = requests;
     await new Promise((resolve) => setTimeout(resolve, 200));

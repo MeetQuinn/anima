@@ -13,6 +13,10 @@ import { registerReactionCommands } from '../tools/reactions-cli.js';
 import { registerSubscriptionCommands } from '../tools/subscriptions-cli.js';
 import { renderCliError } from './cli-errors.js';
 
+// Commander prints the usage of the command that rejected the input; keep it for the
+// structured error instead of letting it reach stderr unformatted.
+let commanderUsage = '';
+
 async function main(): Promise<void> {
   await createCliProgram().parseAsync(process.argv);
 }
@@ -25,7 +29,10 @@ export function createCliProgram(): Command {
     .exitOverride()
     .showHelpAfterError()
     .configureHelp({ sortSubcommands: true })
-    .configureOutput({ writeErr: () => undefined });
+    .configureOutput({
+      outputError: () => undefined,
+      writeErr: (text) => { commanderUsage += text; },
+    });
 
   registerMessageCommands(program);
   registerLinearCommands(program);
@@ -42,7 +49,7 @@ export function createCliProgram(): Command {
 }
 
 main().catch((error) => {
-  const rendered = renderCliError(error);
+  const rendered = renderCliError(error, { usage: commanderUsage });
   if (rendered) {
     console.error(rendered);
     process.exitCode = 1;

@@ -24,6 +24,7 @@ import {
   envelopeTime,
   formatUserLocalTime,
   renderEnvelope,
+  type EnvelopeField,
 } from '../messages/envelope.js';
 import type { Reminder } from '../../shared/reminder.js';
 import {
@@ -37,6 +38,7 @@ import { buildBackgroundInterruptedDeliveryPrompt } from './background-interrupt
 import { formatLinearReplyTarget, linearReplyTargetFor } from '../linear/reply-target.js';
 import { linearIssueKey, linearNotificationEvent } from '../linear/delivery-text.js';
 import { restartSubtaskPrompt, type RestartSubtaskObservation } from './restart-subtasks.js';
+import { preflightFailureDetail } from '../reminders/reminder.helper.js';
 
 export interface CodeAgentPromptContext {
   memoryCoherence?: {
@@ -318,7 +320,20 @@ function buildReminderDeliveryPrompt(
     { key: 'reminder_id', value: reminder.reminderId },
     { key: 'time', value: envelopeTime(scheduledDeliveryTime(event)) },
     { key: 'scheduled', value: envelopeTime(event.scheduledAt ?? event.receivedAt) },
+    ...reminderRecurrenceFields(reminder),
   ]);
+
+  if (event.preflightFailure) {
+    const command = reminder.preflight?.command;
+    const rerun = command
+      ? ` To see why, run it once yourself: \`anima reminder preflight --command ${shellQuote(command)}\`.`
+      : '';
+    return `Reminder check failed:
+
+${envelope} ${reminder.title}
+
+The preflight check that decides whether this reminder wakes you failed (${preflightFailureDetail(event.preflightFailure)}), so its instructions did not run.${rerun} ${preflightFailureNextStep(reminder)}${provenance}`;
+  }
 
   const evidence = event.preflightEvidence?.trim()
     ? `\n\n${event.preflightEvidence.trim()}`
@@ -331,11 +346,46 @@ Instructions:
 ${reminder.instructions}${evidence}${provenance}`;
 }
 
+// Read at delivery, so a reminder cancelled while the wake waited says so. A one-time
+// reminder is spent once its check runs, so there is nothing left to fix or cancel.
+function preflightFailureNextStep(reminder: Reminder): string {
+  if (reminder.status === 'cancelled') {
+    return 'The reminder has since been cancelled, so it will not run again.';
+  }
+  if (reminder.schedule.kind === 'once') {
+    return 'This was a one-time reminder, so it will not run again: do the work now if it is still needed, or schedule it again with a working check.';
+  }
+  if (reminder.status === 'scheduled') {
+    return 'Fix the check or cancel the reminder. You are told once when the check starts failing, not on every failed run.';
+  }
+  return 'The reminder will not run again.';
+}
+
+// A recurring reminder says so in its own wake, with when it comes back, so the
+// agent can decide to keep or cancel it without looking it up.
+function reminderRecurrenceFields(reminder: Reminder): EnvelopeField[] {
+  const { schedule } = reminder;
+  if (schedule.kind === 'once') return [];
+  return [
+    { key: 'repeat', value: schedule.repeatRule },
+    { key: 'window', value: schedule.kind === 'windowed_interval' ? schedule.windowRule : undefined },
+    { key: 'tz', value: 'timezone' in schedule ? schedule.timezone : undefined },
+    {
+      key: 'next',
+      value: reminder.status === 'scheduled' && reminder.nextDueAt ? envelopeTime(reminder.nextDueAt) : undefined,
+    },
+  ];
+}
+
 // Delivery time for scheduled wakes: the moment the runtime claimed the item
 // (so a wake queued behind a busy turn shows its real delay), falling back to
 // enqueue time for items rendered before claim.
 function scheduledDeliveryTime(event: MemoryCoherenceInboxItem | ReminderInboxItem): string {
   return event.handling.startedAt ?? event.receivedAt;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function reminderOriginEnvelope(provenance: NonNullable<Reminder['provenance']>): string {

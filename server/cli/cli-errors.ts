@@ -1,8 +1,9 @@
 import { ZodError } from 'zod';
 import { ContactPolicyRefusal } from '../messages/contact-policy.service.js';
+import { LinearApiError } from '../linear/client.js';
 import { HistoryReadError } from '../storage/history-cursor.js';
 
-type CliErrorLayer = 'input' | 'anima' | 'slack' | 'feishu' | 'network';
+type CliErrorLayer = 'input' | 'anima' | 'slack' | 'feishu' | 'linear' | 'network';
 type CliErrorCode = `${CliErrorLayer}.${string}`;
 
 export interface CliErrorClassification {
@@ -22,19 +23,29 @@ export class CliError extends Error {
   }
 }
 
-export function renderCliError(error: unknown): string | undefined {
+export interface CliErrorRenderOptions {
+  /** Usage Commander printed for the command that rejected the input. */
+  usage?: string;
+}
+
+export function renderCliError(error: unknown, options: CliErrorRenderOptions = {}): string | undefined {
   if (isCommanderHelp(error)) return undefined;
-  const classification = classifyCliError(error);
+  // The usage of the command the agent got wrong belongs in the same answer, so the
+  // next try needs no separate --help lookup.
+  const usage = isCommanderError(error) ? options.usage?.trim() || undefined : undefined;
+  const classification = classifyCliError(error, Boolean(usage));
   const retryable = classification.retryable ? 'retryable' : 'not retryable';
-  const firstLine = `error ${classification.code} (${retryable}): ${classification.hint}`;
-  return classification.detail ? `${firstLine}\ndetail: ${classification.detail}` : firstLine;
+  const lines = [`error ${classification.code} (${retryable}): ${classification.hint}`];
+  if (classification.detail) lines.push(`detail: ${classification.detail}`);
+  if (usage) lines.push('', usage);
+  return lines.join('\n');
 }
 
 export function cliError(classification: CliErrorClassification): CliError {
   return new CliError(classification);
 }
 
-function classifyCliError(error: unknown): CliErrorClassification {
+function classifyCliError(error: unknown, withUsage = false): CliErrorClassification {
   if (error instanceof CliError) return error.cli;
   if (error instanceof HistoryReadError) {
     return {
@@ -49,7 +60,10 @@ function classifyCliError(error: unknown): CliErrorClassification {
     return { code: 'anima.do_not_contact', hint: error.message, retryable: false };
   }
 
-  const commander = classifyCommanderError(error);
+  const linear = classifyLinearError(error);
+  if (linear) return linear;
+
+  const commander = classifyCommanderError(error, withUsage);
   if (commander) return commander;
 
   const zod = classifyZodError(error);
@@ -75,16 +89,37 @@ function classifyCliError(error: unknown): CliErrorClassification {
   };
 }
 
-function classifyCommanderError(error: unknown): CliErrorClassification | undefined {
-  const record = asRecord(error);
-  const code = stringField(record, 'code');
-  if (!code?.startsWith('commander.')) return undefined;
-  if (code === 'commander.helpDisplayed') return undefined;
+function classifyCommanderError(error: unknown, withUsage: boolean): CliErrorClassification | undefined {
+  if (!isCommanderError(error)) return undefined;
+  // `commander.help` is a command group run without a subcommand; Commander's message
+  // is only a placeholder then. Otherwise it names the word that was wrong.
+  const code = stringField(asRecord(error), 'code');
+  const detail = code === 'commander.help' ? undefined : sanitizedDetail(messageOf(error).replace(/^error:\s*/i, ''));
   return {
     code: 'input.invalid_options',
-    hint: 'Run the command with --help to see valid options, then retry.',
+    ...(detail ? { detail } : {}),
+    hint: !withUsage
+      ? 'Run the command with --help to see valid options, then retry.'
+      : code === 'commander.help'
+        ? 'This command needs a subcommand; choose one from the usage below.'
+        : 'Fix the command using the usage below, then retry.',
     retryable: false,
   };
+}
+
+function classifyLinearError(error: unknown): CliErrorClassification | undefined {
+  if (!(error instanceof LinearApiError) || !error.graphqlErrors?.length) return undefined;
+  return {
+    code: 'linear.graphql_error',
+    detail: sanitizedDetail(error.graphqlErrors.join(' | ')),
+    hint: "Linear rejected the request; the detail is Linear's own error. Fix the query or variables before retrying.",
+    retryable: false,
+  };
+}
+
+function isCommanderError(error: unknown): boolean {
+  const code = stringField(asRecord(error), 'code');
+  return Boolean(code?.startsWith('commander.')) && code !== 'commander.helpDisplayed';
 }
 
 function classifyZodError(error: unknown): CliErrorClassification | undefined {

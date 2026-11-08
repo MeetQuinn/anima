@@ -301,6 +301,15 @@ export function reminderActivityFields(reminder: Reminder): Record<string, unkno
   };
 }
 
+/** How a preflight check failed, in a few words: `exit 2`, `timed out, signal SIGKILL`. */
+export function preflightFailureDetail(result: { exitCode?: number; signal?: string; timedOut?: boolean }): string {
+  return [
+    result.timedOut ? 'timed out' : undefined,
+    result.signal ? `signal ${result.signal}` : undefined,
+    result.exitCode !== undefined ? `exit ${result.exitCode}` : undefined,
+  ].filter(Boolean).join(', ') || 'errored';
+}
+
 /** Human-facing schedule fragment for list/activity (includes window when present). */
 export function scheduleDisplayRule(schedule: ReminderSchedule): string | undefined {
   switch (schedule.kind) {

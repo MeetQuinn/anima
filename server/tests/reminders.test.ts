@@ -1001,6 +1001,25 @@ test('every reminder schedule help example passes the real CLI scheduling contra
   }
 });
 
+test('reminder create and add are schedule, because that is what agents type first', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-reminder-cli-alias-'));
+  const configDir = join(root, '.anima');
+  try {
+    await writeConfig(configDir);
+    const env = { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: configDir, ANIMA_INBOX_ITEM_ID: '' };
+    for (const word of ['create', 'add']) {
+      const result = await runNode(
+        [cliPath, 'reminder', word, '--title', `via ${word}`, '--in', '1h', '--instructions', 'check the deploy'],
+        { env },
+      );
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.match(result.stdout, new RegExp(`^scheduled successfully\\. reminder_id=\\S+, title=via ${word}, next=`));
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test('reminder CLI show and JSON inspection are complete, stable, and stdout-only', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-reminder-inspection-'));
   const configDir = join(root, '.anima');

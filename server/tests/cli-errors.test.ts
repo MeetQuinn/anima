@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { renderCliError } from '../cli/cli-errors.js';
 import { FeishuApiError } from '../feishu/client.js';
+import { LinearApiError } from '../linear/client.js';
 import { startSlackApiMock } from './helpers/slack-api.js';
 import { runNode } from './helpers/run-node.js';
 
@@ -57,9 +58,46 @@ test('anima CLI renders Commander failures through the structured error contract
   assert.notEqual(result.status, 0);
   assert.match(
     result.stderr,
-    /^error input\.invalid_options \(not retryable\): Run the command with --help to see valid options, then retry\./,
+    /^error input\.invalid_options \(not retryable\): Fix the command using the usage below, then retry\.\ndetail: unknown option '--definitely-unknown'\n\nUsage: anima message send \[options\]\n/,
   );
   assert.doesNotMatch(result.stderr, /^error: unknown option/m);
+});
+
+test('a mistyped subcommand is named and answered with the group usage', async () => {
+  const result = await runNode([cliPath, 'message', 'list']);
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /^error input\.invalid_options \(not retryable\): Fix the command using the usage below, then retry\.\ndetail: unknown command 'list'\n\nUsage: anima message \[options\] \[command\]\n/,
+  );
+  assert.match(result.stderr, /^ {2}send \[options\]/m);
+  assert.equal(result.stdout, '');
+});
+
+test('a command group run without a subcommand answers with its usage', async () => {
+  const result = await runNode([cliPath, 'reminder']);
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /^error input\.invalid_options \(not retryable\): This command needs a subcommand; choose one from the usage below\.\n\nUsage: anima reminder \[options\] \[command\]\n/,
+  );
+  assert.match(result.stderr, /^ {2}schedule\|create \[options\]/m);
+  assert.doesNotMatch(result.stderr, /outputHelp/);
+});
+
+test('Linear GraphQL errors reach the agent as Linear\'s own words', () => {
+  const error = new LinearApiError('Linear returned an invalid or rejected result.', false, undefined, 'response', undefined, [
+    'Cannot query field "titel" on type "Issue". Did you mean "title"?',
+  ]);
+  assert.equal(
+    renderCliError(error),
+    'error linear.graphql_error (not retryable): Linear rejected the request; the detail is Linear\'s own error. Fix the query or variables before retrying.\n'
+      + 'detail: Cannot query field "titel" on type "Issue". Did you mean "title"?',
+  );
+  // Kept off anything that serializes or logs the error.
+  assert.deepEqual(Object.keys(error).includes('graphqlErrors'), false);
+  assert.doesNotMatch(JSON.stringify(error), /titel/);
+  assert.match(renderCliError(new LinearApiError('Linear request failed.', false, 503, 'http'))!, /^error anima\.unexpected /);
 });
 
 test('anima CLI renders missing agent context as anima.no_agent_context', async () => {
