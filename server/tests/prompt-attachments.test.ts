@@ -544,7 +544,9 @@ test('buildAnimaRuntimeProfile renders the concise Slack and Anima tool contract
   assert.match(prose, /Slack blocks DMs between bots, so reach another agent in a channel or thread you share/);
   assert.match(prose, /Write standard Markdown \(`\*\*bold\*\*`\); Anima converts it for Slack/);
   assert.match(prose, /\$SLACK_BOT_TOKEN/);
-  // Where to reply in Slack is habit and context the model already has; teams differ.
+  // Where to reply is a principle, not a rule: without it agents opened threads under
+  // top-level DMs, and channels differ too much for a fixed thread rule.
+  assert.match(prose, /Answer where the message was said: a top-level message gets a top-level reply, and a message in a thread gets its reply in that thread\. In a channel, match how people there talk, and move a long side discussion into a thread\./);
   assert.doesNotMatch(prose, /focused thread|main timeline|separate announcement/);
   assert.match(prose, /Everything you do with people goes through the `anima` CLI, so it is delivered and recorded/);
   assert.match(prose, /`anima <command> --help` gives exact usage/);
