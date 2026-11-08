@@ -222,7 +222,7 @@ test('the standing Linear section renders with a named identity, an id only, no 
   const section = (text: string) => text.slice(text.indexOf('### Linear'), text.indexOf('\n## Memory\n') + 1);
   const named = section(render({ linearIdentity: { appUserId: 'app-user-sentinel', name: 'Synthetic app' } }));
   assert.match(named, /^### Linear\n\n+- You are \*\*Synthetic app\*\* in Linear \(app user `app-user-sentinel`\)\. Comments and\n  activities from that id are your own\.\n- A delegation, an @mention/);
-  assert.match(named, /\n- For anything else use `anima linear api` \(GraphQL\)\. The guide,\n  `\/synthetic-docs\/agent\/linear\.md`,\n  covers each point in "What wakes you", "Reply", "Work on an issue" and "Hand work to\n  another agent"\.\n+$/);
+  assert.match(named, /\n- For anything else, use `anima linear api` \(GraphQL\);\n  `\/synthetic-docs\/agent\/linear\.md`\n  has the details\.\n+$/);
   for (const line of ['Anima never changes issue status.', 'send progress as `--kind thought`', 'delegate the issue to its Linear app user']) assert.ok(named.includes(line), line);
   const idOnly = section(render({ linearIdentity: { appUserId: 'app-user-sentinel' } }));
   assert.match(idOnly, /^### Linear\n\n- You are app user `app-user-sentinel` in Linear\. Comments and activities from that\n  id are your own\.\n- A delegation/);
