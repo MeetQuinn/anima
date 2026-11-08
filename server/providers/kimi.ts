@@ -576,20 +576,23 @@ class KimiAcpController {
   private async finishCurrentTurn(): Promise<void> {
     const turn = this.currentTurn;
     if (!turn) return;
-    this.currentTurn = undefined;
-    this.activeToolIds.clear();
-    this.pendingTools.clear();
-    this.resolveQuiescentWaitersIfReady();
-    if (this.latestUsage) {
-      await turn.input.effects.recordEvent({
-        ...this.latestUsage,
-        eventType: 'kimi.context.stats',
-        runtimeKind: KIMI_RUNTIME_KIND,
-      });
+    this.clearCurrentTurn();
+    // The turn is already detached, so a failed write must settle it here;
+    // the runTurnQueue catch would find no current turn to abort.
+    try {
+      if (this.latestUsage) {
+        await turn.input.effects.recordEvent({
+          ...this.latestUsage,
+          eventType: 'kimi.context.stats',
+          runtimeKind: KIMI_RUNTIME_KIND,
+        });
+      }
+      const text = turn.text.join('').trim();
+      if (text) await turn.input.effects.recordAgentText(text, { eventType: 'kimi.assistant', transport: 'acp' });
+      turn.resolve(text);
+    } catch (error) {
+      turn.reject(error);
     }
-    const text = turn.text.join('').trim();
-    if (text) await turn.input.effects.recordAgentText(text, { eventType: 'kimi.assistant', transport: 'acp' });
-    turn.resolve(text);
   }
 
   private resolveQuiescentWaitersIfReady(): void {

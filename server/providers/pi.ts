@@ -806,30 +806,36 @@ class PiRpcController {
     this.clearCurrentTurn();
     const trailing = turn.text.join('').trim();
     if (trailing) turn.segments.push(trailing);
-    await turn.input.effects.recordEvent({
-      eventType: 'pi.turn.completed',
-      runtimeKind: PI_RUNTIME_KIND,
-      transport: PI_TRANSPORT,
-      ...(stringField(this.latestUsage, 'terminalReason')
-        ? { terminalReason: stringField(this.latestUsage, 'terminalReason') }
-        : {}),
-    });
-    if (turn.error) {
-      const status = turn.error.status;
-      turn.reject(Object.assign(new Error(turn.error.message), {
-        reason: classifyProviderFailureReason({ message: turn.error.message, status }),
-        ...(status !== undefined ? { status } : {}),
-      }));
-      return;
-    }
-    const text = turn.segments.join('\n\n').trim();
-    if (text) {
-      await turn.input.effects.recordAgentText(text, {
-        eventType: 'pi.assistant',
+    // The turn is already detached, so a failed write must settle it here;
+    // otherwise the error only reaches the stdout effect queue and the turn hangs.
+    try {
+      await turn.input.effects.recordEvent({
+        eventType: 'pi.turn.completed',
+        runtimeKind: PI_RUNTIME_KIND,
         transport: PI_TRANSPORT,
+        ...(stringField(this.latestUsage, 'terminalReason')
+          ? { terminalReason: stringField(this.latestUsage, 'terminalReason') }
+          : {}),
       });
+      if (turn.error) {
+        const status = turn.error.status;
+        turn.reject(Object.assign(new Error(turn.error.message), {
+          reason: classifyProviderFailureReason({ message: turn.error.message, status }),
+          ...(status !== undefined ? { status } : {}),
+        }));
+        return;
+      }
+      const text = turn.segments.join('\n\n').trim();
+      if (text) {
+        await turn.input.effects.recordAgentText(text, {
+          eventType: 'pi.assistant',
+          transport: PI_TRANSPORT,
+        });
+      }
+      turn.resolve(text);
+    } catch (error) {
+      turn.reject(error);
     }
-    turn.resolve(text);
   }
 
   private resolveQuiescentWaitersIfReady(): void {

@@ -1123,6 +1123,44 @@ test('a Grok process that exits cleanly mid-turn is retried as a crash', async (
   }
 });
 
+test('grok-cli rejects the turn when the final transcript write fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-grok-finish-write-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeGrok(
+        stateDir,
+        standardFakeGrok({ callsPath, loadSessionId: 'grok-session-write', reply: 'reply' }),
+      );
+      const ctx = await ingestGrokEvent(stateDir, 'Write fails.', '1771000090.000001');
+      await runtimeSessionServiceForAgent('anima').persistProviderSession('grok-cli', {
+        id: 'grok-session-write',
+        updatedAt: '2026-07-13T00:00:00.000Z',
+      });
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath }),
+        kind: 'grok-cli',
+        model: 'grok-4.5',
+      });
+      const input = await runtimeInput(runtime, ctx, await loadState());
+      const failing = {
+        ...input,
+        effects: {
+          ...input.effects,
+          recordAgentText: async () => {
+            throw new Error('transcript write failed');
+          },
+        },
+      };
+      await assert.rejects(withTimeout(runtime.run(failing), 3_000), /transcript write failed/);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 async function installFakeGrok(stateDir: string, body: string[]): Promise<void> {
   const executable = join(stateDir, 'grok');
   await writeFile(

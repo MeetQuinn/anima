@@ -758,6 +758,50 @@ test('pi sends abort before tearing down a cancelled turn', async () => {
   }
 });
 
+test('pi rejects the turn when the final transcript write fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-pi-finish-write-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await installFakePi(stateDir, [
+        ...FAKE_PI_PRELUDE,
+        'function handle(msg) {',
+        "  if (msg.type === 'get_state') return respond(msg, state());",
+        "  if (msg.type === 'prompt') {",
+        '    respond(msg);',
+        "    send({ type: 'message_update', message: assistant('', {}, 'pending'), assistantMessageEvent: { type: 'text_delta', delta: 'reply' } });",
+        "    send({ type: 'message_end', message: assistant('reply', { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 12, cost: { total: 0.001 } }, 'stop') });",
+        "    send({ type: 'agent_end', messages: [] });",
+        "    send({ type: 'agent_settled' });",
+        '    return;',
+        '  }',
+        '  respond(msg);',
+        '}',
+      ]);
+      const ctx = await ingestPiEvent(stateDir, 'Write fails.', '1786000030.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, { CALLS_PATH: join(stateDir, 'calls.jsonl') }),
+        kind: 'pi',
+        model: 'google/gemini-2.5-pro',
+      });
+      const input = await runtimeInput(runtime, ctx, await loadState());
+      const failing = {
+        ...input,
+        effects: {
+          ...input.effects,
+          recordAgentText: async () => {
+            throw new Error('transcript write failed');
+          },
+        },
+      };
+      await assert.rejects(withTimeout(runtime.run(failing), 3_000), /transcript write failed/);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 async function installFakePi(stateDir: string, bodyLines: string[]): Promise<void> {
   const path = join(stateDir, 'pi');
   await writeFile(path, ['#!/usr/bin/env node', ...bodyLines, ''].join('\n'), 'utf8');
