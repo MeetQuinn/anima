@@ -13,6 +13,7 @@ import {
   observeOwnOutboundPost,
   SendHoldError,
 } from '../runtime/send-hold.js';
+import type { ObservedNameReader } from '../runtime/observed-readable-names.js';
 import {
   exactEarlierMessagesMarker,
   formatHeldDeltaLine,
@@ -986,5 +987,47 @@ test('observeOwnOutboundPost journals own send for later hold exclusion', async 
       ),
       true,
     );
+  });
+});
+
+test('held rows name their senders when a name reader is given', async () => {
+  await withHoldStore(async (store, agentId) => {
+    await store.observe({ teamId: 'T1', channelId: 'D1', messageTs: '10.0', text: 'topic', userId: 'U_ROOT' });
+    await store.advanceCursor({
+      surfaceId: 'slack:T1:D1',
+      expected: { status: 'absent' },
+      nextDeliveredOrdinal: 1,
+      lastDeliveredEventId: 'slack:T1:D1:10.0',
+      lastDeliveredMessageTs: '10.0',
+    });
+    await store.observe({
+      teamId: 'T1',
+      channelId: 'D1',
+      messageTs: '11.0',
+      text: 'wait for <@U_ROOT>',
+      userId: 'U_TESS',
+      receivedAt: '2026-01-01T13:45:20.000Z',
+    });
+    const readNames: ObservedNameReader = async (entries) => entries.map((entry) => ({
+      ...entry,
+      text: entry.text.replace('<@U_ROOT>', '@root'),
+      ...(entry.userId === 'U_TESS' ? { senderLabel: 'Tess (@tess)' } : {}),
+    }));
+
+    const result = await evaluateSendHold({
+      channelKind: 'dm',
+      agentId,
+      teamId: 'T1',
+      channelId: 'D1',
+      tool: 'anima.message.send',
+      botUserId: 'U_BOT',
+      readNames,
+      store,
+      writeOutput: () => {},
+    });
+    assert.equal(result.kind, 'held');
+    if (result.kind !== 'held') return;
+    assert.match(result.stdout, /\n  \[Tess \(@tess\) 13:45:20\] wait for @root/);
+    assert.equal(result.advancedToOrdinal, 2);
   });
 });

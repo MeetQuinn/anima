@@ -20,6 +20,7 @@ import {
   clipObservedText,
 } from '../runtime/cursor-delivery.js';
 import { evaluateSendHold } from '../runtime/send-hold.js';
+import type { ObservedNameReader } from '../runtime/observed-readable-names.js';
 import { groupFollowupContexts } from '../runtime/followup-appender.js';
 import type { RuntimeItemContext } from '../runtime/types.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
@@ -193,6 +194,26 @@ test('first wake: bounded context + trigger retained; child thread established p
     // Idempotent re-commit (provider retry).
     const again = await commitCursorDelivery({ plan: prepared.plan, queue, store });
     assert.deepEqual(again.advanced, []);
+  });
+});
+
+test('a name reader makes rows read like the trigger; ordinals and the cursor are unchanged', async () => {
+  await withEnabledStore(async (store, agentId) => {
+    await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: '1.0', text: 'hi <@U2>', userId: 'U1' });
+    await store.observe({ teamId: 'T1', channelId: 'C1', messageTs: '2.0', text: 'wake me', userId: 'U2' });
+    const readNames: ObservedNameReader = async (entries) => entries.map((entry) => ({
+      ...entry,
+      text: entry.text.replace('<@U2>', '@nora'),
+      ...(entry.userId === 'U1' ? { senderLabel: 'Totoday (@totoday)' } : {}),
+    }));
+
+    const item = slackItem({ channelId: 'C1', messageTs: '2.0', text: 'wake me', userId: 'U2' });
+    const prepared = await prepareCursorDelivery({ agentId, item, readNames, store });
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    assert.match(prepared.plan.promptBody, /ordinal=1\] Totoday \(@totoday\): hi @nora\n/);
+    assert.match(prepared.plan.promptBody, /ordinal=2\] @U2: wake me\n/);
+    assert.equal(prepared.plan.surfaces[0]!.nextDeliveredOrdinal, 2);
   });
 });
 

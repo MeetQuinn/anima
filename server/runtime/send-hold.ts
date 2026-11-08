@@ -28,6 +28,7 @@ import {
   type HeldNoun,
   renderHeldCopy,
 } from './send-hold-copy.js';
+import type { ObservedNameReader } from './observed-readable-names.js';
 
 export type SendHoldTool = 'anima.message.send' | 'anima.ask' | 'anima.file.send';
 
@@ -106,6 +107,8 @@ export async function evaluateSendHold(input: {
   tool: SendHoldTool;
   botUserId?: string;
   botId?: string;
+  /** Shows held rows with readable senders and mentions. Omit to show them as journaled. */
+  readNames?: ObservedNameReader;
   store?: ObservedConversationStore;
   writeOutput?: (line: string) => void;
 }): Promise<EvaluateSendHoldResult> {
@@ -195,7 +198,8 @@ export async function evaluateSendHold(input: {
     }
 
     const totalNewCount = nonOwn.length;
-    const selected = selectNewestFittingForEnvelope(nonOwn, {
+    const shownCandidates = input.readNames ? await input.readNames(nonOwn) : nonOwn;
+    const selected = selectNewestFittingForEnvelope(shownCandidates, {
       maxMessages: CURSOR_DELIVERY_MAX_MESSAGES,
       maxBytes: CURSOR_DELIVERY_MAX_BYTES,
       totalCandidates: totalNewCount,

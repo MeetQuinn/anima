@@ -20,6 +20,7 @@ import {
   triggerEventId,
   type CursorDeliveryPlan,
 } from './cursor-delivery.js';
+import { readNamesFor } from './observed-readable-names.js';
 import type { SlackInboxItem } from '../../shared/inbox.js';
 
 const FOLLOWUP_POLL_MS = 100;
@@ -115,6 +116,7 @@ async function tryFollowupBatch(
       const prepared = await prepareCursorDelivery({
         agentId: input.runtimeConfig.agentId,
         item: context.item,
+        ...await readNamesFor(input.runtimeConfig.agentId, context.item),
       });
       if (prepared.kind === 'failed') {
         skippedItemIds.add(context.item.id);

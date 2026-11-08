@@ -4,6 +4,7 @@
 import type { ObservedConversationEntry } from '../storage/schema/observed-conversation.store.js';
 import { slackDisplayLabel } from '../slack/slack.helper.js';
 import { ACTORLESS_SLACK_WAKE_BOT_ID } from './cursor-wake-journal-backfill.js';
+import type { ReadableObservedEntry } from './observed-readable-names.js';
 
 /** Noun in the HELD outcome: message send / ask → "message"; file send → "file". */
 export type HeldNoun = 'message' | 'file';
@@ -17,8 +18,9 @@ export const HELD_MAX_MESSAGE_CHARS = 2_000;
  * read the raw placeholder as a teammate name.
  */
 export function observedSenderLabel(
-  entry: Pick<ObservedConversationEntry, 'userId' | 'botId'>,
+  entry: Pick<ObservedConversationEntry, 'userId' | 'botId'> & { senderLabel?: string },
 ): string {
+  if (entry.senderLabel) return entry.senderLabel;
   if (entry.userId) return slackDisplayLabel({ userId: entry.userId });
   if (entry.botId === ACTORLESS_SLACK_WAKE_BOT_ID) return 'shortcut';
   if (entry.botId) return `bot:${entry.botId}`;
@@ -74,7 +76,7 @@ export function clipHeldRowText(text: string, maxChars = HELD_MAX_MESSAGE_CHARS)
   return `${truncateUtf8(text, bodyBudget)}${suffix}`;
 }
 
-function heldSenderLabel(entry: ObservedConversationEntry): string {
+function heldSenderLabel(entry: ReadableObservedEntry): string {
   return observedSenderLabel(entry);
 }
 
@@ -95,7 +97,7 @@ export function heldTimeLabel(entry: ObservedConversationEntry): string {
   return entry.messageTs;
 }
 
-export function formatHeldDeltaLine(entry: ObservedConversationEntry): string {
+export function formatHeldDeltaLine(entry: ReadableObservedEntry): string {
   let text = entry.text;
   if (!text && entry.files?.length) {
     text = entry.files.map((f) => f.name ?? f.id).join(', ');

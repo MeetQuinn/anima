@@ -22,6 +22,7 @@ import { envelopeTime, renderEnvelope } from '../messages/envelope.js';
 import { slackDisplayLabel } from '../slack/slack.helper.js';
 import { renderSlackCursorExtras } from './delivery-prompt.js';
 import { ACTORLESS_SLACK_WAKE_BOT_ID } from './cursor-wake-journal-backfill.js';
+import type { ObservedNameReader, ReadableObservedEntry } from './observed-readable-names.js';
 import {
   observedSenderLabel,
   truncatedMarkerSuffix,
@@ -185,6 +186,8 @@ export function triggerEventId(item: SlackInboxItem): string {
 export async function prepareCursorDelivery(input: {
   agentId: string;
   item: InboxItem;
+  /** Shows rows with readable senders and mentions, like the wake trigger. Omit to show them as journaled. */
+  readNames?: ObservedNameReader;
   store?: ObservedConversationStore;
 }): Promise<PrepareCursorDeliveryResult> {
   // Slack-only: non-Slack wakes never consult cursor settings (a corrupt
@@ -257,6 +260,7 @@ export async function prepareCursorDelivery(input: {
     // nextDeliveredOrdinal is computed only from rows that survive that budget —
     // never truncate the rendered evidence after choosing the advance.
     const surfaces = await buildSharedBudgetSurfacePlans(store, surfaceIds, {
+      ...(input.readNames ? { readNames: input.readNames } : {}),
       triggerEventId: eventId,
       triggerSurfaceId,
       triggerItem: triggerForEnvelope,
@@ -503,6 +507,7 @@ async function buildSharedBudgetSurfacePlans(
   store: ObservedConversationStore,
   surfaceIds: string[],
   opts: {
+    readNames?: ObservedNameReader;
     triggerEventId: string;
     triggerSurfaceId: string;
     triggerItem: SlackInboxItem;
@@ -551,6 +556,17 @@ async function buildSharedBudgetSurfacePlans(
       candidates,
       candidateCount,
     });
+  }
+
+  // Names are resolved before budgeting so the byte budget measures the rows
+  // as they will be shown. One call covers every surface's rows.
+  if (opts.readNames) {
+    const readable = await opts.readNames(raw.flatMap((surface) => surface.candidates));
+    let offset = 0;
+    for (const surface of raw) {
+      surface.candidates = readable.slice(offset, offset + surface.candidates.length);
+      offset += surface.candidates.length;
+    }
   }
 
   type Tagged = ObservedConversationEntry & { _surfaceId: string };
@@ -888,7 +904,7 @@ export function selectNewestFittingForEnvelope(
   };
 }
 
-export function formatObservedLine(entry: ObservedConversationEntry): string {
+export function formatObservedLine(entry: ReadableObservedEntry): string {
   const actor = observedSenderLabel(entry);
   let text = entry.text;
   if (!text && entry.files?.length) {
