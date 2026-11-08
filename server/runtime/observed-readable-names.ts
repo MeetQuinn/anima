@@ -48,8 +48,19 @@ export function observedNameReader(input: {
   const timeoutMs = input.timeoutMs ?? READABLE_NAMES_TIMEOUT_MS;
   return async <T extends ObservedConversationEntry>(entries: T[]): Promise<Array<ReadableObservedEntry<T>>> => {
     if (entries.length === 0) return entries;
+    // One deadline covers every request this call starts, and it keeps running
+    // after the call answers: a stale directory entry is answered from cache
+    // while its refresh goes on in the background, queued behind the SDK's
+    // concurrency limit. At the deadline, in-flight requests are cancelled
+    // and queued ones fail without being sent, so a CLI process can exit.
     const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), timeoutMs);
+    deadline.unref?.();
+    const timedOut = new Promise<undefined>((resolve) => {
+      controller.signal.addEventListener('abort', () => resolve(undefined), { once: true });
+    });
     const client = input.client(controller.signal, timeoutMs);
+
     const userIds = new Set<string>();
     const channelIds = new Set<string>();
     for (const entry of entries) {
@@ -66,7 +77,7 @@ export function observedNameReader(input: {
         [channelId, await profiles.conversation({ channelId, client, teamId })] as const
       ))),
     ]);
-    const resolved = await withinDeadline(lookup, timeoutMs, controller);
+    const resolved = await Promise.race([lookup.catch(() => undefined), timedOut]);
     if (!resolved) return entries;
 
     const [users, channels] = resolved;
@@ -123,25 +134,4 @@ function senderLabel(userId: string, profile: SlackUserProfile | undefined): str
   const displayName = profile.displayName && profile.displayName !== userId ? profile.displayName : undefined;
   if (!displayName && !profile.handle) return undefined;
   return slackDisplayLabel({ displayName, handle: profile.handle, userId });
-}
-
-// At the deadline, abort the lookups still in flight and answer without them.
-async function withinDeadline<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  controller: AbortController,
-): Promise<T | undefined> {
-  let timer: NodeJS.Timeout | undefined;
-  const deadline = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      resolve(undefined);
-    }, timeoutMs);
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([promise.catch(() => undefined), deadline]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
