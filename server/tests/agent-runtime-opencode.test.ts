@@ -598,6 +598,57 @@ test('an OpenCode process that exits cleanly mid-turn is retried as a crash', as
   }
 });
 
+test('opencode-cli rejects the turn when the final transcript write fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-opencode-finish-write-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await installFakeOpenCode(stateDir, [
+        "const fs = require('fs');",
+        "process.stdin.setEncoding('utf8');",
+        "let buffer = '';",
+        "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
+        "process.stdin.on('data', (chunk) => {",
+        '  buffer += chunk;',
+        '  const lines = buffer.split(/\\r?\\n/);',
+        "  buffer = lines.pop() || '';",
+        '  for (const line of lines) {',
+        '    if (!line.trim()) continue;',
+        '    const msg = JSON.parse(line);',
+        "    if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentInfo: { name: 'OpenCode', version: '1.18.4' } } });",
+        "    if (msg.method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'opencode-session-write' } });",
+        "    if (msg.method === 'session/set_config_option') send({ jsonrpc: '2.0', id: msg.id, result: {} });",
+        "    if (msg.method === 'session/prompt') {",
+        "      send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'opencode-session-write', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'reply' } } } });",
+        "      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+        '    }',
+        '  }',
+        '});',
+      ]);
+      const ctx = await ingestOpenCodeEvent(stateDir, 'Write fails.', '1785000030.000001');
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, {}),
+        kind: 'opencode-cli',
+        model: 'deepseek/deepseek-v4-pro',
+      });
+      const input = await runtimeInput(runtime, ctx, await loadState());
+      const failing = {
+        ...input,
+        effects: {
+          ...input.effects,
+          recordAgentText: async () => {
+            throw new Error('transcript write failed');
+          },
+        },
+      };
+      await assert.rejects(withTimeout(runtime.run(failing), 3_000), /transcript write failed/);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 async function installFakeOpenCode(stateDir: string, body: string[]): Promise<void> {
   const path = join(stateDir, 'opencode');
   await writeFile(path, ['#!/usr/bin/env node', ...body].join('\n'), 'utf8');

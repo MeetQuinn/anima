@@ -274,14 +274,19 @@ test('antigravity-cli catalog probe times out and still kills a child that ignor
   try {
     await withAnimaHome(stateDir, async () => {
       const pidPath = join(stateDir, 'probe.pid');
+      const body = join(stateDir, 'agy-body.js');
       const agy = join(stateDir, 'agy');
-      await writeFile(agy, [
-        '#!/usr/bin/env node',
-        "const fs = require('fs');",
-        `fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+      await writeFile(body, [
         "process.on('SIGTERM', () => {});",
         "process.stdin.resume();",
         'setInterval(() => {}, 1000);',
+      ].join('\n'), 'utf8');
+      // The shell records the pid before Node starts (exec keeps it), so a slow
+      // Node startup under load cannot outlast the probe timeout unrecorded.
+      await writeFile(agy, [
+        '#!/bin/sh',
+        `echo $$ > ${shellQuote(pidPath)}`,
+        `exec ${shellQuote(process.execPath)} ${shellQuote(body)}`,
       ].join('\n'), 'utf8');
       await chmod(agy, 0o755);
 
@@ -702,4 +707,8 @@ async function readJsonLines(path: string): Promise<Array<Record<string, unknown
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }

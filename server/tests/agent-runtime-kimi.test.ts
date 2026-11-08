@@ -658,3 +658,63 @@ test('kimi-cli closed stdin startup failure stays on provider promise', async ()
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+test('kimi-cli rejects the turn when the final transcript write fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-kimi-finish-write-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const fakeKimi = join(stateDir, 'kimi');
+      await writeFile(
+        fakeKimi,
+        [
+          '#!/usr/bin/env node',
+          "process.stdin.setEncoding('utf8');",
+          "let buffer = '';",
+          'function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }',
+          'process.stdin.on("data", (chunk) => {',
+          '  buffer += chunk;',
+          '  const lines = buffer.split(/\\r?\\n/);',
+          '  buffer = lines.pop() || "";',
+          '  for (const line of lines) {',
+          '    if (!line.trim()) continue;',
+          '    const msg = JSON.parse(line);',
+          '    if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, serverInfo: { name: "Kimi Code CLI", version: "0.12.0" }, agentCapabilities: { loadSession: true } } });',
+          '    if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "kimi-session-write" } });',
+          '    if (msg.method === "session/set_model") send({ jsonrpc: "2.0", id: msg.id, result: {} });',
+          '    if (msg.method === "session/prompt") {',
+          '      send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "kimi-session-write", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "reply" } } } });',
+          '      send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });',
+          '    }',
+          '  }',
+          '});',
+        ].join('\n'),
+        'utf8',
+      );
+      await chmod(fakeKimi, 0o755);
+      const ctx = await ingestEvent(
+        makeSlackEvent({ channelId: 'D-kimi-finish-write', teamId: 'T-demo', text: 'Write fails.', ts: '1770000990.000001', userId: 'U1' }),
+        { agentId: 'anima', stateDir },
+      );
+      runtime = createAgentRuntime({
+        env: runtimeTestEnv(stateDir, {}),
+        kind: 'kimi-cli',
+        model: 'kimi-code/kimi-for-coding',
+      });
+      const input = await runtimeInput(runtime, ctx, await loadState());
+      const failing = {
+        ...input,
+        effects: {
+          ...input.effects,
+          recordAgentText: async () => {
+            throw new Error('transcript write failed');
+          },
+        },
+      };
+      await assert.rejects(withTimeout(runtime.run(failing), 3_000), /transcript write failed/);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
