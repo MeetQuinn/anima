@@ -9,6 +9,7 @@ import {
   postedSlackThreadTs,
   sentThreadSubscriptionPayload,
 } from '../messages/sent-message.service.js';
+import { observedNameReaderForAgent } from '../runtime/observed-readable-names.js';
 import { evaluateSendHold, observeOwnOutboundPost } from '../runtime/send-hold.js';
 import { resolveSlackChannelArgument } from './slack-channel-resolver.js';
 import {
@@ -125,6 +126,7 @@ export async function runSlackSend(input: {
     ...(threadTs ? { threadTs } : {}),
     tool,
     botUserId: agent.slack.botUserId,
+    readNames: observedNameReaderForAgent(agent, teamId),
     writeOutput: input.writeOutput,
   });
   if (hold.kind === 'held') return;

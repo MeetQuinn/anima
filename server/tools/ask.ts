@@ -40,6 +40,7 @@ import {
   evaluateSendHold,
   observeOwnOutboundPost,
 } from '../runtime/send-hold.js';
+import { observedNameReaderForAgent } from '../runtime/observed-readable-names.js';
 
 type SlackPostMessagePayload = Parameters<WebClient['chat']['postMessage']>[0];
 type AskAllowedUser = {
@@ -147,6 +148,7 @@ export async function runAsk(opts: z.infer<typeof AskCommandSchema>): Promise<vo
     ...(target.threadTs ? { threadTs: target.threadTs } : {}),
     tool: 'anima.ask',
     botUserId: agent.slack.botUserId,
+    readNames: observedNameReaderForAgent(agent, teamId),
   });
   if (hold.kind === 'held') return;
 

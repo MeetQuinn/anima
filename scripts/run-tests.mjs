@@ -96,6 +96,7 @@ const groups = {
     'outcome-line.test.js',
     'observed-conversation.test.js',
     'cursor-delivery.test.js',
+    'observed-readable-names.test.js',
     'send-hold.test.js',
     'send-hold-tools.test.js',
     'service-log.test.js',

@@ -45,6 +45,7 @@ import {
   commitCursorDelivery,
   prepareCursorDelivery,
 } from './cursor-delivery.js';
+import { readNamesFor } from './observed-readable-names.js';
 import { backfillActiveSlackWakeJournal } from './cursor-wake-journal-backfill.js';
 import { LinearStore } from '../storage/schema/linear.store.js';
 
@@ -334,6 +335,7 @@ export class AgentRuntimeWorker {
       const prepared = await prepareCursorDelivery({
         agentId: this.options.agentId,
         item: context.item,
+        ...await readNamesFor(this.options.agentId, context.item),
       });
       if (prepared.kind === 'failed') {
         // Fail-closed without tombstone: requeue so repair can retry later.
