@@ -88,6 +88,7 @@ export class LinearClient {
         errors = graphqlErrorMessages(body.errors);
         throw new Error('GraphQL error');
       }
+      if (body.data === undefined) throw new Error('GraphQL result without data');
       return schema.parse(body.data);
     } catch { throw new LinearApiError('Linear returned an invalid or rejected result.', false, undefined, 'response', undefined, errors); }
   }
