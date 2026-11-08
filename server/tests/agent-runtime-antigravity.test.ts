@@ -15,7 +15,7 @@ import {
 } from '../providers/antigravity.js';
 import { classifyProviderRetry } from '../providers/provider-retry.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
-import { parseAntigravityConfigOptions } from '../services/system.service.js';
+import { antigravityAcpModelCatalog, parseAntigravityConfigOptions } from '../services/system.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import {
@@ -220,6 +220,107 @@ test('antigravity-cli model catalog comes from the session model select', () => 
   assert.throws(() => parseAntigravityConfigOptions([]), /did not report any models/);
 });
 
+test('antigravity-cli catalog probe survives a JSON null line and kills a child that ignores SIGTERM', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const pidPath = join(stateDir, 'probe.pid');
+      const agy = join(stateDir, 'agy');
+      await writeFile(agy, [
+        '#!/usr/bin/env node',
+        "const fs = require('fs');",
+        `fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+        "process.on('SIGTERM', () => {});",
+        `const configOptions = ${JSON.stringify(CONFIG_OPTIONS)};`,
+        "process.stdout.write('null\\n42\\n');",
+        "let buffer = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        '  buffer += chunk;',
+        "  const lines = buffer.split('\\n');",
+        "  buffer = lines.pop() || '';",
+        '  for (const line of lines) {',
+        '    if (!line.trim()) continue;',
+        '    const msg = JSON.parse(line);',
+        "    const reply = (result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');",
+        "    if (msg.method === 'initialize') reply({ protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } });",
+        "    if (msg.method === 'session/new') reply({ sessionId: 'probe-session', configOptions });",
+        "    if (msg.method === 'session/close') reply({});",
+        '  }',
+        '});',
+        'setInterval(() => {}, 1000);',
+      ].join('\n'), 'utf8');
+      await chmod(agy, 0o755);
+
+      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 5_000 });
+      assert.equal(catalog.defaultModel, 'gemini-3.8-flash');
+      const pid = Number(await readFile(pidPath, 'utf8'));
+      await waitFor(() => {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli catalog probe times out and still kills a child that ignores SIGTERM', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-timeout-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const pidPath = join(stateDir, 'probe.pid');
+      const agy = join(stateDir, 'agy');
+      await writeFile(agy, [
+        '#!/usr/bin/env node',
+        "const fs = require('fs');",
+        `fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+        "process.on('SIGTERM', () => {});",
+        "process.stdin.resume();",
+        'setInterval(() => {}, 1000);',
+      ].join('\n'), 'utf8');
+      await chmod(agy, 0o755);
+
+      await assert.rejects(
+        antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 1_500 }),
+        /model catalog probe timed out/,
+      );
+      await waitFor(() => readFile(pidPath, 'utf8').then(() => true, () => false));
+      const pid = Number(await readFile(pidPath, 'utf8'));
+      await waitFor(() => {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli catalog probe refuses the app editor launcher without starting it', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-launcher-'));
+  try {
+    const appBin = join(dir, 'Antigravity.app', 'Contents', 'Resources', 'app', 'bin');
+    const marker = join(dir, 'launched');
+    await mkdir(appBin, { recursive: true });
+    await writeFile(join(appBin, 'agy'), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`, 'utf8');
+    await chmod(join(appBin, 'agy'), 0o755);
+    await symlink(join(appBin, 'agy'), join(dir, 'agy'));
+    await assert.rejects(antigravityAcpModelCatalog(join(dir, 'agy')), /editor launcher, not Antigravity CLI/);
+    await assert.rejects(readFile(marker, 'utf8'), { code: 'ENOENT' });
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
 test('antigravity-cli puts the system prompt in the session, selects model and thinking, and appends follow-ups', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-runtime-'));
   let runtime: AgentRuntime | undefined;
@@ -327,6 +428,32 @@ test('antigravity-cli puts the system prompt in the session, selects model and t
         timezone: 'UTC',
       });
       assert.equal(usage.reportedRuns, 1);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli rejects the turn when the final transcript write fails', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-finish-write-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await installFakeAgy(stateDir);
+      const ctx = await ingestAgyEvent(stateDir, 'Write fails.', '1786000015.000001');
+      runtime = createAgentRuntime({ env: agyEnv(stateDir, {}), kind: 'antigravity-cli' });
+      const input = await runtimeInput(runtime, ctx, await loadState());
+      const failing = {
+        ...input,
+        effects: {
+          ...input.effects,
+          recordAgentText: async () => {
+            throw new Error('transcript write failed');
+          },
+        },
+      };
+      await assert.rejects(withTimeout(runtime.run(failing), 3_000), /transcript write failed/);
     });
   } finally {
     await runtime?.close?.();

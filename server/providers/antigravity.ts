@@ -698,25 +698,33 @@ class AntigravityAcpController {
     this.resolveQuiescentWaitersIfReady();
   }
 
+  /**
+   * The turn is detached before the final writes, so a failed write must settle
+   * it here: once `currentTurn` is cleared, abortCurrentTurn can no longer reach it.
+   */
   private async finishCurrentTurn(): Promise<void> {
     const turn = this.currentTurn;
     if (!turn) return;
     this.clearCurrentTurn();
-    if (this.latestUsage) {
-      await turn.input.effects.recordEvent({
-        ...this.latestUsage,
-        eventType: 'antigravity.context.stats',
-        runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
-      });
+    try {
+      if (this.latestUsage) {
+        await turn.input.effects.recordEvent({
+          ...this.latestUsage,
+          eventType: 'antigravity.context.stats',
+          runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
+        });
+      }
+      const text = turn.text.join('').trim();
+      if (text) {
+        await turn.input.effects.recordAgentText(text, {
+          eventType: 'antigravity.assistant',
+          transport: 'acp',
+        });
+      }
+      turn.resolve(text);
+    } catch (error) {
+      turn.reject(error);
     }
-    const text = turn.text.join('').trim();
-    if (text) {
-      await turn.input.effects.recordAgentText(text, {
-        eventType: 'antigravity.assistant',
-        transport: 'acp',
-      });
-    }
-    turn.resolve(text);
   }
 
   private resolveQuiescentWaitersIfReady(): void {

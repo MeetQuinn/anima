@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 
 import { resolveAnimaHome } from '../anima-home.js';
 import { ignoreChildStdinErrors } from '../providers/child-process.js';
+import { antigravityCommandProblem } from '../providers/antigravity.js';
 import { raceWithTimeout } from '../race-timeout.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from './env.js';
@@ -290,12 +291,23 @@ export function parseAntigravityConfigOptions(configOptions: unknown): ProviderM
   };
 }
 
-async function antigravityAcpModelCatalog(command: string): Promise<ProviderModelCatalog> {
+/** Probe one `agy acp` session for its model options. Exported for tests; callers use the cached wrapper. */
+export async function antigravityAcpModelCatalog(
+  command: string,
+  options: { killGraceMs?: number; timeoutMs?: number } = {},
+): Promise<ProviderModelCatalog> {
+  // Same refusal as the runtime: the app's editor launcher would open a window.
+  const problem = antigravityCommandProblem(command, process.env);
+  if (problem) throw new Error(problem);
   const cwd = join(resolveAnimaHome(), 'cache', 'antigravity-model-probe');
   await mkdir(cwd, { recursive: true });
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, ['acp'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     ignoreChildStdinErrors(child);
+    let exited = false;
+    child.once('exit', () => {
+      exited = true;
+    });
     const pending = new Map<number, (message: Record<string, unknown>) => void>();
     let nextId = 0;
     let buffer = '';
@@ -304,13 +316,21 @@ async function antigravityAcpModelCatalog(command: string): Promise<ProviderMode
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      child.kill('SIGTERM');
+      if (!exited) {
+        child.kill('SIGTERM');
+        // A child that ignores SIGTERM must not outlive the probe.
+        const escalate = setTimeout(() => {
+          if (!exited) child.kill('SIGKILL');
+        }, options.killGraceMs ?? 2_000);
+        escalate.unref();
+        child.once('exit', () => clearTimeout(escalate));
+      }
       if (error) reject(error);
       else resolvePromise(value!);
     };
     const timer = setTimeout(
       () => finish(new Error('Antigravity ACP model catalog probe timed out')),
-      ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS,
+      options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS,
     );
     const write = (message: Record<string, unknown>) =>
       child.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
@@ -340,12 +360,14 @@ async function antigravityAcpModelCatalog(command: string): Promise<ProviderMode
       buffer = lines.pop() ?? '';
       for (const line of lines) {
         if (!line.trim()) continue;
-        let message: Record<string, unknown>;
+        let parsed: unknown;
         try {
-          message = JSON.parse(line) as Record<string, unknown>;
+          parsed = JSON.parse(line);
         } catch {
           continue;
         }
+        if (!isPlainRecord(parsed)) continue;
+        const message = parsed;
         if (typeof message['method'] === 'string') {
           // No tools run in this probe; refuse any agent→client request.
           if (message['id'] !== undefined) {
@@ -552,7 +574,9 @@ async function grokAcpModelCatalog(command: string): Promise<ProviderModelCatalo
         if (!line.trim()) continue;
         let message: Record<string, unknown>;
         try {
-          message = JSON.parse(line) as Record<string, unknown>;
+          const parsed: unknown = JSON.parse(line);
+          if (!isPlainRecord(parsed)) continue;
+          message = parsed;
         } catch {
           continue;
         }
