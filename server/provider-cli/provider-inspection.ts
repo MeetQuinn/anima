@@ -77,6 +77,9 @@ export async function inspectProvider(
   if (provider === 'pi') {
     return inspectNpmGlobal(PI_NPM_PACKAGE, executable, installedVersion, catalog.label, env, runCommand);
   }
+  if (provider === 'antigravity-cli') {
+    return inspectAntigravity(executable, installedVersion, catalog.label, env);
+  }
   return inspectGrok(executable, installedVersion, catalog.label, env, runCommand);
 }
 
@@ -338,6 +341,33 @@ async function inspectOpenCode(
   };
 }
 
+async function inspectAntigravity(
+  executable: ResolvedExecutable,
+  installedVersion: string,
+  label: string,
+  env: NodeJS.ProcessEnv,
+): Promise<ProviderInspection> {
+  const home = env.HOME?.trim() || homedir();
+  const nativePath = await realpath(join(home, '.local', 'bin', 'agy')).catch(() => undefined);
+  const native = nativePath === executable.realPath;
+  const editorLauncher = /\.app[/\\]Contents[/\\]/.test(executable.realPath);
+  return {
+    binaryPath: executable.path,
+    installSource: native ? 'antigravity-native' : 'unknown',
+    installedVersion,
+    label,
+    manualCommand: 'agy update',
+    provider: 'antigravity-cli',
+    realPath: executable.realPath,
+    sourceDetail: native
+      ? 'Native ~/.local/bin install; update it with agy update'
+      : editorLauncher
+        ? 'This agy is the Antigravity app\'s editor launcher, not Antigravity CLI'
+        : 'The active agy binary is not a recognized native install',
+    updateMode: 'manual',
+  };
+}
+
 async function inspectGrok(
   executable: ResolvedExecutable,
   installedVersion: string,
@@ -428,6 +458,7 @@ function manualCommandFor(provider: ProviderKind): string {
   if (provider === 'kimi-cli') return 'kimi upgrade';
   if (provider === 'opencode-cli') return 'brew upgrade anomalyco/tap/opencode';
   if (provider === 'pi') return `npm install -g ${PI_NPM_PACKAGE.packageName}@latest`;
+  if (provider === 'antigravity-cli') return 'agy update';
   return 'grok update';
 }
 

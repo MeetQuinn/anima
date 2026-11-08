@@ -5,7 +5,7 @@ export interface ProviderCatalogEntry {
   defaultModel: string;
   dynamicModels?: boolean;
   installHint: string;
-  kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli' | 'opencode-cli' | 'pi';
+  kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli' | 'opencode-cli' | 'pi' | 'antigravity-cli';
   label: string;
   marketingModelAliases?: string[];
   /**
@@ -24,7 +24,7 @@ export type ProviderKind = ProviderCatalogEntry['kind'];
 export const ProviderAvailability = z.object({
   checkedAt: z.string().optional(),
   defaultModel: z.string().optional(),
-  kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli', 'opencode-cli', 'pi']),
+  kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli', 'opencode-cli', 'pi', 'antigravity-cli']),
   modelCheckError: z.string().optional(),
   /**
    * Per-model reasoning effort menus. Missing or empty array means
@@ -50,6 +50,16 @@ const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra
  * can be saved; unadvertised efforts are still not applied at session/set_model.
  */
 const GROK_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+/**
+ * Antigravity thinking levels (`thought_level` values from `agy acp`). Write-time
+ * vocabulary only, like Grok's: the live ACP option decides per model.
+ */
+const ANTIGRAVITY_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** Write-time effort vocabulary for providers whose per-model menu is live-only. */
+const LIVE_REASONING_EFFORT_VOCABULARY: Record<string, string[]> = {
+  'antigravity-cli': ANTIGRAVITY_REASONING_EFFORTS,
+  'grok-cli': GROK_REASONING_EFFORTS,
+};
 // pi thinking levels (`--thinking`). Whether a model honors a level is decided by
 // pi's model catalog at runtime; unset means pi's own default for that model.
 const PI_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -208,6 +218,25 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     // pi's thinking levels are provider-wide; models without reasoning ignore them.
     reasoningEfforts: PI_REASONING_EFFORTS,
   },
+  {
+    kind: 'antigravity-cli',
+    label: 'Antigravity',
+    command: 'agy',
+    installHint:
+      'Install Antigravity CLI so `agy --version` works, then run `agy` once and sign in.',
+    // `agy acp` reports the models the signed-in account can use (they differ by
+    // plan), so the menu is live, like Grok's.
+    models: [],
+    modelLabels: {
+      'gemini-4-argon': 'Gemini 4 Argon',
+      'gemini-3.8-flash': 'Gemini 3.8 Flash',
+    },
+    defaultModel: '',
+    dynamicModels: true,
+    // Thinking levels are model-scoped in Antigravity (the ACP `thought_level`
+    // option); the UI reads live modelReasoningEfforts.
+    reasoningEfforts: [],
+  },
 ];
 
 export function providerCatalog(): ProviderCatalogEntry[] {
@@ -254,6 +283,11 @@ export function providerSupportsFastMode(
   return kind === 'claude-code' || kind === 'codex-cli';
 }
 
+/** Providers whose effort menu per model comes only from the live catalog. */
+export function providerHasLiveReasoningEfforts(kind: string): boolean {
+  return Object.hasOwn(LIVE_REASONING_EFFORT_VOCABULARY, kind);
+}
+
 export function defaultModelForProvider(kind: string): string | undefined {
   return providerCatalogEntry(kind)?.defaultModel || undefined;
 }
@@ -277,11 +311,12 @@ export type ReasoningEffortAvailability = {
 /**
  * Whether `effort` is a valid token to store for this provider.
  *
- * Grok: when live ACP availability is present **and** includes this model, the
- * per-model menu is authoritative (empty menu ⇒ no effort may be stored). When
- * live data is absent (offline / probe failed / model not in snapshot), fall
- * back to the provider write vocabulary so saves are not blocked. Per-model
- * apply at runtime still gates `session/set_model` on the live catalog.
+ * Grok and Antigravity: when live ACP availability is present **and** includes
+ * this model, the per-model menu is authoritative (empty menu ⇒ no effort may be
+ * stored). When live data is absent (offline / probe failed / model not in
+ * snapshot), fall back to the provider write vocabulary so saves are not
+ * blocked. The runtime still applies an effort only when the live catalog
+ * advertises it for the session's model.
  */
 export function isSupportedReasoningEffort(
   kind: string,
@@ -289,7 +324,10 @@ export function isSupportedReasoningEffort(
   model?: string,
   availability?: ReasoningEffortAvailability,
 ): boolean {
-  if (kind === 'grok-cli') {
+  const liveVocabulary = providerHasLiveReasoningEfforts(kind)
+    ? LIVE_REASONING_EFFORT_VOCABULARY[kind]
+    : undefined;
+  if (liveVocabulary) {
     if (
       model
       && availability?.modelReasoningEfforts
@@ -297,22 +335,23 @@ export function isSupportedReasoningEffort(
     ) {
       return (availability.modelReasoningEfforts[model] ?? []).includes(effort);
     }
-    return GROK_REASONING_EFFORTS.includes(effort);
+    return liveVocabulary.includes(effort);
   }
   return reasoningEffortsForModel(kind, model, availability).includes(effort);
 }
 
 /**
  * Effort menu to show for the selected model. Static providers use their catalog's
- * exact model menu. Grok is live-only: the ACP catalog (`modelReasoningEfforts`) is
- * the single authority, so absent that data the menu is empty rather than guessed.
+ * exact model menu. Grok and Antigravity are live-only: the ACP catalog
+ * (`modelReasoningEfforts`) is the single authority, so absent that data the menu
+ * is empty rather than guessed.
  */
 export function reasoningEffortsForModel(
   kind: string,
   model: string | undefined,
   availability?: { modelReasoningEfforts?: Record<string, string[]> } | null,
 ): string[] {
-  if (kind === 'grok-cli') {
+  if (providerHasLiveReasoningEfforts(kind)) {
     if (model && availability?.modelReasoningEfforts && model in availability.modelReasoningEfforts) {
       return [...(availability.modelReasoningEfforts[model] ?? [])];
     }

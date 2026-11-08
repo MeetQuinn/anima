@@ -700,6 +700,39 @@ test('grok-cli effort write-validates the provider vocabulary; per-model support
   );
 });
 
+test('antigravity-cli models and thinking levels are live; writes accept the vocabulary', () => {
+  const entry = providerCatalogEntry('antigravity-cli');
+  assert.equal(entry?.command, 'agy');
+  assert.equal(entry?.dynamicModels, true);
+  assert.deepEqual(entry?.models, []);
+  assert.deepEqual(entry?.reasoningEfforts, []);
+  const parsed = AgentCreateRequest.parse({
+    name: 'Antigravity',
+    homePath: 'agents/antigravity',
+    role: 'general purpose',
+    provider: { kind: 'antigravity-cli', model: 'gemini-3.8-flash', reasoningEffort: 'high' },
+  }).provider;
+  assert.equal(parsed.kind, 'antigravity-cli');
+  assert.equal(parsed.model, 'gemini-3.8-flash');
+  const live = { modelReasoningEfforts: { 'gemini-3.8-flash': ['low', 'medium', 'high'] } };
+  assert.equal(isSupportedReasoningEffort('antigravity-cli', 'high', 'gemini-3.8-flash', live), true);
+  assert.equal(isSupportedReasoningEffort('antigravity-cli', 'max', 'gemini-3.8-flash', live), false);
+  // A model the live snapshot does not describe falls back to the vocabulary.
+  assert.equal(isSupportedReasoningEffort('antigravity-cli', 'max', 'gemini-4-argon', live), true);
+  assert.deepEqual(reasoningEffortsForModel('antigravity-cli', 'gemini-3.8-flash', live), ['low', 'medium', 'high']);
+  assert.deepEqual(reasoningEffortsForModel('antigravity-cli', 'gemini-3.8-flash'), []);
+  assert.throws(
+    () =>
+      AgentCreateRequest.parse({
+        name: 'Antigravity bad effort',
+        homePath: 'agents/antigravity-effort',
+        role: 'general purpose',
+        provider: { kind: 'antigravity-cli', model: 'gemini-3.8-flash', reasoningEffort: 'ultra' },
+      }),
+    /unsupported reasoningEffort ultra/,
+  );
+});
+
 test('provider turn and child idle timeouts default for all providers', async () => {
   for (const provider of [
     { kind: 'claude-code', model: 'opus' },
@@ -708,6 +741,7 @@ test('provider turn and child idle timeouts default for all providers', async ()
     { kind: 'kimi-cli', model: 'kimi-code/kimi-for-coding' },
     { kind: 'opencode-cli', model: 'deepseek/deepseek-v4-pro' },
     { kind: 'pi', model: 'google/gemini-2.5-pro' },
+    { kind: 'antigravity-cli', model: 'gemini-3.8-flash' },
   ]) {
     const configDir = await mkdtemp(join(tmpdir(), 'anima-config-timeout-test-'));
     try {

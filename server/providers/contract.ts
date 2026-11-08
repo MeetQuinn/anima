@@ -1,5 +1,6 @@
 import type {
   AgentProviderConfig,
+  AntigravityCliAgentProviderConfig,
   ClaudeCodeAgentProviderConfig,
   CodexCliAgentProviderConfig,
   GrokCliAgentProviderConfig,
@@ -12,6 +13,7 @@ import type { ProviderUsageInput } from '../../shared/agent-token-usage.js';
 
 export type {
   AgentProviderConfig,
+  AntigravityCliAgentProviderConfig,
   ClaudeCodeAgentProviderConfig,
   CodexCliAgentProviderConfig,
   GrokCliAgentProviderConfig,

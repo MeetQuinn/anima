@@ -1,3 +1,4 @@
+import { AntigravityCliAgentRuntime } from './antigravity.js';
 import { ClaudeCodeAgentRuntime } from './claude.js';
 import { CodexCliAgentRuntime } from './codex.js';
 import { GrokCliAgentRuntime } from './grok.js';
@@ -19,5 +20,6 @@ export function createAgentRuntime(
   if (config.kind === 'kimi-cli') return new KimiCliAgentRuntime(config, command, args);
   if (config.kind === 'opencode-cli') return new OpenCodeCliAgentRuntime(config, command, args);
   if (config.kind === 'pi') return new PiAgentRuntime(config, command, args);
+  if (config.kind === 'antigravity-cli') return new AntigravityCliAgentRuntime(config, command, args);
   throw new Error(`Unsupported agent provider kind: ${(config as { kind?: string }).kind ?? 'missing'}`);
 }

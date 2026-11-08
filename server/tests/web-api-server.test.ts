@@ -161,6 +161,7 @@ test('web API reports provider availability', async () => {
         providers: Array<{ authed?: unknown; kind: string; present: unknown }>;
       };
       assert.deepEqual(body.providers.map((provider) => provider.kind).sort(), [
+        'antigravity-cli',
         'claude-code',
         'codex-cli',
         'grok-cli',

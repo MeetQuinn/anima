@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ProviderUsageKind } from './provider-usage.js';
 
 export const ProviderCliInstallSource = z.enum([
+  'antigravity-native',
   'claude-native',
   'codex-npm-global',
   'kimi-native',

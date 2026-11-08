@@ -1,11 +1,11 @@
 ---
 title: Provider setup and identity
-description: Install and authenticate Claude Code, Codex, Kimi Code, Grok Build, OpenCode, or pi for use by Anima agents.
+description: Install and authenticate Claude Code, Codex, Kimi Code, Grok Build, OpenCode, pi, or Antigravity CLI for use by Anima agents.
 ---
 
 # Provider setup and identity
 
-Anima supplies the durable agent identity, chat routing, queue, memory, and activity trail. Claude Code, Codex, Kimi Code, Grok Build, OpenCode, or pi supplies the model work and developer tools.
+Anima supplies the durable agent identity, chat routing, queue, memory, and activity trail. Claude Code, Codex, Kimi Code, Grok Build, OpenCode, pi, or Antigravity CLI supplies the model work and developer tools.
 
 The provider CLI is a machine-level dependency. Anima launches the executable found on the host's `PATH` and uses that provider's existing local authentication. Provider login state is not copied into an agent home or stored by Anima.
 
@@ -13,20 +13,21 @@ The provider CLI is a machine-level dependency. Anima launches the executable fo
 
 Install and authenticate at least one before creating the first agent.
 
-| Provider    | Official setup                                                                                                                         | Verify on the Anima host          |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| Claude Code | [Install and authenticate Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started)                                 | `claude --version`                |
-| Codex       | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access           | `codex --version`                 |
-| Kimi Code   | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch       | `kimi --version`                  |
-| Grok Build  | [Install Grok Build](https://docs.x.ai/build/overview) and sign in with `grok login` or configure its supported API-key authentication | `grok --no-auto-update --version` |
-| OpenCode    | [Install OpenCode](https://opencode.ai/docs/) and add a DeepSeek API key with `opencode auth login --provider deepseek`                | `opencode --version`              |
-| pi          | `npm install -g @earendil-works/pi-coding-agent`, then run `pi` and `/login` (or add the provider API key to `~/.pi/agent/auth.json`)  | `pi --version`                    |
+| Provider    | Official setup                                                                                                                           | Verify on the Anima host          |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Claude Code | [Install and authenticate Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started)                                   | `claude --version`                |
+| Codex       | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access             | `codex --version`                 |
+| Kimi Code   | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch         | `kimi --version`                  |
+| Grok Build  | [Install Grok Build](https://docs.x.ai/build/overview) and sign in with `grok login` or configure its supported API-key authentication   | `grok --no-auto-update --version` |
+| OpenCode    | [Install OpenCode](https://opencode.ai/docs/) and add a DeepSeek API key with `opencode auth login --provider deepseek`                  | `opencode --version`              |
+| pi          | `npm install -g @earendil-works/pi-coding-agent`, then run `pi` and `/login` (or add the provider API key to `~/.pi/agent/auth.json`)    | `pi --version`                    |
+| Antigravity | [Install Antigravity CLI](https://antigravity.google/docs/install/) (it installs to `~/.local/bin/agy`), then run `agy` once and sign in | `agy --version`                   |
 
 Run the verification command from the same host user and service environment that runs Anima. A CLI installed only inside another shell profile or user account may work interactively while remaining invisible to the Anima services.
 
 ## How onboarding detects readiness
 
-The create-agent flow checks whether `claude`, `codex`, `kimi`, `grok`, `opencode`, and `pi` resolve on `PATH`.
+The create-agent flow checks whether `claude`, `codex`, `kimi`, `grok`, `opencode`, `pi`, and `agy` resolve on `PATH`.
 
 - Missing providers are disabled.
 - If one available provider exists, onboarding can select it automatically.
@@ -38,7 +39,7 @@ Detection proves that an executable exists. The first real turn proves that its 
 
 Each provider has machine-wide **Runtime command** and **Arguments** fields under
 **Settings > Providers**. Leave the command blank to use the default shown in the placeholder:
-`claude`, `codex`, `kimi`, `grok`, `opencode`, or `pi`. Set it to another executable name or an absolute
+`claude`, `codex`, `kimi`, `grok`, `opencode`, `pi`, or `agy`. Set it to another executable name or an absolute
 executable path when every Anima agent using that provider should launch through a compatible
 wrapper, for example `mcodex` for Codex.
 
@@ -141,6 +142,7 @@ selected model exactly:
 | OpenCode    | DeepSeek V4 Pro, DeepSeek V4.1 Flash                            | `high`, `max`                                                                                          |
 | pi          | Live from pi (`get_available_models`)                           | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (pi `--thinking`; the model decides what it honors) |
 | Grok Build  | Live model catalog                                              | Whatever the selected model advertises                                                                 |
+| Antigravity | Live from the signed-in account (for example Gemini 3.8 Flash)  | Whatever the selected model advertises (`thought_level`, for example `low`, `medium`, `high`)          |
 
 OpenCode agents can use DeepSeek V4 Pro or DeepSeek V4.1 Flash. Their DeepSeek API key stays in
 OpenCode's machine-level credential store; Anima does not copy it into the agent's Launch
@@ -154,6 +156,14 @@ until a credential exists the menu is empty and the panel says so. Provider cred
 passed to pi.
 
 For Grok Build, Anima reads the current model catalog from the installed CLI (for example `grok-4.5` and `grok-composer-2.5-fast`) and records the actual model ID returned by the runtime. Reasoning effort is **per model**: only models that advertise effort support show an effort control (Composer does not). The `grok-build` marketing alias is never stored as model authority.
+
+Antigravity agents use the models the signed-in Google account can reach; the dashboard reads that
+list live from `agy acp`. Plans differ: Gemini 4 Argon needs a paid Google AI plan, while Gemini 3.8
+Flash works on the free tier. If an agent is configured for a model the account does not offer, its
+turn fails with the list of available models instead of silently running a different one. The
+sign-in stays in Antigravity's machine-level keychain entry; Anima does not copy it. The Antigravity
+desktop app installs its own `agy` editor launcher; Anima refuses that one, so keep the CLI's
+`~/.local/bin/agy` first on the service `PATH`.
 
 You can change the provider later from the agent's Profile tab. A provider change starts a fresh provider session after the current work reaches a safe boundary. The agent's `MEMORY.md`, notes, files, Anima activity, and chat identity remain intact; the previous provider session is archived.
 

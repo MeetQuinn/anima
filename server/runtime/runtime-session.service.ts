@@ -204,6 +204,7 @@ export function tokenDeltaForActivities(activities: Activity[]): number | undefi
       eventType === 'grok.context.stats'
       || eventType === 'kimi.context.stats'
       || eventType === 'opencode.context.stats'
+      || eventType === 'antigravity.context.stats'
       || eventType === 'pi.context.stats',
   );
   return acpStats ? tokenDeltaFromPayload(acpStats.payload) : undefined;
@@ -272,6 +273,7 @@ function mergeSessionStats(
     eventType === 'grok.context.stats'
     || eventType === 'kimi.context.stats'
     || eventType === 'opencode.context.stats'
+    || eventType === 'antigravity.context.stats'
       ? undefined
       : summary.usedTokens;
   const currentContextTokens =
@@ -370,6 +372,7 @@ function providerSessionStatsPayload(
     eventType === 'grok.context.stats' ||
     eventType === 'kimi.context.stats' ||
     eventType === 'opencode.context.stats' ||
+    eventType === 'antigravity.context.stats' ||
     eventType === 'pi.session.stats'
     ? payload
     : undefined;
@@ -384,6 +387,7 @@ function providerContextStatsPayload(
     eventType === 'grok.context.stats' ||
     eventType === 'kimi.context.stats' ||
     eventType === 'opencode.context.stats' ||
+    eventType === 'antigravity.context.stats' ||
     eventType === 'pi.context.stats'
     ? payload
     : undefined;
