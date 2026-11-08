@@ -1,8 +1,8 @@
 # Feishu runbook for agents
 
-Read this when you are handling Feishu work and the normal `anima` command help is not enough.
-The command reference has exact commands and API snippets. This page is the operating model: what
-the Feishu identifiers mean, which settings humans must configure, and how to avoid blind retries.
+Read this when you are handling Feishu work and the normal `anima` command help is not enough:
+what the Feishu identifiers mean, which settings humans must configure, the direct API calls for
+what `anima` does not cover yet, and how to avoid blind retries.
 
 ## The mental model
 
@@ -16,8 +16,7 @@ members to a group. For those, you may call Feishu OpenAPI directly with
 `FEISHU_TENANT_ACCESS_TOKEN`. Do not print or log that token. Anything a human should see still goes
 through `anima message`, so the action is visible in Anima's audit trail.
 
-Do not start with web search. First inspect the delivery envelope and this runbook, then use the
-command reference for the exact call.
+Do not start with web search. First inspect the delivery envelope and this runbook.
 
 ## Feishu identifiers
 
@@ -87,33 +86,71 @@ mention. Do not invent an `open_id` from a name.
 
 ## Creating a group
 
-There is no first-class `anima` command for Feishu group creation yet. Use the direct Feishu API
-path in the command reference. The practical sequence is:
+There is no first-class `anima` command for Feishu group creation yet.
 
-1. Get at least one user `open_id` from the envelope, usually the person who asked you.
-2. Call the chat-create API once.
+1. Get at least one user `open_id` from the envelope, usually the person who asked you. Do not
+   guess people from display names.
+2. Call the chat-create API once:
+
+   ```
+   curl -sS -X POST \
+     "https://open.feishu.cn/open-apis/im/v1/chats?user_id_type=open_id" \
+     -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
+     -H "Content-Type: application/json" \
+     --data '{"name":"<chat_name>","description":"<description>","user_id_list":["<owner_open_id>"],"chat_mode":"group","chat_type":"private"}'
+   ```
+
 3. Read the JSON response. If it contains `chat_id`, the group exists.
-4. Send the visible confirmation or test message with `anima message send --chat-id <chat_id>`.
+4. Send the visible confirmation or first message with `anima message send --chat-id <chat_id>`.
 
 Do not create another group just because you are unsure whether the first call worked. Check the
 response first.
 
 ## Inviting people or bots
 
-For a human teammate, prefer `open_id`. If the user mentions the teammate in Feishu, use the
-mention metadata. If you only have a tenant `user_id`, you may call the member API with
-`member_id_type=user_id`. If you only have a display name, ask for a mention, email, phone number,
-`open_id`, or `user_id`.
+There is no first-class `anima` command for invites yet. The current agent must already be in the
+chat, and you need the chat's `oc_...` id from the envelope.
 
-For another Anima-created Feishu bot, invite by that agent's Feishu App ID, not by bot `open_id`.
-Ask the user to copy it from the target agent's Profile page if you cannot see it.
+**A human teammate** is invited by `open_id`:
+
+- If the teammate appears in the envelope or readable history, use their `open_id`.
+- If the user gives an email address or phone number, resolve it to an `open_id` first.
+- If you only have a tenant `user_id`, invite with `member_id_type=user_id` and pass that id.
+- If you only have a display name, ask the user to mention the teammate in Feishu and send the
+  request again, or to give an email, phone number, `open_id`, or `user_id`.
+
+Resolve an email or phone number, passing only the fields you have:
+
+```
+curl -sS -X POST \
+  "https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id" \
+  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"emails":["<email>"],"mobiles":["<phone>"],"include_resigned":false}'
+```
+
+Then invite:
+
+```
+curl -sS -X POST \
+  "https://open.feishu.cn/open-apis/im/v1/chats/<chat_id>/members?member_id_type=open_id" \
+  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"id_list":["<target_open_id>"]}'
+```
+
+**Another Anima-created Feishu bot** is invited by that agent's Feishu App ID (`cli_...`), not by
+its bot `open_id`: the same members call with `member_id_type=app_id` and the App ID in
+`id_list`. If you cannot see the App ID, ask the user to copy it from the target agent's Profile
+page. Do not guess it from the bot name.
 
 When invite calls fail:
 
 - `232024` or "visibility of the app" means app visibility is missing for the target user. Ask the
-  user to update the app availability range, then retry.
-- A permission error means the current app probably lacks the group-member scope or the new app
-  version has not been published.
+  user to add the target person to the app's availability range, save or publish that change, then
+  retry. An external collaborator may also need external collaboration permission.
+- A permission error means the current app probably lacks the group-member or user-lookup scope,
+  or the new app version has not been published.
 - A group management error means this bot may not be allowed to manage members in that specific
   group.
 

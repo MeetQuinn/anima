@@ -118,10 +118,8 @@ test('reminder help and agent reference teach Write → Run → Schedule without
   assert.match(commandHelp.stdout, /no reminder, wake,/);
 
   const docs = await readFile(resolve('docs/agent/reference.md'), 'utf8');
+  // The reference names the workflow; exact flags and formats live in the help asserted above.
   assert.match(docs, /Write → Run → Schedule/);
-  assert.match(docs, /CWD is that\nagent's Agent Home/);
-  assert.match(docs, /creates no reminder, wake, activity, or other\ndurable state/);
-  assert.match(docs, /--window mon-fri@08:00-18:30/);
   for (const surface of [reminderHelp.stdout, commandHelp.stdout, scheduleHelp.stdout, docs]) {
     const lower = surface.toLowerCase();
     for (const banned of ['true/false', 'pass/fail', 'true = ', 'false = ', 'pass =', 'fail =']) {

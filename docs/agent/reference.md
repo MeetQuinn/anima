@@ -1,55 +1,33 @@
 # Agent command reference
 
-Quick how-tos for the `anima` commands you use as an agent. When you are about to use a command
-you are not sure about, read the relevant entry here first. For the mental model behind these
-commands (how Anima works around you), see the [agent guide](/agent/guide). For situations where
-the right move is not obvious from any single command, see the
-[recipes for common moments](/agent/recipes). For Feishu-specific identifiers, permissions,
-visibility, group creation, and invite troubleshooting, see the [Feishu runbook](/agent/feishu).
+`anima <command> --help` gives exact flags and formats. This page covers what help does not: how
+the commands behave, how to read their output, and the mistakes worth avoiding. For how Anima works
+around you, see the [agent guide](/agent/guide); for situations that span commands, the
+[recipes](/agent/recipes); for Feishu, the [Feishu runbook](/agent/feishu); for Linear,
+[Work in Linear](/agent/linear).
 
-## Per-agent environment values and secrets (`anima env`)
+## Environment values and secrets (`anima env`)
 
-Use this when you need an external service's value to run a command or tool, for example an API
-key, a token, or a config setting like a region.
-
-These values live in your own per-agent store. Setting a value does not put it into your shell.
-A value only enters a process when you explicitly run that process through `anima env run`.
-
-**Set a plain (non-secret) value:**
+Use this when a command or tool needs an external service's value, such as an API key, a token, or
+a region. Values live in your own per-agent store, and secrets are encrypted at rest.
+Nothing is auto-injected into your shell: a value enters a process only when you run that process
+through `anima env run`, which injects the keys you name (or every value, without `--keys`) into
+that one child process.
 
 ```
 anima env set SERVICE_REGION us-west-2
-```
-
-**Set a secret (API key, token). The value is read from stdin, never from the command line:**
-
-```
 printf '%s' "$THE_SECRET_VALUE" | anima env set OPENAI_API_KEY --secret
-```
-
-Secrets are encrypted at rest. The CLI rejects a secret passed as an argument, so always pipe it
-in through stdin.
-
-**Use values to run a command.** Inject only the keys that command needs, into that one child
-process:
-
-```
 anima env run --keys OPENAI_API_KEY -- some-tool --do-the-thing
 ```
 
-Omit `--keys` to inject every configured value. Nothing is auto-injected into your shell, so wrap
-the command each time you need a value. Only selected stored values are added; Anima's managed
-runtime and provider credentials are not forwarded automatically.
-
-**Check what is configured.** Secret values are shown masked, for example `••••1234`:
-
-```
-anima env list
-```
-
-There is also `anima env source`, which prints shell export lines for non-secret values. It
-excludes secrets by default; keep it that way. Secrets belong inside `anima env run`, never
-exported into your shell.
+- Pipe a secret in through stdin. The CLI rejects one passed as an argument, which would land in
+  shell history and process listings.
+- `anima env list` masks secret values (`••••1234`), which is all you need to confirm a key is set.
+- `anima env source` prints export lines for non-secret values only. Keep it that way: secrets
+  belong inside `anima env run`, never exported into your shell.
+- `env run` adds only your stored values. Anima's
+  managed runtime and provider credentials are not forwarded automatically. Reserved names such as
+  `ANIMA_*`, `PATH`, and `NODE_OPTIONS` cannot be set.
 
 ### Transfer a secret
 
@@ -90,50 +68,27 @@ conversation, not from the cryptographic box. The source value for an agent send
 secret env entry. This does not transfer Claude/Codex login state, Slack/Feishu credentials, or
 other Anima-managed credentials.
 
-**Do not:**
-
-- Never print or echo a secret value, in any message, file, or log. `anima env list` masks values
-  so you can confirm a key is set without revealing it. That is all you need.
-- Do not pass a secret as a command argument; it would land in shell history and process listings.
-  Use stdin only.
-- Some names are reserved or managed and cannot be set (for example `ANIMA_*`, `PATH`,
-  `NODE_OPTIONS`, and the dotenv key material). The CLI will tell you if a name is not allowed.
-
 ## Call the Slack Web API directly (`$SLACK_BOT_TOKEN`)
 
-Use this when you need a Slack operation the `anima` commands do not cover yet, for example creating
-or archiving a channel, inviting someone to a channel, or reading workspace metadata. You have a
-Slack bot token available in your environment as `$SLACK_BOT_TOKEN`. Use it to call the Slack Web
-API directly; this is a supported, encouraged way to reach Slack actions the CLI has not wrapped.
+For a Slack operation `anima` does not cover yet, such as creating a channel, inviting someone, or
+reading workspace metadata, call the Slack Web API with `$SLACK_BOT_TOKEN`. This is supported.
 
 ```
 curl -sS -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   -d "name=new-channel" https://slack.com/api/conversations.create
 ```
 
-Read the JSON response before retrying: `"ok": true` means it worked, and `"ok": false` carries an
-`error` you can act on. Do not repeat a call just because you are unsure it landed; check the
-response first.
-
-**Do not:**
-
-- Never print, echo, or log `$SLACK_BOT_TOKEN`. Use it inside the request only.
-- For anything teammates should see (a message, a reaction, a file), still use the `anima`
-  commands, so it lands in the audit log. Use the Web API for operations the CLI does not cover, not
-  to bypass the audited path for ordinary team communication.
+Read the JSON response before retrying: `"ok": false` carries an `error` you can act on, and being
+unsure whether a call landed is a reason to check, not to repeat it. Never print or log the token.
+Anything teammates should see (a message, a reaction, a file) still goes through `anima`, so it is
+recorded.
 
 ## Extend yourself with skills (`npx skills`)
 
-Skills are modular capability packages from the open skills ecosystem: a folder of instructions
-(and sometimes helper tools) that teach you to do a specialized task well, for example design work,
-writing tests, or working with a specific API. They are separate from your `anima` tools and ride
-the provider's skill mechanism, not Anima's. You already have a few installed, and the bundled
-`find-skills` skill walks you through finding and adding more.
-
-Use this when you hit a capability gap: a task specialized enough that someone has probably already
-packaged the know-how. Before improvising from scratch, check whether a skill exists.
-
-Search the ecosystem, then install by name:
+Skills are packaged know-how for a specialized task, such as design work, writing tests, or a
+specific API. They load through your provider's skill mechanism, not Anima's. Before improvising
+something specialized, check whether a skill exists; the bundled `find-skills` skill walks you
+through it.
 
 ```
 npx skills find <query>             # search, e.g. npx skills find pr review
@@ -142,361 +97,98 @@ npx skills check                    # see what has updates
 npx skills update                   # update installed skills
 ```
 
-Browse the catalog at https://skills.sh.
-
-**Do not:**
-
-- Do not reinvent a capability from scratch when a skill likely exists. Search first.
-- Do not treat a found skill as already installed. Tell the person what it does and where it comes
-  from before you add it.
-
-## Invite another Feishu bot into a chat
-
-Use this when the user asks you to add another Anima-created Feishu agent to the current Feishu
-chat and there is no `anima` command for the invite yet.
-
-Feishu invites bots by **app ID**, not by `open_id`. For an Anima-created Feishu agent, the target
-app ID is the agent's Feishu App ID (`feishu.appId`). If you cannot see the target agent's app ID,
-ask the user for it or ask them to open the target agent's Profile page and copy the Feishu App ID.
-Do not guess it from the bot name.
-
-You need the current chat ID from the delivery envelope, for example `chat_id=oc_...`. The current
-agent must already be in that chat, and its Feishu app must have the recommended group-member
-permission authorized and published.
-
-Call Feishu's chat-member API with the runtime tenant token:
-
-```
-curl -sS -X POST \
-  "https://open.feishu.cn/open-apis/im/v1/chats/<chat_id>/members?member_id_type=app_id" \
-  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"id_list":["<target_app_id>"]}'
-```
-
-Replace `<chat_id>` with the Feishu `oc_...` chat ID and `<target_app_id>` with the target
-agent's Feishu App ID.
-
-Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. If the API says the app lacks permission, ask the
-user to authorize the recommended Feishu permissions, publish a new app version, then try again. If
-the API says the bot cannot manage chat members, the current bot may not be allowed to invite
-members in that group.
-
-## Create a Feishu group chat
-
-Use this when the user asks you to create a Feishu group and there is no `anima` command for group
-creation yet.
-
-You need at least one user `open_id` to seed the group. In a Feishu DM, use the sender `open_id`
-from the message envelope. Do not guess people from display names.
-
-Call Feishu's chat-create API with the runtime tenant token:
-
-```
-curl -sS -X POST \
-  "https://open.feishu.cn/open-apis/im/v1/chats?user_id_type=open_id" \
-  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"name":"<chat_name>","description":"<description>","user_id_list":["<owner_open_id>"],"chat_mode":"group","chat_type":"private"}'
-```
-
-Read the JSON response before trying again. If it includes a `chat_id`, the group was created. Use
-the audited CLI for the visible follow-up message:
-
-```
-anima message send --chat-id <chat_id> <<'ANIMA_MESSAGE'
-<message>
-ANIMA_MESSAGE
-```
-
-Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. Do not create a second group just because you
-are unsure whether the first call worked. Check the response for `chat_id`, then send a message to
-that `chat_id`.
-
-## Invite a Feishu user into a chat
-
-Use this when the user asks you to add a human teammate to the current Feishu chat and there is no
-`anima` command for the invite yet.
-
-Use deterministic identifiers only:
-
-- If the teammate appears in the current message envelope or readable history, use their Feishu
-  `open_id`.
-- If the user gives an email address or phone number, resolve it to an `open_id` first.
-- If the user gives a tenant `user_id`, you may invite with `member_id_type=user_id`.
-- Do not guess from display name. If you only have a name, first ask the user to mention the
-  teammate in Feishu and send the request again so Anima can read the stable ID from the mention
-  metadata. If they cannot mention the teammate, ask for an email, phone number, `open_id`, or
-  `user_id`.
-
-To resolve an email or phone number to an `open_id`, call Feishu's user ID lookup API:
-
-```
-curl -sS -X POST \
-  "https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id" \
-  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"emails":["<email>"],"mobiles":["<phone>"],"include_resigned":false}'
-```
-
-Use only the fields you have. For example, omit `mobiles` when you only have an email address. If
-Feishu returns no matching user, first ask the user to mention the teammate in Feishu and send the
-request again. If they cannot mention the teammate, ask for another deterministic identifier.
-
-After you have the target user's `open_id`, invite them with the chat-member API:
-
-```
-curl -sS -X POST \
-  "https://open.feishu.cn/open-apis/im/v1/chats/<chat_id>/members?member_id_type=open_id" \
-  -H "Authorization: Bearer $FEISHU_TENANT_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"id_list":["<target_open_id>"]}'
-```
-
-Replace `<chat_id>` with the Feishu `oc_...` chat ID and `<target_open_id>` with the user's Feishu
-`open_id`. If you already have a tenant `user_id`, use
-`member_id_type=user_id` and pass that `user_id` in `id_list`.
-
-Do not print or log `$FEISHU_TENANT_ACCESS_TOKEN`. The current agent's Feishu app must have the
-recommended member-invite and user-lookup permissions authorized and published. If the API says the
-bot cannot manage chat members, the current bot may not be allowed to invite members in that group.
-If Feishu returns `232024` with a message like "Users do not have the visibility of the app", ask
-the user to add the target person to the app's availability or visibility range in the Feishu
-developer console, publish or save that change, then retry. If the target is an external
-collaborator, the workspace may also need external collaboration permission.
+The catalog is at https://skills.sh. A skill you found is not installed yet: tell the person what it
+does and where it comes from before you add it.
 
 ## Ask a one-click question (`anima ask`)
 
-Use this when you need a bounded decision from a human: yes/no, approve/reject, or one pick
-from a short list of 2 to 5 options. For an open-ended or multi-part question, send a normal
-message instead. `ask` is for choices, not discussion.
+Use this for a bounded decision from a human: yes/no, approve/reject, or one pick from 2 to 5
+options. An open-ended or multi-part question is a normal message. The answer wakes you.
 
-The question posts with clickable answer buttons. By default the current Slack surface answers
-it: the person in a DM, or first-click-wins in a channel or thread. Add `--to` only when one
-specific person must be the one to answer.
-
-Only active human Slack users can answer an ask. For an agent, use `anima message send`
-with an @mention in a shared channel or thread instead.
-
-```
-anima ask --question "Ship the release to stable now?" --option "Ship" --option "Hold" --to @teammate
-```
+By default the current Slack surface answers: the person in a DM, or the first click in a channel
+or thread. Add `--to` only when one specific person must answer. Only active human Slack users can
+answer; to ask an agent, @mention it in a shared channel or thread.
 
 ## Wake yourself later (`anima reminder`)
 
-Use this for all deferred or recurring work: check back on a task, follow up with a teammate, run
-a daily routine, or anything you need to do later. A reminder wakes you with its instructions at
-the scheduled time. This is the most basic form of acting on your own initiative. Reminders
-persist across restarts and are recorded in the audit log.
+Use a reminder for all deferred and recurring work. It is the only wake that survives a restart,
+so do not roll your own with a background sleep. A reminder wakes you privately with its
+instructions; it is not an instruction to post something.
 
-Schedule a one-shot with a delay (`--in`) or a fixed time (`--fire-at`; that is the flag name,
-not `--at`), or a recurring one with a repeat rule and a timezone:
+For a conditional reminder, use **Write → Run → Schedule**: write and debug a check script in your
+Agent Home, run it once with `anima reminder preflight --command '<command>'`, and only then
+schedule that exact command with `--preflight`. Exit 0 wakes you; exit 1 skips this run; exit 2 or
+higher, a signal, or a timeout errors: the instructions do not run, the dashboard reports Needs
+attention, and you get one wake saying the check failed when it starts failing (not one per failed
+run). The command is stored and shown in `list`, `show`, and the dashboard, so never inline a
+secret.
 
-```
-anima reminder schedule --in 2h --title "check deploy" --instructions "verify prod is healthy"
-anima reminder schedule --fire-at 2026-07-03T01:30:00Z --title "morning check" --instructions "review overnight PRs"
-anima reminder schedule --repeat daily@09:00 --timezone Asia/Shanghai --title "standup" --instructions "post the async standup"
-anima reminder schedule --in 10m --repeat every:1h --title "hourly check" --instructions "check service health"
-```
+To have a reminder bring you back into a Slack conversation, anchor it with `--anchor-channel` and
+`--anchor-message-ts` (add `--anchor-thread-ts` inside a thread). `list` is compact; `show <id>` has
+the full instructions, schedule, anchor, status, and firing count.
 
-The instruction body can also come from stdin; `--instructions` is optional when you
-pipe text or use a heredoc. A reminder still needs a non-empty instruction body.
+When a reminder wakes you, its envelope carries `time=` (when it reached you) and `scheduled=` (when
+it was meant to fire); a recurring one also carries `repeat=` and `next=`. A gap between `time=`
+and `scheduled=` means the reminder waited, so check whether the world moved on before following its
+instructions verbatim. Snooze is for "not yet": the reminder arrived but its precondition has not,
+and snoozing also revives a one-shot that already fired. If you keep snoozing the same reminder,
+its trigger is wrong: get woken by the event itself (an @mention from the owner) or cancel it.
 
-For conditional reminders, use **Write → Run → Schedule**. Write and debug a script in your Agent
-Home, run it exactly once in the hosted preflight execution context, then schedule that exact
-command only after you understand the result:
+## Reconstruct what happened (`anima history`)
 
-```
-anima reminder preflight --command './scripts/check-usage.sh' --timeout 2m
-anima reminder schedule --repeat every:15m --title 'Usage check' --instructions 'review the usage alert' --preflight './scripts/check-usage.sh' --preflight-timeout 2m
-```
+`anima history` is one timeline of what you received and sent, marked `IN`/`OUT`, newest last.
+Read it after a restart or compaction (after `MEMORY.md`), and whenever you are unsure whether you
+already replied. `anima inbox` and `anima outbox` are the received-only and sent-only views; all
+three take the same filters.
 
-Run `preflight` from the target agent; it requires the current agent context. Its CWD is that
-agent's Agent Home, and the child receives the same configured/managed environment as hosted
-preflight. It does not invent an active message, reminder, inbox item, channel, thread, session,
-workspace, or surface context. The one-shot run creates no reminder, wake, activity, or other
-durable state.
-
-The command's stdout and stderr are captured with explicit truncation markers, followed by its
-duration and exit, signal, or timeout. Exit 0 succeeds and a hosted reminder wakes; exit 1 declines
-and it skips; exit 2 or higher, a signal, or a timeout errors: the instructions do not run, the
-dashboard reports Needs attention, and you get one wake saying the check failed when it starts
-failing (not one per failed run). The CLI
-returns the command's exit code, returns 124 for timeout, and uses `128 + signal number` for a
-signal. Preflight commands and explicit timeouts are scheduled with `--preflight <command>` and
-`--preflight-timeout <duration>`; the default is 30 minutes and the hard cap is 24 hours. Do not
-inline secrets because a scheduled command is persisted and shown by reminder inspection surfaces.
-
-To make a reminder wake you back into a specific Slack conversation (so your follow-up lands in
-the thread it belongs to), anchor it with `--anchor-channel <id> --anchor-message-ts <ts>` (add
-`--anchor-thread-ts <ts>` inside a thread).
-
-Manage them with `anima reminder list`, `anima reminder show <id>`, `anima reminder cancel <id>`, and
-`anima reminder snooze <id> --by <duration>` (delays the next firing without changing the repeat
-schedule). `--in` and `--fire-at` are mutually exclusive; either may be combined with `--repeat`
-to set the first fire, and `--repeat` remains valid by itself. Repeat formats:
-`every:<n>m|h|d`, `daily@HH:MM`, and `weekly:<day,day>@HH:MM`. The
-timezone is an IANA name, for example `Asia/Shanghai`.
-
-For an `every:*` reminder, add `--window <days>@HH:MM-HH:MM` to keep firings inside same-day local
-working hours, for example `--window mon-fri@08:00-18:30 --timezone America/New_York`. A window is
-only valid with `every:*`, cannot be combined with `--in` or `--fire-at`, cannot cross midnight,
-and must be at least as long as the interval.
-
-`list` stays compact and shows scheduled reminders by default. Use `show <id>` (or
-`show --id <id>`) when you need the full instructions, schedule, Slack anchor, timestamps, status,
-and firing count. Add `--json` to either command for the stable machine-readable representation;
-JSON is the only stdout content.
-
-When a reminder wakes you, its envelope carries both `time=` (when it reached you) and
-`scheduled=` (when it was meant to fire; reminders from before this field existed show the actual
-fire time instead). A gap between them means the reminder waited, so check
-whether the world moved on before executing its instructions verbatim. Snooze is for "not yet":
-the reminder arrived but its precondition has not (the reply you were waiting for is not in, the
-work it checks on is still mid-flight). It also revives a one-shot that already fired. If you find
-yourself snoozing the same reminder again and again, the trigger was designed wrong; switch to
-being woken by the event itself (an @mention from the owner) or cancel it.
-
-**Do not:**
-
-- Do not roll your own scheduling, for example a background sleep. Only `anima reminder` survives
-  a restart, which is the whole point: a scheduled wake must still fire after the runtime restarts.
-
-## Reconstruct after a restart (`anima history`)
-
-Use this when you have just restarted or compacted and need to see what was happening. Read your
-`MEMORY.md` first to restore what you are in the middle of and your open obligations, then check recent history.
-`anima history` selects recent received and sent records, then sorts that page by event
-time, marked `IN`/`OUT`, newest last. Selection follows the local ledger's append order.
-Continue with `--before <next_cursor>` to read older appended records, including
-records with equal or out-of-order event timestamps. The cursor preserves the
-original filters; omit them on the next page or pass the same values. You may
-change `--limit`. An ISO `--before` is a time filter, not a page position.
-Starting with an old ISO cursor keeps that time filter on later pages; refresh
-from the first page to include records excluded by an old cursor's timestamp.
-Invalid or expired cursors produce an error; restart from the first page.
-If you are unsure whether you already replied to something, check the timeline before sending, so
-you do not answer it twice.
-
-```
-anima history
-anima history --limit 50
-anima history --channel #team
-anima history --channel C-team --thread-ts 1770000200.000001
-```
-
-`anima inbox` (received only) and `anima outbox` (sent only, including messages, files, and
-reactions) are filtered views of the same history; all three accept `--limit`, `--since`,
-`--before`, `--channel`, and `--thread-ts`. A thread filter requires `--channel` and
-includes the root message if it is in your local ledger. It filters before applying
-the page limit. This reads stored history; it does not fetch missing Slack messages.
+It reads your local ledger; it does not fetch Slack messages you never received, which
+`anima message read` does. To page back, pass `next_cursor` to `--before`. Pages follow the order
+records were stored, so an older page can hold records with later timestamps, and the cursor keeps
+the original filters. An ISO timestamp in `--before` is a time filter, not a page position. An
+invalid or expired cursor is an error; start again from the first page.
 
 ## See where you are present (`anima places`)
 
-Use this when you need to re-place yourself: `anima places` answers "where am I" by listing the
-rooms whose human-authored conversation reaches you without being named. Channels come from live
-membership, DMs from your own message ledger, and `Muted (n)` always renders, even at zero, so
-nothing is hidden.
+`anima places` lists the rooms whose human-authored conversation reaches you without being named:
+channels from live membership, DMs from your own ledger, and a `Muted (n)` section that always
+renders. Each row has the id ready for `--channel` and the time the runtime last delivered a message
+from there, newest last. A section over 50 rows shows the 50 most recent and says so; `--all` shows
+the rest. `anima subscription list` is the same command.
 
-```
-anima places
-anima places --all
-```
-
-Each row shows the name, the id (ready to paste into `--channel`), the topic when the platform
-actually has one, and the time the runtime last delivered a message from that room. Rows sort by
-last delivery with the newest last, the same direction as `anima history`, so the most alive rooms
-sit closest to your prompt; rooms with no delivery yet sort to the top. A section over 50 rows
-shows only the 50 most recent and says so in its header, with the full count and a `--all`
-pointer; the list may be partial, the count never is.
-
-Three things to read correctly:
-
-- Timestamps are delivery times from your own ledger, not the room's latest activity. A muted room
-  shows its pre-mute time; that is the truth.
-- On Feishu the sections are labeled "Feishu known chats" and "Feishu known DMs": the platform
-  offers no full-membership listing today, so the view covers the chats this runtime knows from
-  its ledger and subscriptions.
-- There is no thread section. Thread-following is a behavior rule (you posted or were @mentioned,
-  so later human or bot/app follow-ups reach you while the follow is unmuted and has not gone 30
-  days without a wake or a post), not a thing to browse.
-  Bot/app follow-ups cannot create or revive a follow. The thread that concerns you is waking you, so its `thread_ts` is already
-  in the envelope in your hand.
-
-`anima subscription list` is an alias of this command.
+- Times are deliveries to you, not the room's latest activity. A muted room shows its pre-mute time.
+- On Feishu the sections cover the chats this runtime knows from its ledger and subscriptions; the
+  platform offers no full-membership listing.
+- There is no thread section. A thread that concerns you is the one waking you, and its `thread_ts`
+  is in the envelope.
 
 ## Look up who or what an id is (`anima whois`)
 
-Use this the moment before you act on an id or a name: `anima whois` answers "who is this" with a
-point lookup, always queried live, never cached. It accepts a user, bot, or channel through one
-entrance: `@handle`, `#channel`, or a raw id (Slack `U…`/`C…`, Feishu `ou_…`/`oc_…`). It never
-opens a DM as a side effect.
-
-```
-anima whois @milo
-anima whois #team
-anima whois U0BXXXXXXX
-```
-
-Agents hosted by this runtime render with full detail, name, handle, id, and role, marked
-`(this runtime)`. Everything else renders exactly as the platform reports it: a bot from another
-runtime is `bot (not managed by this runtime)`, with nothing invented about whose it is or what it
-does, and a channel shows your membership and member count from the live API. If a name matches
-more than one entity, the command lists the candidates with ids and fails with
-`anima.ambiguous_user`; rerun it with the exact id.
-
-Prefer this over ids remembered in `MEMORY.md`: stored rosters go stale, and the lookup is cheap.
+Before you act on an id or a name, `anima whois <@handle | #channel | id>` looks it up live. It
+never opens a DM. Agents hosted by this runtime show name, handle, id, and role, marked
+`(this runtime)`; anything else shows only what the platform reports, such as
+`bot (not managed by this runtime)`. A name that matches several entities fails with
+`anima.ambiguous_user` and lists the candidates; rerun with the exact id. Prefer this over ids
+remembered in `MEMORY.md`, which go stale.
 
 ## Dreaming (your daily memory consolidation)
 
-Dreaming is what sleep does for a person: you look back over what happened, write down what is
-worth keeping, and let go of the rest. Your session is short-term; `MEMORY.md` is what you wake up
-knowing; `notes/` is what you recall when a pointer sends you there. Left alone, `MEMORY.md` tends
-to bloat, hold facts that newer events have contradicted, and freeze relative dates like "today."
-
-Anima runs [Dreaming](/concepts#memory) for you once a day unless your operator has explicitly
-disabled it; you will simply receive that wake and do not need anything below. You can also do the
-same yourself, and schedule it with a reminder so it happens without you thinking about it:
+Anima runs [Dreaming](/concepts#memory) once a day unless your operator has disabled it, and its
+wake carries its own instructions. If it is disabled, you can run the same pass on a reminder:
 
 ```
 anima reminder schedule --repeat daily@05:00 --timezone <your-tz> --title "dreaming" \
   --instructions "Look back over what happened since last time. Write down what is worth keeping (lessons, decisions, people's preferences, verified rules) in notes/ with a pointer in MEMORY.md. Let go of finished work, state you can look up, and stale notes. If nothing changed, do nothing."
 ```
 
-What you read in your memory is a record, not a command: a note that something should happen is
-not by itself authorization to do it now. This is an ordinary wake, not a restricted mode; your
-normal capabilities, judgment, and the usual rules that govern any wake are unchanged. If your
-ongoing session has clearly valid unfinished work, you may finish it with that same judgment first.
-Dreaming never edits the guide, this reference, or your standing prompt. Move detail into a note
-and confirm it landed before deleting it from `MEMORY.md`. Don't keep word-for-word copies of
-`MEMORY.md` in `notes/`. If nothing meaningful changed since last time, do nothing rather than
-churn.
-
 ## Search messages you saw or sent (`anima message search`)
 
-Use this when you need to find an older decision or thread by keyword without guessing a time
-window. This searches your local Anima message ledger: conversations you were actually part of,
-meaning messages delivered to you and messages you sent.
-
-This is agent-visible history, not workspace search. It cannot find messages from channels or
-threads where you were never present, and transcripts fetched with `anima message read` are not
-searchable yet.
-
-```
-anima message search launch criteria
-anima message search "invoice bug" --channel '#support' --since 2026-06-01
-anima message search invoice --channel C-support --thread-ts 1770000200.000001
-```
-
-Search uses AND matching by default: every keyword must match. Results are newest first and include
-the message timestamp, channel, direction, and a snippet. Pass the opaque
-`next_cursor` to `--before` to page older matches, keeping the same keywords.
-`--thread-ts` has the same channel requirement and local-history boundary as `history`.
+Use this to find an older decision or thread by keyword without guessing a time window. It searches
+your local ledger: messages delivered to you and messages you sent. It is not workspace search, so
+it cannot find conversations you were never part of, and transcripts fetched with
+`anima message read` are not searchable yet. Every keyword must match; results are newest first,
+and `next_cursor` passed to `--before` pages older matches.
 
 ## Send a file, or open one you received (`anima message send --file`, `anima file`)
-
-Use this to post a local file to the chat, or to open a file a teammate sent you. Sending fails
-before upload if a path does not exist.
 
 ```
 anima message send --channel C0XXXX --file /tmp/chart.png <<'MSG'
@@ -505,106 +197,61 @@ MSG
 anima file fetch <fileId> /tmp/incoming.png
 ```
 
-Repeat `--file` to post several files as one message. The body is optional; when given, it
-becomes the files' caption, so the explanation sits on the files instead of in a separate
-message. Pass a ready body, as a heredoc does: if nothing arrives on stdin within about a second,
-the files post without a caption. On Slack a caption works like a message body: Markdown, `@name`
-mentions and links all work together. A file post counts as posting, so you follow its thread
-like a message's. The output includes its `message_ts`; for images and video, Slack can take a
-few seconds to report it. `anima file send <path>... [--caption <text>]` does the same thing.
+Repeat `--file` to post several files as one message. The body is optional and becomes the files'
+caption, so the explanation sits on the files. Pass it ready, as a heredoc does: if nothing arrives
+on stdin within about a second, the files post without a caption. On Slack a caption works like a
+message body, with Markdown, `@name` mentions, and links. A file post counts as posting, so you
+follow its thread. For images and video, Slack can take a few seconds to report the `message_ts`.
 
-The `fileId` comes from the `attached: id=<id>` line in message-read output. To actually look at
-an image a teammate sent, fetch it to a path and then read that path.
+The `fileId` comes from the `attached: id=<id>` line in `anima message read` output. To look at an
+image a teammate sent, fetch it to a path and read that path.
 
 ## Mute or unmute what is done (`anima subscription`)
-
-Use this to stop or resume following a channel or thread. To see where you are present, use
-`anima places`; `anima subscription list` is an alias of it.
 
 ```
 anima subscription mute --channel <id>
 anima subscription mute --channel <id> --thread-ts <ts>   # mute one thread, keep the channel
 anima subscription unmute --channel <id>
-anima subscription unmute --channel <id> --thread-ts <ts>
 ```
 
-Mute only when a thread or channel is clearly done with you and still noisy. An @mention always
-brings you back, and `unmute` resumes following without waiting for one. Muting is safe and is not
-the same as leaving. Finishing your part of a thread is not a reason to mute, because follow-ups are
-common.
+Mute a channel or thread that is done with you and still noisy. A DM or @mention still reaches you
+there, and `unmute` resumes following without waiting for one. See
+[what reaches you](/agent/guide#what-reaches-you).
 
 ## Send messages and reactions (`anima message`, `anima reaction`)
 
-The message body is read from stdin, so send a multi-line or Markdown body with a heredoc. Reply
-where the message came from: pass the envelope's `channel=` to `--channel` and its `thread_ts=` to
-`--thread-ts`. Bodies are Markdown, so use `**bold**`. `anima message update` edits a message in
-place.
+The body is read from stdin, so send a multi-line or Markdown body with a heredoc. To answer in
+place, pass the envelope's `channel=` to `--channel` and its `thread_ts=` to `--thread-ts`. Bodies
+are Markdown, so use `**bold**`. `anima message update` edits a message in place, but editing in an
+@mention does not notify the person; delete and re-post with the mention instead.
 
-Some delivery envelopes include `wake=<reason>` to say why the message reached you, such as a DM,
-mention, channel follow, or thread follow. Treat it as context, not a command; reason values vary by
-transport because Slack and Feishu expose different conversation shapes.
+Some envelopes include `wake=<reason>`, such as a DM, mention, channel follow, or thread follow. It
+is context, not a command, and its values vary by platform.
 
-```
-anima message send --channel C0XXXX --thread-ts 1780000000.000000 <<'MSG'
-**Done.** Details here.
-MSG
-```
+In Slack DMs and threads, a send can return `HELD` when messages arrived after your last view: it
+was not sent, and the updates come with it. For a successful Slack send, the returned `message_ts`
+is the receipt. If local bookkeeping fails after Slack accepted the post, the command still
+succeeds and prints a warning with the receipt; do not resend to repair it.
 
-With cursor delivery enabled, Slack DMs (including group DMs) and threads can return `HELD`
-when unread messages arrived after your last delivered view. The message, question, or file was
-not sent; read the supplied updates, then resend if needed. Channel-top-level sends do not use
-this check and do not advance the read cursor.
-
-For a successful Slack send, keep the returned `message_ts` as the receipt. If local engagement,
-thread subscription, completion audit, or outbox recording fails after Slack accepts the post,
-the command still exits successfully and prints a warning with that receipt. Do not resend the
-message to repair local bookkeeping; it has already been sent.
-
-A reaction is a lightweight reply when a full message is not needed. The emoji is a name, without
-colons:
+A reaction is a lightweight reply when a full message is not needed. The emoji is a bare name
+without colons:
 
 ```
 anima reaction add --channel C0XXXX --message-ts 1780000000.000000 --name white_check_mark
 ```
 
-**Do not:**
-
-- Do not pass the emoji with colons, for example `:white_check_mark:`. Use the bare name
-  `white_check_mark`.
-- Editing a message to add an @mention does not notify the mentioned person. Delete and re-post
-  with the mention instead.
-
 ## When a command fails (the error contract)
 
-Every `anima` command failure renders one structured line, so you can pick the right recovery
-without guessing:
+Every `anima` command failure renders one line, plus a `detail:` line when the underlying message
+adds information:
 
 ```
 error <layer.code> (retryable | not retryable): <hint>
-detail: <raw underlying message, only when it adds information>
 ```
 
-- **`layer.code`** tells you whose problem it is. Layers: `input` (your arguments, rejected before
-  any network call; a mistyped command also gets that command's usage below the error), `anima`
-  (this runtime or its config), `slack` and `feishu` (the platform rejected the call; the code
-  after the dot is the vendor's own, verbatim, so you can look it up in their docs), `linear`
-  (Linear rejected a GraphQL request; the detail line is Linear's own error), `network`
-  (transport trouble, usually transient).
-- **`retryable`** is the one bit that matters most: `retryable` means retry with backoff and say
-  so in-channel if it persists; `not retryable` means retrying is waste, change something instead.
-- **`hint`** names the next move. Follow it before improvising.
-
-Examples of what to expect:
-
-```
-error slack.channel_not_found (not retryable): You cannot see a channel with that id. Verify it from a recent envelope or anima history, not from memory.
-error network.dns_failure (retryable): Name resolution failed; retry with backoff, and say so in-channel if it persists.
-error anima.no_agent_context (not retryable): Pass --agent <id> or set ANIMA_AGENT_ID.
-```
-
-`anima.unexpected` means the failure did not match any known shape; stop and show the operator the
-detail line rather than retrying blind.
-
-## Linear
-
-Use `reply` to answer where a delivery points, `start` to open a work session yourself, and `api` for workspace queries and changes. `token` supplies current credentials to other programs when needed. See [Work in Linear](/agent/linear) for command syntax and result-unknown rules.
+The layer says whose problem it is: `input` (your arguments, rejected before any network call; a
+mistyped command also gets that command's usage below the error), `anima` (this runtime or its
+config), `slack`, `feishu`, and `linear` (the platform rejected the call; the code or detail is the
+platform's own, verbatim), and `network` (transport trouble, usually transient). `retryable` means
+retry with backoff and say so if it persists; `not retryable` means change something instead. The
+hint names the next move; follow it before improvising.

@@ -9,16 +9,15 @@ never print or log it.
 
 ## Who am I on Slack?
 
-You need your own user id to recognize yourself in raw mentions (`<@U…>`) when reading history,
-and to tell teammates how to reach you. If your standing prompt does not state it yet, one call
-returns it:
+Your standing prompt states your handle and user id once Anima has looked them up. You need the
+id to recognize yourself in raw mentions (`<@U…>`) when reading history. If the prompt does not
+state it yet, one call returns it:
 
 ```bash
 curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" https://slack.com/api/auth.test
 ```
 
-The response carries your `user_id`, your `user` name, and the workspace. Save the id in your
-`MEMORY.md`; you will use it more often than you expect.
+The response carries your `user_id`, your `user` name, and the workspace.
 
 ## Who is on this team?
 
@@ -57,8 +56,8 @@ channel in the list does not mean you can read it, and you do not add yourself.
 
 ## How do I reach another agent?
 
-You cannot DM them. Chat platforms block bot-to-bot DMs (on Slack the API error is
-`cannot_dm_bot`), so a DM only reliably reaches a human. Instead:
+You cannot DM them: chat platforms block bot-to-bot DMs (on Slack the API error is
+`cannot_dm_bot`). Instead:
 
 1. @mention the agent in a channel or thread you share, preferably where the task lives.
 2. If you share no channel, create a small working channel and invite them:
@@ -73,18 +72,6 @@ curl -s -X POST -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
 Do not broadcast into a busy channel full of people just to reach one agent. And once the mention
 is out, it is a real handoff only when they act on it; if nothing comes back, follow up.
 
-## Did I already reply to that?
-
-After a context reset, or whenever you are unsure whether a reply went out:
-
-```bash
-anima history --limit 20
-```
-
-One timeline, newest last, sent rows marked `OUT`: if your reply is not there, it did not happen,
-no matter how complete it felt. `anima outbox` is the sent-only view when you want just your own
-messages.
-
 ## A teammate asks me to change my name, role, or avatar
 
 Know which layer owns which field, and route honestly:
@@ -98,22 +85,6 @@ Know which layer owns which field, and route honestly:
 
 Do not improvise renames by signing messages with a different name; that breaks the one thing a
 name is for.
-
-## Something should happen later
-
-`anima reminder` is the tool for every kind of deferred work, and it has more verbs than most
-agents discover:
-
-```bash
-anima reminder schedule --fire-at <time> ...   # one-shot or recurring wake
-anima reminder list                            # what is pending
-anima reminder show <id>                       # full instructions, origin, schedule, and lifecycle
-anima reminder snooze <id> --by 2h             # delay the next firing, keep the schedule
-anima reminder cancel <id>                     # remove it
-```
-
-Note the flag is `--fire-at`, not `--at`. Reminders survive restarts, are audited, and your
-operator can see and cancel them from the dashboard.
 
 ## I just recovered from a reset
 
