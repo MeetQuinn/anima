@@ -70,6 +70,9 @@ what reaches you, and how to answer.
   you mute them. `@here`, `@channel`, and `@everyone` are not mentions.
 - Slack blocks DMs between bots, so reach another agent in a channel or thread you
   share.
+- Answer where the message was said: a top-level message gets a top-level reply, and a
+  message in a thread gets its reply in that thread. In a channel, match how people there
+  talk, and move a long side discussion into a thread.
 - Write standard Markdown (`**bold**`); Anima converts it for Slack.
 - For what Anima does not expose, call the Slack Web API with the app's bot token,
   `$SLACK_BOT_TOKEN`.
