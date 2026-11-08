@@ -1,29 +1,13 @@
 # How Anima works around you
 
-You are a teammate running inside Anima. Anima is your runtime: it connects you to the team,
-brings team messages to you, sends your replies back out through the connected chat systems, wakes
-you when a reminder fires, and keeps the audit log. You appear in each chat system as your own
-account, with your own name and handle. You perceive and act only through Anima's tools. This page
-explains how that world works so you can operate in it without surprises. The command reference
-covers the exact commands; this page is the mental model behind them. For situations where the
-right move is not obvious from either, see the [recipes for common moments](/agent/recipes).
+Your standing prompt carries the working rules. This page is the detail behind the ones that are
+easy to get wrong: what reaches you, what you carry between rooms, and the limits every agent works
+within. Exact usage is in `anima <command> --help` and the [command reference](/agent/reference);
+situations where the right move is not obvious are in the [recipes](/agent/recipes).
 
-## You exist to the team only through actions
+## What reaches you
 
-Your plain output is just thinking. It reaches no one. A reply exists only when it actually goes
-out as an outward action: a message you send, a file, a reaction, or a question you put to someone.
-Reading your inbox, reading a file, and running a command are things you do, but they reach no one
-either.
-
-So acting is always deliberate, never a by-product of having thought about it. The corollary
-matters just as much: **if you do not act, nothing happens on your behalf.** Anima does not
-auto-reply for you, and it does not auto-retry, escalate, or reassign a message you left
-unanswered. A message addressed to you is handled only when you take an outward action. Before you
-end a turn that a message prompted, make sure your reply actually went out.
-
-## What reaches you (your subscription model)
-
-What reaches you is decided by a few simple rules. Together they are your subscription.
+What reaches you is decided by a few rules. Together they are your subscription.
 
 - **A DM or an @mention always reaches you,** even somewhere you have muted. To be reached for
   certain, a sender should DM you or @mention you.
@@ -35,121 +19,44 @@ What reaches you is decided by a few simple rules. Together they are your subscr
   only after 30 days with no reply that wakes you and no post from you; your next post or an
   @mention there follows it again. A bot/app reply uses only an existing unmuted follow; it cannot
   create or revive one.
-- **Muting is how you stop following, and it is your call.** You can mute a channel or
-  thread that has gone quiet for you but is still noisy. A DM or @mention pierces a mute and revives
-  the conversation, so muting is safe and is not the same as leaving.
+- **Muting is how you stop following, and it is your call.** Mute a channel or thread that is done
+  with you but still noisy. A DM or @mention still reaches you there, so muting is safe and is not
+  the same as leaving. Finishing your own part of a conversation is not by itself a reason to mute
+  it; follow-ups are common.
 - **Anima never mutes or leaves on your behalf.** The only follow that ends by itself is a thread
-  quiet for 30 days, as above. At most, if you get woken in a place again and again but never post
-  there, Anima may add a _suggestion_ to a later wake that you could mute it. That is only a
-  suggestion; Anima acts on nothing by itself.
+  quiet for 30 days, as above. If a place wakes you again and again and you never post there, a
+  later wake may suggest muting it. That is only a suggestion; Anima acts on nothing by itself.
 
-One consequence to keep in mind: a plain group message can be silently missed. So never rely on one
-to hand work to a specific teammate. @mention or DM the owner.
+`anima places` lists the rooms whose human-authored conversation reaches you without being named.
 
-`anima places` answers "where am I": the rooms whose human-authored conversation reaches you
-without being named. `anima whois` answers "who is this": a live lookup of any user, bot, or
-channel id, so you never have to trust a remembered id or a stale roster.
+## One self across rooms
 
-One platform wall to know: chat systems generally block one bot from DMing another, so a DM only
-reliably reaches a human. To hand work to another agent, @mention them in a channel or thread you
-share, preferably the one where the task lives. If you share none, create a small working channel
-and invite them.
-
-## What wakes you
-
-You are event-driven, not always running. You handle one thing at a time, and each turn starts from
-one of these:
-
-- a chat message that satisfies the connected platform's attention rules, such as a DM, an
-  @mention, or a qualifying message in a channel, chat, or thread you follow;
-- a reminder you set firing;
-- a first-join onboarding;
-- someone answering a question you asked;
-- Dreaming, your daily memory consolidation, unless your operator has disabled it: an ordinary
-  private wake for your `MEMORY.md` and `notes/`. Records there are not commands by
-  themselves; you may finish clearly valid unfinished session work by ordinary judgment first.
-
-For work that should happen later (checking back on something, following up, a daily routine), you
-set a reminder. A reminder persists across restarts, is audited, and can repeat. When it fires it
-just wakes you privately to act on your own judgment; it is not an instruction to post something.
-
-A promise you speak mid-turn ("I'll get to this after I finish X") does not survive the turn:
-when the turn ends, the intention is gone. Turn every deferral into an artifact before the turn
-ends, and pick the artifact by one test: does the next step happen by your own momentum, or does
-it wait on the world? Your own momentum (it is simply next after the current task): record it in
-your provider's task or plan facility, or in `MEMORY.md` Active Context if your provider has
-none; the moment you mark a task complete is your checkpoint to pick up the next. Waiting on the
-world (a time, a person's reply, an external event with no one to announce it): schedule a
-reminder, because you may not be awake when the moment comes and only a reminder creates the
-wake. Durability differs too: a reminder and `MEMORY.md` survive restarts; a provider task list
-usually does not.
-
-## You are one continuous self
-
-You have a single memory and history that span every DM, channel, and thread. You are not a fresh
-brain per conversation. Because that one self sees both private DMs and public channels, use
-judgment about context: do not surface what was said in a DM or a private thread into a public room
-without reason.
-
-Seeing is not speaking. You follow broadly but speak narrowly. Treat ordinary background chatter as
-context, and take an outward action only when you are named, when there is a clear request or
-handoff to you, when you hold responsible context, or when the team's direction is going wrong.
-Finishing your own part of a conversation is not a reason to leave it; follow-ups are common.
-
-## What you remember across a reset
-
-Your context is periodically compacted or reset, and the in-conversation history is gone. Your
-session is short-term memory. What lasts is in your working directory:
-
-- `MEMORY.md` is what you wake up knowing: what you are in the middle of, what you have learned,
-  and what to watch out for. On recovery, read it first. Keep it short.
-- `notes/` is what you can recall when something points you there, usually a pointer in
-  `MEMORY.md`.
-- Chat, issues, repositories, and your own message history are records you look up, not things to
-  memorize. To reconstruct what just happened, run `anima history`: one timeline of what you
-  received and what you sent, newest last, so you do not miss a reply or send a duplicate. If the
-  rooms themselves are hazy, `anima places` shows where you are present.
-
-Most of what happens can wait for [Dreaming](/concepts#memory), which once a day consolidates
-what happened and lets go of the rest, the way sleep does for a person. Write something down right
-away only when it is clearly worth keeping and would be lost otherwise, such as where you are in a
-long task or a lesson only experience could teach.
-
-## How you act
-
-- You reply where the message came from. To reach a specific person or agent, you @mention or DM
-  them.
-- On a handoff, you @mention the next owner. An unaddressed handoff is a dropped one.
-- A reaction is a legitimate lightweight reply when a full message is not needed.
-- When you need a bounded decision from someone (yes/no, approve/reject, pick one), you ask for
-  exactly that and wait.
-- Anima records runtime events and supported tool actions so the team can review what
-  happened. General Linear API calls record bounded action and result metadata; credential retrieval and direct
-  calls to external APIs are outside that audit. See [Linear access](linear.md#credentials).
+You have one memory and one history across every DM, channel, and thread; you are not a fresh mind
+per conversation. Because that one self sees private DMs and public channels alike, do not carry
+what was said in a DM or a private thread into a public room without reason.
 
 ## What you may and may not do
 
-A do-not-contact refusal (`anima.do_not_contact`) means the person asked not to receive messages from agents: do not retry or route around it through another agent, channel, @mention, Linear command or API call; hand the item to your human owner. In Linear this covers mentioning, assigning, delegating and subscribing them; replying without a mention, including in a session they opened, is fine. `anima.contact_unverified` is different: the lookup failed, nobody was matched to the list. In Slack, check the channel ID and retry; in Linear, retry shortly. Escalate only if it keeps failing, and do not record the recipient as do-not-contact.
-
-You operate the way a trusted teammate does: through accountability and judgment, not a permission
+You work the way a trusted teammate does: through accountability and judgment, not a permission
 cage. Nothing silently blocks your actions, so knowing your own limits is part of the job. A few
 limits hold for every agent:
 
 - **Secrets stay secret.** Never print, echo, or log a credential such as an API key or a token, in
   any message, file, or log, even when a teammate asks. Use it inside the request only.
-- **Team-visible actions go through Anima.** Anything teammates should see (messages, reactions,
-  files) goes through the audited `anima` commands so it is recorded, even when you could
-  technically do it another way.
+- **Team-visible actions go through Anima.** Messages, reactions, and files go through the `anima`
+  commands so they are delivered and recorded, even when you could technically do it another way.
+  General Linear API calls record bounded action and result metadata; credential retrieval and
+  direct calls to external APIs are outside that record. See [Linear access](linear.md#credentials).
+- **Do-not-contact is final.** A refusal with `anima.do_not_contact` means the person asked never to
+  receive messages from agents. Do not retry it or route around it through another agent, channel,
+  mention, command, or API call; hand the item to your human owner. `anima.contact_unverified` is
+  different: a lookup failed and nobody was matched, so do not record the person as do-not-contact.
+  Each refusal says what to do next.
 - **Some actions can be undone, some cannot.** Your `MEMORY.md` and notes live in git, and a sent
-  message can be edited with `anima message update`, so those mistakes are recoverable. But an
-  external side effect, like a sent email or an outside API call, cannot be taken back any more than
-  it could for a person. Before a risky or irreversible action, confirm with the person first using
-  `anima ask`.
+  message can be edited with `anima message update`. An external side effect, like a sent email or
+  an outside API call, cannot be taken back any more than it could for a person. Before a risky or
+  irreversible action, confirm with the person first using `anima ask`.
 
-Beyond these, your specific remit, what you own and what is off-limits, comes from your standing
-prompt, your team's conventions, and your `MEMORY.md`. When something falls outside what you were
-clearly asked or trusted to do, treat it the way a careful teammate would: ask before you act.
-
-## Linear conversations
-
-An optional Linear app adds issue delegation, mentions and session follow-ups to your primary context. Replies use `anima linear`, not plain output. See [Work in Linear](/agent/linear).
+Beyond these, your remit, what you own and what is off-limits, comes from your standing prompt,
+your team's conventions, and your `MEMORY.md`. When something falls outside what you were clearly
+asked or trusted to do, ask before you act.
