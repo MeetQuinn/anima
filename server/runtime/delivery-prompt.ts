@@ -328,15 +328,11 @@ function buildReminderDeliveryPrompt(
     const rerun = command
       ? ` To see why, run it once yourself: \`anima reminder preflight --command ${shellQuote(command)}\`.`
       : '';
-    // A one-time reminder is spent after its check runs, so there is nothing left to fix or cancel.
-    const next = reminder.status === 'scheduled'
-      ? 'Fix the check or cancel the reminder. You are told once when the check starts failing, not on every failed run.'
-      : 'This was a one-time reminder, so it will not run again: do the work now if it is still needed, or schedule it again with a working check.';
     return `Reminder check failed:
 
 ${envelope} ${reminder.title}
 
-The preflight check that decides whether this reminder wakes you failed (${preflightFailureDetail(event.preflightFailure)}), so its instructions did not run.${rerun} ${next}${provenance}`;
+The preflight check that decides whether this reminder wakes you failed (${preflightFailureDetail(event.preflightFailure)}), so its instructions did not run.${rerun} ${preflightFailureNextStep(reminder)}${provenance}`;
   }
 
   const evidence = event.preflightEvidence?.trim()
@@ -348,6 +344,21 @@ ${envelope} ${reminder.title}
 
 Instructions:
 ${reminder.instructions}${evidence}${provenance}`;
+}
+
+// Read at delivery, so a reminder cancelled while the wake waited says so. A one-time
+// reminder is spent once its check runs, so there is nothing left to fix or cancel.
+function preflightFailureNextStep(reminder: Reminder): string {
+  if (reminder.status === 'cancelled') {
+    return 'The reminder has since been cancelled, so it will not run again.';
+  }
+  if (reminder.schedule.kind === 'once') {
+    return 'This was a one-time reminder, so it will not run again: do the work now if it is still needed, or schedule it again with a working check.';
+  }
+  if (reminder.status === 'scheduled') {
+    return 'Fix the check or cancel the reminder. You are told once when the check starts failing, not on every failed run.';
+  }
+  return 'The reminder will not run again.';
 }
 
 // A recurring reminder says so in its own wake, with when it comes back, so the

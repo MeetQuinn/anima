@@ -82,7 +82,8 @@ export class LinearClient {
     }
     let errors: string[] | undefined;
     try {
-      const body = z.object({ data: z.unknown(), errors: z.array(z.unknown()).optional() }).parse(await response.json());
+      // GraphQL may answer 200 with errors and no data, so read errors before data.
+      const body = z.object({ data: z.unknown().optional(), errors: z.array(z.unknown()).optional() }).parse(await response.json());
       if (body.errors?.length) {
         errors = graphqlErrorMessages(body.errors);
         throw new Error('GraphQL error');

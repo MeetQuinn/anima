@@ -735,6 +735,77 @@ test('a failing preflight tells the agent once per failure, not on every failed 
     assert.match(prompt, / repeat=every:1h next=\S+\] hourly gate\n/);
     assert.match(prompt, /Fix the check or cancel the reminder\. You are told once when the check starts failing/);
     assert.doesNotMatch(prompt, /check the queue/);
+
+    // Cancelled after the failure but before the wake is delivered: the wake says so.
+    const cancelled = await service.cancelReminder({ id: rem.reminderId });
+    const late = buildCodeAgentDeliveryPrompt((await failureWakes())[0] as never, { reminder: cancelled });
+    assert.match(late, /The reminder has since been cancelled, so it will not run again\.$/m);
+    assert.doesNotMatch(late, /one-time|Fix the check|schedule it again/);
+  });
+});
+
+test('a failure wake survives a failed enqueue, a missed publish, and a lost CAS', async () => {
+  await withAgentHome(async (_home, agentId) => {
+    const service = reminderServiceForAgent(agentId);
+    const queue = new WakeQueueService(agentId);
+    const subscriber = new ReminderInboxSubscriber(queue, service);
+    type Commit = (reminder: unknown, result: unknown, completedAt: Date, expected: unknown) => Promise<void>;
+    const commitErrored = (subscriber as unknown as Record<string, Commit>).commitErroredPreflight!.bind(subscriber);
+    const schedule = (title: string) => service.scheduleReminder({
+      fireAt: '2020-01-01T00:00:00.000Z',
+      instructions: 'do the work',
+      now: new Date('2019-12-31T00:00:00.000Z'),
+      preflight: { command: 'exit 9' },
+      title,
+    });
+    const versionOf = (live: Awaited<ReturnType<typeof schedule>>) =>
+      ({ nextDueAt: live.nextDueAt, preflight: live.preflight, status: live.status, updatedAt: live.updatedAt });
+    const fail = async (id: string, at: string, expected?: unknown): Promise<void> => {
+      const live = (await service.findReminder(id))!;
+      const result = { durationMs: 1, endedAt: at, exitCode: 9, scheduledAt: live.nextDueAt!, startedAt: at, status: 'errored' as const };
+      await commitErrored(live, result, new Date(at), expected ?? versionOf(live));
+    };
+    const wakesFor = async (id: string) => (await queue.list()).filter((i) =>
+      i.kind === 'reminder' && i.reminderId === id && 'preflightFailure' in i && i.preflightFailure);
+
+    // Enqueue fails: the reminder is left untouched, so the next run of the check tells the agent.
+    const a = await schedule('enqueue fails');
+    const enqueueStaged = queue.enqueueStaged.bind(queue);
+    queue.enqueueStaged = async () => { throw new Error('disk full'); };
+    await fail(a.reminderId, '2030-01-01T00:00:00.000Z');
+    queue.enqueueStaged = enqueueStaged;
+    const untouched = (await service.findReminder(a.reminderId))!;
+    assert.equal(untouched.status, 'scheduled');
+    assert.equal(untouched.preflightError, undefined);
+    assert.equal((await wakesFor(a.reminderId)).length, 0);
+    await fail(a.reminderId, '2030-01-01T00:01:00.000Z');
+    const retried = await wakesFor(a.reminderId);
+    assert.equal(retried.length, 1);
+    assert.equal(retried[0]!.handling.stagedAt, undefined, 'published');
+    assert.equal((await service.findReminder(a.reminderId))!.status, 'fired');
+
+    // Publish misses after the CAS: the staged wake is published on the next poll, even
+    // by a fresh subscriber after a restart.
+    const b = await schedule('publish misses');
+    const publishQueued = queue.publishQueued.bind(queue);
+    queue.publishQueued = async () => false;
+    await fail(b.reminderId, '2030-01-01T00:02:00.000Z');
+    queue.publishQueued = publishQueued;
+    assert.ok((await service.findReminder(b.reminderId))!.preflightError);
+    assert.ok((await wakesFor(b.reminderId))[0]!.handling.stagedAt, 'still staged');
+    const restarted = new ReminderInboxSubscriber(queue, service);
+    await (restarted as unknown as { reconcileStagedReminderWakes(now: Date): Promise<void> }).reconcileStagedReminderWakes(new Date());
+    const recovered = await wakesFor(b.reminderId);
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0]!.handling.stagedAt, undefined, 'published by reconcile');
+
+    // The CAS loses (the reminder changed while the check ran): nothing is published.
+    const c = await schedule('cas loses');
+    const stale = versionOf((await service.findReminder(c.reminderId))!);
+    await service.snoozeReminder({ by: '1h', id: c.reminderId });
+    await fail(c.reminderId, '2030-01-01T00:03:00.000Z', stale);
+    assert.equal((await wakesFor(c.reminderId)).length, 0);
+    assert.equal((await service.findReminder(c.reminderId))!.preflightError, undefined);
   });
 });
 

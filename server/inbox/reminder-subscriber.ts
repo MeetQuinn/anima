@@ -122,6 +122,24 @@ export class ReminderInboxSubscriber {
       if (item.kind !== 'reminder' || item.handling.status !== 'queued' || !item.handling.stagedAt) {
         continue;
       }
+      const failureSince = reminderPreflightFailureSinceFromEventId(item.id);
+      if (failureSince !== undefined) {
+        // Its check is still committing; that job publishes or abandons it.
+        if (this.jobs.has(item.reminderId)) continue;
+        const reminder = await this.reminderService.findReminder(item.reminderId);
+        if (reminder?.preflightError?.since === failureSince) {
+          const published = await this.queue.publishQueued(item.id);
+          console.log(
+            `reminder preflight error wake reconciled publish reminderId=${item.reminderId} eventId=${item.id} published=${published}`,
+          );
+        } else {
+          const abandoned = await this.queue.abandonStaged(item.id);
+          console.log(
+            `reminder preflight error wake reconciled abandon reminderId=${item.reminderId} eventId=${item.id} abandoned=${Boolean(abandoned)}`,
+          );
+        }
+        continue;
+      }
       const fireIndex = reminderFireIndexFromEventId(item.id);
       if (fireIndex === undefined) {
         console.warn(`reminder staged wake has unparseable id=${item.id}; leaving in place`);
@@ -354,6 +372,23 @@ export class ReminderInboxSubscriber {
   ): Promise<void> {
     const attentionKey = classifyPreflightAttentionKey(reminder.reminderId, result);
     const shouldNotify = shouldNotifyPreflightError(reminder, attentionKey, completedAt);
+    // The agent wrote the check, so it is the one who can fix it: tell it once when the
+    // check starts failing. The wake is staged before the CAS, like a fire: if staging
+    // fails the reminder is left untouched and the next poll runs the check again, and a
+    // committed wake that misses publish is recovered by reconcileStagedReminderWakes.
+    let failureWake: ReminderInboxItem | undefined;
+    if (!reminder.preflightError) {
+      const event = preflightFailureWakeEvent(reminder, result, completedAt);
+      try {
+        const decision = await this.queue.enqueueStaged(event);
+        if (!decision.duplicate || decision.staged) failureWake = event;
+      } catch (error) {
+        console.error(
+          `reminder preflight error wake enqueue failed reminderId=${reminder.reminderId}: ${errorMessage(error)}`,
+        );
+        return;
+      }
+    }
     const transition = await this.reminderService.recordPreflightCheck({
       expected,
       id: reminder.reminderId,
@@ -364,22 +399,24 @@ export class ReminderInboxSubscriber {
         // Only set lastNotifiedAt when we actually notify; otherwise service
         // preserves the previous timestamp (throttle must not erase it).
         ...(shouldNotify ? { lastNotifiedAt: completedAt.toISOString() } : {}),
+        // A staged failure wake is committed exactly when `since` names its run.
         since: reminder.preflightError?.since ?? completedAt.toISOString(),
       },
     });
     if (!transition.applied) {
+      if (failureWake) await this.queue.abandonStaged(failureWake.id);
       console.log(
         `reminder preflight errored discarded stale reminderId=${reminder.reminderId}`,
       );
       return;
     }
+    if (failureWake && !(await this.queue.publishQueued(failureWake.id))) {
+      console.error(
+        `reminder preflight error wake publish missed reminderId=${reminder.reminderId} eventId=${failureWake.id}; will reconcile`,
+      );
+    }
     if (shouldNotify) {
       await this.recordPreflightErrorAttention(reminder, result);
-    }
-    // The agent wrote the check, so it is the one who can fix it: tell it once when
-    // the check starts failing, not on every failed run.
-    if (!reminder.preflightError) {
-      await this.enqueuePreflightFailureWake(transition.reminder, result, completedAt);
     }
     console.log(
       `reminder preflight errored reminderId=${reminder.reminderId} exit=${result.exitCode ?? '-'} timedOut=${Boolean(result.timedOut)} completedAt=${completedAt.toISOString()} notified=${shouldNotify}`,
@@ -423,40 +460,6 @@ export class ReminderInboxSubscriber {
     console.log(
       `reminder fired reminderId=${reminder.reminderId} eventId=${event.id} duplicate=${Boolean(decision.duplicate)} queued=${Boolean(decision.queued)} firedAt=${firedAt.toISOString()}`,
     );
-  }
-
-  private async enqueuePreflightFailureWake(
-    reminder: Reminder,
-    result: PreflightLastResult,
-    completedAt: Date,
-  ): Promise<void> {
-    const receivedAt = completedAt.toISOString();
-    const event: ReminderInboxItem = {
-      id: `reminder:${reminder.reminderId}:preflight-error:${completedAt.getTime()}`,
-      kind: 'reminder',
-      receivedAt,
-      handling: {
-        createdAt: receivedAt,
-        queuedAt: receivedAt,
-        status: 'queued',
-        updatedAt: receivedAt,
-      },
-      preflightFailure: {
-        ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-        ...(result.signal ? { signal: result.signal } : {}),
-        ...(result.timedOut ? { timedOut: true } : {}),
-      },
-      reminderId: reminder.reminderId,
-      scheduledAt: result.scheduledAt,
-      title: reminder.title,
-    };
-    try {
-      await this.queue.enqueue(event);
-    } catch (error) {
-      console.error(
-        `reminder preflight error wake failed reminderId=${reminder.reminderId}: ${errorMessage(error)}`,
-      );
-    }
   }
 
   private async recordPreflightErrorAttention(
@@ -508,6 +511,41 @@ function expectedVersionFrom(reminder: Reminder): ReminderExpectedVersion {
     ...(reminder.nextDueAt !== undefined ? { nextDueAt: reminder.nextDueAt } : {}),
     ...(reminder.preflight ? { preflight: reminder.preflight } : {}),
   };
+}
+
+function preflightFailureWakeEvent(
+  reminder: Reminder,
+  result: PreflightLastResult,
+  completedAt: Date,
+): ReminderInboxItem {
+  const receivedAt = completedAt.toISOString();
+  return {
+    id: `reminder:${reminder.reminderId}:preflight-error:${completedAt.getTime()}`,
+    kind: 'reminder',
+    receivedAt,
+    handling: {
+      createdAt: receivedAt,
+      queuedAt: receivedAt,
+      status: 'queued',
+      updatedAt: receivedAt,
+    },
+    preflightFailure: {
+      ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+      ...(result.signal ? { signal: result.signal } : {}),
+      ...(result.timedOut ? { timedOut: true } : {}),
+    },
+    reminderId: reminder.reminderId,
+    scheduledAt: result.scheduledAt,
+    title: reminder.title,
+  };
+}
+
+/** `reminder:<reminderId>:preflight-error:<ms>` → the `preflightError.since` it belongs to */
+export function reminderPreflightFailureSinceFromEventId(eventId: string): string | undefined {
+  const match = /^reminder:(.+):preflight-error:(\d+)$/.exec(eventId);
+  if (!match) return undefined;
+  const at = new Date(Number(match[2]));
+  return Number.isNaN(at.getTime()) ? undefined : at.toISOString();
 }
 
 /** `reminder:<reminderId>:fire:<n>` → n */
