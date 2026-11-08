@@ -52,6 +52,8 @@ function normalizeAcpUpdateType(type: string): string {
       return 'tool_call_update';
     case 'usageupdate':
       return 'usage_update';
+    case 'configoptionupdate':
+      return 'config_option_update';
     case 'turnend':
     case 'endturn':
       return 'turn_end';

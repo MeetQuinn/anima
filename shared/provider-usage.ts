@@ -7,6 +7,7 @@ export const ProviderUsageKind = z.enum([
   "grok-cli",
   "opencode-cli",
   "pi",
+  "antigravity-cli",
 ]);
 export type ProviderUsageKind = z.infer<typeof ProviderUsageKind>;
 

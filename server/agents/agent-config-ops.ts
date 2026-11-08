@@ -82,7 +82,7 @@ export function agentConfigFromCreateInput(
 export function agentConfigWithProviderUpdate(
   current: AgentConfig,
   update: AgentUpdateProviderRequest,
-  /** Live ACP effort menus (Grok). When provided, write-time validation follows Live. */
+  /** Live ACP effort menus (Grok, Antigravity). When provided, write-time validation follows Live. */
   availability?: ReasoningEffortAvailability,
 ): AgentConfig {
   const selection = mergeProviderSelection(current.provider, update, availability);

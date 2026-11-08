@@ -432,6 +432,41 @@ test('OpenCode Homebrew installs use the paired brew and never invoke authentica
   }
 });
 
+test('Antigravity CLI native installs are reported as manual `agy update` installs', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-antigravity-'));
+  const home = join(root, 'home');
+  const nativeDir = join(home, '.local', 'bin');
+  const appBin = join(root, 'Antigravity.app', 'Contents', 'Resources', 'app', 'bin');
+  const calls: string[] = [];
+  const runCommand: ProviderCliCommandRunner = async (command, args) => {
+    calls.push(`${command} ${args.join(' ')}`);
+    if (args.join(' ') === '--version') return { stderr: '', stdout: '1.5.3\n' };
+    throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
+  };
+  try {
+    await mkdir(nativeDir, { recursive: true });
+    await mkdir(appBin, { recursive: true });
+    for (const binary of [join(nativeDir, 'agy'), join(appBin, 'agy')]) {
+      await writeFile(binary, '#!/bin/sh\nexit 0\n', 'utf8');
+      await chmod(binary, 0o755);
+    }
+
+    const native = await inspectProvider('antigravity-cli', { HOME: home, PATH: nativeDir }, runCommand);
+    assert.equal(native.installSource, 'antigravity-native');
+    assert.equal(native.installedVersion, '1.5.3');
+    assert.equal(native.updateMode, 'manual');
+    assert.equal(native.manualCommand, 'agy update');
+    assert.equal(native.updateCommand, undefined);
+
+    const launcher = await inspectProvider('antigravity-cli', { HOME: home, PATH: appBin }, runCommand);
+    assert.equal(launcher.installSource, 'unknown');
+    assert.match(launcher.sourceDetail ?? '', /editor launcher, not Antigravity CLI/);
+    assert.deepEqual(calls.filter((call) => !call.endsWith(' --version')), []);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test('managed Claude updates isolate updater writes from account credentials', async () => {
   const root = await mkdtemp(join(tmpdir(), 'anima-provider-cli-claude-'));
   const home = join(root, 'home');
@@ -770,8 +805,11 @@ test('provider checks reuse validators and keep failures isolated by provider', 
       const first = await service.checkNow();
       assert.deepEqual(
         first.providers.map((row) => row.latestVersion),
-        ['2.1.0', '1.2.0', '0.24.0', undefined, '1.18.4', '0.84.3'],
+        ['2.1.0', '1.2.0', '0.24.0', undefined, '1.18.4', '0.84.3', undefined],
       );
+      // Antigravity has no version endpoint: no latest version, and no error either.
+      assert.equal(first.providers[6]?.provider, 'antigravity-cli');
+      assert.equal(first.providers[6]?.checkError, undefined);
       assert.match(first.providers[3]?.checkError?.message ?? '', /grok/i);
       round = 1;
       const second = await service.checkNow();

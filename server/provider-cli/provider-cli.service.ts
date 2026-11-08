@@ -284,6 +284,9 @@ export class ProviderCliService {
     previous: ProviderCheck | undefined,
     checkedAt: string,
   ): Promise<ProviderCheck> {
+    // Antigravity CLI publishes no version endpoint and `agy update` has no
+    // check-only mode, so there is no latest version to compare against.
+    if (provider === 'antigravity-cli') return { checkedAt };
     let result: VersionLookup;
     if (provider === 'claude-code') {
       result = await fetchTextVersion(

@@ -633,6 +633,50 @@ and `PI_CODING_AGENT_DIR` to the service environment and replaces every `*_API_K
 agent's Launch env with the machine value (or removes it). Operators configure pi once per host
 with `pi` → `/login`, `~/.pi/agent/auth.json`, or a provider API key in the service environment.
 
+## Antigravity Adapter
+
+Implementation: `server/providers/antigravity.ts`.
+
+Antigravity CLI (`agy`) is Google's agent CLI. Anima uses its official ACP server, the same entry
+point editors use.
+
+Current process model:
+
+- Anima starts one persistent `agy acp --dangerously-skip-permissions` process and speaks ACP over
+  stdio. Operator **Arguments** go after `acp`. Anima refuses the Antigravity desktop app's `agy`
+  editor launcher, which would open an editor window instead of an ACP server.
+- Fresh work uses `session/new`. When `initialize` advertises
+  `agentCapabilities._meta.antigravity.systemPrompt.append`, the Anima runtime profile is appended
+  to Antigravity's system prompt through `_meta.antigravity.systemPrompt.append`, and it persists
+  in the session across process restarts. An older CLI without that capability gets the profile
+  prepended to the first prompt instead. Because the profile lives in the session, a profile
+  edit reaches an Antigravity agent when it next starts a fresh provider session.
+- A stored provider session uses `session/resume`. `agy` reports an unknown session as
+  `Failed to read session …`; only that missing-session answer falls back to `session/new`
+  (`antigravity.session.resume_missing`).
+- The model and thinking level are ACP session config options. After session creation or resume
+  Anima applies the configured model with `session/set_config_option` (`model`) and the optional
+  `reasoningEffort` with `thought_level`. A model the signed-in account does not offer fails the
+  turn with the available list; a thinking level the model does not offer is skipped and recorded
+  as `antigravity.effort.unavailable`.
+- The model menu is live. The dashboard availability probe starts `agy acp`, opens one session in
+  a fixed directory under the Anima home, reads the `model` and `thought_level` options, and
+  closes it. Every probe session is a conversation in Antigravity's history, so the catalog is
+  cached for 15 minutes per command. Thinking levels are model-scoped, so the probe knows them
+  only for the account's current model; other models fall back to the provider vocabulary at
+  write time and are gated by the live session at run time.
+- Each item uses `session/prompt`, with the shared ACP mid-turn follow-up policy and
+  `session/cancel` on operator cancellation, as for OpenCode.
+- ACP thinking, assistant text, usage, tool calls (named from the ACP tool `kind`: `Shell`,
+  `ReadFile`, `EditFile`, `Search`, `Fetch`, …), tool failures, and permission requests are mapped
+  into the same Anima activity and health surfaces as the other providers.
+- An ACP `Authentication required` error (-32000) becomes sign-in guidance: run `agy` once on the
+  host and sign in.
+
+Sign-in is machine-level (the OS keychain and `~/.gemini`), so Anima pins `HOME` to the service
+environment. `agy` has no check-only update mode, so **Settings > Providers** shows the installed
+version and the manual `agy update` command rather than a managed update.
+
 ## Agent Activities
 
 Provider adapters write activities so the user can inspect what happened without reading raw provider logs.

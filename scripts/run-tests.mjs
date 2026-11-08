@@ -170,6 +170,7 @@ const groups = {
     'agent-runtime-kimi.test.js',
     'agent-runtime-opencode.test.js',
     'agent-runtime-pi.test.js',
+    'agent-runtime-antigravity.test.js',
     'cli-env.test.js',
     'cli-errors.test.js',
     'cli-file.test.js',

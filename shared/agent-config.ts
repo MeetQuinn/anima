@@ -383,6 +383,22 @@ export const PiAgentProviderConfig = z.object({
 
 export type PiAgentProviderConfig = z.infer<typeof PiAgentProviderConfig>;
 
+export const AntigravityCliAgentProviderConfig = z.object({
+  env: z.record(z.string(), z.string()).optional(),
+  idleTimeoutMs: z.number().optional(),
+  kind: z.literal('antigravity-cli'),
+  model: z.string().optional(),
+  providerChildIdleTimeoutMs: z.number().nonnegative().optional(),
+  // Agent-level launch overrides (aligned with the machine-wide
+  // providerCommands/providerArgs from shared/provider-runtime-commands.ts).
+  // When set they replace the machine-wide value for this agent; unset inherits.
+  runtimeArgs: ProviderRuntimeArgs.optional(),
+  runtimeCommand: ProviderRuntimeCommand.optional(),
+  reasoningEffort: z.string().optional(),
+});
+
+export type AntigravityCliAgentProviderConfig = z.infer<typeof AntigravityCliAgentProviderConfig>;
+
 export const AgentProviderConfig = z.preprocess(
   (value) => {
     const input = isRecord(value) ? value : {};
@@ -398,8 +414,8 @@ export const AgentProviderConfig = z.preprocess(
         : undefined;
     const model = typeof input.model === 'string' ? input.model : defaultModelForProvider(kind);
     const rawEffort = typeof input.reasoningEffort === 'string' ? input.reasoningEffort : undefined;
-    // Keep a persisted effort when it is valid for the selected model. Grok is the
-    // exception: its per-model authority is the live ACP catalog at runtime, so only
+    // Keep a persisted effort when it is valid for the selected model. Grok and
+    // Antigravity are the exception: their per-model authority is the live ACP catalog at runtime, so only
     // the provider's write vocabulary is checked here.
     const keepEffort =
       rawEffort && isSupportedReasoningEffort(kind, rawEffort, model) ? rawEffort : undefined;
@@ -423,6 +439,7 @@ export const AgentProviderConfig = z.preprocess(
     KimiCliAgentProviderConfig,
     OpenCodeCliAgentProviderConfig,
     PiAgentProviderConfig,
+    AntigravityCliAgentProviderConfig,
   ]),
 );
 

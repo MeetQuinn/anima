@@ -75,6 +75,7 @@ test('provider runtimes use catalog commands by default and accept one executabl
     [{ kind: 'grok-cli' as const }, 'grok'],
     [{ kind: 'opencode-cli' as const }, 'opencode'],
     [{ kind: 'pi' as const }, 'pi'],
+    [{ kind: 'antigravity-cli' as const }, 'agy'],
   ] as const;
 
   for (const [config, expected] of cases) {
