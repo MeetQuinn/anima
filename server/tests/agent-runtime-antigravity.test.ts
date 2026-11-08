@@ -252,7 +252,7 @@ test('antigravity-cli catalog probe survives a JSON null line and kills a child 
       ].join('\n'), 'utf8');
       await chmod(agy, 0o755);
 
-      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 5_000 });
+      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 15_000 });
       assert.equal(catalog.defaultModel, 'gemini-3.8-flash');
       const pid = Number(await readFile(pidPath, 'utf8'));
       await waitFor(() => {
@@ -269,43 +269,46 @@ test('antigravity-cli catalog probe survives a JSON null line and kills a child 
   }
 });
 
-test('antigravity-cli catalog probe times out and still kills a child that ignores SIGTERM', async () => {
+test('antigravity-cli catalog probe times out and still kills a child that ignores SIGTERM', async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-timeout-'));
+  let pid: number | undefined;
   try {
     await withAnimaHome(stateDir, async () => {
-      const pidPath = join(stateDir, 'probe.pid');
-      const body = join(stateDir, 'agy-body.js');
+      const readyPath = join(stateDir, 'ready.pid');
       const agy = join(stateDir, 'agy');
-      await writeFile(body, [
+      await writeFile(agy, [
+        '#!/usr/bin/env node',
+        "const fs = require('fs');",
         "process.on('SIGTERM', () => {});",
+        // Written only after SIGTERM is ignored, so this pid can only end by SIGKILL.
+        `fs.writeFileSync(${JSON.stringify(readyPath)}, String(process.pid));`,
         "process.stdin.resume();",
         'setInterval(() => {}, 1000);',
       ].join('\n'), 'utf8');
-      // The shell records the pid before Node starts (exec keeps it), so a slow
-      // Node startup under load cannot outlast the probe timeout unrecorded.
-      await writeFile(agy, [
-        '#!/bin/sh',
-        `echo $$ > ${shellQuote(pidPath)}`,
-        `exec ${shellQuote(process.execPath)} ${shellQuote(body)}`,
-      ].join('\n'), 'utf8');
       await chmod(agy, 0o755);
 
-      await assert.rejects(
-        antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 1_500 }),
-        /model catalog probe timed out/,
+      // The probe deadline starts at spawn, and a fake that starts slowly under load
+      // would lose that race. The test owns the clock and moves it only once the
+      // fake is ignoring SIGTERM. setInterval stays real for the polling below.
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const outcome = antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 1_500 }).then(
+        () => undefined,
+        (error: unknown) => error,
       );
-      await waitFor(() => readFile(pidPath, 'utf8').then(() => true, () => false));
-      const pid = Number(await readFile(pidPath, 'utf8'));
-      await waitFor(() => {
-        try {
-          process.kill(pid, 0);
-          return false;
-        } catch {
-          return true;
-        }
-      });
+      // A reader can see the file before its contents land; pid 0 would mean the process group.
+      const readyPid = () => readFile(readyPath, 'utf8').then((text) => Number(text), () => 0);
+      await pollUntil(async () => (await readyPid()) > 0, 30_000);
+      pid = await readyPid();
+
+      t.mock.timers.tick(1_500);
+      assert.match(String(await outcome), /model catalog probe timed out/);
+      await realDelay(200);
+      assert.equal(processAlive(pid), true, 'the fake ignored SIGTERM and is waiting for the grace period');
+      t.mock.timers.tick(100);
+      await pollUntil(() => !processAlive(pid!), 5_000);
     });
   } finally {
+    if (pid && pid > 0 && processAlive(pid)) process.kill(pid, 'SIGKILL');
     await rm(stateDir, { force: true, recursive: true });
   }
 });
@@ -709,6 +712,29 @@ async function readJsonLines(path: string): Promise<Array<Record<string, unknown
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Real-time waits for tests that mock setTimeout; setInterval is left real.
+function realDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const handle = setInterval(() => {
+      clearInterval(handle);
+      resolve();
+    }, ms);
+  });
+}
+
+async function pollUntil(predicate: () => boolean | Promise<boolean>, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await predicate())) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${predicate.toString()}`);
+    await realDelay(10);
+  }
 }
