@@ -129,7 +129,8 @@ curl -sS -X POST \
   --data '{"emails":["<email>"],"mobiles":["<phone>"],"include_resigned":false}'
 ```
 
-Then invite:
+If Feishu returns no matching user, ask the user to mention the teammate in Feishu and send the
+request again, or for another deterministic identifier. Then invite:
 
 ```
 curl -sS -X POST \

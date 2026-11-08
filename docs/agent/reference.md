@@ -23,8 +23,8 @@ anima env run --keys OPENAI_API_KEY -- some-tool --do-the-thing
 - Pipe a secret in through stdin. The CLI rejects one passed as an argument, which would land in
   shell history and process listings.
 - `anima env list` masks secret values (`••••1234`), which is all you need to confirm a key is set.
-- `anima env source` prints export lines for non-secret values only. Keep it that way: secrets
-  belong inside `anima env run`, never exported into your shell.
+- `anima env source` prints shell export lines and excludes secrets by default. Keep it that way:
+  secrets belong inside `anima env run`, never exported into your shell.
 - `env run` adds only your stored values. Anima's
   managed runtime and provider credentials are not forwarded automatically. Reserved names such as
   `ANIMA_*`, `PATH`, and `NODE_OPTIONS` cannot be set.
@@ -120,12 +120,14 @@ Agent Home, run it once with `anima reminder preflight --command '<command>'`, a
 schedule that exact command with `--preflight`. Exit 0 wakes you; exit 1 skips this run; exit 2 or
 higher, a signal, or a timeout errors: the instructions do not run, the dashboard reports Needs
 attention, and you get one wake saying the check failed when it starts failing (not one per failed
-run). The command is stored and shown in `list`, `show`, and the dashboard, so never inline a
-secret.
+run). `anima reminder preflight` itself exits with the command's own code, 124 on a timeout, and
+128 plus the signal number on a signal. The command is stored and shown in `list`, `show`, and the
+dashboard, so never inline a secret.
 
-To have a reminder bring you back into a Slack conversation, anchor it with `--anchor-channel` and
-`--anchor-message-ts` (add `--anchor-thread-ts` inside a thread). `list` is compact; `show <id>` has
-the full instructions, schedule, anchor, status, and firing count.
+With `--repeat`, `--in` or `--fire-at` sets the first firing. To have a reminder bring you back
+into a Slack conversation, anchor it with `--anchor-channel` and `--anchor-message-ts` (add
+`--anchor-thread-ts` inside a thread). `list` is compact; `show <id>` has the full instructions,
+schedule, anchor, status, and firing count.
 
 When a reminder wakes you, its envelope carries `time=` (when it reached you) and `scheduled=` (when
 it was meant to fire); a recurring one also carries `repeat=` and `next=`. A gap between `time=`
