@@ -80,6 +80,14 @@ Generated service definitions carry an explicit Anima home and PATH because OS s
 load an interactive shell profile. The PATH includes normal system, Homebrew, and supported local
 provider locations; it does not copy temporary turn-specific environment values.
 
+The definitions launch the Node that ran the install. A Homebrew Node is recorded through its
+unversioned `opt` link, such as `/opt/homebrew/opt/node/bin/node`, so a Homebrew upgrade or cleanup
+does not leave the definition pointing at a deleted version. If the recorded Node is missing anyway,
+the next restart, or a start of a stopped service, rewrites the definition with the Node running that
+command; a running service is left as it is until then. A start or restart fails when a service does
+not keep running for two seconds after it starts, so a runtime upgrade reports the failure and rolls
+back instead of reporting success.
+
 Remove the OS definitions without deleting the Anima home:
 
 ```bash

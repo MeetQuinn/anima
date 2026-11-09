@@ -639,8 +639,8 @@ async function runManagedServicesRestart(
       else resolveDone(exitCode ?? 1);
     });
   });
-  if (code !== 0) throw new Error(`services restart exited with code ${code}`);
   try {
+    if (code !== 0) throw new Error(`services restart exited with code ${code}`);
     return await readServicesRestartSummary(resultPath);
   } finally {
     await rm(resultPath, { force: true }).catch(() => undefined);
