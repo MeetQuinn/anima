@@ -183,11 +183,13 @@ async function runRestart(opts: ServicesCliOptions): Promise<void> {
     const failures = await startEachService(specs, supervisor);
     await printStatus(specs);
     printDashboardHint(specs);
+    // The receipt and the resumed line report a successful restart, so a
+    // restart that left a service down writes neither and fails instead.
+    throwStartFailures(failures);
     await writeRestartResult(gate.result);
     if (gate.drainResult?.resumedCount) {
       console.log(`restart: ${gate.drainResult.resumedCount} agent item(s) resumed after restart`);
     }
-    throwStartFailures(failures);
   } catch (error) {
     if (error instanceof RestartBlockedError) {
       await writeRestartResult(blockedServicesRestartResult(error));

@@ -303,7 +303,8 @@ test('systemd start/install/stop plans distinguish loaded from running', () => {
     'start',
   ]);
 
-  assert.deepEqual(systemdInstallActions(), ['daemon-reload', 'enable', 'restart']);
+  assert.deepEqual(systemdInstallActions({ failed: false }), ['daemon-reload', 'enable', 'restart']);
+  assert.deepEqual(systemdInstallActions({ failed: true }), ['daemon-reload', 'enable', 'reset-failed', 'restart']);
 
   assert.deepEqual(systemdStopActions({ loaded: true }), ['stop']);
   assert.deepEqual(systemdStopActions({ loaded: false }), []);
@@ -1142,7 +1143,7 @@ test(
 );
 
 test(
-  'services start fails when a service exits right after launchd starts it, and still starts the others',
+  'services start and restart fail when a service exits right after launchd starts it, and still start the others',
   { skip: process.platform !== 'darwin' ? 'launchd is macOS only' : false },
   async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'anima-launchd-crash-'));
@@ -1161,6 +1162,51 @@ test(
       assert.equal((await fake.actions()).filter((action) => action.startsWith('kickstart')).length, 2);
       assert.match(started.stdout, /web: started launchd ai\.meetquinn\.anima\.web pid 4242/);
       assert.match(started.stdout, /^agent \| stopped \| launchd/m);
+
+      // A restart that brings web back but leaves the agent down fails, and
+      // leaves no succeeded receipt for the dashboard's restart echo.
+      const resultPath = join(fake.home, '.anima', 'run', 'services-restart-result.json');
+      const restarted = await runAnimactlWith(['services', 'restart'], {
+        ...fake.env,
+        ANIMA_RESTART_RESULT_FILE: resultPath,
+      });
+      assert.notEqual(restarted.status, 0, restarted.stdout);
+      assert.match(restarted.stderr, /agent: launchd ai\.meetquinn\.anima\.agent exited right after start/);
+      assert.match(restarted.stderr, /services failed to start/);
+      assert.match(restarted.stdout, /web: stopped launchd/);
+      assert.match(restarted.stdout, /web: started launchd ai\.meetquinn\.anima\.web pid 4242/);
+      assert.equal(await stat(resultPath).then(() => true, () => false), false);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  },
+);
+
+test(
+  'systemd start rewrites a unit whose Node is gone and clears a failed start limit first',
+  { skip: process.platform !== 'linux' ? 'systemd is Linux only' : false },
+  async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'anima-systemd-stale-node-'));
+    try {
+      const fake = await writeFakeServiceManager(tempDir, 'systemctl', { systemdFailed: true });
+      const unitDir = join(fake.home, '.config', 'systemd', 'user');
+      const unitPath = join(unitDir, 'ai.meetquinn.anima.agent.service');
+      await mkdir(unitDir, { recursive: true });
+      const staleNode = join(tempDir, 'Cellar', 'node', '25.8.2', 'bin', 'node');
+      await writeFile(unitPath, `[Service]\nExecStart="${staleNode}" "/old/animactl.js" "server"\n`);
+
+      // The unit kept failing on the missing Node until systemd's start limit
+      // stopped it; restart is refused until reset-failed clears that.
+      const started = await runAnimactlWith(['services', 'start', '--only', 'agent'], fake.env);
+      assert.equal(started.status, 0, started.stderr || started.stdout);
+      assert.match(started.stdout, /systemd unit launches missing Node .*; reinstalling/);
+      assert.deepEqual(await fake.actions(), [
+        'daemon-reload rotated=yes',
+        'enable rotated=yes',
+        'reset-failed rotated=yes',
+        'restart rotated=yes',
+      ]);
+      assert.equal(systemdUnitNodePath(await readFile(unitPath, 'utf8')), serviceNodePath(process.execPath));
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }

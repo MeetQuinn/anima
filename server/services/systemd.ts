@@ -51,7 +51,7 @@ export async function installSystemdService(spec: ServiceSpec, options: Supervis
   await mkdir(serviceLogDir(spec), { recursive: true });
   await writeFile(unitPath, buildSystemdUnit(spec, options), 'utf8');
 
-  for (const action of systemdInstallActions()) {
+  for (const action of systemdInstallActions(await systemdServiceStatus(spec))) {
     const invocation = systemdActionInvocation(action, spec);
     await systemctl(invocation.args, invocation.options);
   }
@@ -162,8 +162,10 @@ export async function systemdServiceStatus(spec: ServiceSpec): Promise<SystemdSt
 
 type SystemdAction = 'daemon-reload' | 'disable' | 'enable' | 'reset-failed' | 'restart' | 'start' | 'stop';
 
-export function systemdInstallActions(): SystemdAction[] {
-  return ['daemon-reload', 'enable', 'restart'];
+export function systemdInstallActions(status: Pick<SystemdStatus, 'failed'>): SystemdAction[] {
+  // A failed unit may have hit its start limit, which a daemon-reload keeps;
+  // `restart` is refused until reset-failed clears it, as in a start.
+  return status.failed ? ['daemon-reload', 'enable', 'reset-failed', 'restart'] : ['daemon-reload', 'enable', 'restart'];
 }
 
 export function systemdStartActions(

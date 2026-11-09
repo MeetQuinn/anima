@@ -24,11 +24,14 @@ export interface FakeServiceManager {
  * running. A label in `crashLabels` reports its pid once after a start and is
  * gone on the next check, like a program that fails to exec or exits during
  * boot.
+ *
+ * With `systemdFailed`, systemctl reports the unit failed at its start limit:
+ * start and restart are refused until reset-failed runs.
  */
 export async function writeFakeServiceManager(
   tempDir: string,
   command: 'launchctl' | 'systemctl',
-  options: { crashLabels?: string[]; runningLabels?: string[] } = {},
+  options: { crashLabels?: string[]; runningLabels?: string[]; systemdFailed?: boolean } = {},
 ): Promise<FakeServiceManager> {
   const home = join(tempDir, 'home');
   const configDir = join(home, '.anima');
@@ -47,6 +50,8 @@ export async function writeFakeServiceManager(
   await mkdir(stateDir, { recursive: true });
   for (const label of options.crashLabels ?? []) await writeFile(join(stateDir, `${label}.crash`), '');
   for (const label of options.runningLabels ?? []) await writeFile(join(stateDir, `${label}.running`), '');
+  const failedPath = join(stateDir, 'failed');
+  if (options.systemdFailed) await writeFile(failedPath, '');
   const status = command === 'launchctl'
     ? [
         'if [ "$1" = print ]; then',
@@ -60,14 +65,18 @@ export async function writeFakeServiceManager(
         'fi',
         'action="$1"',
         `if [ "$action" = kickstart ]; then : > '${stateDir}'/"\${2##*/}".running; fi`,
+        `if [ "$action" = bootout ]; then rm -f '${stateDir}'/"\${2##*/}".running; fi`,
       ]
     : [
         'if [ "$2" = show ]; then',
         `  if [ -e '${runningPath}' ]; then printf 'LoadState=loaded\\nActiveState=active\\nMainPID=4242\\nUnitFileState=enabled\\n'; exit 0; fi`,
-        "  printf 'LoadState=loaded\\nActiveState=inactive\\nMainPID=0\\nUnitFileState=enabled\\n'",
+        `  if [ -e '${failedPath}' ]; then state=failed; else state=inactive; fi`,
+        "  printf 'LoadState=loaded\\nActiveState=%s\\nMainPID=0\\nUnitFileState=enabled\\n' \"$state\"",
         '  exit 0',
         'fi',
         'action="$2"',
+        `if [ "$action" = reset-failed ]; then rm -f '${failedPath}'; fi`,
+        `case "$action" in start|restart) if [ -e '${failedPath}' ]; then echo "$action refused" >> '${callsPath}'; echo 'Start request repeated too quickly.' >&2; exit 1; fi ;; esac`,
       ];
   await writeFile(join(binDir, command), [
     '#!/bin/sh',
