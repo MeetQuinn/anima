@@ -11,6 +11,7 @@ import {
   buildLaunchdPlist,
   launchdInstallActions,
   launchdLabel,
+  launchdPlistNodePath,
   launchdStartActions,
   launchdStopActions,
   parseLaunchdRuntime,
@@ -24,7 +25,9 @@ import {
   systemdStartActions,
   systemdStopActions,
   systemdUninstallActions,
+  systemdUnitNodePath,
 } from '../services/systemd.js';
+import { missingDefinitionNode, serviceNodePath } from '../services/service-start.js';
 import { buildServiceEnvironment, buildServicePath, cleanServiceEnv } from '../services/env.js';
 import {
   servicesRestartDetachedFallbackPlan,
@@ -146,6 +149,68 @@ test('launchd plist pins service command, environment, logs, and keepalive', () 
   assert.match(plist, /<key>KeepAlive<\/key><true\/>/);
 });
 
+test('service definitions launch Homebrew Node through its unversioned opt link', () => {
+  const files = new Map<string, string>([
+    ['/opt/homebrew/Cellar/node/26.5.0/bin/node', '/opt/homebrew/Cellar/node/26.5.0/bin/node'],
+    ['/opt/homebrew/opt/node/bin/node', '/opt/homebrew/Cellar/node/26.5.0/bin/node'],
+    ['/opt/homebrew/Cellar/node@22/22.20.0/bin/node', '/opt/homebrew/Cellar/node@22/22.20.0/bin/node'],
+    ['/opt/homebrew/opt/node@22/bin/node', '/opt/homebrew/Cellar/node@22/22.20.0/bin/node'],
+    ['/Users/test/.nvm/versions/node/v24.18.0/bin/node', '/Users/test/.nvm/versions/node/v24.18.0/bin/node'],
+  ]);
+  const fs = {
+    exists: (path: string) => files.has(path),
+    realpath: (path: string) => {
+      const target = files.get(path);
+      if (!target) throw new Error(`ENOENT ${path}`);
+      return target;
+    },
+  };
+
+  assert.equal(serviceNodePath('/opt/homebrew/Cellar/node/26.5.0/bin/node', fs), '/opt/homebrew/opt/node/bin/node');
+  assert.equal(serviceNodePath('/opt/homebrew/Cellar/node@22/22.20.0/bin/node', fs), '/opt/homebrew/opt/node@22/bin/node');
+  // The keg this process runs from is gone (Homebrew cleanup): the formula's current Node is what is left.
+  assert.equal(serviceNodePath('/opt/homebrew/Cellar/node/25.8.2/bin/node', fs), '/opt/homebrew/opt/node/bin/node');
+  // An older keg that still exists stays as is: the opt link would launch a different Node.
+  files.set('/opt/homebrew/Cellar/node/25.8.2/bin/node', '/opt/homebrew/Cellar/node/25.8.2/bin/node');
+  assert.equal(serviceNodePath('/opt/homebrew/Cellar/node/25.8.2/bin/node', fs), '/opt/homebrew/Cellar/node/25.8.2/bin/node');
+  assert.equal(
+    serviceNodePath('/Users/test/.nvm/versions/node/v24.18.0/bin/node', fs),
+    '/Users/test/.nvm/versions/node/v24.18.0/bin/node',
+  );
+  assert.equal(serviceNodePath('/usr/local/bin/node', fs), '/usr/local/bin/node');
+  files.delete('/opt/homebrew/opt/node@22/bin/node');
+  assert.equal(serviceNodePath('/opt/homebrew/Cellar/node@22/22.20.0/bin/node', fs), '/opt/homebrew/Cellar/node@22/22.20.0/bin/node');
+});
+
+test('a service definition counts as stale only when its absolute Node path is gone', () => {
+  const exists = (path: string) => path === '/opt/homebrew/opt/node/bin/node';
+  assert.equal(missingDefinitionNode('/opt/homebrew/Cellar/node/25.8.2/bin/node', { exists }), '/opt/homebrew/Cellar/node/25.8.2/bin/node');
+  assert.equal(missingDefinitionNode('/opt/homebrew/opt/node/bin/node', { exists }), undefined);
+  assert.equal(missingDefinitionNode('node', { exists }), undefined);
+  assert.equal(missingDefinitionNode(undefined, { exists }), undefined);
+});
+
+test('launchd and systemd definitions read back the Node they launch', () => {
+  const spec = {
+    animaHome: join(homedir(), '.anima'),
+    args: ['server'],
+    id: 'agent',
+    logName: 'agent.log',
+    matchAny: [' server'],
+  };
+  const options = { animactl: '/srv/anima/dist/server/cli/animactl.js', cwd: '/srv/anima' };
+  assert.equal(launchdPlistNodePath(buildLaunchdPlist(spec, options)), serviceNodePath());
+  assert.equal(systemdUnitNodePath(buildSystemdUnit(spec, options)), serviceNodePath());
+
+  assert.equal(
+    launchdPlistNodePath('<key>ProgramArguments</key>\n<array>\n<string>/opt/a&amp;b/bin/node</string>\n</array>'),
+    '/opt/a&b/bin/node',
+  );
+  assert.equal(launchdPlistNodePath('<plist/>\n'), undefined);
+  assert.equal(systemdUnitNodePath('[Service]\nExecStart="/opt/a \\"b\\"/100%%/bin/node" "x.js"\n'), '/opt/a "b"/100%/bin/node');
+  assert.equal(systemdUnitNodePath('[Service]\nType=simple\n'), undefined);
+});
+
 test('launchd start/install/stop plans distinguish loaded from running', () => {
   assert.deepEqual(launchdStartActions({ loaded: true, running: true }), []);
   assert.deepEqual(launchdStartActions({ loaded: true, running: false }), ['kickstart']);
@@ -238,7 +303,8 @@ test('systemd start/install/stop plans distinguish loaded from running', () => {
     'start',
   ]);
 
-  assert.deepEqual(systemdInstallActions(), ['daemon-reload', 'enable', 'restart']);
+  assert.deepEqual(systemdInstallActions({ failed: false }), ['daemon-reload', 'enable', 'restart']);
+  assert.deepEqual(systemdInstallActions({ failed: true }), ['daemon-reload', 'enable', 'reset-failed', 'restart']);
 
   assert.deepEqual(systemdStopActions({ loaded: true }), ['stop']);
   assert.deepEqual(systemdStopActions({ loaded: false }), []);
@@ -1006,6 +1072,141 @@ test(
       assert.deepEqual(await fake.actions(), []);
       assert.equal((await stat(fake.logPath)).size, FULL_SERVICE_LOG_BYTES);
       await assert.rejects(stat(`${fake.logPath}.2`), /ENOENT/);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  },
+);
+
+test(
+  'launchd start reinstalls a plist whose Node binary no longer exists',
+  { skip: process.platform !== 'darwin' ? 'launchd is macOS only' : false },
+  async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'anima-launchd-stale-node-'));
+    try {
+      const fake = await writeFakeServiceManager(tempDir, 'launchctl');
+      const plistPath = join(fake.home, 'Library', 'LaunchAgents', 'ai.meetquinn.anima.agent.plist');
+      await mkdir(join(fake.home, 'Library', 'LaunchAgents'), { recursive: true });
+      const staleNode = join(tempDir, 'Cellar', 'node', '25.8.2', 'bin', 'node');
+      await writeFile(plistPath, [
+        '<plist version="1.0">',
+        '<dict>',
+        '<key>ProgramArguments</key>',
+        '<array>',
+        `<string>${staleNode}</string>`,
+        '<string>/old/animactl.js</string>',
+        '<string>server</string>',
+        '</array>',
+        '</dict>',
+        '</plist>',
+        '',
+      ].join('\n'));
+
+      const started = await runAnimactlWith(['services', 'start', '--only', 'agent'], fake.env);
+      assert.equal(started.status, 0, started.stderr || started.stdout);
+      assert.match(started.stdout, new RegExp(`launches missing Node ${staleNode.replaceAll('/', '\\/')}; reinstalling`));
+      assert.deepEqual(await fake.actions(), ['bootstrap rotated=yes', 'kickstart rotated=yes']);
+      const rewritten = await readFile(plistPath, 'utf8');
+      assert.equal(launchdPlistNodePath(rewritten), serviceNodePath(process.execPath));
+      assert.doesNotMatch(rewritten, /25\.8\.2/);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  },
+);
+
+test(
+  'launchd start leaves a running service alone when its plist Node is gone',
+  { skip: process.platform !== 'darwin' ? 'launchd is macOS only' : false },
+  async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'anima-launchd-stale-running-'));
+    try {
+      const fake = await writeFakeServiceManager(tempDir, 'launchctl', { runningLabels: ['ai.meetquinn.anima.agent'] });
+      const plistPath = join(fake.home, 'Library', 'LaunchAgents', 'ai.meetquinn.anima.agent.plist');
+      await mkdir(join(fake.home, 'Library', 'LaunchAgents'), { recursive: true });
+      const staleNode = join(tempDir, 'Cellar', 'node', '25.8.2', 'bin', 'node');
+      const plist = `<plist version="1.0">\n<dict>\n<key>ProgramArguments</key>\n<array>\n<string>${staleNode}</string>\n</array>\n</dict>\n</plist>\n`;
+      await writeFile(plistPath, plist);
+
+      // Reinstalling would boot out the running agent without a drain; the
+      // next restart stops it first and rewrites the plist then.
+      const started = await runAnimactlWith(['services', 'start', '--only', 'agent'], fake.env);
+      assert.equal(started.status, 0, started.stderr || started.stdout);
+      assert.match(started.stdout, /agent: already running launchd/);
+      assert.match(started.stdout, /launches missing Node .*; the next restart rewrites it/);
+      assert.deepEqual(await fake.actions(), []);
+      assert.equal(await readFile(plistPath, 'utf8'), plist);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  },
+);
+
+test(
+  'services start and restart fail when a service exits right after launchd starts it, and still start the others',
+  { skip: process.platform !== 'darwin' ? 'launchd is macOS only' : false },
+  async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'anima-launchd-crash-'));
+    try {
+      const fake = await writeFakeServiceManager(tempDir, 'launchctl', { crashLabels: ['ai.meetquinn.anima.agent'] });
+      await mkdir(join(fake.home, 'Library', 'LaunchAgents'), { recursive: true });
+      // Never loadable plists: the fake launchctl must be the only one that sees them.
+      await writeFile(join(fake.home, 'Library', 'LaunchAgents', 'ai.meetquinn.anima.agent.plist'), '<plist/>\n');
+      await writeFile(join(fake.home, 'Library', 'LaunchAgents', 'ai.meetquinn.anima.web.plist'), '<plist/>\n');
+
+      const started = await runAnimactlWith(['services', 'start'], fake.env);
+      assert.notEqual(started.status, 0, started.stdout);
+      assert.match(started.stderr, /agent: launchd ai\.meetquinn\.anima\.agent exited right after start \(started as pid 4242, now stopped\)/);
+      assert.match(started.stderr, /services failed to start/);
+      // The web service still started, so the dashboard stays reachable.
+      assert.equal((await fake.actions()).filter((action) => action.startsWith('kickstart')).length, 2);
+      assert.match(started.stdout, /web: started launchd ai\.meetquinn\.anima\.web pid 4242/);
+      assert.match(started.stdout, /^agent \| stopped \| launchd/m);
+
+      // A restart that brings web back but leaves the agent down fails, and
+      // leaves no succeeded receipt for the dashboard's restart echo.
+      const resultPath = join(fake.home, '.anima', 'run', 'services-restart-result.json');
+      const restarted = await runAnimactlWith(['services', 'restart'], {
+        ...fake.env,
+        ANIMA_RESTART_RESULT_FILE: resultPath,
+      });
+      assert.notEqual(restarted.status, 0, restarted.stdout);
+      assert.match(restarted.stderr, /agent: launchd ai\.meetquinn\.anima\.agent exited right after start/);
+      assert.match(restarted.stderr, /services failed to start/);
+      assert.match(restarted.stdout, /web: stopped launchd/);
+      assert.match(restarted.stdout, /web: started launchd ai\.meetquinn\.anima\.web pid 4242/);
+      assert.equal(await stat(resultPath).then(() => true, () => false), false);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  },
+);
+
+test(
+  'systemd start rewrites a unit whose Node is gone and clears a failed start limit first',
+  { skip: process.platform !== 'linux' ? 'systemd is Linux only' : false },
+  async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'anima-systemd-stale-node-'));
+    try {
+      const fake = await writeFakeServiceManager(tempDir, 'systemctl', { systemdFailed: true });
+      const unitDir = join(fake.home, '.config', 'systemd', 'user');
+      const unitPath = join(unitDir, 'ai.meetquinn.anima.agent.service');
+      await mkdir(unitDir, { recursive: true });
+      const staleNode = join(tempDir, 'Cellar', 'node', '25.8.2', 'bin', 'node');
+      await writeFile(unitPath, `[Service]\nExecStart="${staleNode}" "/old/animactl.js" "server"\n`);
+
+      // The unit kept failing on the missing Node until systemd's start limit
+      // stopped it; restart is refused until reset-failed clears that.
+      const started = await runAnimactlWith(['services', 'start', '--only', 'agent'], fake.env);
+      assert.equal(started.status, 0, started.stderr || started.stdout);
+      assert.match(started.stdout, /systemd unit launches missing Node .*; reinstalling/);
+      assert.deepEqual(await fake.actions(), [
+        'daemon-reload rotated=yes',
+        'enable rotated=yes',
+        'reset-failed rotated=yes',
+        'restart rotated=yes',
+      ]);
+      assert.equal(systemdUnitNodePath(await readFile(unitPath, 'utf8')), serviceNodePath(process.execPath));
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }

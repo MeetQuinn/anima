@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { buildServiceEnvironment } from './env.js';
 import { rotateServiceLogIfNeeded, serviceLogDir, serviceLogPath } from './service-log.js';
+import { confirmServiceStayedUp, missingDefinitionNode, serviceNodePath } from './service-start.js';
 import type { ServiceSpec, SupervisorOptions } from './supervisor.js';
 
 export interface SystemdStatus {
@@ -43,20 +44,21 @@ export async function systemdServiceInstalled(spec: ServiceSpec): Promise<boolea
   }
 }
 
-export async function installSystemdService(spec: ServiceSpec, options: SupervisorOptions): Promise<void> {
+export async function installSystemdService(spec: ServiceSpec, options: SupervisorOptions): Promise<SystemdStatus> {
   assertSystemdSupported();
   const unitPath = systemdUnitPath(spec);
   await mkdir(dirname(unitPath), { recursive: true });
   await mkdir(serviceLogDir(spec), { recursive: true });
   await writeFile(unitPath, buildSystemdUnit(spec, options), 'utf8');
 
-  for (const action of systemdInstallActions()) {
+  for (const action of systemdInstallActions(await systemdServiceStatus(spec))) {
     const invocation = systemdActionInvocation(action, spec);
     await systemctl(invocation.args, invocation.options);
   }
   const next = await waitForSystemdRunning(spec);
   const pidPart = next.pid !== undefined ? ` pid ${next.pid}` : '';
   console.log(`${spec.id}: installed systemd ${systemdServiceName(spec)}${pidPart} unit ${unitPath}`);
+  return next;
 }
 
 export async function uninstallSystemdService(spec: ServiceSpec): Promise<void> {
@@ -76,18 +78,34 @@ export async function uninstallSystemdService(spec: ServiceSpec): Promise<void> 
   }
 }
 
-export async function startSystemdService(spec: ServiceSpec): Promise<SystemdStatus> {
+export async function startSystemdService(spec: ServiceSpec, options: SupervisorOptions): Promise<SystemdStatus> {
   assertSystemdSupported();
   if (!(await systemdServiceInstalled(spec))) {
     throw new Error(`${spec.id}: systemd service is not installed. Run \`animactl services install${spec.id === 'web' ? ' --only web' : spec.id === 'agent' ? ' --only agent' : ''}\` first.`);
   }
 
+  const staleNode = missingDefinitionNode(systemdUnitNodePath(await readFile(systemdUnitPath(spec), 'utf8').catch(() => '')));
   const status = await systemdServiceStatus(spec);
   const actions = systemdStartActions(status);
   if (actions.length === 0) {
     const pidPart = status.pid !== undefined ? ` pid ${status.pid}` : '';
     console.log(`${spec.id}: already running systemd ${systemdServiceName(spec)}${pidPart}`);
+    if (staleNode) console.log(`${spec.id}: its unit launches missing Node ${staleNode}; the next restart rewrites it`);
     return status;
+  }
+
+  // A unit that launches a Node binary which no longer exists can never
+  // start. Rewrite it with this
+  // process's Node, as `animactl services install` would. A running
+  // service is left alone above: reinstalling it would stop it undrained.
+  if (staleNode) {
+    const nodePath = serviceNodePath();
+    if (missingDefinitionNode(nodePath)) {
+      throw new Error(`${spec.id}: systemd unit launches missing Node ${staleNode}, and this process's Node ${nodePath} is missing too. Run \`animactl services install\` with a working Node.`);
+    }
+    console.log(`${spec.id}: systemd unit launches missing Node ${staleNode}; reinstalling it with ${nodePath}`);
+    await rotateServiceLogIfNeeded(serviceLogPath(spec));
+    return installSystemdService(spec, options);
   }
   // systemd opens the append: output file when it starts the unit, so a
   // rotation here hands the new process a fresh log, as detached starts do.
@@ -144,8 +162,10 @@ export async function systemdServiceStatus(spec: ServiceSpec): Promise<SystemdSt
 
 type SystemdAction = 'daemon-reload' | 'disable' | 'enable' | 'reset-failed' | 'restart' | 'start' | 'stop';
 
-export function systemdInstallActions(): SystemdAction[] {
-  return ['daemon-reload', 'enable', 'restart'];
+export function systemdInstallActions(status: Pick<SystemdStatus, 'failed'>): SystemdAction[] {
+  // A failed unit may have hit its start limit, which a daemon-reload keeps;
+  // `restart` is refused until reset-failed clears it, as in a start.
+  return status.failed ? ['daemon-reload', 'enable', 'reset-failed', 'restart'] : ['daemon-reload', 'enable', 'restart'];
 }
 
 export function systemdStartActions(
@@ -180,13 +200,14 @@ export function systemdActionInvocation(
 }
 
 export function buildSystemdUnit(spec: ServiceSpec, options: SupervisorOptions): string {
+  const nodePath = serviceNodePath();
   const env = buildServiceEnvironment({
     animaHome: spec.animaHome,
-    nodePath: process.execPath,
+    nodePath,
     platform: 'linux',
   });
   const execStart = [
-    process.execPath,
+    nodePath,
     options.animactl,
     ...spec.args,
   ];
@@ -210,6 +231,13 @@ export function buildSystemdUnit(spec: ServiceSpec, options: SupervisorOptions):
     'WantedBy=default.target',
     '',
   ].join('\n');
+}
+
+/** The program a unit launches: the first ExecStart word, as buildSystemdUnit quotes it. */
+export function systemdUnitNodePath(unit: string): string | undefined {
+  const match = /^ExecStart="((?:[^"\\]|\\.)*)"/m.exec(unit);
+  if (!match?.[1]) return undefined;
+  return match[1].replace(/\\(.)/g, '$1').replaceAll('%%', '%');
 }
 
 export function systemdServiceName(spec: ServiceSpec): string {
@@ -271,7 +299,12 @@ async function waitForSystemdRunning(spec: ServiceSpec): Promise<SystemdStatus> 
     await sleep(100);
     last = await systemdServiceStatus(spec);
   }
-  return last;
+  return confirmServiceStayedUp({
+    describe: `${spec.id}: systemd ${systemdServiceName(spec)}`,
+    logPath: serviceLogPath(spec),
+    read: () => systemdServiceStatus(spec),
+    started: last,
+  });
 }
 
 async function waitForSystemdStopped(spec: ServiceSpec): Promise<void> {

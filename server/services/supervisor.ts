@@ -54,7 +54,7 @@ export interface SupervisorOptions {
 
 export async function startService(spec: ServiceSpec, options: SupervisorOptions): Promise<ServiceStatusEntry> {
   if (await launchdServiceInstalled(spec)) {
-    const status = await startLaunchdService(spec);
+    const status = await startLaunchdService(spec, options);
     return statusEntry(spec, {
       manager: 'launchd',
       pid: status.pid,
@@ -62,7 +62,7 @@ export async function startService(spec: ServiceSpec, options: SupervisorOptions
     });
   }
   if (await systemdServiceInstalled(spec)) {
-    const status = await startSystemdService(spec);
+    const status = await startSystemdService(spec, options);
     return statusEntry(spec, {
       manager: 'systemd',
       pid: status.pid,

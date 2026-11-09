@@ -19,10 +19,19 @@ export interface FakeServiceManager {
  * until a start action runs, then running. Each start action records whether
  * `agent.log.1` existed at that moment, which shows the rotation ran before
  * the manager would open the log.
+ *
+ * launchctl tracks each label separately. A label in `runningLabels` starts out
+ * running. A label in `crashLabels` reports its pid once after a start and is
+ * gone on the next check, like a program that fails to exec or exits during
+ * boot.
+ *
+ * With `systemdFailed`, systemctl reports the unit failed at its start limit:
+ * start and restart are refused until reset-failed runs.
  */
 export async function writeFakeServiceManager(
   tempDir: string,
   command: 'launchctl' | 'systemctl',
+  options: { crashLabels?: string[]; runningLabels?: string[]; systemdFailed?: boolean } = {},
 ): Promise<FakeServiceManager> {
   const home = join(tempDir, 'home');
   const configDir = join(home, '.anima');
@@ -37,28 +46,44 @@ export async function writeFakeServiceManager(
   await mkdir(binDir, { recursive: true });
   const callsPath = join(tempDir, `${command}-calls`);
   const runningPath = join(tempDir, `${command}-running`);
+  const stateDir = join(tempDir, `${command}-state`);
+  await mkdir(stateDir, { recursive: true });
+  for (const label of options.crashLabels ?? []) await writeFile(join(stateDir, `${label}.crash`), '');
+  for (const label of options.runningLabels ?? []) await writeFile(join(stateDir, `${label}.running`), '');
+  const failedPath = join(stateDir, 'failed');
+  if (options.systemdFailed) await writeFile(failedPath, '');
   const status = command === 'launchctl'
     ? [
         'if [ "$1" = print ]; then',
-        `  if [ -e '${runningPath}' ]; then printf 'state = running\\n\\tpid = 4242\\n'; exit 0; fi`,
+        '  label="${2##*/}"',
+        `  if [ -e '${stateDir}'/"$label".running ]; then`,
+        `    if [ -e '${stateDir}'/"$label".crash ]; then rm -f '${stateDir}'/"$label".running; fi`,
+        "    printf 'state = running\\n\\tpid = 4242\\n'",
+        '    exit 0',
+        '  fi',
         '  exit 113',
         'fi',
         'action="$1"',
+        `if [ "$action" = kickstart ]; then : > '${stateDir}'/"\${2##*/}".running; fi`,
+        `if [ "$action" = bootout ]; then rm -f '${stateDir}'/"\${2##*/}".running; fi`,
       ]
     : [
         'if [ "$2" = show ]; then',
         `  if [ -e '${runningPath}' ]; then printf 'LoadState=loaded\\nActiveState=active\\nMainPID=4242\\nUnitFileState=enabled\\n'; exit 0; fi`,
-        "  printf 'LoadState=loaded\\nActiveState=inactive\\nMainPID=0\\nUnitFileState=enabled\\n'",
+        `  if [ -e '${failedPath}' ]; then state=failed; else state=inactive; fi`,
+        "  printf 'LoadState=loaded\\nActiveState=%s\\nMainPID=0\\nUnitFileState=enabled\\n' \"$state\"",
         '  exit 0',
         'fi',
         'action="$2"',
+        `if [ "$action" = reset-failed ]; then rm -f '${failedPath}'; fi`,
+        `case "$action" in start|restart) if [ -e '${failedPath}' ]; then echo "$action refused" >> '${callsPath}'; echo 'Start request repeated too quickly.' >&2; exit 1; fi ;; esac`,
       ];
   await writeFile(join(binDir, command), [
     '#!/bin/sh',
     ...status,
     `if [ -e '${logPath}.1' ]; then rotated=yes; else rotated=no; fi`,
     `echo "$action rotated=$rotated" >> '${callsPath}'`,
-    `case "$action" in kickstart|start|restart) : > '${runningPath}' ;; esac`,
+    ...(command === 'systemctl' ? [`case "$action" in start|restart) : > '${runningPath}' ;; esac`] : []),
     'exit 0',
     '',
   ].join('\n'), { mode: 0o755 });

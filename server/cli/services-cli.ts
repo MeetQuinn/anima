@@ -41,6 +41,7 @@ import {
   type ServiceSpec,
   type SupervisorOptions,
 } from '../services/supervisor.js';
+import { errorMessage } from '../ids.js';
 import type { GlobalCliOptions } from './shared.js';
 
 const DEFAULT_DASHBOARD_PORT = 4174;
@@ -154,9 +155,10 @@ async function runUninstall(opts: ServicesCliOptions): Promise<void> {
 
 async function runStart(opts: ServicesCliOptions): Promise<void> {
   const { specs, supervisor } = await resolveServices(opts);
-  for (const spec of specs) await startService(spec, supervisor);
+  const failures = await startEachService(specs, supervisor);
   await printStatus(specs);
   printDashboardHint(specs);
+  throwStartFailures(failures);
 }
 
 async function runStop(opts: ServicesCliOptions): Promise<void> {
@@ -178,9 +180,12 @@ async function runRestart(opts: ServicesCliOptions): Promise<void> {
     stopped = true;
     await refreshRestartGateResult(gate);
     await gate.beforeStart();
-    for (const spec of specs) await startService(spec, supervisor);
+    const failures = await startEachService(specs, supervisor);
     await printStatus(specs);
     printDashboardHint(specs);
+    // The receipt and the resumed line report a successful restart, so a
+    // restart that left a service down writes neither and fails instead.
+    throwStartFailures(failures);
     await writeRestartResult(gate.result);
     if (gate.drainResult?.resumedCount) {
       console.log(`restart: ${gate.drainResult.resumedCount} agent item(s) resumed after restart`);
@@ -193,6 +198,27 @@ async function runRestart(opts: ServicesCliOptions): Promise<void> {
   } finally {
     if (!stopped) await gate?.cleanup();
   }
+}
+
+// Start every service even when one fails, so a broken agent service does not
+// also leave the dashboard down, then fail the command with every error.
+async function startEachService(specs: ServiceSpec[], supervisor: SupervisorOptions): Promise<string[]> {
+  const failures: string[] = [];
+  for (const spec of specs) {
+    try {
+      await startService(spec, supervisor);
+    } catch (error) {
+      const message = errorMessage(error);
+      console.error(message);
+      failures.push(message);
+    }
+  }
+  return failures;
+}
+
+function throwStartFailures(failures: string[]): void {
+  if (failures.length === 0) return;
+  throw new Error(`services failed to start: ${failures.join('; ')}`);
 }
 
 async function runStatus(opts: ServicesCliOptions): Promise<void> {

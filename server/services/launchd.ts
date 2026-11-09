@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { buildServiceEnvironment } from './env.js';
 import { rotateServiceLogIfNeeded, serviceLogDir, serviceLogPath } from './service-log.js';
+import { confirmServiceStayedUp, missingDefinitionNode, serviceNodePath } from './service-start.js';
 import type { ServiceSpec, SupervisorOptions } from './supervisor.js';
 
 export interface LaunchdStatus {
@@ -32,7 +33,7 @@ export async function launchdServiceInstalled(spec: ServiceSpec): Promise<boolea
   }
 }
 
-export async function installLaunchdService(spec: ServiceSpec, options: SupervisorOptions): Promise<void> {
+export async function installLaunchdService(spec: ServiceSpec, options: SupervisorOptions): Promise<LaunchdStatus> {
   assertLaunchdSupported();
   const plistPath = launchdPlistPath(spec);
   await mkdir(dirname(plistPath), { recursive: true });
@@ -48,6 +49,7 @@ export async function installLaunchdService(spec: ServiceSpec, options: Supervis
   const next = await waitForLaunchdRunning(spec);
   const pidPart = next.pid !== undefined ? ` pid ${next.pid}` : '';
   console.log(`${spec.id}: installed launchd ${launchdLabel(spec)}${pidPart} plist ${plistPath}`);
+  return next;
 }
 
 export async function uninstallLaunchdService(spec: ServiceSpec): Promise<void> {
@@ -64,19 +66,35 @@ export async function uninstallLaunchdService(spec: ServiceSpec): Promise<void> 
   }
 }
 
-export async function startLaunchdService(spec: ServiceSpec): Promise<LaunchdStatus> {
+export async function startLaunchdService(spec: ServiceSpec, options: SupervisorOptions): Promise<LaunchdStatus> {
   assertLaunchdSupported();
   const plistPath = launchdPlistPath(spec);
   if (!(await launchdServiceInstalled(spec))) {
     throw new Error(`${spec.id}: launchd service is not installed. Run \`animactl services install${spec.id === 'web' ? ' --only web' : spec.id === 'agent' ? ' --only agent' : ''}\` first.`);
   }
 
+  const staleNode = missingDefinitionNode(launchdPlistNodePath(await readFile(plistPath, 'utf8').catch(() => '')));
   const status = await launchdServiceStatus(spec);
   const actions = launchdStartActions(status);
   if (actions.length === 0) {
     const pidPart = status.pid !== undefined ? ` pid ${status.pid}` : '';
     console.log(`${spec.id}: already running launchd ${launchdLabel(spec)}${pidPart}`);
+    if (staleNode) console.log(`${spec.id}: its plist launches missing Node ${staleNode}; the next restart rewrites it`);
     return status;
+  }
+
+  // A plist that launches a Node binary which no longer exists can never
+  // start; launchd keeps respawning and failing. Rewrite it with this
+  // process's Node, as `animactl services install` would. A running
+  // service is left alone above: reinstalling it would stop it undrained.
+  if (staleNode) {
+    const nodePath = serviceNodePath();
+    if (missingDefinitionNode(nodePath)) {
+      throw new Error(`${spec.id}: launchd plist launches missing Node ${staleNode}, and this process's Node ${nodePath} is missing too. Run \`animactl services install\` with a working Node.`);
+    }
+    console.log(`${spec.id}: launchd plist launches missing Node ${staleNode}; reinstalling it with ${nodePath}`);
+    await rotateServiceLogIfNeeded(serviceLogPath(spec));
+    return installLaunchdService(spec, options);
   }
   // launchd opens StandardOutPath when it spawns the process, so a rotation
   // here hands the new process a fresh log, as detached starts do.
@@ -158,12 +176,13 @@ export function launchdActionInvocation(
 }
 
 export function buildLaunchdPlist(spec: ServiceSpec, options: SupervisorOptions): string {
+  const nodePath = serviceNodePath();
   const env = buildServiceEnvironment({
     animaHome: spec.animaHome,
-    nodePath: process.execPath,
+    nodePath,
   });
   const programArguments = [
-    process.execPath,
+    nodePath,
     options.animactl,
     ...spec.args,
   ];
@@ -196,6 +215,12 @@ export function launchdLabel(spec: ServiceSpec): string {
 
 export function launchdPlistPath(spec: ServiceSpec): string {
   return join(homedir(), 'Library', 'LaunchAgents', `${launchdLabel(spec)}.plist`);
+}
+
+/** The program a plist launches: the first ProgramArguments entry. */
+export function launchdPlistNodePath(plist: string): string | undefined {
+  const match = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(plist);
+  return match?.[1] ? xmlUnescape(match[1]) : undefined;
 }
 
 export function parseLaunchdRuntime(result: { status: number | null; stdout: string }): { loaded: boolean; pid?: number } {
@@ -236,7 +261,12 @@ async function waitForLaunchdRunning(spec: ServiceSpec): Promise<LaunchdStatus> 
     await sleep(100);
     last = await launchdServiceStatus(spec);
   }
-  return last;
+  return confirmServiceStayedUp({
+    describe: `${spec.id}: launchd ${launchdLabel(spec)}`,
+    logPath: serviceLogPath(spec),
+    read: () => launchdServiceStatus(spec),
+    started: last,
+  });
 }
 
 async function isPidRunning(pid: number): Promise<boolean> {
@@ -323,6 +353,15 @@ function keyDict(key: string, values: Record<string, string>): string {
 
 function keyString(key: string, value: string): string {
   return `<key>${xmlEscape(key)}</key>\n<string>${xmlEscape(value)}</string>`;
+}
+
+function xmlUnescape(value: string): string {
+  return value
+    .replaceAll('&apos;', "'")
+    .replaceAll('&quot;', '"')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&amp;', '&');
 }
 
 function xmlEscape(value: string): string {
