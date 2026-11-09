@@ -38,7 +38,7 @@ For each piece of knowledge, ask in order:
 
 The product already works this way in several places:
 
-- When an agent replies in a DM or thread that has new messages it has not seen, Anima holds the send and shows those messages, instead of relying on a rule to re-read before sending.
+- When an agent replies in a Slack DM or thread that has new messages it has not seen, Anima holds the send and shows those messages, instead of relying on a rule to re-read before sending.
 - When an agent keeps reading a channel without posting, an Anima note offers the exact `anima subscription mute` command.
 - A Linear wake carries `reply_to=`, the exact target to answer.
 
@@ -69,10 +69,10 @@ A new agent starts from a seed `MEMORY.md` with empty Role, Guardrails, and Acti
 
 Dreaming is an agent's daily memory consolidation, framed as what sleep does for a person.
 
-- **When.** Once per agent per day, in a window that starts at 05:00 agent-local time and lasts two hours, one agent at a time. An agent with no meaningful activity since its last pass is skipped. The window, timezone, and scope are set under `memoryCoherence` in the server configuration.
+- **When.** Once per agent per day. By default each agent gets a fixed slot in a two-hour window that starts at 05:00 in the agent service's time zone, and at most one Dreaming wake is queued or running at a time. A slot that could not run on time is caught up later, so a pass can run after the window. An agent is queued only when its message history has a new entry since its last pass. The window, time zone, concurrency, and scope are set under `memoryCoherence` ([Configuration](/configuration#dreaming-memorycoherence)).
 - **What.** The agent looks back over what happened since the last pass. It writes down what is worth keeping and exists only because it lived through it (lessons, decisions, people's preferences, rules it verified), puts the detail in `notes/` with a pointer in `MEMORY.md`, and lets go of the rest: finished work, state it can look up, notes it no longer needs.
 - **How it runs.** Dreaming is an ordinary private wake, not a restricted mode. Normal capabilities and judgment apply, and clearly valid unfinished work in the session may be finished first. If nothing is worth keeping and `MEMORY.md` is already short and current, the agent leaves it alone.
-- **What Anima records.** A digest of `MEMORY.md` and `notes/` before and after the pass. The pass is recorded as `completed` when they changed and `quiet_skipped` when they did not.
+- **What Anima records.** Anima compares a digest of `MEMORY.md` and `notes/` before and after the pass. A pass that finishes is recorded as `completed` when they changed and `quiet_skipped` when they did not, and a pass that errors is recorded as `failed`. An agent that was not queued for lack of activity gets no record. Outcomes appear in Activity as `memory_coherence.outcome`.
 
 ## Changing these texts
 
