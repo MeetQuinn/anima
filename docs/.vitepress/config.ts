@@ -97,6 +97,7 @@ export default defineConfig({
         text: "Evaluate and understand",
         items: [
           { text: "Architecture overview", link: "/architecture/overview" },
+          { text: "Memory and context", link: "/architecture/memory-and-context" },
           { text: "Security and data", link: "/security-and-data" },
         ],
       },
