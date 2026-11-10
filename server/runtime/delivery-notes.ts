@@ -12,6 +12,11 @@ export const DEFERRED_WAKE_RETRY_NOTE = [
   'Do not repeat completed external side effects; check `anima outbox` / conversation state before redoing anything.',
 ].join('\n');
 
+export const STALLED_RUN_NOTE = [
+  'Anima note: your previous run showed no provider activity for several minutes while this message was waiting, so Anima stopped it before you saw this message.',
+  'Whatever command or tool that run was in did not finish, and its process may still be running. Answer this message first. Before retrying that work, find out why it hung and use a narrower command or run it in the background.',
+].join('\n');
+
 export function providerCrashRetryNote(): string {
   return [
     'Anima note: the previous provider process crashed before completing this same item.',

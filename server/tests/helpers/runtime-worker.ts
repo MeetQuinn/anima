@@ -435,6 +435,45 @@ export class AbortableRuntime implements AgentRuntime {
   }
 }
 
+/**
+ * First run wedges with no activity until aborted, like a provider stuck in one
+ * tool call; later runs finish at once. Follow-ups are accepted unless
+ * `acceptFollowups` is false.
+ */
+export class WedgedFollowupRuntime implements AgentRuntime {
+  readonly kind = 'wedged-followup';
+  readonly calls: AgentRuntimeInput[] = [];
+  readonly followups: AgentRuntimeFollowupInput[] = [];
+
+  constructor(private readonly options: { acceptFollowups?: boolean; outputOnAbort?: boolean } = {}) {}
+
+  async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    this.calls.push(input);
+    if (this.calls.length > 1) return { text: `completed ${input.itemId}` };
+    return new Promise((_, reject) => {
+      const onAbort = () => {
+        const error = new Error(`aborted: ${String(input.signal?.reason)}`);
+        // Like a killed provider flushing its last output on the way down.
+        if (this.options.outputOnAbort) void input.effects.recordOutput('stderr', 'terminated').finally(() => reject(error));
+        else reject(error);
+      };
+      if (input.signal?.aborted) onAbort();
+      else input.signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean; text?: string }> {
+    if (this.options.acceptFollowups === false) return { accepted: false };
+    this.followups.push(input);
+    return { accepted: true, text: `appended ${input.itemIds.join(',')}` };
+  }
+
+  /** Provider activity on the wedged first run, as if it reached its input. */
+  async emitActivity(): Promise<void> {
+    await this.calls[0]?.effects.recordOutput('stdout', 'working');
+  }
+}
+
 export class DrainableRuntime extends AbortableRuntime {
   readonly drainCalls: AgentRuntimeDrainInput[] = [];
 

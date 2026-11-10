@@ -45,7 +45,9 @@ export interface RuntimeFailedPayload extends RuntimePayload {
 }
 
 export interface RuntimeAbortedPayload {
-  reason: 'idle_timeout' | 'operator_restart' | 'shutdown' | 'user_stop' | (string & {});
+  reason: 'idle_timeout' | 'operator_restart' | 'shutdown' | 'stalled' | 'user_stop' | (string & {});
+  /** Follow-ups requeued because the provider stopped before it reached them. */
+  requeuedFollowups?: number;
   timeoutMs?: number;
 }
 

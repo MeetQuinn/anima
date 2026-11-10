@@ -289,6 +289,16 @@ export class WakeQueueService {
     return items;
   }
 
+  async requeueAppendedSince(
+    parentItemId: string,
+    appendedSince: string,
+    options: { resumeReason?: 'stalled_run' } = {},
+  ): Promise<InboxItem[]> {
+    const items = await this.store.requeueAppendedSince(parentItemId, appendedSince, options);
+    if (items.length > 0) signalWake(this.agentId);
+    return items;
+  }
+
   requestStop(itemId: string): Promise<InboxItem> {
     return this.store.requestStop(itemId);
   }

@@ -466,8 +466,8 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     // dot, same visual family as `Session rotated` — *not* the failure
     // stack). These are expected user/system events, not bugs: the
     // runtime worker emits `runtime.aborted` on services restart
-    // (shutdown), user Stop (user_stop), and idle watchdog
-    // (idle_timeout). Visible in both
+    // (shutdown), user Stop (user_stop), idle watchdog (idle_timeout), and
+    // a silent run with a message waiting (stalled). Visible in both
     // Conversation and Audit modes (user-relevant closure).
     // Plain-language copy (#49): no Unix jargon in the headline.
     const reason = pickString(payload, ['reason']);
@@ -480,10 +480,12 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
             ? 'Restarted by operator'
             : reason === 'idle_timeout'
               ? 'Idle timeout'
-              : 'Runtime stopped';
+              : reason === 'stalled'
+                ? 'Stopped to answer messages'
+                : 'Runtime stopped';
     return {
       title,
-      target: reason === 'idle_timeout' ? idleTimeoutTarget(payload) : undefined,
+      target: reason === 'idle_timeout' || reason === 'stalled' ? idleTimeoutTarget(payload) : undefined,
       color: COLOR_WORKING,
       kind: 'lifecycle',
     };

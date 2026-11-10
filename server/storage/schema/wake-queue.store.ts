@@ -512,6 +512,39 @@ export class WakeQueueStore {
     return this.updateAppendedTo(parentItemId, (item, now) => requeuedItem(item, now, options));
   }
 
+  /**
+   * Requeue the follow-ups appended to `parentItemId` at or after
+   * `appendedSince`, leaving earlier ones running for the caller to settle.
+   * Only the earliest requeued item carries `resumeReason`, so the next run
+   * shows its note once.
+   */
+  async requeueAppendedSince(
+    parentItemId: string,
+    appendedSince: string,
+    options: { resumeReason?: 'stalled_run' } = {},
+  ): Promise<InboxItem[]> {
+    const updated: InboxItem[] = [];
+    await this.update((current) => {
+      const now = nowIso();
+      updated.length = 0;
+      const selected = Object.values(current.items)
+        .filter((item) => item.handling.status === 'running'
+          && item.handling.appendedToItemId === parentItemId
+          && item.handling.appendedAt !== undefined
+          && item.handling.appendedAt >= appendedSince)
+        .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)));
+      if (selected.length === 0) return current;
+      const items = { ...current.items };
+      selected.forEach((item, index) => {
+        const next = requeuedItem(item, now, index === 0 ? options : {});
+        items[item.id] = next;
+        updated.push(next);
+      });
+      return { items, seen: current.seen };
+    });
+    return updated;
+  }
+
   async requestStop(itemId: string): Promise<InboxItem> {
     return this.updateItem(itemId, (item, now) => withHandling(item, { stopRequestedAt: now }, now));
   }
@@ -721,7 +754,7 @@ export interface RequeueOptions {
   deferrals?: number;
   /** Keep the item queued but unclaimable until this ISO instant. */
   notBefore?: string;
-  resumeReason?: 'deferred_retry' | 'runtime_restart';
+  resumeReason?: 'deferred_retry' | 'runtime_restart' | 'stalled_run';
 }
 
 export type SwapDeferredForRetryResult =

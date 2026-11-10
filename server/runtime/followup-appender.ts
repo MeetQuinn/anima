@@ -36,7 +36,6 @@ interface RuntimeFollowupAppenderInput {
   isRestartDrainActive?: () => Promise<boolean>;
   itemDone: AbortSignal;
   logger: Pick<Console, 'error' | 'log'>;
-  onFollowupAccepted: () => void;
   onFollowupAppended: (context: RuntimeItemContext, text: string | undefined) => Promise<void>;
   onFollowupSettled: (context: RuntimeItemContext) => Promise<void>;
   queue: WakeQueueService;
@@ -244,7 +243,6 @@ async function tryFollowupBatch(
         text: result.text,
       },
     );
-    input.onFollowupAccepted();
     await input.queue.markAppendedBatch({
       itemIds,
       parentItemId: input.activeContext.item.id,

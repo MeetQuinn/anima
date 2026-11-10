@@ -23,4 +23,5 @@ export type ItemStopReason =
   | 'operator_restart'
   | 'restart_drain'
   | 'shutdown'
+  | 'stalled'
   | 'user_stop';

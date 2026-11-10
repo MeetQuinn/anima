@@ -30,8 +30,10 @@ export const InboxItemHandling = z.object({
    * `runtime_restart` — interrupted primary continues after a runtime restart.
    * `deferred_retry` — operator Retry-now replacement wake after a rate-limit
    * deferral; unique id, same Slack anchors, bypasses cursor already_delivered.
+   * `stalled_run` — follow-up requeued after Anima stopped the run it was
+   * appended to for making no progress before the provider reached it.
    */
-  resumeReason: z.enum(['deferred_retry', 'runtime_restart']).optional(),
+  resumeReason: z.enum(['deferred_retry', 'runtime_restart', 'stalled_run']).optional(),
   settledAt: z.string().optional(),
   /**
    * When set, the item is durable in the queue but not claimable by workers.
