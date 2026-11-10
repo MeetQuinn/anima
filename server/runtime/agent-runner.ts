@@ -73,7 +73,9 @@ export async function startRunningAgent(options: RunningAgentOptions): Promise<R
         await linear.markStarted(context.item, context.item.id);
         reactions.start(context);
       },
-      onItemAborted: async (context) => { await linear.finishRun(context.item.id, 'This run was interrupted. It may include other accepted messages; check any actions before continuing.'); },
+      onItemAborted: async (context, _reason, requeued) => {
+        await linear.finishRun(context.item.id, 'This run was interrupted. It may include other accepted messages; check any actions before continuing.', requeued.map((item) => item.id));
+      },
       onItemFailed: async (context, failure) => {
         await linear.finishRun(context.item.id, 'The model run failed. Some actions may already have run; inspect progress before sending a new prompt.')
           .catch(() => console.error('Linear run ended; its final notice could not be confirmed.'));

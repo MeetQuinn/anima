@@ -1,5 +1,5 @@
 import { observeInputTrace } from '../providers/input-trace.js';
-import { errorMessage } from '../ids.js';
+import { errorMessage, nowIso } from '../ids.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
 import {
   recordRuntimeFollowupAppended,
@@ -36,7 +36,6 @@ interface RuntimeFollowupAppenderInput {
   isRestartDrainActive?: () => Promise<boolean>;
   itemDone: AbortSignal;
   logger: Pick<Console, 'error' | 'log'>;
-  onFollowupAccepted: () => void;
   onFollowupAppended: (context: RuntimeItemContext, text: string | undefined) => Promise<void>;
   onFollowupSettled: (context: RuntimeItemContext) => Promise<void>;
   queue: WakeQueueService;
@@ -195,6 +194,9 @@ async function tryFollowupBatch(
       { phase, context: traceContext, receipt },
     );
     trace('input.prepared');
+    // The delivery boundary: provider activity from here on may already answer
+    // this batch, so a stop must not requeue it as unseen.
+    const deliveredAt = nowIso();
     const result = await input.agentRuntime.appendToActiveRun({ ...traceContext, prompt });
     if (!result.accepted) {
       trace('input.rejected_before_write');
@@ -244,8 +246,8 @@ async function tryFollowupBatch(
         text: result.text,
       },
     );
-    input.onFollowupAccepted();
     await input.queue.markAppendedBatch({
+      appendedAt: deliveredAt,
       itemIds,
       parentItemId: input.activeContext.item.id,
       workerId: input.workerId,

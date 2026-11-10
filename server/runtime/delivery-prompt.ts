@@ -33,6 +33,7 @@ import {
   providerSessionRecoveryNote,
   providerTransientRetryNote,
   RUNTIME_RESTART_CONTINUATION_NOTE,
+  STALLED_RUN_NOTE,
 } from './delivery-notes.js';
 import { buildBackgroundInterruptedDeliveryPrompt } from './background-interrupted.js';
 import { formatLinearReplyTarget, linearReplyTargetFor } from '../linear/reply-target.js';
@@ -103,6 +104,10 @@ export function buildCodeAgentDeliveryPrompt(event: InboxItem, context: CodeAgen
       return `${retry}\n\n${buildSlackMessageDeliveryPrompt(event)}`;
     }
     return retry;
+  }
+  if (event.handling.resumeReason === 'stalled_run') {
+    const prompt = buildCodeAgentDeliveryPrompt({ ...event, handling: { ...event.handling, resumeReason: undefined } }, context);
+    return `${STALLED_RUN_NOTE}\n\n${prompt}`;
   }
   if (event.kind === 'reminder') return buildReminderDeliveryPrompt(event, context);
   if (event.kind === 'memory_coherence') return buildMemoryCoherenceDeliveryPrompt(event, context.memoryCoherence);

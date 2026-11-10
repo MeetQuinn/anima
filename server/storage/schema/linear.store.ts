@@ -31,7 +31,8 @@ const PendingOAuth = z.object({
  * A receipt records one Linear session event and where it stands.
  * - request: Anima delivered it to the agent. received → running → awaiting (its run ended
  *   without a reply; a later turn can still answer) → answered, or failed when only the
- *   runtime's failure notice closed it. A Stop moves an open request to stopping until a
+ *   runtime's failure notice closed it. A follow-up that a run requeued before reaching it
+ *   goes back from running to received. A Stop moves an open request to stopping until a
  *   terminal notice covers it, then stopped. Finished requests keep their outcome.
  * - comment: the request already came through its comment thread, so there is no session
  *   reply obligation. linked → stopped; Stop still reaches the comment's work.

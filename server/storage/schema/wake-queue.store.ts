@@ -512,6 +512,39 @@ export class WakeQueueStore {
     return this.updateAppendedTo(parentItemId, (item, now) => requeuedItem(item, now, options));
   }
 
+  /**
+   * Requeue the follow-ups appended to `parentItemId` after `appendedSince`,
+   * leaving the others running for the caller to settle.
+   * Only the earliest requeued item carries `resumeReason`, so the next run
+   * shows its note once.
+   */
+  async requeueAppendedSince(
+    parentItemId: string,
+    appendedSince: string,
+    options: { resumeReason?: 'stalled_run' } = {},
+  ): Promise<InboxItem[]> {
+    const updated: InboxItem[] = [];
+    await this.update((current) => {
+      const now = nowIso();
+      updated.length = 0;
+      const selected = Object.values(current.items)
+        .filter((item) => item.handling.status === 'running'
+          && item.handling.appendedToItemId === parentItemId
+          && item.handling.appendedAt !== undefined
+          && item.handling.appendedAt > appendedSince)
+        .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)));
+      if (selected.length === 0) return current;
+      const items = { ...current.items };
+      selected.forEach((item, index) => {
+        const next = requeuedItem(item, now, index === 0 ? options : {});
+        items[item.id] = next;
+        updated.push(next);
+      });
+      return { items, seen: current.seen };
+    });
+    return updated;
+  }
+
   async requestStop(itemId: string): Promise<InboxItem> {
     return this.updateItem(itemId, (item, now) => withHandling(item, { stopRequestedAt: now }, now));
   }
@@ -542,7 +575,12 @@ export class WakeQueueStore {
     }, now));
   }
 
+  /**
+   * Mark a batch as appended to `parentItemId`. `appendedAt` is when the batch
+   * was handed to the provider; it defaults to now.
+   */
   async markAppendedBatch(input: {
+    appendedAt?: string;
     itemIds: string[];
     parentItemId: string;
     workerId: string;
@@ -563,7 +601,7 @@ export class WakeQueueStore {
       const items = { ...current.items };
       for (const item of selected) {
         const next = withHandling(item, {
-          appendedAt: now,
+          appendedAt: input.appendedAt ?? now,
           appendedToItemId: input.parentItemId,
           startedAt: item.handling.startedAt ?? now,
           status: 'running',
@@ -721,7 +759,7 @@ export interface RequeueOptions {
   deferrals?: number;
   /** Keep the item queued but unclaimable until this ISO instant. */
   notBefore?: string;
-  resumeReason?: 'deferred_retry' | 'runtime_restart';
+  resumeReason?: 'deferred_retry' | 'runtime_restart' | 'stalled_run';
 }
 
 export type SwapDeferredForRetryResult =

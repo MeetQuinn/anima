@@ -35,6 +35,13 @@ export function startReceipt(r: LinearReceipt, runItemId: string): LinearReceipt
   return isActiveRequest(r) ? { ...r, state: 'running', runItemId } : r;
 }
 
+/** The run that held the request put it back in the queue unseen; the run that picks it up next owns it. */
+export function requeueReceipt(r: LinearReceipt): LinearReceipt {
+  if (!isActiveRequest(r)) return r;
+  const { runItemId: _runItemId, ...rest } = r;
+  return { ...rest, state: 'received' };
+}
+
 /** The run holding the request ended. Without a reply the request now awaits one; a later turn can answer it. */
 export function endRun(r: LinearReceipt): LinearReceipt {
   return isActiveRequest(r) ? { ...r, state: 'awaiting', item: undefined } : { ...r, item: undefined };

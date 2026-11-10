@@ -159,6 +159,58 @@ for (const shared of [false, true]) for (const outcome of ['completed', 'failed'
 }
 
 
+test('a Linear follow-up an interrupted run never reached stays open, and the run that picks it up answers it', async (t) => withTempAnimaHome(async (home) => {
+  const { service, fake, agentStore, store } = await seedLinear(home);
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  t.mock.method(console, 'log', () => {}); t.mock.method(console, 'error', () => {});
+  t.mock.getter(process, 'stdin', () => Readable.from(['Synthetic recovered reply']) as typeof process.stdin);
+  const queue = new WakeQueueService('scout');
+  const runs: string[] = [];
+  let appends = 0;
+  const runtime = {
+    kind: 'synthetic',
+    async run(input: AgentRuntimeInput) {
+      runs.push(input.itemId);
+      // The first run wedges until the restart stops it, before it reads any follow-up.
+      if (runs.length === 1) {
+        await new Promise<never>((_resolve, reject) => {
+          input.signal!.addEventListener('abort', () => reject(new Error('Synthetic interrupted run')), { once: true });
+        });
+      }
+      const cli = new Command(); registerLinearCommands(cli);
+      await cli.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'respond', '--session', sessionId]);
+      return { text: 'Synthetic completion' };
+    },
+    async appendToActiveRun() { appends++; return { accepted: true }; },
+    async close() {},
+  };
+  const start = async () => startRunningAgent({ agentId: 'scout', agentRuntime: runtime, animaHome: home, stateDir: home,
+    homePath: (await agentStore.read()).homePath!, runtimeEnv: {}, runLimiter: new TeamRunLimiter(1) });
+  await queue.enqueue(makeSlackEvent({ eventId: 'synthetic-root', channelId: 'D-control', userId: 'U-control', ts: '1770000020.000001', text: 'Synthetic root', teamId: 'T-control' }));
+  let runner = await start();
+  try {
+    await waitFor(() => runs.length === 1);
+    await service.receive(created(), install); await service.tick();
+    await waitFor(() => appends === 1);
+    const child = (await queue.list()).find((item) => item.kind === 'linear')!;
+    await waitFor(async () => (await store.read()).receipts[child.id]?.state === 'running');
+
+    await runner.stop({ abortReason: 'operator_restart' });
+    assert.equal((await queue.find(child.id))?.handling.status, 'queued');
+    const kept = (await store.read()).receipts[child.id]!;
+    assert.equal(kept.state, 'received');
+    assert.equal(kept.runItemId, undefined);
+    assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0, 'The interrupted run posts no failure notice for it');
+
+    runner = await start();
+    // The reply posts first; the receipt closes once Linear accepted it.
+    await waitFor(async () => (await store.read()).receipts[child.id]?.state === 'answered', { timeoutMs: 3000 });
+    assert.deepEqual(runs.slice(1), [child.id]);
+    assert.equal(fake.posts.filter((p) => p.content.type === 'response').length, 1);
+    assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0);
+  } finally { await runner.stop(); }
+}));
+
 for (const finish of ['late-reply', 'idle', 'stop'] as const) test(`an unanswered Linear session stays quiet after its run and closes only on ${finish}`, async (t) => withTempAnimaHome(async (home) => {
   const { service, fake, agentStore, store } = await seedLinear(home);
   t.mock.method(globalThis, 'fetch', fake.fetch);

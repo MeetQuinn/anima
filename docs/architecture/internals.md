@@ -105,7 +105,7 @@ The runtime executor is `server/runtime/runtime-worker.ts`.
 
 While the provider is running, `server/runtime/followup-appender.ts` watches for queued follow-up items. Accepted follow-ups call `AgentRuntime.appendToActiveRun`, are marked appended to the active item, and are settled as part of the active run.
 
-The worker also owns abort and drain behavior. `server/runtime/active-run-control.ts` handles idle timeout, stop, and restart-drain requests. `server/runtime/active-item.ts` records the current audited item so agent-facing tools can resolve the item at call time.
+The worker also owns abort and drain behavior. `server/runtime/active-run-control.ts` handles idle timeout, stalled runs with a message waiting, stop, and restart-drain requests. `server/runtime/active-item.ts` records the current audited item so agent-facing tools can resolve the item at call time.
 
 [Dreaming](/concepts#memory) uses the same queue and worker (its modules keep the historical `memory-coherence` name). `server/memory/memory-coherence-scheduler.ts` enqueues Dreaming items, and `server/runtime/runtime-worker.ts` records before/after digests with `server/memory/memory-coherence-outcome.ts`.
 

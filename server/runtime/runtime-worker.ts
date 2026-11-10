@@ -27,7 +27,7 @@ import {
   recordRuntimeEvent,
   recordSessionRotationActivity,
 } from './activity.js';
-import { startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
+import { STALL_WITH_WAITING_INPUT_MS, startActiveRunControl, type ActiveRunHandle } from './active-run-control.js';
 import { appendQueuedFollowupsUntilFinished } from './followup-appender.js';
 import {
   isProviderRateLimitedError,
@@ -63,13 +63,16 @@ export const MAX_RATE_LIMIT_DEFERRALS = 6;
 interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   agentRuntime: AgentRuntime;
   idleTimeoutMs?: number;
+  /** Test seam: provider silence allowed while a message waits on the run. */
+  stallTimeoutMs?: number;
   /** Test seam: inject a deferred restart-drain probe. */
   isRestartDrainActive?: () => Promise<boolean>;
   onItemStarted?: (context: RuntimeItemContext) => Promise<void>;
   /** Terminal failure (retries exhausted or non-retryable): tell the requester. */
   onItemFailed?: (context: RuntimeItemContext, failure: RuntimeItemFailure) => Promise<void>;
   onItemFollowupAppended?: (activeContext: RuntimeItemContext, context: RuntimeItemContext) => Promise<void>;
-  onItemAborted?: (context: RuntimeItemContext, reason: ItemStopReason) => Promise<void>;
+  /** `requeued` are follow-ups the run never reached; they go back to the queue instead of ending with it. */
+  onItemAborted?: (context: RuntimeItemContext, reason: ItemStopReason, requeued: InboxItem[]) => Promise<void>;
   onItemSettled?: (context: RuntimeItemContext) => Promise<void>;
   onIdle?: () => Promise<void>;
   transportHealth?: () => AgentRuntimeHandleSnapshot['transports'];
@@ -90,6 +93,7 @@ export class AgentRuntimeWorker {
   private readonly workerIsAlive: (workerId: string) => boolean;
   private readonly workerId: string;
   private readonly idleTimeoutMs: number;
+  private readonly stallTimeoutMs: number;
   private readonly queue: WakeQueueService;
   private readonly runtimeBridge: AgentRuntimeBridge;
   private activeItem?: ActiveRunHandle;
@@ -116,6 +120,7 @@ export class AgentRuntimeWorker {
     this.workerIsAlive = options.workerIsAlive ?? isWorkerAlive;
     this.workerId = options.workerId ?? `${options.agentId}:${randomUUID()}:${process.pid}`;
     this.idleTimeoutMs = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS_DEFAULT;
+    this.stallTimeoutMs = options.stallTimeoutMs ?? STALL_WITH_WAITING_INPUT_MS;
     this.queue = options.queue;
     this.runtimeBridge = new AgentRuntimeBridge(options.agentRuntime);
   }
@@ -370,7 +375,6 @@ export class AgentRuntimeWorker {
             : {}),
           itemDone: itemAbort.signal,
           logger: this.logger,
-          onFollowupAccepted: () => handle.noteActivity(),
           onFollowupAppended: async (followupContext, _text) => {
             handle.appendedFollowups.push(followupContext);
             await this.notifyItemFollowupAppended(activeContext, followupContext);
@@ -509,7 +513,7 @@ export class AgentRuntimeWorker {
       const abortReason = itemAbort.signal.aborted ? abortReasonOf(itemAbort.signal) : undefined;
       let itemSettled = false;
       if (abortReason && context) {
-        appendedFollowupsSettled = await this.settleAbortedItem(context, abortReason);
+        appendedFollowupsSettled = await this.settleAbortedItem(context, abortReason, handle);
         itemSettled = true;
       } else if (context && isProviderRateLimitedError(error)) {
         const deferrals = (context.item.handling.deferrals ?? 0) + 1;
@@ -594,6 +598,7 @@ export class AgentRuntimeWorker {
       itemId,
       logger: this.logger,
       queue: this.queue,
+      stallTimeoutMs: this.stallTimeoutMs,
     });
     this.activeItem = handle;
     return handle;
@@ -745,20 +750,44 @@ export class AgentRuntimeWorker {
     }
   }
 
-  private async settleAbortedItem(context: RuntimeItemContext, abortReason: ItemStopReason): Promise<boolean> {
-    await recordRuntimeAborted(
-      { agentId: this.options.agentId, itemId: context.item.id },
-      abortReason,
-      abortReason === 'idle_timeout' ? { timeoutMs: this.idleTimeoutMs } : undefined,
-    );
+  private async settleAbortedItem(
+    context: RuntimeItemContext,
+    abortReason: ItemStopReason,
+    handle: ActiveRunHandle,
+  ): Promise<boolean> {
     if (abortReason === 'restart_drain') {
+      await recordRuntimeAborted({ agentId: this.options.agentId, itemId: context.item.id }, abortReason);
       await this.queue.requeue(context.item.id, { resumeReason: 'runtime_restart' });
       await this.queue.requeueAppendedTo(context.item.id);
       return false;
     }
+    // Follow-ups appended after the provider's last activity never reached it:
+    // requeue them instead of failing them with the run. A user stop is the
+    // requester's call, so it still ends everything appended to the run.
+    const requeued = abortReason === 'user_stop'
+      ? []
+      : await this.queue.requeueAppendedSince(
+        context.item.id,
+        handle.providerSilentSince(),
+        abortReason === 'stalled' || abortReason === 'idle_timeout' ? { resumeReason: 'stalled_run' } : {},
+      );
+    const requeuedIds = new Set(requeued.map((item) => item.id));
+    const remaining = handle.appendedFollowups.filter((followup) => !requeuedIds.has(followup.item.id));
+    handle.appendedFollowups.splice(0, handle.appendedFollowups.length, ...remaining);
+    const timeoutMs = abortReason === 'idle_timeout'
+      ? this.idleTimeoutMs
+      : abortReason === 'stalled' ? this.stallTimeoutMs : undefined;
+    await recordRuntimeAborted(
+      { agentId: this.options.agentId, itemId: context.item.id },
+      abortReason,
+      {
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        ...(requeued.length > 0 ? { requeuedFollowups: requeued.length } : {}),
+      },
+    );
     await this.queue.fail(context.item.id);
     await this.queue.failAppendedTo(context.item.id);
-    await this.options.onItemAborted?.(context, abortReason).catch(() => this.logger.error('Runtime worker abort hook failed.'));
+    await this.options.onItemAborted?.(context, abortReason, requeued).catch(() => this.logger.error('Runtime worker abort hook failed.'));
     return true;
   }
 }
@@ -783,6 +812,7 @@ function abortReasonOf(signal: AbortSignal): ItemStopReason | undefined {
     reason === 'operator_restart' ||
     reason === 'restart_drain' ||
     reason === 'shutdown' ||
+    reason === 'stalled' ||
     reason === 'user_stop'
     ? reason
     : undefined;
