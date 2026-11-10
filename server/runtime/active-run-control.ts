@@ -90,14 +90,16 @@ class ActiveRunController implements ActiveRunHandle {
   // message is waiting on such a run, stop it well before the idle timeout so
   // the message gets an answer.
   private async stopIfInputWaiting(): Promise<void> {
-    // A restart drain settles the item itself; do not race it with a stop.
-    if (this.stallCheckInFlight || this.drainRequestInFlight) return;
+    if (this.stallCheckInFlight || this.drainOwnsRun()) return;
     this.stallCheckInFlight = true;
     const { abortController, itemId, logger, queue } = this.input;
     try {
       const silentSince = this.providerSilentSince();
       const items = await queue.list();
+      // Decide again after the read: activity, an abort or a restart drain may
+      // have arrived while it ran.
       if (abortController.signal.aborted || this.providerSilentSince() !== silentSince) return;
+      if (this.drainOwnsRun(items.find((item) => item.id === itemId))) return;
       if (items.some((item) => isInputWaitingOn(item, itemId, silentSince))) abortController.abort('stalled');
     } catch (error) {
       logger.error(`Runtime worker stall check failed for item ${itemId}: ${errorMessage(error)}`);
@@ -108,6 +110,17 @@ class ActiveRunController implements ActiveRunHandle {
 
   release(): void {
     clearInterval(this.watchdog);
+  }
+
+  /**
+   * A restart drain settles the item itself and requeues it, so a stall stop
+   * must not take it over: one is in flight, or `active` carries a drain
+   * request this run has not started yet.
+   */
+  private drainOwnsRun(active?: InboxItem): boolean {
+    if (this.drainRequestInFlight) return true;
+    const requestedAt = active?.handling.drainRequestedAt;
+    return requestedAt !== undefined && requestedAt !== this.drainRequestedAt;
   }
 
   private async checkExternalRequests(): Promise<void> {
@@ -163,7 +176,7 @@ function isInputWaitingOn(item: InboxItem, activeItemId: string, silentSince: st
   if (item.handling.status === 'running') {
     return item.handling.appendedToItemId === activeItemId
       && item.handling.appendedAt !== undefined
-      && item.handling.appendedAt >= silentSince;
+      && item.handling.appendedAt > silentSince;
   }
   return isClaimableQueuedInboxItem(item);
 }

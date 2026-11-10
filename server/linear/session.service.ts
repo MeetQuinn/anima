@@ -9,7 +9,7 @@ import { linearCommentItemId, withLinearCommentLock } from '../inbox/linear-comm
 import { withFileLock } from '../storage/lock.js';
 import type { LinearInstallation, LinearOperation, LinearReceipt } from '../storage/schema/linear.store.js';
 import { LinearIdentityService, linearRequestNotSent } from './identity.service.js';
-import { awaitsAcknowledgement, claimable, closeReceipt, endRun, isActiveRequest, isOpenRequest, isStopped, startReceipt, stopReceipt } from './receipt-state.js';
+import { awaitsAcknowledgement, claimable, closeReceipt, endRun, isActiveRequest, isOpenRequest, isStopped, requeueReceipt, startReceipt, stopReceipt } from './receipt-state.js';
 import { LinearApiError } from './client.js';
 import type { LinearWebhook } from './webhook.js';
 import { linearCommentText, linearIssueKey } from './delivery-text.js';
@@ -346,16 +346,25 @@ export class LinearSessionService {
     });
   }
 
-  async finishRun(runItemId: string, body: string): Promise<void> {
+  /**
+   * The run ended without finishing. Its requests get one failure notice,
+   * except `requeuedItemIds`: follow-ups the run never reached, which the worker
+   * put back in the queue for the run that picks them up next to answer.
+   */
+  async finishRun(runItemId: string, body: string, requeuedItemIds: readonly string[] = []): Promise<void> {
     const pending = [...this.pendingOwners].filter(([, owner]) => owner.runItemId === runItemId);
     const notified = (r: LinearReceipt) => r.runItemId === runItemId && claimable(r, 'failed');
     if (!pending.length && !Object.values((await this.identity.store.read()).receipts).some(notified)) return;
+    const requeued = new Set(requeuedItemIds);
     const file = await this.identity.store.update((current) => {
       const receipts = { ...current.receipts };
       for (const [id, owner] of pending) {
+        if (requeued.has(id)) continue;
         if (current.installation?.id === owner.installationId && receipts[id]) receipts[id] = { ...receipts[id], runItemId: owner.runItemId };
       }
-      for (const [id, r] of Object.entries(receipts)) if (r.runItemId === runItemId) receipts[id] = endRun(r);
+      for (const [id, r] of Object.entries(receipts)) {
+        if (r.runItemId === runItemId) receipts[id] = requeued.has(id) && isActiveRequest(r) ? requeueReceipt(r) : endRun(r);
+      }
       return { ...current, receipts };
     });
     for (const [id, owner] of pending) if (this.pendingOwners.get(id) === owner) this.pendingOwners.delete(id);

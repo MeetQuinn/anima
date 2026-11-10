@@ -513,8 +513,8 @@ export class WakeQueueStore {
   }
 
   /**
-   * Requeue the follow-ups appended to `parentItemId` at or after
-   * `appendedSince`, leaving earlier ones running for the caller to settle.
+   * Requeue the follow-ups appended to `parentItemId` after `appendedSince`,
+   * leaving the others running for the caller to settle.
    * Only the earliest requeued item carries `resumeReason`, so the next run
    * shows its note once.
    */
@@ -531,7 +531,7 @@ export class WakeQueueStore {
         .filter((item) => item.handling.status === 'running'
           && item.handling.appendedToItemId === parentItemId
           && item.handling.appendedAt !== undefined
-          && item.handling.appendedAt >= appendedSince)
+          && item.handling.appendedAt > appendedSince)
         .sort((a, b) => itemSortAt(a).localeCompare(itemSortAt(b)));
       if (selected.length === 0) return current;
       const items = { ...current.items };
@@ -575,7 +575,12 @@ export class WakeQueueStore {
     }, now));
   }
 
+  /**
+   * Mark a batch as appended to `parentItemId`. `appendedAt` is when the batch
+   * was handed to the provider; it defaults to now.
+   */
   async markAppendedBatch(input: {
+    appendedAt?: string;
     itemIds: string[];
     parentItemId: string;
     workerId: string;
@@ -596,7 +601,7 @@ export class WakeQueueStore {
       const items = { ...current.items };
       for (const item of selected) {
         const next = withHandling(item, {
-          appendedAt: now,
+          appendedAt: input.appendedAt ?? now,
           appendedToItemId: input.parentItemId,
           startedAt: item.handling.startedAt ?? now,
           status: 'running',

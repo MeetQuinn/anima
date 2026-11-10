@@ -6,6 +6,7 @@ export const InboxItemStatus = z.enum(['queued', 'running', 'completed', 'failed
 export type InboxItemStatus = z.infer<typeof InboxItemStatus>;
 
 export const InboxItemHandling = z.object({
+  /** When the follow-up was handed to the active run's provider. */
   appendedAt: z.string().optional(),
   appendedToItemId: z.string().optional(),
   completedAt: z.string().optional(),

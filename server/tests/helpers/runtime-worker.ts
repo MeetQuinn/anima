@@ -445,7 +445,12 @@ export class WedgedFollowupRuntime implements AgentRuntime {
   readonly calls: AgentRuntimeInput[] = [];
   readonly followups: AgentRuntimeFollowupInput[] = [];
 
-  constructor(private readonly options: { acceptFollowups?: boolean; outputOnAbort?: boolean } = {}) {}
+  constructor(private readonly options: {
+    acceptFollowups?: boolean;
+    /** The provider acts on an appended follow-up before the append call returns. */
+    activityDuringAppend?: boolean;
+    outputOnAbort?: boolean;
+  } = {}) {}
 
   async run(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
     this.calls.push(input);
@@ -465,6 +470,11 @@ export class WedgedFollowupRuntime implements AgentRuntime {
   async appendToActiveRun(input: AgentRuntimeFollowupInput): Promise<{ accepted: boolean; text?: string }> {
     if (this.options.acceptFollowups === false) return { accepted: false };
     this.followups.push(input);
+    if (this.options.activityDuringAppend) {
+      await this.emitActivity();
+      // fixed delay: the worker records the append clearly after that activity.
+      await sleep(30);
+    }
     return { accepted: true, text: `appended ${input.itemIds.join(',')}` };
   }
 

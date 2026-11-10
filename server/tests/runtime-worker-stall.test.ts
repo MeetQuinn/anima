@@ -8,6 +8,9 @@ import { withAnimaHome } from './anima-home.js';
 import { makeSlackEvent } from './helpers/slack.js';
 import { sleep, waitFor } from './helpers/harness.js';
 import { allActivities, loadState } from './helpers/state.js';
+import type { WakeQueueService } from '../inbox/wake-queue.service.js';
+import type { AgentRuntime } from '../providers/contract.js';
+import { startActiveRunControl } from '../runtime/active-run-control.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { STALLED_RUN_NOTE } from '../runtime/delivery-notes.js';
 import { WakeQueueStore } from '../storage/schema/wake-queue.store.js';
@@ -213,7 +216,77 @@ test('a user stop still ends follow-ups appended to the run', async () => {
   });
 });
 
-test('requeueAppendedSince requeues only later appends and marks the earliest one', async () => {
+test('a follow-up the provider acted on before its append was recorded ends with the run instead of running again', async () => {
+  const runtime = new WedgedFollowupRuntime({ activityDuringAppend: true });
+  await withWorker('append-boundary', runtime, { idleTimeoutMs: 60_000, stallTimeoutMs: 60_000 }, async (worker, coordinator) => {
+    const first = await enqueueInbox(slackMessage('evt-stuck', 'find that file', '1770000010.000001'), coordinator);
+    const drain = worker.drainOnce();
+    await waitFor(() => runtime.calls.length === 1);
+    const seen = await enqueueInbox(slackMessage('evt-seen', 'answered during the append', '1770000011.000001'), coordinator);
+    await waitForInboxItemAppendedTo('scout', seen.ctx.item.id, first.ctx.item.id);
+
+    await worker.close({ abortReason: 'operator_restart' });
+    await drain;
+
+    const [aborted] = await abortedActivities();
+    assert.equal(aborted?.['reason'], 'operator_restart');
+    assert.equal(aborted?.['requeuedFollowups'], undefined);
+    assert.equal(await queueFor('scout').find(seen.ctx.item.id), undefined);
+    assert.equal(runtime.calls.length, 1);
+  });
+});
+
+for (const order of ['started', 'requested'] as const) {
+  test(`a stall check does not stop a run whose restart drain was ${order} while it read the queue`, async () => {
+    const drainRequestedAt = '2026-11-10T00:00:00.000Z';
+    const running = { id: 'parent', kind: 'slack', handling: { status: 'running' } };
+    const draining = { ...running, handling: { ...running.handling, drainRequestedAt, drainTimeoutMs: 5_000 } };
+    const waiting = { id: 'child', kind: 'slack', handling: { status: 'queued' } };
+    let drainWritten = false;
+    let drainCalls = 0;
+    let listing = false;
+    let releaseList!: (items: unknown[]) => void;
+    let releaseDrain!: () => void;
+    const listed = new Promise<unknown[]>((resolve) => { releaseList = resolve; });
+    const drained = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    const abortController = new AbortController();
+    const handle = startActiveRunControl({
+      abortController,
+      agentRuntime: { requestDrain: async () => { drainCalls += 1; await drained; } } as unknown as AgentRuntime,
+      idleTimeoutMs: 60_000,
+      itemId: 'parent',
+      logger: silentLogger,
+      queue: {
+        find: async () => (drainWritten ? draining : running),
+        list: async () => { listing = true; return listed; },
+      } as unknown as WakeQueueService,
+      stallTimeoutMs: 100,
+    });
+    try {
+      await waitFor(() => listing, { description: 'the stall check to read the queue' });
+      drainWritten = true;
+      if (order === 'started') {
+        await waitFor(() => drainCalls === 1, { description: 'the drain to start during the read' });
+        releaseList([waiting]);
+      } else {
+        // The read already returns the drain request; this run has not started it yet.
+        releaseList([draining, waiting]);
+      }
+      // fixed delay: several watchdog ticks after the read returned.
+      await sleep(200);
+      assert.equal(abortController.signal.aborted, false, 'the stall check left the run to the drain');
+      assert.equal(drainCalls, 1);
+      releaseDrain();
+      await waitFor(() => abortController.signal.aborted, { description: 'the drain to stop the run' });
+      assert.equal(abortController.signal.reason, 'restart_drain');
+    } finally {
+      handle.release();
+      releaseDrain();
+    }
+  });
+}
+
+test('requeueAppendedSince requeues only appends after the cut and marks the earliest one', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-wake-queue-appended-since-'));
   try {
     await withAnimaHome(stateDir, async () => {
@@ -221,24 +294,24 @@ test('requeueAppendedSince requeues only later appends and marks the earliest on
       const store = new WakeQueueStore('scout');
       const parent = await enqueueInbox(slackMessage('evt-parent', 'parent', '1770000010.000001'), coordinator);
       const early = await enqueueInbox(slackMessage('evt-early', 'early', '1770000011.000001'), coordinator);
+      const atCut = await enqueueInbox(slackMessage('evt-at-cut', 'at the cut', '1770000011.500001'), coordinator);
       const late = await enqueueInbox(slackMessage('evt-late', 'late', '1770000012.000001'), coordinator);
       const later = await enqueueInbox(slackMessage('evt-later', 'later', '1770000013.000001'), coordinator);
       await store.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'w' });
-      const appendNow = async (itemId: string) => {
+      const appendNow = async (itemId: string, appendedAt: string) => {
         await store.takeQueuedBatch({ activeItemId: parent.ctx.item.id, itemIds: [itemId], workerId: 'w' });
-        await store.markAppendedBatch({ itemIds: [itemId], parentItemId: parent.ctx.item.id, workerId: 'w' });
+        await store.markAppendedBatch({ appendedAt, itemIds: [itemId], parentItemId: parent.ctx.item.id, workerId: 'w' });
       };
-      await appendNow(early.ctx.item.id);
-      // fixed delay: put the cut strictly between the early and late appends.
-      await sleep(5);
-      const since = new Date().toISOString();
-      await sleep(5);
-      await appendNow(late.ctx.item.id);
-      await appendNow(later.ctx.item.id);
+      const since = '2026-11-10T00:00:00.000Z';
+      await appendNow(early.ctx.item.id, '2026-11-09T23:59:59.999Z');
+      await appendNow(atCut.ctx.item.id, since);
+      await appendNow(late.ctx.item.id, '2026-11-10T00:00:00.001Z');
+      await appendNow(later.ctx.item.id, '2026-11-10T00:00:00.002Z');
 
       const requeued = await store.requeueAppendedSince(parent.ctx.item.id, since, { resumeReason: 'stalled_run' });
       assert.deepEqual(requeued.map((item) => item.id), [late.ctx.item.id, later.ctx.item.id]);
       assert.equal((await store.find(early.ctx.item.id))?.handling.appendedToItemId, parent.ctx.item.id);
+      assert.equal((await store.find(atCut.ctx.item.id))?.handling.appendedToItemId, parent.ctx.item.id, 'activity at the delivery time may have answered it');
       assert.equal((await store.find(late.ctx.item.id))?.handling.resumeReason, 'stalled_run');
       assert.equal((await store.find(later.ctx.item.id))?.handling.resumeReason, undefined);
       assert.equal((await store.find(later.ctx.item.id))?.handling.status, 'queued');

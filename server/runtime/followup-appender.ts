@@ -1,5 +1,5 @@
 import { observeInputTrace } from '../providers/input-trace.js';
-import { errorMessage } from '../ids.js';
+import { errorMessage, nowIso } from '../ids.js';
 import type { WakeQueueService } from '../inbox/wake-queue.service.js';
 import {
   recordRuntimeFollowupAppended,
@@ -194,6 +194,9 @@ async function tryFollowupBatch(
       { phase, context: traceContext, receipt },
     );
     trace('input.prepared');
+    // The delivery boundary: provider activity from here on may already answer
+    // this batch, so a stop must not requeue it as unseen.
+    const deliveredAt = nowIso();
     const result = await input.agentRuntime.appendToActiveRun({ ...traceContext, prompt });
     if (!result.accepted) {
       trace('input.rejected_before_write');
@@ -244,6 +247,7 @@ async function tryFollowupBatch(
       },
     );
     await input.queue.markAppendedBatch({
+      appendedAt: deliveredAt,
       itemIds,
       parentItemId: input.activeContext.item.id,
       workerId: input.workerId,

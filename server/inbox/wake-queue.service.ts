@@ -331,6 +331,7 @@ export class WakeQueueService {
   }
 
   markAppendedBatch(input: {
+    appendedAt?: string;
     itemIds: string[];
     parentItemId: string;
     workerId: string;

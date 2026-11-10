@@ -85,7 +85,7 @@ The important boundary: `AgentRuntimeInput` does not contain inbox items, Slack 
 
 The worker uses `onActivity` to reset the idle watchdog. If the provider produces no activity for the configured idle timeout, the worker aborts the item. Messages that arrive during the run do not count as activity. When a message is waiting on the run (appended after the provider's last activity, or queued behind it) and the provider has produced no activity for 10 minutes, the worker stops the run early with reason `stalled`, so a provider wedged inside one tool call cannot hold the waiting message until the idle timeout.
 
-When a stop, restart, shutdown, or timeout aborts an item, follow-ups appended after the provider's last activity are requeued rather than failed with the run, since the provider never reached them. After a `stalled` or idle-timeout stop, the first requeued follow-up carries a note telling the agent its previous run was stopped. A user stop still ends everything appended to the run.
+When a stop, restart, shutdown, or timeout aborts an item, follow-ups handed to the provider after its last activity are requeued rather than failed with the run, since the provider never reached them. A follow-up counts from the moment the worker hands it to the provider, so activity that arrives while the hand-off is still being recorded keeps it with the run. After a `stalled` or idle-timeout stop, the first requeued follow-up carries a note telling the agent its previous run was stopped. A user stop still ends everything appended to the run. A requeued Linear request stays open: the ended run's failure notice does not close it, and the run that picks it up answers it.
 
 ### Effects Sink
 

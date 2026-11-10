@@ -71,7 +71,8 @@ interface AgentRuntimeWorkerOptions extends RuntimeWorkerConfig {
   /** Terminal failure (retries exhausted or non-retryable): tell the requester. */
   onItemFailed?: (context: RuntimeItemContext, failure: RuntimeItemFailure) => Promise<void>;
   onItemFollowupAppended?: (activeContext: RuntimeItemContext, context: RuntimeItemContext) => Promise<void>;
-  onItemAborted?: (context: RuntimeItemContext, reason: ItemStopReason) => Promise<void>;
+  /** `requeued` are follow-ups the run never reached; they go back to the queue instead of ending with it. */
+  onItemAborted?: (context: RuntimeItemContext, reason: ItemStopReason, requeued: InboxItem[]) => Promise<void>;
   onItemSettled?: (context: RuntimeItemContext) => Promise<void>;
   onIdle?: () => Promise<void>;
   transportHealth?: () => AgentRuntimeHandleSnapshot['transports'];
@@ -786,7 +787,7 @@ export class AgentRuntimeWorker {
     );
     await this.queue.fail(context.item.id);
     await this.queue.failAppendedTo(context.item.id);
-    await this.options.onItemAborted?.(context, abortReason).catch(() => this.logger.error('Runtime worker abort hook failed.'));
+    await this.options.onItemAborted?.(context, abortReason, requeued).catch(() => this.logger.error('Runtime worker abort hook failed.'));
     return true;
   }
 }
