@@ -548,6 +548,8 @@ test('buildAnimaRuntimeProfile renders the concise Slack and Anima tool contract
   // top-level DMs, and channels differ too much for a fixed thread rule.
   assert.match(prose, /Answer where the message was said: a top-level message gets a top-level reply, and a message in a thread gets its reply in that thread\. In a channel, match how people there talk, and move a long side discussion into a thread\./);
   assert.doesNotMatch(prose, /focused thread|main timeline|separate announcement/);
+  // Without this, agents added their own :eyes:, which outlives the turn and reads as still working.
+  assert.match(prose, /While you work on a message, Anima shows :eyes: on it and takes it off when your turn ends\. Leave that reaction to Anima\./);
   assert.match(prose, /Everything you do with people goes through the `anima` CLI, so it is delivered and recorded/);
   assert.match(prose, /`anima <command> --help` gives exact usage/);
   assert.match(prose, /`\/opt\/anima\/docs\/agent\/`/);
