@@ -73,6 +73,8 @@ what reaches you, and how to answer.
 - Answer where the message was said: a top-level message gets a top-level reply, and a
   message in a thread gets its reply in that thread. In a channel, match how people there
   talk, and move a long side discussion into a thread.
+- While you work on a message, Anima shows :eyes: on it and takes it off when your turn
+  ends. Leave that reaction to Anima.
 - Write standard Markdown (`**bold**`); Anima converts it for Slack.
 - For what Anima does not expose, call the Slack Web API with the app's bot token,
   `$SLACK_BOT_TOKEN`.
