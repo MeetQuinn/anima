@@ -203,9 +203,10 @@ test('a Linear follow-up an interrupted run never reached stays open, and the ru
     assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0, 'The interrupted run posts no failure notice for it');
 
     runner = await start();
-    await waitFor(() => fake.posts.some((p) => p.content.type === 'response'), { timeoutMs: 3000 });
+    // The reply posts first; the receipt closes once Linear accepted it.
+    await waitFor(async () => (await store.read()).receipts[child.id]?.state === 'answered', { timeoutMs: 3000 });
     assert.deepEqual(runs.slice(1), [child.id]);
-    assert.equal((await store.read()).receipts[child.id]!.state, 'answered');
+    assert.equal(fake.posts.filter((p) => p.content.type === 'response').length, 1);
     assert.equal(fake.posts.filter((p) => p.content.type === 'error').length, 0);
   } finally { await runner.stop(); }
 }));
