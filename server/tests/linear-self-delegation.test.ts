@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { Readable } from 'node:stream';
-import { Command } from 'commander';
 import { LinearSessionService } from '../linear/session.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
-import { registerLinearCommands } from '../tools/linear-cli.js';
 import { withTempAnimaHome } from './helpers/harness.js';
 import { FakeLinear, seedLinear, install, created, prompted } from './helpers/linear.js';
 import { linearQueryErrors } from './helpers/linear-schema.js';
@@ -46,7 +43,7 @@ class Delegations extends FakeLinear {
   }
 }
 
-test('self-delegation is acknowledged once without a wake and the registered reply CLI works', async (t) => withTempAnimaHome(async (home) => {
+test('self-delegation is closed once by its acknowledgement, without a wake', async () => withTempAnimaHome(async (home) => {
   const fake = new Delegations(), { service, identity, store } = await seedLinear(home, fake);
   const event = fake.event(); delete event.agentSession.creatorId;
   await service.receive(event, install);
@@ -55,6 +52,7 @@ test('self-delegation is acknowledged once without a wake and the registered rep
   assert.equal(receipt.state, 'awaiting'); assert.equal(receipt.issueId, fake.origin.issue.id);
   assert.equal(receipt.commentId, fake.origin.comment.id, 'Linear also creates a session comment for self-delegation');
   assert.equal(receipt.acknowledgement, 'pending'); assert.equal(receipt.item, undefined);
+  assert.equal(receipt.selfDelegated, true);
   assert.ok((await store.read()).lastSignedWebhookAt);
   const restarted = new LinearSessionService(identity);
   await restarted.receive(event, install);
@@ -62,16 +60,37 @@ test('self-delegation is acknowledged once without a wake and the registered rep
   await new LinearSessionService(identity).receive(event, install); await restarted.tick();
   assert.equal(fake.calls.filter((call) => call.query.includes('activities(last:')).length, 1, 'A durable receipt handles repeat delivery');
   assert.equal((await new WakeQueueService('scout').list()).length, 0);
-  assert.deepEqual(fake.posts.map((post) => post.content.body), ['Received by Anima.']);
-  assert.equal(fake.posts[0]!.ephemeral, true);
-  assert.equal((await store.read()).receipts[key]!.acknowledgement, 'accepted');
-  t.mock.method(globalThis, 'fetch', fake.fetch);
-  t.mock.getter(process, 'stdin', () => Readable.from(['Finished the self-delegated work']) as typeof process.stdin);
-  t.mock.method(console, 'log', () => {});
-  const command = new Command(); registerLinearCommands(command);
-  await command.parseAsync(['node', 'anima', 'linear', '--agent', 'scout', 'reply', '--to', `session:${fake.origin.id}`]);
-  assert.equal(fake.posts.length, 2); assert.equal(fake.posts[1]!.content.type, 'response');
+  // A response ends the session in Linear; a thought left it running.
+  assert.equal(fake.posts.length, 1);
+  assert.equal(fake.posts[0]!.content.type, 'response'); assert.equal(fake.posts[0]!.ephemeral, false);
+  assert.match(fake.posts[0]!.content.body, /^Received by Anima\. This agent delegated the issue to itself, so this session ends here\./);
+  const closed = (await store.read()).receipts[key]!;
+  assert.equal(closed.acknowledgement, 'accepted'); assert.equal(closed.state, 'answered');
+  await assert.rejects(service.respond(fake.origin.id, 'response', 'Finished the self-delegated work', 'existing-turn'),
+    /This session came from your own delegation and is closed\. Report on the issue instead: reply --to issue:/);
+  assert.equal(fake.posts.length, 1);
+}));
+
+test('a self-delegation closing notice whose result was lost is confirmed, not sent again', async () => withTempAnimaHome(async (home) => {
+  const fake = new Delegations(), { service, store } = await seedLinear(home, fake);
+  await service.receive(fake.event(), install);
+  const key = `linear:${install.id}:created:${fake.origin.id}`;
+  const receipt = (await store.read()).receipts[key]!;
+  // The notice reached Linear, then the process died before recording it.
+  fake.posts.push({ id: receipt.acknowledgementId, agentSessionId: fake.origin.id, content: { type: 'response', body: 'sent' }, ephemeral: false });
+  await store.update((file) => ({ ...file, receipts: { ...file.receipts, [key]: { ...receipt, acknowledgement: 'sending' } } }));
+  await service.tick();
+  assert.equal(fake.posts.length, 1);
   assert.equal((await store.read()).receipts[key]!.state, 'answered');
+}));
+
+test('a reply from the delegating turn before the acknowledgement answers the session once', async () => withTempAnimaHome(async (home) => {
+  const fake = new Delegations(), { service, store } = await seedLinear(home, fake);
+  await service.receive(fake.event(), install);
+  await service.respond(fake.origin.id, 'response', 'Already done', 'existing-turn');
+  await service.tick();
+  assert.deepEqual(fake.posts.map((p) => p.content.body), ['Already done']);
+  assert.deepEqual(Object.values((await store.read()).receipts).map((r) => r.state), ['answered']);
 }));
 
 test('a later human prompt in self-delegated work wakes and keeps normal reply ownership', async () => withTempAnimaHome(async (home) => {

@@ -114,8 +114,8 @@ You own the issue's status; Anima never changes it.
 State names vary by team, so choose by `type` and use the state ID. These rules follow
 [Linear's agent guidance](https://linear.app/developers/agent-best-practices), which also
 asks an agent that implements an issue with no delegate to set itself as the delegate.
-Linear then opens a session for you. Anima posts "Received by Anima." without waking you,
-and you answer that session when the work ends; find it among the issue's sessions.
+Linear then opens a session for you. Anima ends it at once without waking you, so report
+progress and results on the issue: its status and a comment.
 
 To show work in progress without taking over an issue, open a session yourself:
 
