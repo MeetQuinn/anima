@@ -32,7 +32,8 @@ const PendingOAuth = z.object({
  * - request: Anima delivered it to the agent. received → running → awaiting (its run ended
  *   without a reply; a later turn can still answer) → answered, or failed when only the
  *   runtime's failure notice closed it. A follow-up that a run requeued before reaching it
- *   goes back from running to received. A Stop moves an open request to stopping until a
+ *   goes back from running to received. A self-delegated request is answered by its own
+ *   acknowledgement. A Stop moves an open request to stopping until a
  *   terminal notice covers it, then stopped. Finished requests keep their outcome.
  * - comment: the request already came through its comment thread, so there is no session
  *   reply obligation. linked → stopped; Stop still reaches the comment's work.
@@ -70,6 +71,9 @@ const Receipt = z.preprocess(migrateReceipt, z.object({
   // duty to dispose of it: withdrawn once the request is published, settled by Stop.
   heldCommentItemId: z.string().optional(),
   itemId: z.string().optional(), runItemId: z.string().optional(),
+  // The agent delegated the issue to itself while already working. The session is a by-product
+  // of that, not a request, so its acknowledgement closes it.
+  selfDelegated: z.literal(true).optional(),
   acknowledgement: z.enum(['pending', 'sending', 'accepted', 'unknown']),
   acknowledgementId: z.string(),
   lastActivityAt: z.string().optional(),

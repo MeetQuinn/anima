@@ -21,6 +21,7 @@ const SourceComment = z.object({ comment: z.object({ id: z.string(), issueId: z.
     user: z.object({ id: z.string() }).nullable(), children: z.object({ nodes: z.array(z.object({ id: z.string() })) }),
   }).nullable(),
 }) });
+const SELF_DELEGATED_BODY = 'Received by Anima. This agent delegated the issue to itself, so this session ends here. Its progress shows in the issue status and comments.';
 const contentHash = (kind: string, body: string) => createHash('sha256').update(JSON.stringify([kind, body])).digest('hex');
 const sessionFields = 'id appUser{id} creator{id} issue{id identifier title url} comment{id} status url';
 const SessionOrigin = z.object({ agentSession: z.object({
@@ -241,10 +242,10 @@ export class LinearSessionService {
           for (const [id, r] of Object.entries(receipts)) if (r.sessionId === session.id) receipts[id] = stopReceipt(r);
         } else if (commentDelivered) receipt = { ...base, kind: 'comment', state: alreadyStopped ? 'stopped' : 'linked' };
         else if (selfDelegated) {
-          // The caller is already working. Retain the same reply/Stop contract as
-          // a proactive start, while the normal receipt keeps Linear responsive.
+          // The caller is already working and reports on the issue. Until the acknowledgement
+          // closes the session, its turn can still reply there and a Stop still reaches it.
           receipt = { ...base, kind: 'request', state: alreadyStopped ? 'stopping' : 'awaiting',
-            itemId: item.id, runItemId: item.id };
+            itemId: item.id, runItemId: item.id, selfDelegated: true };
         } else {
           receipt = { ...base, kind: 'request', state: alreadyStopped ? 'stopping' : 'received', itemId: item.id };
           if (!alreadyStopped) receipt.item = item;
@@ -389,6 +390,33 @@ export class LinearSessionService {
         await this.acceptOperation(install.id, key, operation);
       }
     }
+    // Once delivered, an unanswered request belongs to the agent's primary
+    // session, not just the turn that first handled it. Terminal notices stay
+    // scoped to their original run; unstarted inputs cannot be claimed here.
+    const owns = async (r: LinearReceipt) => {
+      const owner = await this.ownerFor(r);
+      return !runItemId || owner === runItemId || (!terminal && r.state === 'awaiting' && Boolean(owner));
+    };
+    file = await this.identity.store.read();
+    // A closing acknowledgement whose result is unknown may already have ended the session.
+    // Settle it first, so a reply cannot end the session a second time. A reply that also
+    // answers another request it owns is owed either way, and answers the self-delegation too.
+    if (!terminal) {
+      for (const [key, r] of Object.entries(file.receipts)) {
+        if (r.sessionId !== sessionId || !r.selfDelegated || r.state !== 'awaiting') continue;
+        if (r.acknowledgement !== 'sending' && r.acknowledgement !== 'unknown') continue;
+        try {
+          await this.confirmActivity(install.id, sessionId, r.acknowledgementId);
+          await this.setAcknowledgement(install.id, key, 'accepted');
+        } catch (error) {
+          let answersAnother = false;
+          for (const [id, other] of Object.entries(file.receipts)) {
+            if (id !== key && other.sessionId === sessionId && claimable(other) && await owns(other)) answersAnother = true;
+          }
+          if (!answersAnother) throw error;
+        }
+      }
+    }
     file = await this.identity.store.read();
     // Receipts outlive their queued items. Reuse the latest known display fields,
     // including when a follow-up omits them, without a per-reply API lookup.
@@ -401,18 +429,15 @@ export class LinearSessionService {
     const hash = contentHash(kind, body);
     const candidates = Object.entries(file.receipts).filter(([, r]) => r.sessionId === sessionId && claimable(r, terminal));
     const itemIds: string[] = [];
-    for (const [id, receipt] of candidates) {
-      const owner = await this.ownerFor(receipt);
-      // Once delivered, an unanswered request belongs to the agent's primary
-      // session, not just the turn that first handled it. Terminal notices stay
-      // scoped to their original run; unstarted inputs cannot be claimed here.
-      if (!runItemId || owner === runItemId || (!terminal && receipt.state === 'awaiting' && owner)) itemIds.push(id);
-    }
+    for (const [id, receipt] of candidates) if (await owns(receipt)) itemIds.push(id);
     itemIds.sort();
     if (!itemIds.length) {
       const accepted = Object.values(file.operations).find((op) => op.sessionId === sessionId && op.kind === 'activity'
         && op.state === 'accepted' && op.contentHash === hash && op.ownerRunId === runItemId);
       if (accepted) return { ...issue, activityId: accepted.id, bookkeeping: 'recorded' };
+      if (Object.values(file.receipts).some((r) => r.sessionId === sessionId && r.selfDelegated && r.state === 'answered')) {
+        throw new Error(`This session came from your own delegation and is closed. Report on the issue instead: reply --to issue:${issue.issueKey ?? '<issue>'}.`);
+      }
       throw new Error('No accepted input owned by this run for this Linear session.');
     }
     const key = contentHash(hash, JSON.stringify(itemIds));
@@ -493,23 +518,37 @@ export class LinearSessionService {
         try { await this.confirmActivity(installId, r.sessionId, r.acknowledgementId); }
         catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
       } else if (r.acknowledgement === 'pending') {
-        await this.setAcknowledgement(installId, key, 'sending');
+        // Without an answer, a self-delegated session stayed open and its timer kept running for days.
+        // Linear shows the latest activity as the session's state, so the closing response must not
+        // follow another request that still waits for the agent. Then the agent's reply answers both.
+        const waiting = Object.entries(file.receipts).some(([id, other]) => id !== key && other.sessionId === r.sessionId && isOpenRequest(other));
+        const closes = r.kind === 'request' && r.selfDelegated === true && !waiting;
+        await this.setAcknowledgement(installId, key, 'sending', { keepOpen: r.selfDelegated === true && !closes });
         const body = r.kind === 'comment'
           ? 'Received by Anima. This request was already delivered through the original comment thread. Follow that thread for any reply.'
-          : 'Received by Anima.';
-        try { await this.createActivity(installId, receipt.sessionId, receipt.acknowledgementId, 'thought', body, true); }
-        catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
+          : closes ? SELF_DELEGATED_BODY : 'Received by Anima.';
+        try { await this.createActivity(installId, receipt.sessionId, receipt.acknowledgementId, closes ? 'response' : 'thought', body, !closes); }
+        catch {
+          // A lost result can hide a response Linear accepted. Confirm it, so no later reply ends the session again.
+          const confirmed = closes && await this.confirmActivity(installId, r.sessionId, r.acknowledgementId).then(() => true, () => false);
+          if (!confirmed) { await this.setAcknowledgement(installId, key, 'unknown'); return; }
+        }
       } else return;
       await this.setAcknowledgement(installId, key, 'accepted');
     });
   }
 
-  private async setAcknowledgement(installId: string, key: string, state: LinearReceipt['acknowledgement']): Promise<void> {
+  /** `keepOpen`: a self-delegation whose session another request still waits in; it stays open like any request. */
+  private async setAcknowledgement(installId: string, key: string, state: LinearReceipt['acknowledgement'], { keepOpen = false } = {}): Promise<void> {
     await this.identity.store.update((file) => {
       const r = file.receipts[key];
       if (!r || file.installation?.id !== installId) return file;
-      const next = { ...r, acknowledgement: state };
+      let next: LinearReceipt = { ...r, acknowledgement: state };
+      if (keepOpen) delete next.selfDelegated;
       if (state === 'accepted') next.lastActivityAt = nowIso();
+      // The acknowledgement of a self-delegation was a response, so it answered the request.
+      // A Stop that arrived meanwhile keeps its own notice.
+      if (state === 'accepted' && r.selfDelegated && r.state === 'awaiting') next = closeReceipt(next);
       const result = { ...file, receipts: { ...file.receipts, [key]: next } };
       if (state === 'unknown') result.lastError = 'First-activity result is unknown; inspect Linear before sending a new prompt.';
       return result;

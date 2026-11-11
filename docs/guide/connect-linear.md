@@ -240,10 +240,10 @@ opens a session and posts its initial progress from stdin. It can target an exis
 with `--comment <uuid>`. The session belongs to the app and shares the agent's current
 working context; a creation webhook matching the recorded session does not wake the agent again.
 If creation was uncertain and no session ID was recorded, the webhook follows normal intake. Human replies still wake the agent.
-When the initial prompt identifies the app itself as the delegator, Anima sends
-**Received by Anima** and links the session without waking the agent again. Later human
-prompts in that session wake it normally. If the origin cannot be confirmed, the session
-follows normal intake.
+When the initial prompt identifies the app itself as the delegator, the agent is already
+working and reports on the issue, so Anima ends the session with a **Received by Anima**
+response instead of waking the agent again. Later human prompts in that session wake it
+normally. If the origin cannot be confirmed, the session follows normal intake.
 
 Agents can attach screenshots, logs and other local files with
 `anima linear reply --to <reply_to> --file <path>`; repeat `--file` for several files.
@@ -262,7 +262,7 @@ agent's response, question or error finishes the request. A crashed or interrupt
 gets one error notice. If Linear shows a session as stale, reply there to wake the agent again,
 or stop it. **Copy diagnostics** still includes a local count of sessions with no recorded reply
 and no recorded activity for 30 minutes. It is not a health signal: it can include sessions
-created by self-delegation or answered outside Anima's reply flow.
+answered outside Anima's reply flow.
 
 After a runtime restart, interrupted background work gets a durable recovery wake. The agent
 checks earlier effects before continuing; native background tasks are not automatically
