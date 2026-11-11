@@ -391,6 +391,21 @@ export class LinearSessionService {
       }
     }
     file = await this.identity.store.read();
+    // A closing acknowledgement whose result is unknown may already have ended the session.
+    // Settle it first, so a reply cannot end the session a second time. When another request
+    // waits for this reply, the reply is owed either way and answers the self-delegation too.
+    if (!terminal) {
+      for (const [key, r] of Object.entries(file.receipts)) {
+        if (r.sessionId !== sessionId || !r.selfDelegated || r.state !== 'awaiting') continue;
+        if (r.acknowledgement !== 'sending' && r.acknowledgement !== 'unknown') continue;
+        const waiting = Object.entries(file.receipts).some(([id, other]) => id !== key && other.sessionId === sessionId && isOpenRequest(other));
+        try {
+          await this.confirmActivity(install.id, sessionId, r.acknowledgementId);
+          await this.setAcknowledgement(install.id, key, 'accepted');
+        } catch (error) { if (!waiting) throw error; }
+      }
+    }
+    file = await this.identity.store.read();
     // Receipts outlive their queued items. Reuse the latest known display fields,
     // including when a follow-up omits them, without a per-reply API lookup.
     const issue: Pick<SessionReply, 'issueId' | 'issueKey' | 'issueTitle' | 'issueUrl'> = {};
@@ -497,24 +512,33 @@ export class LinearSessionService {
         try { await this.confirmActivity(installId, r.sessionId, r.acknowledgementId); }
         catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
       } else if (r.acknowledgement === 'pending') {
-        await this.setAcknowledgement(installId, key, 'sending');
         // Without an answer, a self-delegated session stayed open and its timer kept running for days.
-        const closes = r.kind === 'request' && r.selfDelegated === true;
+        // Linear shows the latest activity as the session's state, so the closing response must not
+        // follow another request that still waits for the agent. Then the agent's reply answers both.
+        const waiting = Object.entries(file.receipts).some(([id, other]) => id !== key && other.sessionId === r.sessionId && isOpenRequest(other));
+        const closes = r.kind === 'request' && r.selfDelegated === true && !waiting;
+        await this.setAcknowledgement(installId, key, 'sending', { keepOpen: r.selfDelegated === true && !closes });
         const body = r.kind === 'comment'
           ? 'Received by Anima. This request was already delivered through the original comment thread. Follow that thread for any reply.'
           : closes ? SELF_DELEGATED_BODY : 'Received by Anima.';
         try { await this.createActivity(installId, receipt.sessionId, receipt.acknowledgementId, closes ? 'response' : 'thought', body, !closes); }
-        catch { await this.setAcknowledgement(installId, key, 'unknown'); return; }
+        catch {
+          // A lost result can hide a response Linear accepted. Confirm it, so no later reply ends the session again.
+          const confirmed = closes && await this.confirmActivity(installId, r.sessionId, r.acknowledgementId).then(() => true, () => false);
+          if (!confirmed) { await this.setAcknowledgement(installId, key, 'unknown'); return; }
+        }
       } else return;
       await this.setAcknowledgement(installId, key, 'accepted');
     });
   }
 
-  private async setAcknowledgement(installId: string, key: string, state: LinearReceipt['acknowledgement']): Promise<void> {
+  /** `keepOpen`: a self-delegation whose session another request still waits in; it stays open like any request. */
+  private async setAcknowledgement(installId: string, key: string, state: LinearReceipt['acknowledgement'], { keepOpen = false } = {}): Promise<void> {
     await this.identity.store.update((file) => {
       const r = file.receipts[key];
       if (!r || file.installation?.id !== installId) return file;
       let next: LinearReceipt = { ...r, acknowledgement: state };
+      if (keepOpen) delete next.selfDelegated;
       if (state === 'accepted') next.lastActivityAt = nowIso();
       // The acknowledgement of a self-delegation was a response, so it answered the request.
       // A Stop that arrived meanwhile keeps its own notice.

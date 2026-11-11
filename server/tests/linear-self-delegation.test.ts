@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { LinearSessionService } from '../linear/session.service.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
-import { withTempAnimaHome } from './helpers/harness.js';
+import { waitFor, withTempAnimaHome } from './helpers/harness.js';
 import { FakeLinear, seedLinear, install, created, prompted } from './helpers/linear.js';
 import { linearQueryErrors } from './helpers/linear-schema.js';
 
@@ -82,6 +82,69 @@ test('a self-delegation closing notice whose result was lost is confirmed, not s
   await service.tick();
   assert.equal(fake.posts.length, 1);
   assert.equal((await store.read()).receipts[key]!.state, 'answered');
+}));
+
+test('a lost closing result is confirmed at once, so a later session reply cannot end it again', async () => withTempAnimaHome(async (home) => {
+  const fake = new Delegations(), { service, identity, store } = await seedLinear(home, fake);
+  await service.receive(fake.event(), install);
+  fake.loseResponse = true; await service.tick(); fake.loseResponse = false;
+  await new LinearSessionService(identity).tick();
+  assert.deepEqual(fake.posts.map((p) => p.content.type), ['response']);
+  assert.deepEqual(Object.values((await store.read()).receipts).map((r) => [r.state, r.acknowledgement]), [['answered', 'accepted']]);
+  await assert.rejects(new LinearSessionService(identity).respond(fake.origin.id, 'response', 'Finished work', 'existing-turn'), /came from your own delegation/);
+  assert.equal(fake.posts.length, 1);
+}));
+
+test('an unconfirmed closing result blocks a lone session reply but not a reply a person waits for', async () => withTempAnimaHome(async (home) => {
+  const fake = new Delegations(), { service, store } = await seedLinear(home, fake);
+  await service.receive(fake.event(), install);
+  fake.failMutation = true; await service.tick(); fake.failMutation = false;
+  assert.deepEqual(Object.values((await store.read()).receipts).map((r) => [r.state, r.acknowledgement]), [['awaiting', 'unknown']]);
+  await assert.rejects(service.respond(fake.origin.id, 'response', 'Finished work', 'existing-turn'), /result is unknown/);
+  assert.equal(fake.posts.length, 0);
+  const human = prompted(fake.origin.id); human.agentActivity!.userId = randomUUID();
+  await service.receive(human, install); await service.tick();
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item); await service.markStarted(item, 'human-turn');
+  await service.respond(fake.origin.id, 'response', 'Answered the person', 'human-turn');
+  assert.deepEqual(fake.posts.map((p) => p.content.type), ['thought', 'response']);
+  assert.deepEqual(Object.values((await store.read()).receipts).map((r) => r.state).sort(), ['answered', 'answered']);
+}));
+
+test('a person\'s prompt acknowledged before the self-delegation keeps the session open', async () => withTempAnimaHome(async (home) => {
+  const fake = new Delegations(), { service, store } = await seedLinear(home, fake);
+  const human = prompted(fake.origin.id); human.agentActivity!.userId = randomUUID();
+  // The person writes while Anima is still checking who opened the session.
+  fake.beforeOrigin = async () => { await service.receive(human, install); await service.tick(); };
+  await service.receive(fake.event(), install); await service.tick();
+  // Linear shows the latest activity as the session state; a closing response here would end the person's request.
+  assert.deepEqual(fake.posts.map((p) => [p.content.type, p.content.body]), [['thought', 'Received by Anima.'], ['thought', 'Received by Anima.']]);
+  const self = (await store.read()).receipts[`linear:${install.id}:created:${fake.origin.id}`]!;
+  assert.equal(self.state, 'awaiting'); assert.equal(self.selfDelegated, undefined);
+  const [item] = await new WakeQueueService('scout').list();
+  assert.ok(item); await service.markStarted(item, 'human-turn');
+  await service.respond(fake.origin.id, 'response', 'Answered the person', 'human-turn');
+  assert.equal(fake.posts.at(-1)!.content.body, 'Answered the person'); assert.equal(fake.posts.length, 3);
+  assert.deepEqual(Object.values((await store.read()).receipts).map((r) => r.state).sort(), ['answered', 'answered']);
+}));
+
+test('a Stop during the closing acknowledgement still gets its own notice', async () => withTempAnimaHome(async (home) => {
+  const fake = new Delegations(), base = fake.fetch;
+  let started = false, release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  fake.fetch = async (url, init) => {
+    const { query, variables } = JSON.parse(String(init?.body));
+    if (query.includes('agentActivityCreate') && variables.input.content.type === 'response') { started = true; await gate; }
+    return base(url, init);
+  };
+  const { service, store } = await seedLinear(home, fake);
+  await service.receive(fake.event(), install);
+  const tick = service.tick(); await waitFor(() => started);
+  const stop = service.receive(prompted(fake.origin.id, true), install);
+  await waitFor(async () => Object.values((await store.read()).receipts).some((r) => r.state === 'stopping'));
+  release(); await Promise.all([tick, stop]);
+  assert.deepEqual(Object.values((await store.read()).receipts).map((r) => r.state).sort(), ['confirmed', 'stopped']);
+  assert.deepEqual(fake.posts.map((p) => p.content.type), ['response', 'error']);
 }));
 
 test('a reply from the delegating turn before the acknowledgement answers the session once', async () => withTempAnimaHome(async (home) => {
