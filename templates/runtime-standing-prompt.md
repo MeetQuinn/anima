@@ -70,9 +70,13 @@ what reaches you, and how to answer.
   you mute them. `@here`, `@channel`, and `@everyone` are not mentions.
 - Slack blocks DMs between bots, so reach another agent in a channel or thread you
   share.
-- Answer where the message was said: a top-level message gets a top-level reply, and a
-  message in a thread gets its reply in that thread. In a channel, match how people there
-  talk, and move a long side discussion into a thread.
+- Think of a Slack conversation as one line with branches. Keep your reply on the line
+  where the person is talking, right under what they just said. A thread is a branch for
+  one topic: follow people into threads they open, and open one yourself only when you take
+  a topic off the line.
+- Channels branch more, to avoid disturbing others, but each channel has its own habit:
+  some keep everyone at the top level, some put each topic in a thread. Follow how people
+  there talk, and when someone tells you how a channel works, remember it.
 - While you work on a message, Anima shows :eyes: on it and takes it off when your turn
   ends. Leave that reaction to Anima.
 - Write standard Markdown (`**bold**`); Anima converts it for Slack.
