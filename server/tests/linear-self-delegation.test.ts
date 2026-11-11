@@ -95,7 +95,7 @@ test('a lost closing result is confirmed at once, so a later session reply canno
   assert.equal(fake.posts.length, 1);
 }));
 
-test('an unconfirmed closing result blocks a lone session reply but not a reply a person waits for', async () => withTempAnimaHome(async (home) => {
+test('an unconfirmed closing result blocks a reply unless that reply answers a person', async () => withTempAnimaHome(async (home) => {
   const fake = new Delegations(), { service, store } = await seedLinear(home, fake);
   await service.receive(fake.event(), install);
   fake.failMutation = true; await service.tick(); fake.failMutation = false;
@@ -104,6 +104,9 @@ test('an unconfirmed closing result blocks a lone session reply but not a reply 
   assert.equal(fake.posts.length, 0);
   const human = prompted(fake.origin.id); human.agentActivity!.userId = randomUUID();
   await service.receive(human, install); await service.tick();
+  // The person's prompt has not reached a turn yet, so an unrelated turn's reply would only end the session.
+  await assert.rejects(service.respond(fake.origin.id, 'response', 'Unrelated', 'old-unrelated-turn'), /result is unknown/);
+  assert.deepEqual(fake.posts.map((p) => p.content.type), ['thought']);
   const [item] = await new WakeQueueService('scout').list();
   assert.ok(item); await service.markStarted(item, 'human-turn');
   await service.respond(fake.origin.id, 'response', 'Answered the person', 'human-turn');

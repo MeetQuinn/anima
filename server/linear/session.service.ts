@@ -390,19 +390,31 @@ export class LinearSessionService {
         await this.acceptOperation(install.id, key, operation);
       }
     }
+    // Once delivered, an unanswered request belongs to the agent's primary
+    // session, not just the turn that first handled it. Terminal notices stay
+    // scoped to their original run; unstarted inputs cannot be claimed here.
+    const owns = async (r: LinearReceipt) => {
+      const owner = await this.ownerFor(r);
+      return !runItemId || owner === runItemId || (!terminal && r.state === 'awaiting' && Boolean(owner));
+    };
     file = await this.identity.store.read();
     // A closing acknowledgement whose result is unknown may already have ended the session.
-    // Settle it first, so a reply cannot end the session a second time. When another request
-    // waits for this reply, the reply is owed either way and answers the self-delegation too.
+    // Settle it first, so a reply cannot end the session a second time. A reply that also
+    // answers another request it owns is owed either way, and answers the self-delegation too.
     if (!terminal) {
       for (const [key, r] of Object.entries(file.receipts)) {
         if (r.sessionId !== sessionId || !r.selfDelegated || r.state !== 'awaiting') continue;
         if (r.acknowledgement !== 'sending' && r.acknowledgement !== 'unknown') continue;
-        const waiting = Object.entries(file.receipts).some(([id, other]) => id !== key && other.sessionId === sessionId && isOpenRequest(other));
         try {
           await this.confirmActivity(install.id, sessionId, r.acknowledgementId);
           await this.setAcknowledgement(install.id, key, 'accepted');
-        } catch (error) { if (!waiting) throw error; }
+        } catch (error) {
+          let answersAnother = false;
+          for (const [id, other] of Object.entries(file.receipts)) {
+            if (id !== key && other.sessionId === sessionId && claimable(other) && await owns(other)) answersAnother = true;
+          }
+          if (!answersAnother) throw error;
+        }
       }
     }
     file = await this.identity.store.read();
@@ -417,13 +429,7 @@ export class LinearSessionService {
     const hash = contentHash(kind, body);
     const candidates = Object.entries(file.receipts).filter(([, r]) => r.sessionId === sessionId && claimable(r, terminal));
     const itemIds: string[] = [];
-    for (const [id, receipt] of candidates) {
-      const owner = await this.ownerFor(receipt);
-      // Once delivered, an unanswered request belongs to the agent's primary
-      // session, not just the turn that first handled it. Terminal notices stay
-      // scoped to their original run; unstarted inputs cannot be claimed here.
-      if (!runItemId || owner === runItemId || (!terminal && receipt.state === 'awaiting' && owner)) itemIds.push(id);
-    }
+    for (const [id, receipt] of candidates) if (await owns(receipt)) itemIds.push(id);
     itemIds.sort();
     if (!itemIds.length) {
       const accepted = Object.values(file.operations).find((op) => op.sessionId === sessionId && op.kind === 'activity'
