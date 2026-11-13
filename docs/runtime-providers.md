@@ -1,6 +1,6 @@
 # Provider Layer
 
-This document explains the layer where Anima talks to an underlying provider such as Codex, Claude Code, Kimi Code, Grok Build, OpenCode, or pi.
+This document explains the layer where Anima talks to an underlying provider such as Codex, Claude Code, Kimi Code, Grok Build, OpenCode, pi, or Antigravity CLI.
 
 It intentionally does not re-explain chat routing, reminder scheduling, inbox ingestion, or the web app. For the system map, start with [Architecture overview](architecture/overview.md).
 
@@ -56,7 +56,7 @@ point; live background work is exposed through health and keeps the controller n
 
 When a controller starts terminating its child, it sends `SIGTERM` and schedules `SIGKILL` after five seconds by default. A caller can supply a shorter or longer deadline; a concurrent close cannot postpone an already scheduled kill. The terminating child remains visible to health and later close calls until completion, and a new turn waits for that teardown before starting. This covers a Claude child that ignores stop or idle-timeout cancellation; it does not diagnose why the native process stopped making progress.
 
-Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, OpenCode ACP, and pi RPC) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude and Codex become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks or terminals.
+Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, OpenCode ACP, Antigravity ACP, and pi RPC) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude and Codex become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks or terminals.
 
 `health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, how the live one looks, and any provider-native background work) for the runtime health service. `providerWork` distinguishes a main turn that also has background work (`working` plus a count) from a completed main turn whose background work remains (`background` plus a count).
 
@@ -196,6 +196,7 @@ They are used to resume the underlying tool's native context:
 - Kimi: the stored id is the Kimi ACP session id;
 - Grok: the stored id is the Grok ACP session id;
 - OpenCode: the stored id is the OpenCode ACP session id;
+- Antigravity: the stored id is the Antigravity ACP session id;
 - pi: the stored id is the uuid Anima passes as `--session-id`, which resumes that session or creates it.
 
 When a provider emits a new session id, the adapter calls `effects.persistProviderSession`. The sink updates Anima's primary session record.
@@ -585,7 +586,7 @@ Anima currently exposes `deepseek/deepseek-v4-pro` and `deepseek/deepseek-v4-fla
 Both support `high` and `max` effort. The retired `deepseek-chat` and `deepseek-reasoner` aliases
 are not accepted for new agent configuration.
 
-OpenCode, Kimi, and Grok all use ACP, but most of their session and event contracts are
+OpenCode, Kimi, Grok, and Antigravity all use ACP, but most of their session and event contracts are
 provider-specific. Shared pieces:
 
 - `server/providers/acp-json-rpc.ts`: newline framing, JSON-RPC request correlation, and
@@ -705,7 +706,7 @@ Chat tool activities are separate. When the spawned code agent calls `anima mess
 
 ## Current Boundaries and Tradeoffs
 
-- Codex, Claude, Kimi, Grok, OpenCode, and pi all keep provider continuity through a persisted provider session id and a persistent child process for the lifetime of the worker.
+- Codex, Claude, Kimi, Grok, OpenCode, pi, and Antigravity all keep provider continuity through a persisted provider session id and a persistent child process for the lifetime of the worker.
 - Auto-compact is provider-owned. Anima observes compact events and records them; it does not perform compaction itself.
 - Active-run follow-up append is best-effort. If a provider rejects a follow-up, the item is requeued and processed after the active item.
 - An accepted follow-up item is considered absorbed by the active item. It will not have a separate provider result.
@@ -724,6 +725,6 @@ A new provider should:
 6. implement `appendToActiveRun` using the provider's real in-flight input protocol;
 7. implement `close` if it keeps a process or connection alive beyond a single item.
 
-Adapters that keep one long-lived child-process controller per runtime (the Claude stream-json, Codex, Kimi, Grok, OpenCode, and pi shape) should extend `ControllerAgentRuntime` in `server/providers/provider-runtime.ts`. It owns the controller slot, active-run tracking, `close`/`health`/`requestDrain`, child spawning, and the `runtime.started`/`runtime.completed`/`runtime.failed` activity envelope; the adapter supplies only the provider protocol.
+Adapters that keep one long-lived child-process controller per runtime (the Claude stream-json, Codex, Kimi, Grok, OpenCode, pi, and Antigravity shape) should extend `ControllerAgentRuntime` in `server/providers/provider-runtime.ts`. It owns the controller slot, active-run tracking, `close`/`health`/`requestDrain`, child spawning, and the `runtime.started`/`runtime.completed`/`runtime.failed` activity envelope; the adapter supplies only the provider protocol.
 
 The worker should not need provider-specific changes for a new adapter.

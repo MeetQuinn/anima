@@ -106,14 +106,14 @@ DM and thread sends return an error rather than posting unheld.
 ## Providers (`providerCommands`, `providerArgs`, `providerContextLimits`)
 
 Set these under **Settings > Providers**. [Providers](./guide/providers.md) explains each control.
-Provider keys are `claude-code`, `codex-cli`, `kimi-cli`, `grok-cli`, `opencode-cli`, and `pi`.
+Provider keys are `claude-code`, `codex-cli`, `kimi-cli`, `grok-cli`, `opencode-cli`, `pi`, and `antigravity-cli`.
 
-| Key                              | Type                       | Default                                                | What it does                                                                                     |
-| -------------------------------- | -------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `providerCommands.<provider>`    | string, up to 4096 chars   | `claude`, `codex`, `kimi`, `grok`, `opencode`, or `pi` | Executable name or absolute path launched for every agent on that provider. Not a shell command. |
-| `providerArgs.<provider>`        | array of up to 128 strings | `[]`                                                   | Extra argv entries passed to the provider CLI. No blank entries, line breaks, or NUL bytes.      |
-| `providerContextLimits.grok-cli` | positive integer (tokens)  | unset (no Anima limit)                                 | Machine-wide context cap for Grok. The dashboard offers `131072` or `200000`.                    |
-| `providerContextLimits.kimi-cli` | positive integer (tokens)  | unset (no Anima limit)                                 | Machine-wide context cap for Kimi. The dashboard offers `131072` or `262144`.                    |
+| Key                              | Type                       | Default                                                       | What it does                                                                                     |
+| -------------------------------- | -------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `providerCommands.<provider>`    | string, up to 4096 chars   | `claude`, `codex`, `kimi`, `grok`, `opencode`, `pi`, or `agy` | Executable name or absolute path launched for every agent on that provider. Not a shell command. |
+| `providerArgs.<provider>`        | array of up to 128 strings | `[]`                                                          | Extra argv entries passed to the provider CLI. No blank entries, line breaks, or NUL bytes.      |
+| `providerContextLimits.grok-cli` | positive integer (tokens)  | unset (no Anima limit)                                        | Machine-wide context cap for Grok. The dashboard offers `131072` or `200000`.                    |
+| `providerContextLimits.kimi-cli` | positive integer (tokens)  | unset (no Anima limit)                                        | Machine-wide context cap for Kimi. The dashboard offers `131072` or `262144`.                    |
 
 - An agent's own runtime command or arguments replace these values for that agent. They are not
   merged.

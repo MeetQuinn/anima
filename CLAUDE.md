@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Anima is a local runtime that turns a code-agent runtime (Codex, Claude Code, Kimi Code, Grok Build, OpenCode, or pi) into a durable teammate in Slack or Feishu, with optional Linear app sessions. One agent identity maps to one **primary provider session** that spans every DM, channel, chat, and thread - not one session per thread. See `docs/architecture/overview.md` for the architecture and `README.md` for the user-facing pitch.
+Anima is a local runtime that turns a code-agent runtime (Codex, Claude Code, Kimi Code, Grok Build, OpenCode, pi, or Antigravity CLI) into a durable teammate in Slack or Feishu, with optional Linear app sessions. One agent identity maps to one **primary provider session** that spans every DM, channel, chat, and thread - not one session per thread. See `docs/architecture/overview.md` for the architecture and `README.md` for the user-facing pitch.
 
 ## Commands
 
@@ -56,7 +56,7 @@ The repo is one TypeScript Node ESM project (`"type": "module"`, NodeNext, stric
 
 ```
 Slack Socket Mode ──┐
-Feishu events/WS ───┼──► transports/inbox ──► Runtime worker ──► Codex / Claude / Kimi / Grok / OpenCode / pi CLI
+Feishu events/WS ───┼──► transports/inbox ──► Runtime worker ──► Codex / Claude / Kimi / Grok / OpenCode / pi / agy CLI
 Linear webhooks ────┤
 Reminder scheduler ─┘                                                    │
                                                                          ▼
@@ -86,11 +86,11 @@ The chat transports, reminder scheduler, and agent worker all run in one `agent`
 - **`server/env/`** — Per-agent provider environment storage, encryption/decryption, key validation, and masking.
 - **`server/provider-usage/`** — Provider usage/account probing. It should stay decoupled from provider runtime adapters.
 - **`server/runtime/`** — Runtime item execution. `runtime-worker.ts` drains the wake queue, handles active-run follow-ups, stop/idle/crash behavior, prompt construction, provider effects, session stats, and activity emission.
-- **`server/providers/`** — Provider adapter layer. Claude Code, Codex, Kimi Code, Grok Build, OpenCode, and pi adapters own only their provider protocols; `child-process.ts` is the shared spawn layer. The Grok, Kimi, and OpenCode ACP adapters also share `acp-json-rpc.ts` (JSON-RPC transport), `acp-updates.ts` (session-update parsing), and `acp-midturn-followup.ts` (mid-turn follow-up policy); Grok and Kimi share `acp-permissions.ts` (permission option picker).
+- **`server/providers/`** — Provider adapter layer. Claude Code, Codex, Kimi Code, Grok Build, OpenCode, pi, and Antigravity CLI adapters own only their provider protocols; `child-process.ts` is the shared spawn layer. The Grok, Kimi, OpenCode, and Antigravity ACP adapters also share `acp-json-rpc.ts` (JSON-RPC transport), `acp-updates.ts` (session-update parsing), and `acp-midturn-followup.ts` (mid-turn follow-up policy); Grok, Kimi, and Antigravity share `acp-permissions.ts` (permission option picker).
 - **`server/reminders/`** — Reminder records, repeat-rule parsing (`every:15m`, `daily@09:00`, `weekly:mon,fri@09:00`), reminder lifecycle/activity, and the `anima reminder` CLI. Due reminders become inbox items through `inbox/`.
 - **`server/storage/`** — Persistence primitives and typed stores: JSON files, JSONL logs, file locks, safe filenames, and `storage/schema/*` store modules. Folder layout is under `$ANIMA_HOME/agents/<agentId>/`.
 - **`server/settings/`** — Runtime-wide settings: dashboard password-auth state, the do-not-contact list (`do-not-contact.service.ts`), and the public address check (`public-url-check.ts`).
-- **`server/services/`** — Environment-neutral daemon supervisor. `supervisor.ts` (start/stop/status with pid files, log files, `ps` orphan fallback, env scrub). Called by `cli/services-cli.ts` to back `animactl services <op>`.
+- **`server/services/`** — Environment-neutral daemon supervisor. `supervisor.ts` (start/stop/status with pid files, log files, `ps` orphan fallback, env scrub); `launchd.ts` and `systemd.ts` install and control the OS services; `service-start.ts` resolves a stable Node path for service definitions and confirms a started service stays up; `system.service.ts` backs the system API (provider availability and model catalogs, server info, detached services restart); `restart-drain.ts`, `restart-gate.ts`, and `restart-result.ts` hold the restart drain, idle gate, and result record. Called by `cli/services-cli.ts` to back `animactl services <op>`.
 - **`server/runtime-management/`** — Managed runtime install/update/status logic, npm release-track checks, and stable/canary upgrade orchestration. This is operator/runtime package management, not provider execution.
 - **`server/diagnostics/`** — Support/diagnostic aggregation for agent health, runtime state, package info, and recent logs. Keep this allowlisted and secret-free.
 - **`server/activities/`** — Activity service and formatting helpers shared by runtime, tools, diagnostics, and UI feed projection.
