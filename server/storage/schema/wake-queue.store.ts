@@ -458,7 +458,7 @@ export class WakeQueueStore {
       }, now));
       const items = { ...current.items };
       for (const item of claimed) items[item.id] = item;
-      // Real work joining a run (e.g. a memory pass) wakes the agent like a claim does.
+      // Real work joining a run (e.g. Dreaming) wakes the agent like a claim does.
       if (claimed.some(isAgentWork)) releaseAllHeld(items, now);
       return { items, seen: current.seen };
     });
