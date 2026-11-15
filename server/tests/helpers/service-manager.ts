@@ -4,6 +4,14 @@ import { join, resolve } from 'node:path';
 
 export const FULL_SERVICE_LOG_BYTES = 20 * 1024 * 1024;
 
+/**
+ * The pid the fake managers report for a running service. Stop paths ask the real OS
+ * whether the previous pid is still alive, so a small pid can belong to an unrelated
+ * process on the test host and stall the stop. No host can have this one: macOS pids stop
+ * at 99999 and Linux pids at 4194304.
+ */
+export const FAKE_SERVICE_PID = 99_999_999;
+
 export interface FakeServiceManager {
   /** Start actions the fake received, as `<action> rotated=<yes|no>`. */
   actions: () => Promise<string[]>;
@@ -58,7 +66,7 @@ export async function writeFakeServiceManager(
         '  label="${2##*/}"',
         `  if [ -e '${stateDir}'/"$label".running ]; then`,
         `    if [ -e '${stateDir}'/"$label".crash ]; then rm -f '${stateDir}'/"$label".running; fi`,
-        "    printf 'state = running\\n\\tpid = 4242\\n'",
+        `    printf 'state = running\\n\\tpid = ${FAKE_SERVICE_PID}\\n'`,
         '    exit 0',
         '  fi',
         '  exit 113',
@@ -69,7 +77,7 @@ export async function writeFakeServiceManager(
       ]
     : [
         'if [ "$2" = show ]; then',
-        `  if [ -e '${runningPath}' ]; then printf 'LoadState=loaded\\nActiveState=active\\nMainPID=4242\\nUnitFileState=enabled\\n'; exit 0; fi`,
+        `  if [ -e '${runningPath}' ]; then printf 'LoadState=loaded\\nActiveState=active\\nMainPID=${FAKE_SERVICE_PID}\\nUnitFileState=enabled\\n'; exit 0; fi`,
         `  if [ -e '${failedPath}' ]; then state=failed; else state=inactive; fi`,
         "  printf 'LoadState=loaded\\nActiveState=%s\\nMainPID=0\\nUnitFileState=enabled\\n' \"$state\"",
         '  exit 0',
