@@ -34,7 +34,7 @@ import {
   servicesRestartDetachedSpawnPlan,
 } from '../services/system.service.js';
 import { stopPidFallbackService } from '../services/supervisor.js';
-import { FULL_SERVICE_LOG_BYTES, runAnimactlWith, writeFakeServiceManager } from './helpers/service-manager.js';
+import { FAKE_SERVICE_PID, FULL_SERVICE_LOG_BYTES, runAnimactlWith, writeFakeServiceManager } from './helpers/service-manager.js';
 
 const animactl = resolve('dist/server/cli/animactl.js');
 const npmAnimactl = resolve('dist/server/cli/animactl-npm.js');
@@ -1156,11 +1156,11 @@ test(
 
       const started = await runAnimactlWith(['services', 'start'], fake.env);
       assert.notEqual(started.status, 0, started.stdout);
-      assert.match(started.stderr, /agent: launchd ai\.meetquinn\.anima\.agent exited right after start \(started as pid 4242, now stopped\)/);
+      assert.match(started.stderr, new RegExp(`agent: launchd ai\\.meetquinn\\.anima\\.agent exited right after start \\(started as pid ${FAKE_SERVICE_PID}, now stopped\\)`));
       assert.match(started.stderr, /services failed to start/);
       // The web service still started, so the dashboard stays reachable.
       assert.equal((await fake.actions()).filter((action) => action.startsWith('kickstart')).length, 2);
-      assert.match(started.stdout, /web: started launchd ai\.meetquinn\.anima\.web pid 4242/);
+      assert.match(started.stdout, new RegExp(`web: started launchd ai\\.meetquinn\\.anima\\.web pid ${FAKE_SERVICE_PID}`));
       assert.match(started.stdout, /^agent \| stopped \| launchd/m);
 
       // A restart that brings web back but leaves the agent down fails, and
@@ -1174,7 +1174,7 @@ test(
       assert.match(restarted.stderr, /agent: launchd ai\.meetquinn\.anima\.agent exited right after start/);
       assert.match(restarted.stderr, /services failed to start/);
       assert.match(restarted.stdout, /web: stopped launchd/);
-      assert.match(restarted.stdout, /web: started launchd ai\.meetquinn\.anima\.web pid 4242/);
+      assert.match(restarted.stdout, new RegExp(`web: started launchd ai\\.meetquinn\\.anima\\.web pid ${FAKE_SERVICE_PID}`));
       assert.equal(await stat(resultPath).then(() => true, () => false), false);
     } finally {
       await rm(tempDir, { force: true, recursive: true });
