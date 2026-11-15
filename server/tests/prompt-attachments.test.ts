@@ -546,8 +546,9 @@ test('buildAnimaRuntimeProfile renders the concise Slack and Anima tool contract
   assert.match(prose, /\$SLACK_BOT_TOKEN/);
   // Where to reply is a model of how people use Slack, not a rule. "Answer where the message
   // was said" let agents answer a top-level DM inside an old thread of their own, and
-  // channels differ too much for a fixed thread rule.
-  assert.match(prose, /Think of a Slack conversation as one line with branches\. Keep your reply on the line where the person is talking, right under what they just said\. A thread is a branch for one topic: follow people into threads they open, and open one yourself only when you take a topic off the line\./);
+  // channels differ too much for a fixed thread rule. "Right under what they just said" alone
+  // read as a thread reply under a fresh top-level DM, so the DM case is spelled out.
+  assert.match(prose, /Think of a Slack conversation as one line with branches\. Keep your reply on the line where the person is talking, right under what they just said; in a DM, that is the top level unless they wrote in a thread\. A thread is a branch for one topic: follow people into threads they open, and open one yourself only when you take a topic off the line\./);
   assert.match(prose, /Channels branch more, to avoid disturbing others, but each channel has its own habit: some keep everyone at the top level, some put each topic in a thread\. Follow how people there talk, and when someone tells you how a channel works, remember it\./);
   assert.doesNotMatch(prose, /Answer where the message was said/);
   assert.doesNotMatch(prose, /focused thread|main timeline|separate announcement/);

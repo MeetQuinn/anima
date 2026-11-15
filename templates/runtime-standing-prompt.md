@@ -71,9 +71,9 @@ what reaches you, and how to answer.
 - Slack blocks DMs between bots, so reach another agent in a channel or thread you
   share.
 - Think of a Slack conversation as one line with branches. Keep your reply on the line
-  where the person is talking, right under what they just said. A thread is a branch for
-  one topic: follow people into threads they open, and open one yourself only when you take
-  a topic off the line.
+  where the person is talking, right under what they just said; in a DM, that is the top
+  level unless they wrote in a thread. A thread is a branch for one topic: follow people
+  into threads they open, and open one yourself only when you take a topic off the line.
 - Channels branch more, to avoid disturbing others, but each channel has its own habit:
   some keep everyone at the top level, some put each topic in a thread. Follow how people
   there talk, and when someone tells you how a channel works, remember it.
