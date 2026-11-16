@@ -874,6 +874,79 @@ test('a mention that lifts a thread mute also keeps unmentioned bot replies mute
   }
 });
 
+// The 30-day lapse ends the follow for people's replies, but the agent's bot mute
+// outlives it: posting or being mentioned there later must not bring bot replies back.
+for (const reengage of ['post', 'mention'] as const) {
+  test(`a bot-reply mute survives the 30-day cleanup until unmute (re-engage by ${reengage})`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), `anima-slack-bot-mute-lapse-${reengage}-test-`));
+    const day = 24 * 60 * 60 * 1000;
+    const later = 3_000 + 31 * day;
+    const threadTs = '1770000050.000001';
+    const reply = (ts: string, bot: boolean) => ({
+      ...(bot ? { bot_id: 'B123', subtype: 'bot_message' } : {}),
+      channel: 'C123',
+      channel_type: 'channel' as const,
+      text: bot ? 'bot hand-off' : 'human follow-up',
+      thread_ts: threadTs,
+      ts,
+      type: 'message' as const,
+      user: bot ? 'U456' : 'U123',
+    });
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const store = new SubscriptionStore('scout');
+        const subscriptionId = threadSubscriptionId('scout', 'C123', threadTs);
+        await ensureThreadSubscriptionForSentMessage({ agentId: 'scout', channelId: 'C123', messageTs: threadTs, nowMs: 1_000 });
+        await muteSubscriptionForAgent({ agentId: 'scout', channelId: 'C123', threadTs, nowMs: 2_000 });
+        await ensureThreadSubscriptionForSentMessage({
+          agentId: 'scout',
+          channelId: 'C123',
+          messageTs: '1770000050.000002',
+          nowMs: 3_000,
+          threadTs,
+        });
+
+        // 31 quiet days later, a message in another channel writes the store and runs the cleanup.
+        const elsewhere = await slackRuntimeDecision(
+          { channel: 'C789', channel_type: 'channel', text: 'new topic', ts: '1770000060.000001', type: 'message', user: 'U123' },
+          { agentId: 'scout', nowMs: later },
+        );
+        assert.equal(elsewhere.reason, 'channel_follow');
+        const kept = await store.find(subscriptionId);
+        assert.equal(kept?.kind === 'thread' && kept.botRepliesMutedAt, new Date(2_000).toISOString());
+        // The follow itself has still lapsed for people's replies.
+        assert.equal((await slackRuntimeDecision(reply('1770000050.000003', false), { agentId: 'scout', nowMs: later + 1 })).reason, 'not_addressed');
+
+        if (reengage === 'post') {
+          await ensureThreadSubscriptionForSentMessage({
+            agentId: 'scout',
+            channelId: 'C123',
+            messageTs: '1770000050.000004',
+            nowMs: later + 2,
+            threadTs,
+          });
+        } else {
+          const mention = await slackRuntimeDecision(
+            { ...reply('1770000050.000004', false), text: '<@U999> back here', type: 'app_mention' },
+            { agentId: 'scout', botUserId: 'U999', nowMs: later + 2 },
+          );
+          assert.equal(mention.reason, 'mention');
+        }
+
+        assert.equal((await slackRuntimeDecision(reply('1770000050.000005', false), { agentId: 'scout', nowMs: later + 3 })).reason, 'thread_follow');
+        const bot = await slackRuntimeDecision(reply('1770000050.000006', true), { agentId: 'scout', nowMs: later + 4 });
+        assert.equal(bot.shouldStartRuntime, false);
+        assert.equal(bot.reason, 'muted');
+
+        await unmuteSubscriptionForAgent({ agentId: 'scout', channelId: 'C123', threadTs, nowMs: later + 5 });
+        assert.equal((await slackRuntimeDecision(reply('1770000050.000007', true), { agentId: 'scout', nowMs: later + 6 })).reason, 'thread_follow');
+      });
+    } finally {
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
 test('Slack top-level bot posts do not consume channel follows', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-bot-channel-routing-test-'));
   try {
@@ -1053,6 +1126,7 @@ test('subscription writes drop lapsed thread follows and Slack DM thread records
         thread('C123', '2.000001', at(nowMs - 31 * day), { lastActivityAt: at(nowMs - 2 * day) }),
         thread('C123', '3.000001', at(nowMs - 29 * day)),
         thread('C123', '4.000001', at(nowMs - 90 * day), { mutedAt: at(nowMs - 90 * day) }),
+        thread('C123', '6.000001', at(nowMs - 90 * day), { botRepliesMutedAt: at(nowMs - 91 * day) }),
         thread('D-alice', '5.000001', at(nowMs - day)),
         thread('oc_group', 'omt_topic', at(nowMs - day), { platform: 'feishu' }),
       ];
@@ -1067,6 +1141,7 @@ test('subscription writes drop lapsed thread follows and Slack DM thread records
         threadSubscriptionId('scout', 'C123', '2.000001'),
         threadSubscriptionId('scout', 'C123', '3.000001'),
         threadSubscriptionId('scout', 'C123', '4.000001'),
+        threadSubscriptionId('scout', 'C123', '6.000001'),
         threadSubscriptionId('scout', 'C123', '9.000001'),
         threadSubscriptionId('scout', 'oc_group', 'omt_topic'),
       ].sort());
