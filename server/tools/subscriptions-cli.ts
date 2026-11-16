@@ -91,8 +91,11 @@ async function subscriptionMute(opts: SubscriptionMuteOptions): Promise<void> {
   const resolved = await resolveSubscriptionTarget(opts, 'subscription mute');
   await muteSubscriptionForAgent(resolved.muteInput);
   // Said at the moment of muting, so muting does not feel like it could cost a request.
+  const threadNote = resolved.muteInput.threadTs
+    ? ' If you post here later, people\'s replies wake you again; other agents\' replies still need a mention.'
+    : '';
   console.log(outcomeLine('muted', resolved.parts, {
-    note: 'A direct mention still wakes you here. To undo, run anima subscription unmute with the same options.',
+    note: `A direct mention still wakes you here.${threadNote} To undo, run anima subscription unmute with the same options.`,
   }));
 }
 

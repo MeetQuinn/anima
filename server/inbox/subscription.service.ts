@@ -102,6 +102,7 @@ export async function unmuteSubscriptionForAgent(input: {
   const { mutedAt: _mutedAt, ...withoutMute } = existing;
   const unmuted = await store.replace({
     ...withoutMute,
+    ...(withoutMute.kind === 'thread' ? { botRepliesMutedAt: undefined } : {}),
     updatedAt: now,
   });
   await activityServiceForAgent(input.agentId).record({
@@ -179,6 +180,11 @@ export function followThread(input: {
       const base = existing?.kind === 'thread'
         ? existing
         : threadSubscriptionRecord(input.agentId, input.channelId, input.threadTs, input.now, input.platform);
+      // Lifting a mute brings people's replies back, not bot chatter: for an agent,
+      // every followed reply is a full wake.
+      const botRepliesMutedAt = input.unmute && base.kind === 'thread'
+        ? base.botRepliesMutedAt ?? base.mutedAt
+        : undefined;
       return input.store.replace({
         ...base,
         lastActivityAt: input.now,
@@ -190,6 +196,7 @@ export function followThread(input: {
           wakesSinceLastPost: 0,
         } : {}),
         ...(input.unmute ? { mutedAt: undefined } : {}),
+        ...(botRepliesMutedAt ? { botRepliesMutedAt } : {}),
         updatedAt: input.now,
       });
     });

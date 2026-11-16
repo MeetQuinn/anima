@@ -113,7 +113,7 @@ async function consumeThreadFollow(
   if (!subscription || subscription.kind !== 'thread' || threadFollowLapsed(subscription, nowMs)) {
     return { reason: 'not_addressed', shouldStartRuntime: false };
   }
-  if (subscription.mutedAt) {
+  if (subscription.mutedAt || (event.bot_id && subscription.botRepliesMutedAt)) {
     return {
       reason: 'muted',
       shouldStartRuntime: false,

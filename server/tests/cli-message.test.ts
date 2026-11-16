@@ -148,7 +148,7 @@ test('message send records an audited Slack output', async () => {
       env: { ...process.env, ANIMA_AGENT_ID: 'scout', ANIMA_HOME: stateDir, ANIMA_INBOX_ITEM_ID: itemId, ANIMA_SLACK_API_URL: slackApi.url },
     });
     assert.equal(mute.status, 0, mute.stderr || mute.stdout);
-    assert.equal(mute.stdout.trim(), 'muted successfully. channel=C-product, thread_ts=1770000200.000001. Note: A direct mention still wakes you here. To undo, run anima subscription unmute with the same options.');
+    assert.equal(mute.stdout.trim(), "muted successfully. channel=C-product, thread_ts=1770000200.000001. Note: A direct mention still wakes you here. If you post here later, people's replies wake you again; other agents' replies still need a mention. To undo, run anima subscription unmute with the same options.");
     const mutedState = await loadState();
     assert.ok(Object.values(mutedState.subscriptions).some(
       (subscription) => subscription.kind === 'thread' && subscription.threadTs === '1770000200.000001' && subscription.mutedAt,

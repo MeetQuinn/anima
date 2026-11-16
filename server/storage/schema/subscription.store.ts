@@ -32,6 +32,10 @@ const SubscriptionBase = z.object({
 });
 
 export const ThreadSubscription = SubscriptionBase.extend({
+  // Set when a post or @mention lifts the agent's mute on this thread. People's
+  // replies wake the agent again; other agents' and apps' replies still need a
+  // direct mention until the agent runs `unmute`.
+  botRepliesMutedAt: z.string().optional(),
   kind: z.literal('thread'),
   remainingMessages: z.number().optional(),
   threadTs: z.string(),
@@ -145,12 +149,15 @@ function isSlackDmThread(subscription: Subscription): boolean {
  * Drop thread records that can no longer wake the agent: lapsed unmuted
  * follows, and every Slack DM thread record. The DM case includes muted
  * records, because a DM wakes directly and never consults the mute. Channel
- * records and channel-thread mutes are kept.
+ * records and channel-thread mutes are kept, and so is a lapsed follow that
+ * still mutes bot replies: the agent asked for that, and only `unmute` undoes it.
  */
 function withoutDeadThreadRecords(stored: StoredSubscriptions, nowMs: number): StoredSubscriptions {
   let kept: StoredSubscriptions | undefined;
   for (const [subscriptionId, subscription] of Object.entries(stored)) {
-    if (!isSlackDmThread(subscription) && !threadFollowLapsed(subscription, nowMs)) continue;
+    const prunableLapse = threadFollowLapsed(subscription, nowMs)
+      && !(subscription.kind === 'thread' && subscription.botRepliesMutedAt);
+    if (!isSlackDmThread(subscription) && !prunableLapse) continue;
     kept ??= { ...stored };
     delete kept[subscriptionId];
   }
