@@ -743,6 +743,137 @@ test('Slack bot thread replies consume existing unmuted thread follows', async (
   }
 });
 
+// For a person, a re-followed thread costs a badge; for an agent, every followed reply is a full
+// wake. Over two weeks, 97% of the replies that woke agents after they posted in a thread they had
+// muted came from other agents. Lifting a mute therefore brings back people, not bots.
+test('posting in a muted thread brings back human replies, while bot replies need a mention until unmute', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-muted-thread-bots-test-'));
+  const threadTs = '1770000030.000001';
+  const humanReply = (ts: string) => ({
+    channel: 'C123',
+    channel_type: 'channel' as const,
+    text: 'human follow-up',
+    thread_ts: threadTs,
+    ts,
+    type: 'message' as const,
+    user: 'U123',
+  });
+  const botReply = (ts: string, mention = false) => ({
+    bot_id: 'B123',
+    channel: 'C123',
+    channel_type: 'channel' as const,
+    subtype: 'bot_message',
+    text: mention ? '<@U999> need your call' : 'bot hand-off',
+    thread_ts: threadTs,
+    ts,
+    type: (mention ? 'app_mention' : 'message') as 'app_mention' | 'message',
+    user: 'U456',
+  });
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const store = new SubscriptionStore('scout');
+      const subscriptionId = threadSubscriptionId('scout', 'C123', threadTs);
+      await ensureThreadSubscriptionForSentMessage({ agentId: 'scout', channelId: 'C123', messageTs: threadTs, nowMs: 1_000 });
+      // Never muted: bot replies wake as before.
+      assert.equal((await slackRuntimeDecision(botReply('1770000030.000002'), { agentId: 'scout', nowMs: 1_500 })).reason, 'thread_follow');
+
+      await muteSubscriptionForAgent({ agentId: 'scout', channelId: 'C123', threadTs, nowMs: 2_000 });
+      await ensureThreadSubscriptionForSentMessage({
+        agentId: 'scout',
+        channelId: 'C123',
+        messageTs: '1770000030.000003',
+        nowMs: 3_000,
+        threadTs,
+      });
+      const refollowed = await store.find(subscriptionId);
+      assert.equal(refollowed?.mutedAt, undefined);
+      assert.equal(refollowed?.kind === 'thread' && refollowed.botRepliesMutedAt, new Date(2_000).toISOString());
+
+      const human = await slackRuntimeDecision(humanReply('1770000030.000004'), { agentId: 'scout', nowMs: 4_000 });
+      assert.equal(human.shouldStartRuntime, true);
+      assert.equal(human.reason, 'thread_follow');
+
+      const beforeBot = await store.find(subscriptionId);
+      const bot = await slackRuntimeDecision(botReply('1770000030.000005'), { agentId: 'scout', nowMs: 5_000 });
+      assert.equal(bot.shouldStartRuntime, false);
+      assert.equal(bot.reason, 'muted');
+      assert.deepEqual(await store.find(subscriptionId), beforeBot);
+
+      const mentioned = await slackRuntimeDecision(botReply('1770000030.000006', true), {
+        agentId: 'scout',
+        botUserId: 'U999',
+        nowMs: 6_000,
+      });
+      assert.equal(mentioned.shouldStartRuntime, true);
+      assert.equal(mentioned.reason, 'mention');
+      // A mention wakes the agent once; it does not bring bot chatter back.
+      assert.equal((await slackRuntimeDecision(botReply('1770000030.000007'), { agentId: 'scout', nowMs: 7_000 })).reason, 'muted');
+
+      await unmuteSubscriptionForAgent({ agentId: 'scout', channelId: 'C123', threadTs, nowMs: 8_000 });
+      const unmuted = await store.find(subscriptionId);
+      assert.equal(unmuted?.kind === 'thread' && unmuted.botRepliesMutedAt, undefined);
+      assert.equal((await slackRuntimeDecision(botReply('1770000030.000008'), { agentId: 'scout', nowMs: 9_000 })).reason, 'thread_follow');
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('a mention that lifts a thread mute also keeps unmentioned bot replies muted', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-mention-muted-thread-bots-test-'));
+  const threadTs = '1770000040.000001';
+  try {
+    await withAnimaHome(stateDir, async () => {
+      await ensureThreadSubscriptionForSentMessage({ agentId: 'scout', channelId: 'C123', messageTs: threadTs, nowMs: 1_000 });
+      await muteSubscriptionForAgent({ agentId: 'scout', channelId: 'C123', threadTs, nowMs: 2_000 });
+      const revived = await slackRuntimeDecision(
+        {
+          channel: 'C123',
+          channel_type: 'channel',
+          text: '<@U999> one question',
+          thread_ts: threadTs,
+          ts: '1770000040.000002',
+          type: 'app_mention',
+          user: 'U123',
+        },
+        { agentId: 'scout', nowMs: 3_000 },
+      );
+      assert.equal(revived.subscription?.status, 'following');
+
+      const bot = await slackRuntimeDecision(
+        {
+          bot_id: 'B123',
+          channel: 'C123',
+          channel_type: 'channel',
+          subtype: 'bot_message',
+          text: 'bot hand-off',
+          thread_ts: threadTs,
+          ts: '1770000040.000003',
+          type: 'message',
+          user: 'U456',
+        },
+        { agentId: 'scout', nowMs: 4_000 },
+      );
+      assert.equal(bot.reason, 'muted');
+
+      // Muting again and posting again still keeps bot replies muted.
+      await muteSubscriptionForAgent({ agentId: 'scout', channelId: 'C123', threadTs, nowMs: 5_000 });
+      await ensureThreadSubscriptionForSentMessage({
+        agentId: 'scout',
+        channelId: 'C123',
+        messageTs: '1770000040.000004',
+        nowMs: 6_000,
+        threadTs,
+      });
+      const thread = await new SubscriptionStore('scout').find(threadSubscriptionId('scout', 'C123', threadTs));
+      assert.equal(thread?.mutedAt, undefined);
+      assert.ok(thread?.kind === 'thread' && thread.botRepliesMutedAt);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
 test('Slack top-level bot posts do not consume channel follows', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-slack-bot-channel-routing-test-'));
   try {

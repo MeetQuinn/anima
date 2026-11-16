@@ -32,6 +32,10 @@ const SubscriptionBase = z.object({
 });
 
 export const ThreadSubscription = SubscriptionBase.extend({
+  // Set when a post or @mention lifts the agent's mute on this thread. People's
+  // replies wake the agent again; other agents' and apps' replies still need a
+  // direct mention until the agent runs `unmute`.
+  botRepliesMutedAt: z.string().optional(),
   kind: z.literal('thread'),
   remainingMessages: z.number().optional(),
   threadTs: z.string(),
