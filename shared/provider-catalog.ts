@@ -2,6 +2,12 @@ import { z } from 'zod';
 
 export interface ProviderCatalogEntry {
   command: string;
+  /**
+   * Static menu, but any non-empty model id may be stored. The CLI resolves the id
+   * when the turn starts, so a model a newer CLI release adds works before this
+   * catalog lists it. An unlisted id gets `reasoningEfforts` as its effort menu.
+   */
+  acceptsUnlistedModels?: boolean;
   defaultModel: string;
   dynamicModels?: boolean;
   installHint: string;
@@ -106,6 +112,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     command: 'codex',
     installHint: 'Install Codex CLI so `codex --version` works.',
     models: [
+      'gpt-6.2-astra',
+      'gpt-6.2-sol',
       'gpt-6.1-sol',
       'gpt-6-astra',
       'gpt-6-sol',
@@ -116,6 +124,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'gpt-5.5',
     ],
     modelLabels: {
+      'gpt-6.2-astra': 'GPT-6.2 Astra',
+      'gpt-6.2-sol': 'GPT-6.2 Sol',
       'gpt-6.1-sol': 'GPT-6.1 Sol',
       'gpt-6-astra': 'GPT-6 Astra',
       'gpt-6-sol': 'GPT-6 Sol',
@@ -125,8 +135,11 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'gpt-5.6-luna': 'GPT-5.6 Luna',
       'gpt-5.5': 'GPT-5.5',
     },
-    defaultModel: 'gpt-6-astra',
+    defaultModel: 'gpt-6.2-astra',
+    acceptsUnlistedModels: true,
     modelReasoningEfforts: {
+      'gpt-6.2-astra': CODEX_REASONING_EFFORTS,
+      'gpt-6.2-sol': CODEX_REASONING_EFFORTS,
       'gpt-6.1-sol': CODEX_REASONING_EFFORTS,
       'gpt-6-astra': CODEX_REASONING_EFFORTS,
       'gpt-6-sol': CODEX_REASONING_EFFORTS,
@@ -136,7 +149,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
       'gpt-5.5': ['low', 'medium', 'high', 'xhigh'],
     },
-    reasoningEfforts: [],
+    // Effort menu for a model id the catalog doesn't list yet (acceptsUnlistedModels).
+    reasoningEfforts: CODEX_REASONING_EFFORTS,
   },
   {
     kind: 'kimi-cli',
@@ -299,7 +313,7 @@ export function isSupportedProviderKind(kind: string): boolean {
 export function isSupportedProviderModel(kind: string, model: string): boolean {
   const entry = providerCatalogEntry(kind);
   if (!entry) return false;
-  if (!entry.dynamicModels) return entry.models.includes(model);
+  if (!entry.dynamicModels && !entry.acceptsUnlistedModels) return entry.models.includes(model);
   const normalized = model.trim();
   return normalized.length > 0 && !entry.marketingModelAliases?.includes(normalized);
 }

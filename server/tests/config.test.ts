@@ -22,6 +22,7 @@ import {
   PROVIDER_IDLE_TIMEOUT_MS_DEFAULT,
 } from '../../shared/agent-config.js';
 import {
+  isSupportedProviderModel,
   isSupportedReasoningEffort,
   providerCatalogEntry,
   reasoningEffortsForModel,
@@ -516,9 +517,11 @@ test('claude-code catalog keeps family aliases and adds version-pinned models', 
   }
 });
 
-test('codex-cli catalog includes GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, and current GPT-5 models', () => {
+test('codex-cli catalog includes GPT-6.2 Astra/Sol, GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, and current GPT-5 models', () => {
   const entry = providerCatalogEntry('codex-cli');
   assert.deepEqual(entry?.models, [
+    'gpt-6.2-astra',
+    'gpt-6.2-sol',
     'gpt-6.1-sol',
     'gpt-6-astra',
     'gpt-6-sol',
@@ -528,7 +531,15 @@ test('codex-cli catalog includes GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, and current 
     'gpt-5.6-luna',
     'gpt-5.5',
   ]);
-  assert.equal(entry?.defaultModel, 'gpt-6-astra');
+  assert.equal(entry?.defaultModel, 'gpt-6.2-astra');
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-6.2-astra'),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-6.2-sol'),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  );
   assert.deepEqual(
     reasoningEffortsForModel('codex-cli', 'gpt-6.1-sol'),
     ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
@@ -597,6 +608,32 @@ test('codex-cli catalog includes GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, and current 
       }),
     /unsupported reasoningEffort ultra/,
   );
+});
+
+test('codex-cli accepts a model id its catalog does not list yet', () => {
+  // A newer Codex CLI can ship a model before Anima's catalog names it.
+  assert.equal(isSupportedProviderModel('codex-cli', 'gpt-7-astra'), true);
+  assert.equal(isSupportedProviderModel('codex-cli', '  '), false);
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-7-astra'),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  );
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Codex Next',
+      homePath: 'agents/codex-next',
+      role: 'general purpose',
+      provider: {
+        kind: 'codex-cli',
+        model: 'gpt-7-astra',
+        reasoningEffort: 'xhigh',
+      },
+    }).provider.model,
+    'gpt-7-astra',
+  );
+  // Other static catalogs still reject unlisted ids.
+  assert.equal(isSupportedProviderModel('claude-code', 'gpt-7-astra'), false);
+  assert.equal(isSupportedProviderModel('opencode-cli', 'deepseek/deepseek-chat'), false);
 });
 
 test('grok-cli effort write-validates the provider vocabulary; per-model support is a runtime gate', () => {
