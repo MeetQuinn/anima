@@ -134,7 +134,8 @@ selected model exactly:
 | Claude Code | Opus, Sonnet, Fable; Claude Opus 4.8                            | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
 | Claude Code | Claude Opus 4.6, Claude Sonnet 4.6                              | `low`, `medium`, `high`, `max`                                                                         |
 | Claude Code | Haiku                                                           | Provider default; no adjustable effort                                                                 |
-| Codex       | GPT-6.1 Sol, GPT-6 Astra, GPT-6 Sol, GPT-5.6 Sol, GPT-5.6 Terra | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
+| Codex       | GPT-6.2 Astra, GPT-6.2 Sol, GPT-6.1 Sol, GPT-6 Astra, GPT-6 Sol | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
+| Codex       | GPT-5.6 Sol, GPT-5.6 Terra                                      | `low`, `medium`, `high`, `xhigh`, `max`, `ultra`                                                       |
 | Codex       | GPT-6 Luna, GPT-5.6 Luna                                        | `low`, `medium`, `high`, `xhigh`, `max`                                                                |
 | Codex       | GPT-5.5                                                         | `low`, `medium`, `high`, `xhigh`                                                                       |
 | Kimi Code   | K3                                                              | `low`, `high`, `max`                                                                                   |
@@ -143,6 +144,11 @@ selected model exactly:
 | pi          | Live from pi (`get_available_models`)                           | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (pi `--thinking`; the model decides what it honors) |
 | Grok Build  | Live model catalog                                              | Whatever the selected model advertises                                                                 |
 | Antigravity | Live from the signed-in account (for example Gemini 3.8 Flash)  | Whatever the selected model advertises (`thought_level`, for example `low`, `medium`, `high`)          |
+
+Codex also accepts a model ID this table does not list yet, because the Codex CLI resolves the ID
+when the turn starts. After upgrading Codex, set it with `POST /api/agents/<agentId>/provider` and a
+body such as `{"model": "gpt-7-astra"}`; the dashboard shows the raw ID and offers the full Codex
+effort list for it.
 
 OpenCode agents can use DeepSeek V4 Pro or DeepSeek V4.1 Flash. Their DeepSeek API key stays in
 OpenCode's machine-level credential store; Anima does not copy it into the agent's Launch
