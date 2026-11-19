@@ -1,7 +1,16 @@
+import { attachmentsHaveSlackMessagePreviews } from './message-previews.js';
+
 export interface SlackMessageTextInput {
+  attachments?: unknown;
   blocks?: unknown;
   text?: string;
 }
+
+// A message forwarded without a comment has no text of its own: Slack sends the
+// forwarded message as an attachment and leaves `text` empty. Ingestion treats a
+// message with no text and no file as empty, so without a stand-in body the forward
+// is dropped before its preview is ever read.
+export const SLACK_FORWARDED_MESSAGE_TEXT = '[forwarded message]';
 
 // Slack's top-level text is an accessibility/notification fallback. For rich
 // messages it can be shorter than the body Slack renders from blocks, so
@@ -12,10 +21,16 @@ export function slackVisibleMessageText(input: SlackMessageTextInput): string | 
 
 /**
  * Apply blocks→visible text before routing/decide so mention detection and the
- * final inbox item share one canonical representation. No Slack API fetch.
+ * final inbox item share one canonical representation. A message whose only
+ * content is a forwarded Slack message gets SLACK_FORWARDED_MESSAGE_TEXT as its
+ * body; the forwarded content itself stays in the attachment and reaches the
+ * agent as a message preview. No Slack API fetch.
  */
 export function withCanonicalSlackVisibleText<T extends SlackMessageTextInput>(input: T): T {
-  const visible = slackVisibleMessageText(input);
+  const rendered = slackVisibleMessageText(input);
+  const visible = !rendered?.trim() && attachmentsHaveSlackMessagePreviews(input.attachments)
+    ? SLACK_FORWARDED_MESSAGE_TEXT
+    : rendered;
   if (visible === undefined || visible === input.text) return input;
   return { ...input, text: visible };
 }

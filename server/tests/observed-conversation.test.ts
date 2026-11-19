@@ -10,6 +10,8 @@ import { observeObservableSlackMessage, observeSlackEventAtIngress } from '../in
 import { isObservableSlackMessage, isRoutableSlackMessage } from '../inbox/slack-events.js';
 import { SlackInboxSubscriber } from '../inbox/slack-subscriber.js';
 import { WakeQueueService } from '../inbox/wake-queue.service.js';
+import { prepareCursorDelivery, setCursorDeliveryEnabledForTests } from '../runtime/cursor-delivery.js';
+import { SLACK_FORWARDED_MESSAGE_TEXT } from '../slack/message-text.js';
 import { SlackProfileResolver } from '../slack/profiles.js';
 import { withAnimaHome } from './anima-home.js';
 import {
@@ -916,6 +918,119 @@ test('ingress: userless bot_message is journaled; not routable for wake', async 
       assert.equal(rows[0]?.userId, undefined);
       assert.equal(rows[0]?.text, 'integration bot chatter');
       assert.equal((await store.getIndex('slack:T1:C50'))?.tailOrdinal, 1);
+      assert.equal((await new WakeQueueService('anima').list()).length, 0);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+// Slack sends a forwarded message as an attachment and, when the sender adds no
+// comment, an empty `text`. The forward used to be dropped as an empty message.
+const forwardedAttachment = {
+  author_id: 'U-author',
+  author_name: 'Arlen',
+  channel_id: 'C-source',
+  from_url: 'https://demo.slack.com/archives/C-source/p1770000100000001',
+  is_msg_unfurl: true,
+  is_share: true,
+  text: 'the invite does not show the host',
+  ts: '1770000100.000001',
+};
+
+test('ingress: a DM forward with no comment is journaled and wakes with the forwarded message', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-ingress-forward-'));
+  setCursorDeliveryEnabledForTests(true);
+  try {
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
+    await withAnimaHome(stateDir, async () => {
+      await invokeHandleSlackEvent({
+        agentId: 'anima',
+        event: {
+          type: 'message',
+          attachments: [forwardedAttachment],
+          channel: 'D-owner',
+          channel_type: 'im',
+          text: '',
+          ts: '430.001',
+          user: 'U1',
+        },
+      });
+
+      const store = new ObservedConversationStore('anima');
+      const rows = await store.readJournal('slack:T1:D-owner');
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.text, SLACK_FORWARDED_MESSAGE_TEXT);
+
+      const queued = await new WakeQueueService('anima').list();
+      assert.equal(queued.length, 1);
+      const item = queued[0];
+      if (item?.kind !== 'slack') throw new Error('missing Slack wake');
+      assert.equal(item.text, SLACK_FORWARDED_MESSAGE_TEXT);
+      assert.equal(item.previewStatus, undefined);
+      assert.deepEqual(item.previews, [{
+        authorId: 'U-author',
+        authorName: 'Arlen',
+        channelId: 'C-source',
+        fromUrl: forwardedAttachment.from_url,
+        messageTs: '1770000100.000001',
+        text: 'the invite does not show the host',
+      }]);
+
+      // What the provider is handed: the stand-in body on the row and the wake
+      // trigger, and the forwarded message itself as a preview.
+      const prepared = await prepareCursorDelivery({ agentId: 'anima', item, store });
+      assert.equal(prepared.kind, 'prepared');
+      if (prepared.kind !== 'prepared') return;
+      assert.match(prepared.plan.promptBody, /ordinal=1\] @U1: \[forwarded message\]\n/);
+      assert.match(prepared.plan.promptBody, /Wake trigger:\n\[[^\]]*wake=dm[^\]]*\] [^\n]*: \[forwarded message\]/);
+      assert.match(
+        prepared.plan.promptBody,
+        /<slack_message_previews>\n<preview [^>]*author="Arlen"[^>]*>\nthe invite does not show the host\n<\/preview>/,
+      );
+    });
+  } finally {
+    setCursorDeliveryEnabledForTests(undefined);
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('ingress: an empty message whose attachment is not a Slack message stays unobserved', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-obs-ingress-card-'));
+  try {
+    await writeAgentConfigs(stateDir, [defaultAgentConfig('anima')]);
+    await withAnimaHome(stateDir, async () => {
+      // An alert bot's card: the whole post, a mention included, sits in a legacy
+      // attachment. Agents are not shown such attachments, so it stays out.
+      const card = [{ fallback: 'CPU high <@U-bot>', text: 'CPU high <@U-bot>', title: 'Alert' }];
+      await invokeHandleSlackEvent({
+        agentId: 'anima',
+        event: {
+          type: 'message',
+          subtype: 'bot_message',
+          attachments: card,
+          bot_id: 'B-alerts',
+          channel: 'C50',
+          text: '',
+          ts: '431.001',
+        },
+      });
+      await invokeHandleSlackEvent({
+        agentId: 'anima',
+        event: {
+          type: 'message',
+          attachments: card,
+          channel: 'D-owner',
+          channel_type: 'im',
+          text: '',
+          ts: '431.002',
+          user: 'U1',
+        },
+      });
+
+      const store = new ObservedConversationStore('anima');
+      assert.equal(await store.getIndex('slack:T1:C50'), undefined);
+      assert.equal(await store.getIndex('slack:T1:D-owner'), undefined);
       assert.equal((await new WakeQueueService('anima').list()).length, 0);
     });
   } finally {

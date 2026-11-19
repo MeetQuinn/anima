@@ -199,6 +199,8 @@ export class SlackInboxSubscriber {
     // blocks → canonical visible text BEFORE decide/routing. Slack's top-level
     // `text` can truncate before a trailing user mention; enrichment after an
     // ignore never runs, so mention detection must see the full body first.
+    // A forward sent without a comment gets its stand-in body here too, so the
+    // journal and the routable check below do not drop it as an empty message.
     const rawEvent = withCanonicalSlackVisibleText(event as SlackRawMessageEvent);
     const envelope = body as SlackMessageEnvelope;
 
