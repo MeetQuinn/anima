@@ -354,7 +354,7 @@ export class KbService {
       const language = kbCodeLanguage(relPath);
       if (language) meta.language = language;
     }
-    // Image / HTML / PDF / binary render via the raw route (img / iframe src),
+    // Image / video / HTML / PDF / binary render via the raw route (img / video / iframe src),
     // so we don't inline their bytes here. Text-ish kinds carry their content
     // for the client renderer, capped. An unrecognised extension is sniffed
     // first, so a plain-text config file still reads as text.

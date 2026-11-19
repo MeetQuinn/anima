@@ -5,6 +5,7 @@ import {
   FileCode,
   FileJson,
   FileText,
+  FileVideo,
   Folder,
   Image as ImageIcon,
   Globe,
@@ -65,6 +66,8 @@ function KindIcon({ kind, className }: { kind: KbFileKind; className: string }) 
       return <FileCode className={className} />;
     case 'image':
       return <ImageIcon className={className} />;
+    case 'video':
+      return <FileVideo className={className} />;
     case 'html':
       return <Globe className={className} />;
     case 'pdf':

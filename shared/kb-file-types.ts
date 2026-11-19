@@ -1,6 +1,8 @@
-export type KbFileKind = 'markdown' | 'html' | 'json' | 'code' | 'image' | 'pdf' | 'text' | 'binary';
+export type KbFileKind = 'markdown' | 'html' | 'json' | 'code' | 'image' | 'video' | 'pdf' | 'text' | 'binary';
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'avif']);
+// Formats a browser <video> element plays (mov when it carries H.264, as screen recordings do).
+const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'webm', 'mov']);
 const TEXT_EXTENSIONS = new Set(['txt', 'text', 'log', '', 'env', 'gitignore', 'conf', 'cfg', 'ini']);
 
 const CODE_LANGUAGES: Record<string, string> = {
@@ -48,6 +50,7 @@ export function kbFileKind(path: string): KbFileKind {
   if (ext === 'json') return 'json';
   if (ext === 'pdf') return 'pdf';
   if (IMAGE_EXTENSIONS.has(ext)) return 'image';
+  if (VIDEO_EXTENSIONS.has(ext)) return 'video';
   if (CODE_LANGUAGES[ext]) return 'code';
   if (TEXT_EXTENSIONS.has(ext)) return 'text';
   return 'binary';

@@ -10,6 +10,14 @@ test('kbFileKind classifies pdf separately from binary', () => {
   assert.equal(kbFileKind('data.bin'), 'binary');
 });
 
+test('kbFileKind classifies browser-playable video', () => {
+  assert.equal(kbFileKind('_data/demo-videos/2762200401501838528.mp4'), 'video');
+  assert.equal(kbFileKind('Clip.MOV'), 'video');
+  assert.equal(kbFileKind('clip.webm'), 'video');
+  assert.equal(kbFileKind('clip.m4v'), 'video');
+  assert.equal(kbFileKind('clip.avi'), 'binary');
+});
+
 test('kbFileKind treats common config extensions as text', () => {
   assert.equal(kbFileKind('home/surge/default.conf'), 'text');
   assert.equal(kbFileKind('setup.cfg'), 'text');
@@ -30,4 +38,11 @@ test('looksLikeUtf8Text accepts UTF-8 text and rejects NUL bytes or invalid sequ
 test('contentTypeFor serves application/pdf for pdf paths', () => {
   assert.equal(contentTypeFor('docs/guide.pdf'), 'application/pdf');
   assert.equal(contentTypeFor('data.bin'), 'application/octet-stream');
+});
+
+test('contentTypeFor serves video types the browser player accepts', () => {
+  assert.equal(contentTypeFor('demo/clip.mp4'), 'video/mp4');
+  assert.equal(contentTypeFor('demo/clip.m4v'), 'video/mp4');
+  assert.equal(contentTypeFor('demo/clip.webm'), 'video/webm');
+  assert.equal(contentTypeFor('demo/clip.mov'), 'video/quicktime');
 });

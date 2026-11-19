@@ -48,13 +48,16 @@ export function queryParam(rawUrl: string | undefined, key: string): string | un
 // follows links and opens popups, but it cannot read the dashboard API, and
 // the cross-site write guard refuses its writes. PDFs keep only nosniff so the
 // browser's built-in viewer behaves as it always has; the dashboard's PDF
-// preview iframe is unsandboxed for the same reason.
+// preview iframe is unsandboxed for the same reason. Video is left out too:
+// Chrome's player page does not load the file under a CSP sandbox, and a media
+// document runs no page script; nosniff keeps the browser on the video type.
 const UNTRUSTED_FILE_SANDBOX =
   'sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads';
 
 export function untrustedFileHeaders(contentType: string, policy?: string): Record<string, string> {
-  const isPdf = contentType.split(';', 1)[0]?.trim().toLowerCase() === 'application/pdf';
-  const csp = [policy, isPdf ? undefined : UNTRUSTED_FILE_SANDBOX].filter(Boolean).join('; ');
+  const mime = contentType.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  const ownViewer = mime === 'application/pdf' || mime.startsWith('video/');
+  const csp = [policy, ownViewer ? undefined : UNTRUSTED_FILE_SANDBOX].filter(Boolean).join('; ');
   return {
     ...(csp ? { 'content-security-policy': csp } : {}),
     'x-content-type-options': 'nosniff',

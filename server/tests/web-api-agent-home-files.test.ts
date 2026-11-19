@@ -306,12 +306,38 @@ test('agent home pdf is metadata-only and raw route serves application/pdf', asy
   }
 });
 
-test('served files open in a sandbox with an opaque origin, except PDFs', async () => {
+test('agent home video is metadata-only and raw route serves byte ranges as video/mp4', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'anima-home-files-video-'));
+  try {
+    const bytes = Buffer.from('\x00\x00\x00\x18ftypmp42 not a real movie', 'latin1');
+    await writeHomeFile(homeDir, 'demo/clip.mp4', bytes);
+    await withHomeServer(homeDir, async (base) => {
+      const file = await getJson<Record<string, unknown>>(
+        `${base}/api/agents/anima/home/files/demo/clip.mp4`,
+      );
+      assert.equal(file.status, 200);
+      assert.equal(file.body.kind, 'video');
+      assert.equal('content' in file.body, false);
+
+      // A <video> element asks for ranges; seeking needs a 206 with the slice.
+      const raw = await fetch(`${base}/api/agents/anima/home/raw/demo/clip.mp4`, { headers: { range: 'bytes=4-11' } });
+      assert.equal(raw.status, 206);
+      assert.equal(raw.headers.get('content-type'), 'video/mp4');
+      assert.equal(raw.headers.get('content-range'), `bytes 4-11/${bytes.length}`);
+      assert.deepEqual(Buffer.from(await raw.arrayBuffer()), bytes.subarray(4, 12));
+    });
+  } finally {
+    await rm(homeDir, { force: true, recursive: true });
+  }
+});
+
+test('served files open in a sandbox with an opaque origin, except PDFs and video', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'anima-home-files-sandbox-'));
   try {
     await writeHomeFile(homeDir, 'notes/report.html', '<script>fetch("/api/agents")</script>');
     await writeHomeFile(homeDir, 'notes/chart.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>');
     await writeHomeFile(homeDir, 'notes/guide.pdf', '%PDF-1.4 minimal');
+    await writeHomeFile(homeDir, 'notes/demo.mp4', '<script>fetch("/api/agents")</script>');
     await withHomeServer(
       homeDir,
       async (base) => {
@@ -343,6 +369,14 @@ test('served files open in a sandbox with an opaque origin, except PDFs', async 
         assert.equal(pdf.status, 200);
         assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff');
         assert.equal(pdf.headers.get('content-security-policy'), null, 'PDFs keep the built-in viewer as it was');
+
+        // Chrome's player page loads nothing under a sandbox. nosniff keeps even
+        // HTML bytes in a .mp4 on the video type, so they never run as a page.
+        const video = await fetch(`${base}/api/agents/anima/home/raw/notes/demo.mp4`);
+        assert.equal(video.status, 200);
+        assert.equal(video.headers.get('content-type'), 'video/mp4');
+        assert.equal(video.headers.get('x-content-type-options'), 'nosniff');
+        assert.equal(video.headers.get('content-security-policy'), null, 'video plays in the browser player page');
       },
       { slackTeamId: 'T-demo' },
     );
