@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { buildKbPath, buildKbRawPath } from '@/lib/url-state';
 import { formatBytes } from '@/lib/format';
 import { parseFrontmatter } from '@shared/frontmatter';
+import { kbFileKind } from '@shared/kb-file-types';
 import type { KbFile } from '@shared/kb';
 import { CodeView } from './CodeView';
 import { CopyButton, HeadingAnchor, ViewModeToggle } from './FileChrome';
@@ -436,6 +437,20 @@ export function FileContent({
             resolvedSrc = links.rawPath(resolved.path);
           }
         }
+        // `![demo](clip.mp4)` embeds a player: the image syntax is the one way to
+        // place media in Markdown that survives sanitizing.
+        if (kbFileKind(resolvedSrc.split(/[?#]/, 1)[0] ?? '') === 'video') {
+          return (
+            <video
+              src={resolvedSrc}
+              title={alt ?? ''}
+              controls
+              preload="metadata"
+              playsInline
+              className="my-2 max-h-[70vh] max-w-full rounded-sm bg-black"
+            />
+          );
+        }
         return <ImageLightbox src={resolvedSrc} alt={alt ?? ''} />;
       },
       // The KB content panel is always a light surface (the dashboard has no
@@ -607,6 +622,39 @@ export function FileContent({
       <div className="flex h-full flex-col">
         <div className="flex flex-1 items-center justify-center overflow-auto bg-surface-elevated/30 p-6">
           <ImageLightbox src={rawUrl} alt={file.name} />
+        </div>
+      </div>
+    );
+  }
+
+  // Video plays in the browser's own player from the raw route. That route
+  // answers byte ranges, so a large recording starts at once and seeks without
+  // downloading the whole file. `key` gives each file a fresh element.
+  if (file.kind === 'video') {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex h-8 shrink-0 items-center justify-end border-b border-border-soft px-3">
+          <a
+            href={rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            title="Open the video in a new tab"
+            className="chrome flex items-center gap-1 rounded-sm px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open full page
+          </a>
+        </div>
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-surface-elevated/30 p-6">
+          <video
+            key={rawUrl}
+            src={rawUrl}
+            title={file.name}
+            controls
+            preload="metadata"
+            playsInline
+            className="max-h-full max-w-full rounded-sm bg-black"
+          />
         </div>
       </div>
     );
