@@ -9,6 +9,7 @@ import { withAnimaHome } from "../anima-home.js";
 
 import { slackMessagePreviewsFromAttachments } from "../slack/message-previews.js";
 import {
+  SLACK_FORWARDED_MESSAGE_TEXT,
   slackEventMentionsUserId,
   slackVisibleMessageText,
   withCanonicalSlackVisibleText,
@@ -256,6 +257,33 @@ test("literal/code mentions do not count as agent address; real entities and mar
     ),
     true,
   );
+});
+
+test("a Slack forward with no comment gets a stand-in body; other attachments do not", () => {
+  const forwarded = {
+    author_id: "U-author",
+    channel_id: "C-source",
+    from_url: "https://demo.slack.com/archives/C-source/p1770000100000001",
+    is_msg_unfurl: true,
+    is_share: true,
+    text: "the forwarded message",
+    ts: "1770000100.000001",
+  };
+
+  const bare = withCanonicalSlackVisibleText({ attachments: [forwarded], text: "" });
+  assert.equal(bare.text, SLACK_FORWARDED_MESSAGE_TEXT);
+  assert.deepEqual(bare.attachments, [forwarded]);
+  const noText: { attachments: unknown[]; text?: string } = { attachments: [forwarded] };
+  assert.equal(withCanonicalSlackVisibleText(noText).text, SLACK_FORWARDED_MESSAGE_TEXT);
+
+  // The sender's own comment is the body; the forward stays a preview beside it.
+  const commented = { attachments: [forwarded], text: "see this" };
+  assert.equal(withCanonicalSlackVisibleText(commented), commented);
+
+  // An attachment that is not a Slack message (an alert card, a link card) is not
+  // rendered for agents, so it must not turn an empty message into a deliverable one.
+  const card = { attachments: [{ fallback: "CPU high", title: "Alert" }], text: "" };
+  assert.equal(withCanonicalSlackVisibleText(card), card);
 });
 
 test("Slack visible message text restores complete rich text and tables from blocks", () => {
