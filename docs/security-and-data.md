@@ -90,7 +90,7 @@ The [public address](./configuration.md#public-address-publicurl) is a declarati
 
 The dashboard refuses writes that a browser marks as coming from another site, so a page open in the operator's browser cannot change agents or restart services through it. Clients that are not browsers, such as `curl`, are not affected. Reads are not covered by this check, and it is not a substitute for authentication.
 
-Files from agent homes, knowledge bases, and chat uploads open in a sandbox, so an HTML or SVG file viewed in its own tab cannot use the dashboard's access. PDFs are left unsandboxed so the browser's built-in viewer works as before.
+Files from agent homes, knowledge bases, and chat uploads open in a sandbox, so an HTML or SVG file viewed in its own tab cannot use the dashboard's access. PDFs and videos are left unsandboxed so the browser's own PDF viewer and video player work; they are still served with `nosniff`, so the browser keeps the declared type.
 
 The URL displayed for local access does not prove that the listener is isolated to the host. Binding, port forwarding, tunnels, proxies, and host network policy all determine the real exposure boundary.
 
