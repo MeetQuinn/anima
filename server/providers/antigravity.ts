@@ -580,12 +580,19 @@ class AntigravityAcpController {
   private readonly activeToolIds = new Set<string>();
   /** The last Stop of the session's own conversation said background work is still running. */
   private backgroundPending = false;
+  /** When the stdout chunk being handled was read from agy. */
+  private chunkReceivedAt = 0;
   private exited = false;
   private readonly hookEvents?: AntigravityHookEvents;
   /** The input of the last turn, for a self-started turn when no background work was announced. */
   private lastTurnInput?: AgentRuntimeInput;
   /** The input of the turn that left background work; turns agy starts on its own report here. */
   private observer?: AgentRuntimeInput;
+  /**
+   * The turn whose `session/prompt` agy has received and not yet answered. agy's
+   * updates belong to it only in that window, in the order they are written.
+   */
+  private promptOnWire?: AntigravityTurn;
   private wake?: AntigravityWake;
   private wakePoll?: NodeJS.Timeout;
   private readonly wakeTiming: Required<AntigravityWakeTiming>;
@@ -678,9 +685,6 @@ class AntigravityAcpController {
   async startTurn(input: AgentRuntimeInput, prompt: string): Promise<string> {
     if (this.currentTurn) throw new Error('Antigravity ACP runtime already has an active turn');
     this.latestUsage = undefined;
-    // A prompt sent while agy runs a turn of its own joins that turn, so its
-    // output from here on belongs to this item.
-    const wake = this.detachWake();
     const result = new Promise<string>((resolve, reject) => {
       this.currentTurn = {
         acceptingFollowups: true,
@@ -692,9 +696,7 @@ class AntigravityAcpController {
       };
     });
     this.turnCompletion = result;
-    void this.recordWakeText(wake)
-      .then(() => this.runTurnQueue(prompt))
-      .catch((error) => this.abortCurrentTurn(error));
+    void this.runTurnQueue(prompt).catch((error) => this.abortCurrentTurn(error));
     return result.finally(() => {
       if (this.turnCompletion === result) this.turnCompletion = undefined;
     });
@@ -721,7 +723,8 @@ class AntigravityAcpController {
     });
   }
 
-  acceptStdoutChunk(chunk: string): Promise<void> {
+  acceptStdoutChunk(chunk: string, receivedAt = Date.now()): Promise<void> {
+    this.chunkReceivedAt = receivedAt;
     return this.rpc.acceptStdoutChunk(chunk);
   }
 
@@ -738,12 +741,21 @@ class AntigravityAcpController {
     return this.child.snapshot();
   }
 
-  waitForQuiescent(signal?: AbortSignal): Promise<void> {
-    return this.quiescentWaiters.waitUntilReady(() => this.isQuiescent(), signal);
+  /** Also waits for output already read from agy, which can open a self-started turn again. */
+  async waitForQuiescent(signal?: AbortSignal): Promise<void> {
+    for (;;) {
+      await this.quiescentWaiters.waitUntilReady(() => this.isSettled(), signal);
+      await this.child.outputSettled?.();
+      if (this.isQuiescent()) return;
+    }
+  }
+
+  isQuiescent(): boolean {
+    return this.isSettled() && !this.child.outputPending?.();
   }
 
   /** No tool call in flight, no turn agy started on its own, and no background work its last Stop reported. */
-  isQuiescent(): boolean {
+  private isSettled(): boolean {
     return this.activeToolIds.size === 0 && !this.wake && !this.backgroundPending;
   }
 
@@ -915,10 +927,7 @@ class AntigravityAcpController {
         (value) => {
           this.promptInFlight = value;
         },
-        () => this.rpc.request('session/prompt', {
-          prompt: [{ text: prompt, type: 'text' }],
-          sessionId: this.sessionId,
-        }),
+        () => this.sendPrompt(turn, prompt),
       );
     } catch (error) {
       discardAcpPromptPartialText(turn, textCheckpoint);
@@ -960,6 +969,36 @@ class AntigravityAcpController {
     });
   }
 
+  /**
+   * A prompt sent while agy runs a turn of its own joins that turn: what agy said
+   * before this write goes to that turn's item, and everything after it to this
+   * prompt until its answer is read.
+   */
+  private sendPrompt(turn: AntigravityTurn, prompt: string): Promise<Record<string, unknown> | undefined> {
+    void this.recordWakeText(this.detachWake());
+    this.promptOnWire = turn;
+    return this.rpc.request(
+      'session/prompt',
+      { prompt: [{ text: prompt, type: 'text' }], sessionId: this.sessionId },
+      { onResponse: () => this.promptAnswered(turn) },
+    );
+  }
+
+  /**
+   * Runs as agy's answer is read, before the update that follows it on the wire.
+   * The prompt's Stop is on disk before agy answers; a Stop written after the
+   * answer was read belongs to a later loop, so it waits for the poll.
+   */
+  private promptAnswered(turn: AntigravityTurn): void {
+    if (this.promptOnWire !== turn) return;
+    this.promptOnWire = undefined;
+    this.lastTurnInput = turn.input;
+    // Tool calls still open went to the background; their updates now arrive outside a prompt.
+    this.activeToolIds.clear();
+    const answeredAt = this.chunkReceivedAt;
+    this.applyHookEvents((event) => event.at <= answeredAt, turn.input);
+  }
+
   private handleAgentRequest(message: Record<string, unknown>): void {
     const method = stringField(message, 'method');
     if (method === 'session/request_permission') {
@@ -987,7 +1026,7 @@ class AntigravityAcpController {
       this.captureConfigOptions(data);
       return;
     }
-    const turn = this.currentTurn;
+    const turn = this.promptOnWire;
     if (!turn) {
       await this.handleUpdateOutsideTurn(type, data);
       return;
@@ -1080,22 +1119,24 @@ class AntigravityAcpController {
   }
 
   /**
-   * Applies the Stop events of the session's own conversation (subagents have
-   * conversations of their own). Each Stop ends the execution loop that was
-   * running, so a turn agy started on its own is over, and `fullyIdle` says
-   * whether background work remains. `settledBefore` leaves newer events queued.
+   * Applies, in order, the Stop events of the session's own conversation that are
+   * `ready` (subagents have conversations of their own). Each Stop ends the
+   * execution loop that was running, so a turn agy started on its own is over,
+   * and `fullyIdle` says whether background work remains. Work that is done has
+   * nothing left to report, so the next turn that leaves work, `answered`, owns
+   * the reports.
    */
-  private applyHookEvents(settledBefore?: number): void {
+  private applyHookEvents(ready: (event: AntigravityStopEvent) => boolean, answered?: AgentRuntimeInput): void {
     if (this.exited) return;
-    const events = this.hookEvents?.take((event) => settledBefore === undefined || event.at <= settledBefore) ?? [];
     let stopped = false;
-    for (const event of events) {
+    for (const event of this.hookEvents?.take(ready) ?? []) {
       if (event.hookEventName !== 'Stop' || !this.sessionId || event.conversationId !== this.sessionId) continue;
       stopped = true;
       this.backgroundPending = event.fullyIdle === false;
+      if (!this.backgroundPending) this.observer = undefined;
     }
-    if (!stopped) return;
-    if (!this.currentTurn) {
+    if (answered && this.backgroundPending) this.observer ??= answered;
+    if (stopped && !this.promptOnWire) {
       this.endWake();
       if (!this.backgroundPending) this.pendingTools.clear();
     }
@@ -1151,13 +1192,15 @@ class AntigravityAcpController {
    * agy runs the Stop hook after the last update of an execution loop. A
    * prompt's answer follows its Stop and applies it; nothing follows the Stop of
    * a turn agy started on its own, so the poll applies a Stop once it has
-   * settled (output agy wrote before the hook may still be queued). The poll also
-   * ends a self-started turn that has been silent for `quietMs` (an agy without
-   * hooks never sends a Stop).
+   * settled and all output read from agy has been handled. The poll also ends a
+   * self-started turn that has been silent for `quietMs` (an agy without hooks
+   * never sends a Stop).
    */
   private pollWake(): void {
+    // Output read before the Stop is recorded before the Stop ends anything.
+    if (this.child.outputPending?.()) return;
     const now = Date.now();
-    this.applyHookEvents(now - this.wakeTiming.settleMs);
+    this.applyHookEvents((event) => event.at <= now - this.wakeTiming.settleMs);
     if (this.wake && now - this.wake.lastUpdateAt >= this.wakeTiming.quietMs) {
       this.endWake();
       this.settleBackground();
@@ -1227,15 +1270,13 @@ class AntigravityAcpController {
   private clearCurrentTurn(): void {
     const turn = this.currentTurn;
     this.currentTurn = undefined;
-    // The last prompt's Stop is on disk before agy answers the prompt.
-    this.applyHookEvents();
     if (turn) {
+      // A prompt agy never answered (a failed write, an exit) leaves no window open.
+      if (this.promptOnWire === turn) this.promptOnWire = undefined;
       this.lastTurnInput = turn.input;
-      if (this.backgroundPending) this.observer ??= turn.input;
     }
-    this.activeToolIds.clear();
     // A tool still running went to the background; keep its name for its result.
-    if (!this.backgroundPending) this.pendingTools.clear();
+    if (!this.wake && !this.backgroundPending) this.pendingTools.clear();
     this.settleBackground();
   }
 
@@ -1269,7 +1310,7 @@ class AntigravityAcpController {
   }
 
   private resolveQuiescentWaitersIfReady(): void {
-    this.quiescentWaiters.resolveIfReady(() => this.isQuiescent());
+    this.quiescentWaiters.resolveIfReady(() => this.isSettled());
   }
 
   /** `turnError` settles the active turn before the rejected requests' handlers run, so it decides how the turn is retried. */
@@ -1281,6 +1322,7 @@ class AntigravityAcpController {
     void this.recordWakeText(this.detachWake());
     this.backgroundPending = false;
     this.observer = undefined;
+    this.promptOnWire = undefined;
     this.activeToolIds.clear();
     this.pendingTools.clear();
     this.abortCurrentTurn(turnError);

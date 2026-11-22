@@ -668,15 +668,21 @@ Current process model:
   the session's own conversation counts. A Stop with `fullyIdle: false` keeps the controller
   non-quiescent and reports `providerWork` (`working` or `background`, without a count), so the
   idle reset and a restart drain wait for the background work as they do for Claude.
-- A self-started turn goes to the item whose turn first left background work, or else to the
-  last item. Its thinking, tool calls, and context stats are recorded on that item as they
-  arrive, its permission requests are approved as in a prompt, and its text is recorded there
-  when the turn ends. That text is a record, not a reply; a reply still goes through Anima. The
-  turn ends at its Stop, when a new item starts (a prompt sent during it joins it, so the output
-  from then on goes to the new item), or after two minutes of silence, which also covers an `agy`
-  that runs no hooks. `agy` runs the hook after a loop's last update: a prompt's answer follows
-  its Stop, but nothing follows the Stop of a self-started turn, so Anima applies that one once
-  it is two seconds old, which leaves time for the output before it to be recorded.
+- Output belongs to a prompt from the moment Anima writes the prompt until it reads `agy`'s
+  answer; everything else belongs to a self-started turn. Such a turn goes to the item whose turn
+  left the background work, or else to the last item. Its thinking, tool calls, and context stats
+  are recorded on that item as they arrive, its permission requests are approved as in a prompt,
+  and its text is recorded there when the turn ends. That text is a record, not a reply; a reply
+  still goes through Anima. The turn ends at its Stop, when Anima writes a prompt (the prompt joins
+  it, so the output from then on goes to the new item), or after two minutes of silence, which
+  also covers an `agy` that runs no hooks.
+- `agy` runs the hook after a loop's last update. A prompt's answer follows its Stop, so when
+  Anima reads the answer it applies the Stops written before that moment; a later one ends a
+  later loop. Nothing follows the Stop of a self-started turn, so Anima applies that one once it
+  is two seconds old and the output read before it has been handled. Stops are applied one at a
+  time: once one says the background work is done, its reports are over, and the next turn that
+  leaves work owns the next ones. The controller is not quiescent while output it has read is
+  still being handled.
 - `agy` runs an unknown `--agent` as its default agent without an error, which would drop the
   profile. Anima therefore checks that `agy --add-dir <directory> agents` lists `anima-runtime`
   before using it. The check runs while the provider launch permit is held, so it gets 15 seconds.

@@ -22,7 +22,7 @@ interface ControllerAgentRuntimeOptions {
 export interface ProviderTurnController {
   completion: Promise<unknown>;
   acceptStderrChunk(chunk: string): Promise<void>;
-  acceptStdoutChunk(chunk: string): Promise<void>;
+  acceptStdoutChunk(chunk: string, receivedAt?: number): Promise<void>;
   isQuiescent?(): boolean;
   kill(signal?: NodeJS.Signals): void;
   snapshot(): ProviderChildHealthSnapshot;
@@ -102,7 +102,7 @@ export abstract class ControllerAgentRuntime<C extends ProviderTurnController> i
         env: input.env,
         label: spawn.label,
         onStderrChunk: (chunk) => controller.acceptStderrChunk(chunk),
-        onStdoutChunk: (chunk) => controller.acceptStdoutChunk(chunk),
+        onStdoutChunk: (chunk, receivedAt) => controller.acceptStdoutChunk(chunk, receivedAt),
       }),
     );
     return this.slot.install(controller);
