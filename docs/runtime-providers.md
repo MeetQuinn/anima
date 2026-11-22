@@ -689,16 +689,19 @@ Current process model:
 - ACP thinking, assistant text, usage, tool calls (named from the ACP tool `kind`: `Shell`,
   `ReadFile`, `EditFile`, `Search`, `Fetch`, …), tool failures, and permission requests are mapped
   into the same Anima activity and health surfaces as the other providers.
-- An ACP `Authentication required` error (-32000) becomes sign-in guidance: run `agy` once on the
-  host and sign in.
+- An ACP error is classified from its code and its own message. Its `data` can quote other text,
+  such as an earlier error, so it stays in the error for diagnostics and never decides the retry.
+  `Authentication required` (-32000) becomes sign-in guidance: run `agy` once on the host and sign
+  in. JSON-RPC request errors, such as invalid params, fail at once. A message that is exactly the
+  quota notice below waits for its reset, and any other error is retried or failed by its own
+  message.
 - When the account runs out of quota, `agy` ends the turn normally with a notice as the reply,
   as a step of its own: `⚠ Individual quota reached. Please upgrade your subscription to increase
 your limits. Resets in 3h20m5s.` Anima does not deliver that notice as the agent's answer. The
   turn fails as quota exhausted, and the item waits until the reset time the notice gives, within
   the usual rate-limit bounds (`provider.rate_limit.defer`); usage the prompt reported is still
   recorded. Only that exact notice counts: a model reply that mentions a quota is delivered as
-  usual. The notice as the message of an ACP prompt error is handled the same way; text quoted in
-  the error's `data` does not count, and an authentication error stays a sign-in error.
+  usual.
 
 Sign-in is machine-level (the OS keychain and `~/.gemini`), so Anima pins `HOME` to the service
 environment. `agy` has no check-only update mode, so **Settings > Providers** shows the installed

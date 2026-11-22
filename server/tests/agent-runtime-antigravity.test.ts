@@ -18,6 +18,7 @@ import {
   parseAcpSelectOptions,
 } from '../providers/antigravity.js';
 import { classifyProviderRetry, providerRateLimitResumeAt } from '../providers/provider-retry.js';
+import { isProviderRateLimitedError, runProviderWithCrashRetries } from '../runtime/provider-runner.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
 import { antigravityAcpModelCatalog, parseAntigravityConfigOptions } from '../services/system.service.js';
 import { withAnimaHome } from './anima-home.js';
@@ -939,6 +940,92 @@ for (const scenario of [
         );
         assert.notEqual(classifyProviderRetry(error), 'rate_limited');
         assert.equal(runtime.health?.().child, undefined);
+      });
+    } finally {
+      await runtime?.close?.();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
+const AGY_QUOTA_REASON = 'Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h30m.';
+type RpcRetryExpectation =
+  | { deferMs: number }
+  | { prompts: number; retryClass: 'terminal' | 'transient'; signIn?: boolean };
+for (const scenario of [
+  { name: 'quota notice', error: { code: -32603, message: AGY_QUOTA_REASON }, expect: { deferMs: 90 * 60_000 } },
+  {
+    name: 'quota notice whose data quotes a sign-in error',
+    error: { code: -32603, data: { detail: 'Previous error: Authentication required' }, message: AGY_QUOTA_REASON },
+    expect: { deferMs: 90 * 60_000 },
+  },
+  {
+    name: 'rate limit in its own message',
+    error: { code: -32603, message: 'Rate limit exceeded; try again in 2 minutes' },
+    expect: { deferMs: 2 * 60_000 },
+  },
+  { name: 'invalid params', error: { code: -32602, message: 'Invalid params' }, expect: { prompts: 1, retryClass: 'terminal' } },
+  {
+    name: 'invalid params whose data quotes the quota notice',
+    error: { code: -32602, data: { detail: `Invalid example text: ${AGY_QUOTA_REASON}` }, message: 'Invalid params' },
+    expect: { prompts: 1, retryClass: 'terminal' },
+  },
+  {
+    name: 'invalid params whose message quotes the quota notice',
+    error: { code: -32602, message: `Invalid message template: "${AGY_QUOTA_REASON}"` },
+    expect: { prompts: 1, retryClass: 'terminal' },
+  },
+  {
+    // Its own message is about a quota, but the reset time it quotes is not agy's notice.
+    name: 'internal error whose message quotes the quota notice',
+    error: { code: -32603, message: `Invalid message template: "${AGY_QUOTA_REASON}"` },
+    expect: { deferMs: 5 * 60_000 },
+  },
+  {
+    name: 'internal error whose data quotes sign-in and quota text',
+    error: { code: -32603, data: { detail: `Authentication required. ${AGY_QUOTA_REASON}` }, message: 'Internal error' },
+    expect: { prompts: 4, retryClass: 'transient' },
+  },
+  {
+    name: 'authentication error whose data quotes the quota notice',
+    error: { code: -32000, data: { detail: AGY_QUOTA_REASON }, message: 'Authentication required' },
+    expect: { prompts: 1, retryClass: 'terminal', signIn: true },
+  },
+] satisfies Array<{ error: Record<string, unknown>; expect: RpcRetryExpectation; name: string }>) {
+  test(`antigravity-cli retries an ACP ${scenario.name} by its code and own message`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-rpc-retry-'));
+    let runtime: AgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        await installFakeAgy(stateDir);
+        const ctx = await ingestAgyEvent(stateDir, 'Label the billing chart.', '1786000055.000001');
+        runtime = createAgentRuntime({ env: agyEnv(stateDir, { promptError: scenario.error }), kind: 'antigravity-cli' });
+        const input = await runtimeInput(runtime, ctx, await loadState());
+        const before = Date.now();
+        const error = await runProviderWithCrashRetries({
+          agentId: 'anima',
+          agentRuntime: runtime,
+          buildInput: async () => input,
+          itemId: input.itemId,
+          retry: { transientBackoffMs: [0] },
+          signal: new AbortController().signal,
+        }).then(
+          () => assert.fail('the item should not succeed'),
+          (failure: unknown) => failure,
+        );
+        const expected: RpcRetryExpectation = scenario.expect;
+        if ('deferMs' in expected) {
+          assert.ok(isProviderRateLimitedError(error), String(error));
+          assert.ok(Math.abs(error.resumeAt.getTime() - (before + expected.deferMs)) < 10_000, String(error.resumeAt));
+          assert.doesNotMatch(String(error), /not signed in/);
+        } else {
+          assert.equal(isProviderRateLimitedError(error), false, String(error));
+          assert.equal(classifyProviderRetry(error), expected.retryClass, String(error));
+          assert.equal(/not signed in on this machine/.test(String(error)), expected.signIn ?? false, String(error));
+          if ('data' in scenario.error) assert.match(String(error), /data=/, 'data stays for diagnostics');
+        }
+        const prompts = promptTexts(await readJsonLines(join(stateDir, 'calls.jsonl')));
+        assert.equal(prompts.length, 'deferMs' in expected ? 1 : expected.prompts);
       });
     } finally {
       await runtime?.close?.();

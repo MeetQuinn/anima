@@ -11,6 +11,8 @@ import { raceWithTimeout } from '../race-timeout.js';
 import { type RunningChildProcess } from './child-process.js';
 import { providerUsageFromStats } from './provider-usage.js';
 import { AcpJsonRpcError, AcpJsonRpcPeer } from './acp-json-rpc.js';
+import { ClassifiedProviderError, providerFailureReasonFromError } from './provider-failure.js';
+import { classifyProviderRetry, providerRateLimitResumeAt } from './provider-retry.js';
 import { acpPermissionApprovalOptionId } from './acp-permissions.js';
 import {
   copyNumberLike,
@@ -334,8 +336,10 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
           }
           return text.trim() ? { text: text.trim() } : {};
         } catch (error) {
-          const mapped = antigravitySetupError(error);
-          if (mapped !== error) await this.slot.reset();
+          const mapped = antigravityRpcError(error);
+          if (mapped instanceof ClassifiedProviderError && mapped.reason === 'provider_auth_failed') {
+            await this.slot.reset();
+          }
           throw mapped;
         }
       },
@@ -736,7 +740,7 @@ class AntigravityAcpController {
       this.activeToolIds.clear();
       this.pendingTools.clear();
       await turn.input.effects.recordUsage(providerUsageFromStats(sourceId, this.latestUsage, { model }));
-      throw antigravityQuotaErrorFromRpc(error) ?? error;
+      throw error;
     }
     const stopReason = stringField(result, 'stopReason');
     if (rollbackCancelledAcpPromptText(turn, textCheckpoint, stopReason)) {
@@ -1058,38 +1062,58 @@ export function antigravityQuotaResetsAt(notice: string, now: Date = new Date())
 }
 
 /** Classified as quota exhausted; the item is retried once the quota resets. */
-export class AntigravityQuotaError extends Error {
-  readonly reason = 'provider_quota_exhausted';
-  readonly resetsAt?: string;
-
+export class AntigravityQuotaError extends ClassifiedProviderError {
   constructor(notice: string, options?: ErrorOptions) {
-    super(`Antigravity: ${notice}`, options);
-    this.name = 'AntigravityQuotaError';
     const resetsAt = antigravityQuotaResetsAt(notice);
-    if (resetsAt) this.resetsAt = resetsAt.toISOString();
+    super(
+      `Antigravity: ${notice}`,
+      { reason: 'provider_quota_exhausted', retryClass: 'rate_limited', ...(resetsAt ? { resetsAt } : {}) },
+      options,
+    );
+    this.name = 'AntigravityQuotaError';
   }
 }
 
-/**
- * agy's quota notice as the reason of a prompt error. Only the error's own message
- * counts (its `data` can quote earlier text), and an authentication error stays one.
- */
-function antigravityQuotaErrorFromRpc(error: unknown): AntigravityQuotaError | undefined {
-  if (!(error instanceof AcpJsonRpcError) || antigravitySetupError(error) !== error) return undefined;
-  const notice = new RegExp(ANTIGRAVITY_QUOTA_SENTENCE, 'u').exec(stringField(error.error, 'message') ?? '')?.[0];
-  return notice ? new AntigravityQuotaError(notice, { cause: error }) : undefined;
-}
+/** JSON-RPC's own request errors (parse, invalid request, unknown method, invalid params). */
+const JSON_RPC_REQUEST_ERROR_CODES = new Set([-32700, -32600, -32601, -32602]);
+const ANTIGRAVITY_RPC_QUOTA_NOTICE = new RegExp(`^(?:\\u26A0\\uFE0F?[^\\S\\n]*)?(${ANTIGRAVITY_QUOTA_SENTENCE})$`, 'u');
 
-/** ACP `Authentication required` (-32000): the CLI on this machine is not signed in. */
-export function antigravitySetupError(error: unknown): unknown {
+/**
+ * An ACP error from agy, classified from its code and its own message. An
+ * authentication error (-32000) asks for sign-in, agy's quota notice waits for the
+ * reset, and a malformed request fails at once. Anything else is classified from
+ * its own message alone. `data` can quote other text (an earlier error, a
+ * template), so it stays in the message for diagnostics but never decides how the
+ * failure is reported or retried.
+ */
+export function antigravityRpcError(error: unknown): unknown {
   if (!(error instanceof AcpJsonRpcError)) return error;
   const code = numberField(error.error, 'code');
-  if (code !== -32000 && !/authentication required/i.test(error.message)) return error;
-  return new Error(
-    'Antigravity CLI is not signed in on this machine. Run `agy` in a terminal once and sign in '
-      + `(or \`agy acp --login\`), then retry. ${error.message}`,
-    { cause: error },
-  );
+  const reason = stringField(error.error, 'message')?.trim() ?? '';
+  const classified = (message: string, classification: ConstructorParameters<typeof ClassifiedProviderError>[1]) => {
+    const mapped = new ClassifiedProviderError(message, classification, { cause: error });
+    mapped.name = error.name;
+    return mapped;
+  };
+  if (code === -32000 || /\bauthentication required\b/i.test(reason)) {
+    return classified(
+      'Antigravity CLI is not signed in on this machine. Run `agy` in a terminal once and sign in '
+        + `(or \`agy acp --login\`), then retry. ${error.message}`,
+      { reason: 'provider_auth_failed', retryClass: 'terminal' },
+    );
+  }
+  if (code !== undefined && JSON_RPC_REQUEST_ERROR_CODES.has(code)) {
+    return classified(error.message, { reason: 'provider_error', retryClass: 'terminal' });
+  }
+  const notice = ANTIGRAVITY_RPC_QUOTA_NOTICE.exec(reason)?.[1];
+  if (notice) return new AntigravityQuotaError(notice, { cause: error });
+  const actual = new Error(reason || 'Unknown JSON-RPC error');
+  const retryClass = classifyProviderRetry(actual);
+  return classified(error.message, {
+    reason: providerFailureReasonFromError(actual),
+    retryClass,
+    ...(retryClass === 'rate_limited' ? { resetsAt: providerRateLimitResumeAt(actual, new Date()) } : {}),
+  });
 }
 
 const ANTIGRAVITY_TOOL_KIND_NAMES: Record<string, string> = {

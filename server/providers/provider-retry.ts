@@ -1,5 +1,9 @@
 import { errorMessage } from '../ids.js';
-import { ProviderTurnFailedError, providerFailureReasonFromError } from './provider-failure.js';
+import {
+  ClassifiedProviderError,
+  ProviderTurnFailedError,
+  providerFailureReasonFromError,
+} from './provider-failure.js';
 
 /**
  * How the runtime should react to a failed provider turn.
@@ -41,11 +45,13 @@ const TRANSIENT_PATTERN = new RegExp([
 ].join('|'), 'i');
 
 export function isProviderCrashError(error: unknown): boolean {
+  if (error instanceof ClassifiedProviderError) return error.retryClass === 'crash';
   return !(error instanceof ProviderTurnFailedError) && CRASH_PATTERN.test(errorMessage(error));
 }
 
 export function classifyProviderRetry(error: unknown): ProviderRetryClass {
   if (error instanceof ProviderTurnFailedError) return 'terminal';
+  if (error instanceof ClassifiedProviderError) return error.retryClass;
   if (isProviderCrashError(error)) return 'crash';
   const reason = providerFailureReasonFromError(error);
   if (reason === 'provider_rate_limited' || reason === 'provider_quota_exhausted') return 'rate_limited';
@@ -64,9 +70,11 @@ const MIN_RATE_LIMIT_DEFER_MS = 30 * 1000;
  * explicit `resetsAt` property when the adapter attached one, otherwise parses
  * the human text Claude Code prints ("resets 2:10pm (Asia/Shanghai)",
  * "resets at 14:10", "try again in 30 seconds"). Falls back to a fixed delay.
+ * A classified error's message is diagnostics, so only its `resetsAt` counts.
  */
 export function providerRateLimitResumeAt(error: unknown, now: Date): Date {
-  const candidate = explicitResetAt(error) ?? parsedResetAt(errorMessage(error), now);
+  const candidate = explicitResetAt(error)
+    ?? (error instanceof ClassifiedProviderError ? undefined : parsedResetAt(errorMessage(error), now));
   const delta = candidate ? candidate.getTime() - now.getTime() : DEFAULT_RATE_LIMIT_DEFER_MS;
   const bounded = Math.min(Math.max(delta, MIN_RATE_LIMIT_DEFER_MS), MAX_RATE_LIMIT_DEFER_MS);
   return new Date(now.getTime() + bounded);
