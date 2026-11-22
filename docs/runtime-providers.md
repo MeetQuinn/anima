@@ -671,8 +671,9 @@ Current process model:
   session, so they persist across process restarts and a resumed session keeps them. A profile
   edit reaches an Antigravity agent when it next starts a fresh provider session.
 - A stored provider session uses `session/resume`. `agy` reports an unknown session as
-  `Failed to read session …`; only that missing-session answer falls back to `session/new`
-  (`antigravity.session.resume_missing`).
+  `-32603 Failed to read session …`. Only that code with that message of its own falls back to
+  `session/new` (`antigravity.session.resume_missing`); any other resume error, including one
+  whose `data` quotes that text, keeps the saved session.
 - The model and thinking level are ACP session config options. After session creation or resume
   Anima applies the configured model with `session/set_config_option` (`model`) and the optional
   `reasoningEffort` with `thought_level`. A model the signed-in account does not offer fails the
@@ -691,10 +692,11 @@ Current process model:
   into the same Anima activity and health surfaces as the other providers.
 - An ACP error is classified from its code and its own message. Its `data` can quote other text,
   such as an earlier error, so it stays in the error for diagnostics and never decides the retry.
-  `Authentication required` (-32000) becomes sign-in guidance: run `agy` once on the host and sign
-  in. JSON-RPC request errors, such as invalid params, fail at once. A message that is exactly the
-  quota notice below waits for its reset, and any other error is retried or failed by its own
-  message.
+  JSON-RPC request errors, such as invalid params, fail at once whatever their message quotes.
+  `Authentication required` (-32000, or a message that starts with it) becomes sign-in guidance:
+  run `agy` once on the host and sign in; a message that only mentions it is a provider error. A
+  message that is exactly the quota notice below waits for its reset, and any other error is
+  retried or failed by its own message.
 - When the account runs out of quota, `agy` ends the turn normally with a notice as the reply,
   as a step of its own: `⚠ Individual quota reached. Please upgrade your subscription to increase
 your limits. Resets in 3h20m5s.` Anima does not deliver that notice as the agent's answer. The

@@ -1025,14 +1025,14 @@ function antigravityInitializeEvent(result: Record<string, unknown> | undefined)
 
 /**
  * `agy acp` 1.5 answers a resume of an unknown or unreadable session with
- * `-32603 Failed to read session <id>; retry, or load it with session/load`.
+ * `-32603 Failed to read session <id>; retry, or load it with session/load`. Only
+ * that code and the error's own message count; any other resume error keeps the
+ * saved session.
  */
 function isAntigravitySessionNotFoundError(error: unknown): boolean {
-  if (!(error instanceof AcpJsonRpcError)) return false;
-  if (error.method !== 'session/resume') return false;
-  return /failed\s+to\s+(?:read|load|find)\s+session|session.{0,40}(?:not\s+found|missing|unknown|does\s+not\s+exist)|(?:not\s+found|missing|unknown|no\s+such).{0,40}(?:session|conversation)/i.test(
-    error.message,
-  );
+  if (!(error instanceof AcpJsonRpcError) || error.method !== 'session/resume') return false;
+  return numberField(error.error, 'code') === -32603
+    && /^Failed to read session\b/i.test(stringField(error.error, 'message')?.trim() ?? '');
 }
 
 const ANTIGRAVITY_QUOTA_SENTENCE =
@@ -1079,12 +1079,12 @@ const JSON_RPC_REQUEST_ERROR_CODES = new Set([-32700, -32600, -32601, -32602]);
 const ANTIGRAVITY_RPC_QUOTA_NOTICE = new RegExp(`^(?:\\u26A0\\uFE0F?[^\\S\\n]*)?(${ANTIGRAVITY_QUOTA_SENTENCE})$`, 'u');
 
 /**
- * An ACP error from agy, classified from its code and its own message. An
- * authentication error (-32000) asks for sign-in, agy's quota notice waits for the
- * reset, and a malformed request fails at once. Anything else is classified from
- * its own message alone. `data` can quote other text (an earlier error, a
- * template), so it stays in the message for diagnostics but never decides how the
- * failure is reported or retried.
+ * An ACP error from agy, classified from its code and its own message. A malformed
+ * request fails at once, an authentication error asks for sign-in, and agy's quota
+ * notice waits for the reset. Anything else is classified from its own message
+ * alone. `data` can quote other text (an earlier error, a template), so it stays in
+ * the message for diagnostics but never decides how the failure is reported or
+ * retried.
  */
 export function antigravityRpcError(error: unknown): unknown {
   if (!(error instanceof AcpJsonRpcError)) return error;
@@ -1095,22 +1095,24 @@ export function antigravityRpcError(error: unknown): unknown {
     mapped.name = error.name;
     return mapped;
   };
-  if (code === -32000 || /\bauthentication required\b/i.test(reason)) {
+  if (code !== undefined && JSON_RPC_REQUEST_ERROR_CODES.has(code)) {
+    return classified(error.message, { reason: 'provider_error', retryClass: 'terminal' });
+  }
+  if (code === -32000 || /^authentication required\b/i.test(reason)) {
     return classified(
       'Antigravity CLI is not signed in on this machine. Run `agy` in a terminal once and sign in '
         + `(or \`agy acp --login\`), then retry. ${error.message}`,
       { reason: 'provider_auth_failed', retryClass: 'terminal' },
     );
   }
-  if (code !== undefined && JSON_RPC_REQUEST_ERROR_CODES.has(code)) {
-    return classified(error.message, { reason: 'provider_error', retryClass: 'terminal' });
-  }
   const notice = ANTIGRAVITY_RPC_QUOTA_NOTICE.exec(reason)?.[1];
   if (notice) return new AntigravityQuotaError(notice, { cause: error });
   const actual = new Error(reason || 'Unknown JSON-RPC error');
   const retryClass = classifyProviderRetry(actual);
+  const failureReason = providerFailureReasonFromError(actual);
   return classified(error.message, {
-    reason: providerFailureReasonFromError(actual),
+    // Sign-in is agy's own authentication error above; a message that only mentions it is not one.
+    reason: failureReason === 'provider_auth_failed' ? 'provider_error' : failureReason,
     retryClass,
     ...(retryClass === 'rate_limited' ? { resetsAt: providerRateLimitResumeAt(actual, new Date()) } : {}),
   });

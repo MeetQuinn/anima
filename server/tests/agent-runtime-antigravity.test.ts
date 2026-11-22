@@ -17,6 +17,7 @@ import {
   antigravityToolName,
   parseAcpSelectOptions,
 } from '../providers/antigravity.js';
+import { providerFailureReasonFromError } from '../providers/provider-failure.js';
 import { classifyProviderRetry, providerRateLimitResumeAt } from '../providers/provider-retry.js';
 import { isProviderRateLimitedError, runProviderWithCrashRetries } from '../runtime/provider-runner.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
@@ -152,6 +153,7 @@ const FAKE_AGY = [
   '      continue;',
   '    }',
   "    if (msg.method === 'session/resume') {",
+  "      if (scenario.resumeError) { send({ jsonrpc: '2.0', id: msg.id, error: scenario.resumeError }); continue; }",
   "      if (scenario.resume === 'missing') { send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Failed to read session ' + msg.params.sessionId + '; retry, or load it with session/load' } }); continue; }",
   '      sessionId = msg.params.sessionId;',
   "      send({ jsonrpc: '2.0', id: msg.id, result: { configOptions } });",
@@ -987,6 +989,21 @@ for (const scenario of [
     expect: { prompts: 4, retryClass: 'transient' },
   },
   {
+    name: 'invalid params whose message quotes a sign-in error',
+    error: { code: -32602, message: 'Invalid message template: "Authentication required"' },
+    expect: { prompts: 1, retryClass: 'terminal' },
+  },
+  {
+    name: 'internal error whose message quotes a sign-in error',
+    error: { code: -32603, message: 'Invalid message template: "Authentication required"' },
+    expect: { prompts: 1, retryClass: 'terminal' },
+  },
+  {
+    name: 'internal error whose message is a sign-in error',
+    error: { code: -32603, message: 'Authentication required' },
+    expect: { prompts: 1, retryClass: 'terminal', signIn: true },
+  },
+  {
     name: 'authentication error whose data quotes the quota notice',
     error: { code: -32000, data: { detail: AGY_QUOTA_REASON }, message: 'Authentication required' },
     expect: { prompts: 1, retryClass: 'terminal', signIn: true },
@@ -1022,10 +1039,77 @@ for (const scenario of [
           assert.equal(isProviderRateLimitedError(error), false, String(error));
           assert.equal(classifyProviderRetry(error), expected.retryClass, String(error));
           assert.equal(/not signed in on this machine/.test(String(error)), expected.signIn ?? false, String(error));
+          if (expected.retryClass === 'terminal') {
+            assert.equal(providerFailureReasonFromError(error), expected.signIn ? 'provider_auth_failed' : 'provider_error');
+          }
           if ('data' in scenario.error) assert.match(String(error), /data=/, 'data stays for diagnostics');
         }
         const prompts = promptTexts(await readJsonLines(join(stateDir, 'calls.jsonl')));
         assert.equal(prompts.length, 'deferMs' in expected ? 1 : expected.prompts);
+      });
+    } finally {
+      await runtime?.close?.();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
+const RESUME_MISSING_QUOTE = 'Previous attempt: Failed to read session agy-session-old; retry, or load it with session/load';
+for (const scenario of [
+  { name: 'an unknown method', resumeError: { code: -32601, message: 'Method not found' }, outcome: 'terminal' },
+  {
+    name: 'invalid params that read like a missing session',
+    resumeError: { code: -32602, message: 'Failed to read session agy-session-saved; retry, or load it with session/load' },
+    outcome: 'terminal',
+  },
+  {
+    name: 'an internal error whose data quotes a missing session',
+    resumeError: { code: -32603, data: { detail: RESUME_MISSING_QUOTE }, message: 'Internal error' },
+    outcome: 'transient',
+  },
+  {
+    name: 'the quota notice whose data quotes a missing session',
+    resumeError: { code: -32603, data: { detail: RESUME_MISSING_QUOTE }, message: AGY_QUOTA_REASON },
+    outcome: 'deferred',
+  },
+  {
+    name: 'an authentication error whose data quotes a missing session',
+    resumeError: { code: -32000, data: { detail: RESUME_MISSING_QUOTE }, message: 'Authentication required' },
+    outcome: 'sign-in',
+  },
+] as const) {
+  test(`antigravity-cli keeps the saved session when resume fails with ${scenario.name}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-resume-error-'));
+    let runtime: AgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        await installFakeAgy(stateDir);
+        const ctx = await ingestAgyEvent(stateDir, 'Resume Antigravity.', '1786000041.000001');
+        await runtimeSessionServiceForAgent('anima').persistProviderSession('antigravity-cli', {
+          id: 'agy-session-saved',
+          updatedAt: '2026-11-08T00:00:00.000Z',
+        });
+        runtime = createAgentRuntime({ env: agyEnv(stateDir, { resumeError: scenario.resumeError }), kind: 'antigravity-cli' });
+        const input = await runtimeInput(runtime, ctx, await loadState());
+        const error = await runProviderWithCrashRetries({
+          agentId: 'anima',
+          agentRuntime: runtime,
+          buildInput: async () => input,
+          itemId: input.itemId,
+          retry: { transientBackoffMs: [0] },
+          signal: new AbortController().signal,
+        }).then(
+          () => assert.fail('the item should not succeed'),
+          (failure: unknown) => failure,
+        );
+        const outcome = isProviderRateLimitedError(error)
+          ? 'deferred'
+          : /not signed in on this machine/.test(String(error)) ? 'sign-in' : classifyProviderRetry(error);
+        assert.equal(outcome, scenario.outcome, String(error));
+        const methods = methodsOf(await readJsonLines(join(stateDir, 'calls.jsonl')));
+        assert.equal(methods.includes('session/new'), false, methods.join(','));
+        assert.equal(methods.includes('session/prompt'), false, methods.join(','));
+        assert.equal((await loadState()).sessions.anima?.current?.id, 'agy-session-saved');
       });
     } finally {
       await runtime?.close?.();
