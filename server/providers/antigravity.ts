@@ -143,9 +143,10 @@ export interface AntigravityAgentCheckOptions {
 
 /**
  * Runs `agy --add-dir <dir> agents` and returns what it prints. The check runs
- * while the provider launch permit is held, so it is bounded: on timeout or
- * abort the child gets SIGTERM, then SIGKILL after a grace period, and the check
- * waits for it to exit before returning.
+ * while the provider launch permit is held, so it is bounded. It starts in a
+ * process group of its own, so a wrapper script and the CLI it starts are
+ * stopped together: on timeout or abort the group gets SIGTERM, then SIGKILL
+ * after a grace period, and the check waits for the group to be gone.
  */
 async function listAntigravityAgents(
   command: string,
@@ -158,12 +159,9 @@ async function listAntigravityAgents(
   const killGraceMs = options.killGraceMs ?? 2_000;
   const child = spawn(command, ['--add-dir', dir, 'agents'], {
     cwd: input.cwd,
+    detached: true,
     env: input.env,
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const exited = new Promise<void>((resolve) => {
-    child.once('exit', () => resolve());
-    child.once('error', () => resolve());
   });
   let stdout = '';
   let stderr = '';
@@ -177,6 +175,7 @@ async function listAntigravityAgents(
   });
   let timer: NodeJS.Timeout | undefined;
   let onAbort: (() => void) | undefined;
+  let stopped = false;
   try {
     return await new Promise<string>((resolve, reject) => {
       child.once('error', reject);
@@ -188,20 +187,51 @@ async function listAntigravityAgents(
         const detail = stderr.trim() ? `: ${stderr.trim()}` : '';
         reject(new Error(`\`agy agents\` exited with ${signal ?? `code ${String(code)}`}${detail}`));
       });
-      timer = setTimeout(() => reject(new Error(`\`agy agents\` did not finish within ${timeoutMs} ms`)), timeoutMs);
-      onAbort = () => reject(input.signal?.reason);
+      timer = setTimeout(() => {
+        stopped = true;
+        reject(new Error(`\`agy agents\` did not finish within ${timeoutMs} ms`));
+      }, timeoutMs);
+      onAbort = () => {
+        stopped = true;
+        reject(input.signal?.reason);
+      };
       input.signal?.addEventListener('abort', onAbort, { once: true });
     });
   } finally {
     clearTimeout(timer);
     if (onAbort) input.signal?.removeEventListener('abort', onAbort);
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM');
-      const force = setTimeout(() => child.kill('SIGKILL'), killGraceMs);
-      await raceWithTimeout(exited, killGraceMs + 1_000, undefined);
-      clearTimeout(force);
+    // A wrapper can exit on SIGTERM and leave the CLI behind, so the whole group is
+    // stopped even when the direct child is already gone.
+    if (stopped || (child.exitCode === null && child.signalCode === null)) {
+      await stopProcessGroup(child.pid, killGraceMs);
     }
   }
+}
+
+/** SIGTERM to the process group led by `pid`, SIGKILL after `killGraceMs`, then wait (bounded) for it to be gone. */
+async function stopProcessGroup(pid: number | undefined, killGraceMs: number): Promise<void> {
+  // pid 0 or below would signal Anima's own process group.
+  if (pid === undefined || pid <= 0) return;
+  const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
+    try {
+      process.kill(-pid, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const goneWithin = async (ms: number): Promise<boolean> => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      if (!signalGroup(0)) return true;
+    }
+    return false;
+  };
+  if (!signalGroup('SIGTERM')) return;
+  if (await goneWithin(killGraceMs)) return;
+  signalGroup('SIGKILL');
+  await goneWithin(1_000);
 }
 
 /**
@@ -1001,8 +1031,9 @@ function isAntigravitySessionNotFoundError(error: unknown): boolean {
   );
 }
 
-const ANTIGRAVITY_QUOTA_NOTICE =
-  /^\u26A0\uFE0F?[^\S\n]*(Individual quota reached\. Please upgrade your subscription to increase your limits\. Resets in (?:\d+[dhms])+\.)$/u;
+const ANTIGRAVITY_QUOTA_SENTENCE =
+  'Individual quota reached\\. Please upgrade your subscription to increase your limits\\. Resets in (?:\\d+[dhms])+\\.';
+const ANTIGRAVITY_QUOTA_NOTICE = new RegExp(`^\\u26A0\\uFE0F?[^\\S\\n]*(${ANTIGRAVITY_QUOTA_SENTENCE})$`, 'u');
 
 /**
  * When the account is out of quota, agy ends the turn normally (`end_turn`) with a
@@ -1039,10 +1070,14 @@ export class AntigravityQuotaError extends Error {
   }
 }
 
+/**
+ * agy's quota notice as the reason of a prompt error. Only the error's own message
+ * counts (its `data` can quote earlier text), and an authentication error stays one.
+ */
 function antigravityQuotaErrorFromRpc(error: unknown): AntigravityQuotaError | undefined {
-  if (!(error instanceof AcpJsonRpcError)) return undefined;
-  const notice = /Individual quota reached\.[^\n]*/u.exec(error.message)?.[0];
-  return notice ? new AntigravityQuotaError(notice.trim(), { cause: error }) : undefined;
+  if (!(error instanceof AcpJsonRpcError) || antigravitySetupError(error) !== error) return undefined;
+  const notice = new RegExp(ANTIGRAVITY_QUOTA_SENTENCE, 'u').exec(stringField(error.error, 'message') ?? '')?.[0];
+  return notice ? new AntigravityQuotaError(notice, { cause: error }) : undefined;
 }
 
 /** ACP `Authentication required` (-32000): the CLI on this machine is not signed in. */

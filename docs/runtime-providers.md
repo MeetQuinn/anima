@@ -660,9 +660,10 @@ Current process model:
   prompt the model is not told its working directory, so the agent file states it.
 - `agy` runs an unknown `--agent` as its default agent without an error, which would drop the
   profile. Anima therefore checks that `agy --add-dir <directory> agents` lists `anima-runtime`
-  before using it. The check runs while the provider launch permit is held, so it gets 15 seconds;
-  on a timeout or a Stop, Anima terminates it (SIGKILL after a 2-second grace) and waits for it to
-  exit. When the check does not list the agent, Anima records `antigravity.agent.unavailable` and
+  before using it. The check runs while the provider launch permit is held, so it gets 15 seconds.
+  It runs in its own process group, so on a timeout or a Stop, Anima terminates the whole group (a
+  wrapper script and the CLI it started; SIGKILL after a 2-second grace) and waits for it to be
+  gone. When the check does not list the agent, Anima records `antigravity.agent.unavailable` and
   falls back: if `initialize` advertises `agentCapabilities._meta.antigravity.systemPrompt.append`,
   the profile is appended to Antigravity's system prompt on `session/new`; an older CLI without
   that capability gets the profile prepended to the first prompt.
@@ -696,7 +697,8 @@ your limits. Resets in 3h20m5s.` Anima does not deliver that notice as the agent
   turn fails as quota exhausted, and the item waits until the reset time the notice gives, within
   the usual rate-limit bounds (`provider.rate_limit.defer`); usage the prompt reported is still
   recorded. Only that exact notice counts: a model reply that mentions a quota is delivered as
-  usual. The notice in an ACP error is handled the same way.
+  usual. The notice as the message of an ACP prompt error is handled the same way; text quoted in
+  the error's `data` does not count, and an authentication error stays a sign-in error.
 
 Sign-in is machine-level (the OS keychain and `~/.gemini`), so Anima pins `HOME` to the service
 environment. `agy` has no check-only update mode, so **Settings > Providers** shows the installed
