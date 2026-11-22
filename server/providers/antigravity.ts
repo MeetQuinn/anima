@@ -1,14 +1,18 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { accessSync, constants as fsConstants, realpathSync } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 
-import { nowIso } from '../ids.js';
+import { errorMessage, nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { truncateForActivity } from '../activities/format.js';
 import { raceWithTimeout } from '../race-timeout.js';
 import { type RunningChildProcess } from './child-process.js';
 import { providerUsageFromStats } from './provider-usage.js';
 import { AcpJsonRpcError, AcpJsonRpcPeer } from './acp-json-rpc.js';
+import { ClassifiedProviderError, providerFailureReasonFromError } from './provider-failure.js';
+import { classifyProviderRetry, providerRateLimitResumeAt } from './provider-retry.js';
 import { acpPermissionApprovalOptionId } from './acp-permissions.js';
 import {
   copyNumberLike,
@@ -42,14 +46,194 @@ import {
 
 const ANTIGRAVITY_RUNTIME_KIND = 'antigravity-cli';
 
+/** The custom agent Anima writes for `agy acp --agent`. */
+const ANTIGRAVITY_AGENT_NAME = 'anima-runtime';
+
+/**
+ * The Antigravity tools an Anima agent keeps. A custom agent that excludes the
+ * default components starts with none of them (agy always adds manage_task).
+ * Questions and reminders go through Anima, so ask_question and schedule stay
+ * out. Subagents always run in the background and report in a turn agy starts
+ * after the prompt has ended, which Anima does not attach to the item yet, so
+ * the subagent tools, swarm and run_workflow stay out too.
+ */
+const ANTIGRAVITY_AGENT_TOOLS = ['read_file', 'write_file', 'edit_file', 'run_command', 'search_web'];
+
 /**
  * `agy acp` is Antigravity CLI's official ACP server — the same entry point Zed,
  * JetBrains and Xcode launch. Flags go after `acp`. An Anima agent has no one to
  * answer permission prompts, so tool calls are approved up front, as with the
- * other providers.
+ * other providers. With `agentDir`, the session runs Anima's custom agent from
+ * that directory (see antigravityAgentDefinition).
  */
-export function antigravityAcpLaunchArgs(providerArgs: readonly string[] = []): string[] {
-  return ['acp', ...providerArgs, '--dangerously-skip-permissions'];
+export function antigravityAcpLaunchArgs(providerArgs: readonly string[] = [], agentDir?: string): string[] {
+  return [
+    'acp',
+    ...providerArgs,
+    '--dangerously-skip-permissions',
+    ...(agentDir ? ['--add-dir', agentDir, '--agent', ANTIGRAVITY_AGENT_NAME] : []),
+  ];
+}
+
+/**
+ * `agy acp` can only append to its own system prompt, which describes Antigravity
+ * and a dozen tools Anima does not use. A custom agent with
+ * `excludeDefaultComponents: true` replaces it: the body becomes the whole system
+ * prompt and `tools` the whole tool set. Without the default prompt the model is
+ * not told its working directory, so the definition says it.
+ */
+export function antigravityAgentDefinition(systemPrompt: string, cwd: string): string {
+  return [
+    '---',
+    `name: ${ANTIGRAVITY_AGENT_NAME}`,
+    'description: Anima agent runtime',
+    'excludeDefaultComponents: true',
+    `tools: [${ANTIGRAVITY_AGENT_TOOLS.join(', ')}]`,
+    '---',
+    systemPrompt.trim(),
+    '',
+    `Your working directory is ${cwd}.`,
+    '',
+  ].join('\n');
+}
+
+/**
+ * agy reads custom agents from `<workspace>/.agents/agents/<name>.md`, and `--add-dir`
+ * adds a workspace directory without changing the session's cwd. The directory sits
+ * beside the agent's other provider files in Anima's run directory.
+ */
+function antigravityAgentDir(systemPromptFilePath: string): string {
+  return join(dirname(systemPromptFilePath), 'antigravity-cli-agent');
+}
+
+/**
+ * Writes Anima's custom agent and checks that this `agy` finds it. agy runs an
+ * unknown `--agent` as its default agent without saying so, which would drop the
+ * system prompt entirely, so the session uses the agent only when `agy agents`
+ * lists it; otherwise the prompt is appended as before. Undefined when there is
+ * no system prompt to carry.
+ */
+async function prepareAntigravityAgent(
+  command: string,
+  input: AgentRuntimeInput,
+  env: NodeJS.ProcessEnv,
+  check: AntigravityAgentCheckOptions,
+): Promise<{ dir: string } | { problem: string } | undefined> {
+  const systemPrompt = input.systemPrompt?.trim();
+  if (!systemPrompt) return undefined;
+  if (!input.systemPromptFilePath) return { problem: 'no runtime directory' };
+  const dir = antigravityAgentDir(input.systemPromptFilePath);
+  try {
+    const file = join(dir, '.agents', 'agents', `${ANTIGRAVITY_AGENT_NAME}.md`);
+    await mkdir(dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temp, antigravityAgentDefinition(systemPrompt, input.cwd), 'utf8');
+    await rename(temp, file);
+    const stdout = await listAntigravityAgents(command, dir, { cwd: input.cwd, env, signal: input.signal }, check);
+    const listed = stdout.split(/\r?\n/).some((line) => line.trim() === ANTIGRAVITY_AGENT_NAME);
+    return listed ? { dir } : { problem: '`agy agents` did not list the agent' };
+  } catch (error) {
+    if (input.signal?.aborted) throw error;
+    return { problem: truncateForActivity(errorMessage(error)) };
+  }
+}
+
+export interface AntigravityAgentCheckOptions {
+  killGraceMs?: number;
+  timeoutMs?: number;
+}
+
+/**
+ * Runs `agy --add-dir <dir> agents` and returns what it prints. The check runs
+ * while the provider launch permit is held, so it is bounded. It starts in a
+ * process group of its own, so a wrapper script and the CLI it starts are
+ * stopped together: on timeout or abort the group gets SIGTERM, then SIGKILL
+ * after a grace period, and the check waits for the group to be gone.
+ */
+async function listAntigravityAgents(
+  command: string,
+  dir: string,
+  input: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal | undefined },
+  options: AntigravityAgentCheckOptions,
+): Promise<string> {
+  input.signal?.throwIfAborted();
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const killGraceMs = options.killGraceMs ?? 2_000;
+  const child = spawn(command, ['--add-dir', dir, 'agents'], {
+    cwd: input.cwd,
+    detached: true,
+    env: input.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    if (stdout.length < 1024 * 1024) stdout += chunk;
+  });
+  child.stderr.on('data', (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-4096);
+  });
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  let stopped = false;
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => {
+        if (code === 0) {
+          resolve(stdout);
+          return;
+        }
+        const detail = stderr.trim() ? `: ${stderr.trim()}` : '';
+        reject(new Error(`\`agy agents\` exited with ${signal ?? `code ${String(code)}`}${detail}`));
+      });
+      timer = setTimeout(() => {
+        stopped = true;
+        reject(new Error(`\`agy agents\` did not finish within ${timeoutMs} ms`));
+      }, timeoutMs);
+      onAbort = () => {
+        stopped = true;
+        reject(input.signal?.reason);
+      };
+      input.signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) input.signal?.removeEventListener('abort', onAbort);
+    // A wrapper can exit on SIGTERM and leave the CLI behind, so the whole group is
+    // stopped even when the direct child is already gone.
+    if (stopped || (child.exitCode === null && child.signalCode === null)) {
+      await stopProcessGroup(child.pid, killGraceMs);
+    }
+  }
+}
+
+/** SIGTERM to the process group led by `pid`, SIGKILL after `killGraceMs`, then wait (bounded) for it to be gone. */
+async function stopProcessGroup(pid: number | undefined, killGraceMs: number): Promise<void> {
+  // pid 0 or below would signal Anima's own process group.
+  if (pid === undefined || pid <= 0) return;
+  const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
+    try {
+      process.kill(-pid, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const goneWithin = async (ms: number): Promise<boolean> => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      if (!signalGroup(0)) return true;
+    }
+    return false;
+  };
+  if (!signalGroup('SIGTERM')) return;
+  if (await goneWithin(killGraceMs)) return;
+  signalGroup('SIGKILL');
+  await goneWithin(1_000);
 }
 
 /**
@@ -110,6 +294,7 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
   readonly command: string;
   readonly env: Record<string, string> | undefined;
   readonly kind = ANTIGRAVITY_RUNTIME_KIND;
+  private readonly agentCheck: AntigravityAgentCheckOptions;
   private readonly config: AntigravityCliAgentProviderConfig;
   private readonly providerArgs: readonly string[];
 
@@ -117,8 +302,10 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
     config: AntigravityCliAgentProviderConfig,
     command: string,
     providerArgs: readonly string[] = [],
+    options: { agentCheck?: AntigravityAgentCheckOptions } = {},
   ) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
+    this.agentCheck = options.agentCheck ?? {};
     this.config = config;
     this.command = command;
     this.env = config.env;
@@ -149,8 +336,10 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
           }
           return text.trim() ? { text: text.trim() } : {};
         } catch (error) {
-          const mapped = antigravitySetupError(error);
-          if (mapped !== error) await this.slot.reset();
+          const mapped = antigravityRpcError(error);
+          if (mapped instanceof ClassifiedProviderError && mapped.reason === 'provider_auth_failed') {
+            await this.slot.reset();
+          }
           throw mapped;
         }
       },
@@ -182,14 +371,26 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
         const env = antigravityLaunchEnvironment(input.env);
         const problem = antigravityCommandProblem(this.command, env);
         if (problem) throw new Error(problem);
+        const agent = await prepareAntigravityAgent(this.command, input, env, this.agentCheck);
+        if (agent && 'problem' in agent) {
+          await input.effects.recordEvent({
+            eventType: 'antigravity.agent.unavailable',
+            problem: agent.problem,
+            runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
+            transport: 'acp',
+          });
+        }
+        const agentDir = agent && 'dir' in agent ? agent.dir : undefined;
+        // A Stop that landed during the awaits above must not start agy or a session.
+        input.signal?.throwIfAborted();
         return this.spawnController(
           {
-            args: antigravityAcpLaunchArgs(this.providerArgs),
+            args: antigravityAcpLaunchArgs(this.providerArgs, agentDir),
             command: this.command,
             label: 'Antigravity ACP runtime',
           },
           { ...input, env },
-          (child) => new AntigravityAcpController(child),
+          (child) => new AntigravityAcpController(child, agentDir !== undefined),
         );
       });
 
@@ -239,14 +440,19 @@ class AntigravityAcpController {
   private turnCompletion?: Promise<string>;
   /** True while a session/prompt RPC is outstanding. */
   private promptInFlight = false;
+  // Length of the turn text when the current prompt last reported a tool step.
+  private textAtLastStep = 0;
   /** Whether `agy acp` takes an appended system prompt on session/new. */
   private supportsSystemPromptAppend = false;
+  /** Whether this process runs Anima's custom agent, whose body is the system prompt. */
+  private readonly usesCustomAgent: boolean;
   /** Whether this session already carries Anima's system prompt. */
   private sessionHasSystemPrompt = false;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
 
-  constructor(private readonly child: RunningChildProcess) {
+  constructor(private readonly child: RunningChildProcess, usesCustomAgent = false) {
+    this.usesCustomAgent = usesCustomAgent;
     this.rpc = new AcpJsonRpcPeer(child, {
       label: 'Antigravity',
       onNotification: (message) => this.handleNotification(message),
@@ -272,9 +478,11 @@ class AntigravityAcpController {
   }
 
   /**
-   * The system prompt goes into the session itself when `agy acp` supports it
-   * (`_meta.antigravity.systemPrompt.append` on session/new); a resumed session
-   * already has it. Only an older CLI without that capability gets it prepended.
+   * The system prompt goes into the session itself: as Anima's custom agent, or
+   * appended on session/new (`_meta.antigravity.systemPrompt.append`) when the
+   * agent is unavailable. agy keeps a session's agent and prompt when it is
+   * resumed, so a resumed session already has it. Only an older CLI with neither
+   * gets the prompt prepended.
    */
   primaryPrompt(input: AgentRuntimeInput): string {
     const systemPrompt = input.systemPrompt?.trim();
@@ -385,7 +593,7 @@ class AntigravityAcpController {
         });
         this.sessionId = extractSessionId(result) ?? requestedSessionId;
         this.captureConfigOptions(result);
-        this.sessionHasSystemPrompt = this.supportsSystemPromptAppend;
+        this.sessionHasSystemPrompt = this.usesCustomAgent || this.supportsSystemPromptAppend;
       } catch (error) {
         if (!isAntigravitySessionNotFoundError(error)) throw error;
         await input.effects.recordEvent({
@@ -416,7 +624,7 @@ class AntigravityAcpController {
 
   private async createSession(input: AgentRuntimeInput): Promise<string> {
     const systemPrompt = input.systemPrompt?.trim();
-    const appendSystemPrompt = Boolean(systemPrompt && this.supportsSystemPromptAppend);
+    const appendSystemPrompt = Boolean(systemPrompt && !this.usesCustomAgent && this.supportsSystemPromptAppend);
     const result = await this.rpc.request('session/new', {
       cwd: input.cwd,
       mcpServers: [],
@@ -427,7 +635,7 @@ class AntigravityAcpController {
     const sessionId = extractSessionId(result);
     if (!sessionId) throw new Error('Antigravity ACP session/new returned no sessionId');
     this.captureConfigOptions(result);
-    this.sessionHasSystemPrompt = appendSystemPrompt;
+    this.sessionHasSystemPrompt = this.usesCustomAgent || appendSystemPrompt;
     return sessionId;
   }
 
@@ -515,6 +723,7 @@ class AntigravityAcpController {
     // Assistant chunks stream into turn.text; if this prompt is cancelled for a
     // mid-turn follow-up, discard only the chunks produced by this prompt.
     const textCheckpoint = turn.text.length;
+    this.textAtLastStep = textCheckpoint;
     let result: Record<string, unknown> | undefined;
     try {
       result = await withAcpPromptInFlight(
@@ -550,6 +759,14 @@ class AntigravityAcpController {
       });
     }
     await turn.input.effects.recordUsage(providerUsageFromStats(sourceId, usage ?? this.latestUsage, { model }));
+    // agy's quota notice is a step of its own: the whole reply since the last tool step.
+    const quotaNotice = stopReason === 'end_turn'
+      ? antigravityQuotaNotice(turn.text.slice(Math.max(textCheckpoint, this.textAtLastStep)).join(''))
+      : undefined;
+    if (quotaNotice) {
+      turn.text.length = textCheckpoint;
+      throw new AntigravityQuotaError(quotaNotice);
+    }
     await turn.input.effects.recordEvent({
       eventType: 'antigravity.turn.completed',
       runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
@@ -611,11 +828,8 @@ class AntigravityAcpController {
       }));
       return;
     }
-    if (type === 'tool_call') {
-      await this.handleToolCall(turn.input, data);
-      return;
-    }
-    if (type === 'tool_call_update') {
+    if (type === 'tool_call' || type === 'tool_call_update') {
+      this.textAtLastStep = turn.text.length;
       await this.handleToolCall(turn.input, data);
       return;
     }
@@ -811,26 +1025,97 @@ function antigravityInitializeEvent(result: Record<string, unknown> | undefined)
 
 /**
  * `agy acp` 1.5 answers a resume of an unknown or unreadable session with
- * `-32603 Failed to read session <id>; retry, or load it with session/load`.
+ * `-32603 Failed to read session <id>; retry, or load it with session/load`. Only
+ * that code and the error's own message count; any other resume error keeps the
+ * saved session.
  */
 function isAntigravitySessionNotFoundError(error: unknown): boolean {
-  if (!(error instanceof AcpJsonRpcError)) return false;
-  if (error.method !== 'session/resume') return false;
-  return /failed\s+to\s+(?:read|load|find)\s+session|session.{0,40}(?:not\s+found|missing|unknown|does\s+not\s+exist)|(?:not\s+found|missing|unknown|no\s+such).{0,40}(?:session|conversation)/i.test(
-    error.message,
-  );
+  if (!(error instanceof AcpJsonRpcError) || error.method !== 'session/resume') return false;
+  return numberField(error.error, 'code') === -32603
+    && /^Failed to read session\b/i.test(stringField(error.error, 'message')?.trim() ?? '');
 }
 
-/** ACP `Authentication required` (-32000): the CLI on this machine is not signed in. */
-export function antigravitySetupError(error: unknown): unknown {
+const ANTIGRAVITY_QUOTA_SENTENCE =
+  'Individual quota reached\\. Please upgrade your subscription to increase your limits\\. Resets in (?:\\d+[dhms])+\\.';
+const ANTIGRAVITY_QUOTA_NOTICE = new RegExp(`^\\u26A0\\uFE0F?[^\\S\\n]*(${ANTIGRAVITY_QUOTA_SENTENCE})$`, 'u');
+
+/**
+ * When the account is out of quota, agy ends the turn normally (`end_turn`) with a
+ * notice as the agent's reply: `⚠ Individual quota reached. Please upgrade your
+ * subscription to increase your limits. Resets in 3h20m5s.` Returns the notice when
+ * `text` is exactly that notice; a model reply that only mentions a quota is not one.
+ */
+export function antigravityQuotaNotice(text: string): string | undefined {
+  return ANTIGRAVITY_QUOTA_NOTICE.exec(text.trim())?.[1];
+}
+
+/** `Resets in 1d2h3m4s` as a time, if the notice says. */
+export function antigravityQuotaResetsAt(notice: string, now: Date = new Date()): Date | undefined {
+  const match = /\bresets\s+in\s+((?:\d+\s*[dhms]\s*)+)/i.exec(notice);
+  if (!match?.[1]) return undefined;
+  const unitMs: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1_000 };
+  let total = 0;
+  for (const [, amount, unit] of match[1].matchAll(/(\d+)\s*([dhms])/gi)) {
+    total += Number(amount) * (unitMs[unit!.toLowerCase()] ?? 0);
+  }
+  return total > 0 ? new Date(now.getTime() + total) : undefined;
+}
+
+/** Classified as quota exhausted; the item is retried once the quota resets. */
+export class AntigravityQuotaError extends ClassifiedProviderError {
+  constructor(notice: string, options?: ErrorOptions) {
+    const resetsAt = antigravityQuotaResetsAt(notice);
+    super(
+      `Antigravity: ${notice}`,
+      { reason: 'provider_quota_exhausted', retryClass: 'rate_limited', ...(resetsAt ? { resetsAt } : {}) },
+      options,
+    );
+    this.name = 'AntigravityQuotaError';
+  }
+}
+
+/** JSON-RPC's own request errors (parse, invalid request, unknown method, invalid params). */
+const JSON_RPC_REQUEST_ERROR_CODES = new Set([-32700, -32600, -32601, -32602]);
+const ANTIGRAVITY_RPC_QUOTA_NOTICE = new RegExp(`^(?:\\u26A0\\uFE0F?[^\\S\\n]*)?(${ANTIGRAVITY_QUOTA_SENTENCE})$`, 'u');
+
+/**
+ * An ACP error from agy, classified from its code and its own message. A malformed
+ * request fails at once, an authentication error asks for sign-in, and agy's quota
+ * notice waits for the reset. Anything else is classified from its own message
+ * alone. `data` can quote other text (an earlier error, a template), so it stays in
+ * the message for diagnostics but never decides how the failure is reported or
+ * retried.
+ */
+export function antigravityRpcError(error: unknown): unknown {
   if (!(error instanceof AcpJsonRpcError)) return error;
   const code = numberField(error.error, 'code');
-  if (code !== -32000 && !/authentication required/i.test(error.message)) return error;
-  return new Error(
-    'Antigravity CLI is not signed in on this machine. Run `agy` in a terminal once and sign in '
-      + `(or \`agy acp --login\`), then retry. ${error.message}`,
-    { cause: error },
-  );
+  const reason = stringField(error.error, 'message')?.trim() ?? '';
+  const classified = (message: string, classification: ConstructorParameters<typeof ClassifiedProviderError>[1]) => {
+    const mapped = new ClassifiedProviderError(message, classification, { cause: error });
+    mapped.name = error.name;
+    return mapped;
+  };
+  if (code !== undefined && JSON_RPC_REQUEST_ERROR_CODES.has(code)) {
+    return classified(error.message, { reason: 'provider_error', retryClass: 'terminal' });
+  }
+  if (code === -32000 || /^authentication required\b/i.test(reason)) {
+    return classified(
+      'Antigravity CLI is not signed in on this machine. Run `agy` in a terminal once and sign in '
+        + `(or \`agy acp --login\`), then retry. ${error.message}`,
+      { reason: 'provider_auth_failed', retryClass: 'terminal' },
+    );
+  }
+  const notice = ANTIGRAVITY_RPC_QUOTA_NOTICE.exec(reason)?.[1];
+  if (notice) return new AntigravityQuotaError(notice, { cause: error });
+  const actual = new Error(reason || 'Unknown JSON-RPC error');
+  const retryClass = classifyProviderRetry(actual);
+  const failureReason = providerFailureReasonFromError(actual);
+  return classified(error.message, {
+    // Sign-in is agy's own authentication error above; a message that only mentions it is not one.
+    reason: failureReason === 'provider_auth_failed' ? 'provider_error' : failureReason,
+    retryClass,
+    ...(retryClass === 'rate_limited' ? { resetsAt: providerRateLimitResumeAt(actual, new Date()) } : {}),
+  });
 }
 
 const ANTIGRAVITY_TOOL_KIND_NAMES: Record<string, string> = {

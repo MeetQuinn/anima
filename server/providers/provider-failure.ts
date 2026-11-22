@@ -1,5 +1,6 @@
 import type { AgentHealthReason } from '../../shared/snapshot.js';
 import { errorMessage } from '../ids.js';
+import type { ProviderRetryClass } from './provider-retry.js';
 
 /** A started turn failed; actions may have run, so replay needs a human decision. */
 export class ProviderTurnFailedError extends Error {
@@ -16,6 +17,30 @@ export type ProviderFailureReason =
   | 'provider_rate_limited'
   | 'process_crash'
   | (string & {});
+
+/**
+ * A provider error the adapter has already classified from structured fields,
+ * such as an error code and the provider's own reason. The message is for
+ * diagnostics only: text it quotes does not change how the failure is reported
+ * or retried.
+ */
+export class ClassifiedProviderError extends Error {
+  readonly reason: ProviderFailureReason;
+  readonly resetsAt?: string;
+  readonly retryClass: ProviderRetryClass;
+
+  constructor(
+    message: string,
+    classification: { reason: ProviderFailureReason; resetsAt?: Date; retryClass: ProviderRetryClass },
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'ClassifiedProviderError';
+    this.reason = classification.reason;
+    this.retryClass = classification.retryClass;
+    if (classification.resetsAt) this.resetsAt = classification.resetsAt.toISOString();
+  }
+}
 
 export function classifyProviderFailureReason(input: {
   message?: string;
@@ -35,6 +60,7 @@ export function classifyProviderFailureReason(input: {
 }
 
 export function providerFailureReasonFromError(error: unknown): ProviderFailureReason {
+  if (error instanceof ClassifiedProviderError) return error.reason;
   const reason = stringProperty(error, 'reason');
   const status = unknownProperty(error, 'status');
   const subtype = stringProperty(error, 'subtype');

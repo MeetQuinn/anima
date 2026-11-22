@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ProviderTurnFailedError } from '../providers/provider-failure.js';
+import {
+  ClassifiedProviderError,
+  ProviderTurnFailedError,
+  providerFailureReasonFromError,
+} from '../providers/provider-failure.js';
 
 import {
   classifyProviderRetry,
@@ -24,6 +28,26 @@ test('started-turn failures are never replayed by crash, transient, or quota rul
     assert.equal(classifyProviderRetry(error), 'terminal');
     assert.equal(isProviderCrashError(error), false, 'a failed turn does not mean its process exited');
   }
+});
+
+test('a classified provider error keeps its classification whatever its message quotes', () => {
+  const quoting = 'session/prompt: Invalid params code=-32602 data={"detail":"Authentication required; '
+    + 'quota reached, try again in 30 seconds; runtime exited with code 1; 503 timeout"}';
+  const invalid = new ClassifiedProviderError(quoting, { reason: 'provider_error', retryClass: 'terminal' });
+  assert.equal(classifyProviderRetry(invalid), 'terminal');
+  assert.equal(isProviderCrashError(invalid), false);
+  assert.equal(providerFailureReasonFromError(invalid), 'provider_error');
+
+  const now = new Date('2026-11-22T00:00:00.000Z');
+  const limited = new ClassifiedProviderError(quoting, { reason: 'provider_rate_limited', retryClass: 'rate_limited' });
+  assert.equal(classifyProviderRetry(limited), 'rate_limited');
+  assert.equal(providerRateLimitResumeAt(limited, now).getTime(), now.getTime() + 5 * 60_000, 'the quoted hint is ignored');
+  const reset = new ClassifiedProviderError(quoting, {
+    reason: 'provider_quota_exhausted',
+    resetsAt: new Date(now.getTime() + 90 * 60_000),
+    retryClass: 'rate_limited',
+  });
+  assert.equal(providerRateLimitResumeAt(reset, now).getTime(), now.getTime() + 90 * 60_000);
 });
 
 test('provider retry classifier separates crash, transient, rate-limited, and terminal failures', () => {
