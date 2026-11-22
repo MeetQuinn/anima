@@ -56,7 +56,7 @@ point; live background work is exposed through health and keeps the controller n
 
 When a controller starts terminating its child, it sends `SIGTERM` and schedules `SIGKILL` after five seconds by default. A caller can supply a shorter or longer deadline; a concurrent close cannot postpone an already scheduled kill. The terminating child remains visible to health and later close calls until completion, and a new turn waits for that teardown before starting. This covers a Claude child that ignores stop or idle-timeout cancellation; it does not diagnose why the native process stopped making progress.
 
-Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, OpenCode ACP, Antigravity ACP, and pi RPC) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude and Codex become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks or terminals.
+Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, OpenCode ACP, Antigravity ACP, and pi RPC) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude, Codex, and Antigravity become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks, terminals, or subagents.
 
 `health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, how the live one looks, and any provider-native background work) for the runtime health service. `providerWork` distinguishes a main turn that also has background work (`working` plus a count) from a completed main turn whose background work remains (`background` plus a count).
 
@@ -652,12 +652,31 @@ Current process model:
   process, Anima writes the profile as a custom agent, `.agents/agents/anima-runtime.md` under
   `~/.anima/run/agents/<id>/antigravity-cli-agent/`, with `excludeDefaultComponents: true` and a
   short tool list, and adds `--add-dir <that directory> --agent anima-runtime` to the launch. The
-  agent keeps `read_file`, `write_file`, `edit_file`, `run_command`, and `search_web` (`agy`
-  always adds `manage_task`). Questions and reminders go through Anima, so Antigravity's question
-  and schedule tools are left out. Antigravity subagents always run in the background and report
-  in a turn `agy` starts on its own after the prompt has ended, which Anima does not attach to the
-  item yet, so the subagent, swarm, and workflow tools are left out too. Without the default
-  prompt the model is not told its working directory, so the agent file states it.
+  agent keeps `read_file`, `write_file`, `edit_file`, `run_command`, `search_web`, the subagent
+  tools (`define_subagent`, `invoke_subagent`, `manage_subagents`, `send_message`), and
+  `manage_task`, which `agy` always adds and which manages commands sent to the background.
+  Questions and reminders go through Anima, so Antigravity's question and schedule tools are left
+  out, and so are swarm and workflow. Without the default prompt the model is not told its working
+  directory, so the agent file states it.
+- Antigravity subagents always run in the background, and `run_command` can send a command there.
+  Their results arrive in a turn `agy` starts on its own after the prompt has ended, with no
+  prompt and no end marker. To see where such a turn ends, the same directory holds
+  `.agents/hooks.json`, which registers a `Stop` hook. `agy` runs it at the end of every execution
+  loop: a prompt, a self-started turn, or a subagent's run. The hook appends the conversation id,
+  `fullyIdle`, and the termination reason (never the payload's last user input) to a per-launch
+  file under `events/`, named in the child's environment and removed when the child exits. Only
+  the session's own conversation counts. A Stop with `fullyIdle: false` keeps the controller
+  non-quiescent and reports `providerWork` (`working` or `background`, without a count), so the
+  idle reset and a restart drain wait for the background work as they do for Claude.
+- A self-started turn goes to the item whose turn first left background work, or else to the
+  last item. Its thinking, tool calls, and context stats are recorded on that item as they
+  arrive, its permission requests are approved as in a prompt, and its text is recorded there
+  when the turn ends. That text is a record, not a reply; a reply still goes through Anima. The
+  turn ends at its Stop, when a new item starts (a prompt sent during it joins it, so the output
+  from then on goes to the new item), or after two minutes of silence, which also covers an `agy`
+  that runs no hooks. `agy` runs the hook after a loop's last update: a prompt's answer follows
+  its Stop, but nothing follows the Stop of a self-started turn, so Anima applies that one once
+  it is two seconds old, which leaves time for the output before it to be recorded.
 - `agy` runs an unknown `--agent` as its default agent without an error, which would drop the
   profile. Anima therefore checks that `agy --add-dir <directory> agents` lists `anima-runtime`
   before using it. The check runs while the provider launch permit is held, so it gets 15 seconds.

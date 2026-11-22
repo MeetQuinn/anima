@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentRuntime } from '../providers/contract.js';
@@ -11,6 +13,7 @@ import {
   antigravityAcpLaunchArgs,
   antigravityAgentDefinition,
   antigravityCommandProblem,
+  antigravityHooksDefinition,
   antigravityLaunchEnvironment,
   antigravityQuotaNotice,
   antigravityQuotaResetsAt,
@@ -81,7 +84,14 @@ const CONFIG_OPTIONS = [
  * - quotaNotice / quotaError: answer the prompt with agy's quota notice, as a reply or an error;
  *   quotaNotice 'afterTool' sends it as the step after some text and a tool call
  * - quotaLookalike: a normal reply whose last line looks like a quota notice
- * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`.
+ * - wake: the first prompt starts a subagent and ends with background work pending; once
+ *   WAKE_TRIGGER_PATH exists, agy starts a turn of its own (thinking, a permission request,
+ *   a file write, a reply) for the report. Every prompt and that turn end with a Stop, which
+ *   agy runs after the usage update that closes the loop and before a prompt's answer.
+ *   wake 'joined': that turn reads a file and stops short; the next prompt joins it and finishes it.
+ * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`. Stop runs
+ * the Stop hooks in `<dir>/.agents/hooks.json` the way agy does: `sh -c`, synchronously,
+ * with the hook payload on stdin.
  */
 const FAKE_AGY = [
   "const fs = require('fs');",
@@ -112,8 +122,40 @@ const FAKE_AGY = [
   "let sessionId = 'agy-session-1';",
   'let promptCount = 0;',
   'let pendingPromptId;',
+  'let wakeDone = false;',
   "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
   "function update(value) { send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } }); }",
+  'function runStopHook(conversationId, fullyIdle) {',
+  "  const at = argv.indexOf('--add-dir');",
+  '  if (at < 0) return;',
+  "  const hooksPath = path.join(argv[at + 1], '.agents', 'hooks.json');",
+  '  if (!fs.existsSync(hooksPath)) return;',
+  "  const payload = JSON.stringify({ conversationId, continuationActive: false, executionNum: 0, fullyIdle, hookEventName: 'Stop', lastUserInput: 'private words', terminationReason: 'NO_TOOL_CALL' });",
+  "  for (const hooks of Object.values(JSON.parse(fs.readFileSync(hooksPath, 'utf8')))) {",
+  '    for (const hook of hooks.Stop || []) {',
+  "      require('child_process').spawnSync('sh', ['-c', hook.command], { cwd: path.dirname(hooksPath), env: process.env, input: payload });",
+  '    }',
+  '  }',
+  '}',
+  'function startWake() {',
+  "  if (scenario.wake === 'joined') {",
+  "    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Reading the report.' } });",
+  "    update({ sessionUpdate: 'tool_call', toolCallId: 'agy-wake-read', title: 'Read report.md', kind: 'read', status: 'in_progress', locations: [{ path: '/work/report.md' }] });",
+  "    update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-wake-read', status: 'completed' });",
+  '    return;',
+  '  }',
+  "  update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'the reader reported' } });",
+  "  update({ sessionUpdate: 'usage_update', used: 3500, size: 1048576 });",
+  "  send({ jsonrpc: '2.0', id: 'permission-wake', method: 'session/request_permission', params: { sessionId, toolCall: { toolCallId: 'agy-wake-tool' }, options: [{ optionId: 'reject', kind: 'reject_once', name: 'Reject' }, { optionId: 'allow', kind: 'allow_once', name: 'Allow' }] } });",
+  '}',
+  'function finishWake() {',
+  "  update({ sessionUpdate: 'tool_call', toolCallId: 'agy-wake-tool', title: 'File notes/summary.md', kind: 'edit', status: 'in_progress', locations: [{ path: '/work/notes/summary.md' }] });",
+  "  update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-wake-tool', status: 'completed' });",
+  "  update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'SUMMARY SAVED' } });",
+  '  wakeDone = true;',
+  "  update({ sessionUpdate: 'usage_update', used: 5000, size: 1048576 });",
+  '  runStopHook(sessionId, true);',
+  '}',
   'function select(category, value) {',
   '  const option = configOptions.find((entry) => entry.category === category);',
   '  if (!option || !option.options.some((entry) => entry.value === value)) return false;',
@@ -128,6 +170,10 @@ const FAKE_AGY = [
   '    if (!line.trim()) continue;',
   '    const msg = JSON.parse(line);',
   "    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
+  "    if (msg.id === 'permission-wake' && msg.result) {",
+  '      finishWake();',
+  '      continue;',
+  '    }',
   "    if (msg.id === 'permission-1' && msg.result) {",
   "      fs.writeFileSync(process.env.CALLS_PATH + '.permission', JSON.stringify(msg.result));",
   "      update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'considering' } });",
@@ -194,12 +240,38 @@ const FAKE_AGY = [
   "      if (scenario.exitOnPrompt) process.exit(0);",
   '      promptCount += 1;',
   '      if (scenario.hang) { pendingPromptId = msg.id; continue; }',
+  '      if (scenario.wake && promptCount === 1) {',
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-1', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'reader' } });",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-1', status: 'completed' });",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started a subagent.' } });",
+  "        update({ sessionUpdate: 'usage_update', used: 3000, size: 1048576 });",
+  '        runStopHook(sessionId, false);',
+  // A subagent's conversation stops too; its Stop says nothing about the session's work.
+  "        runStopHook('agy-subagent-1', true);",
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 } } });",
+  '        const trigger = setInterval(() => {',
+  '          if (!fs.existsSync(process.env.WAKE_TRIGGER_PATH)) return;',
+  '          clearInterval(trigger);',
+  '          startWake();',
+  '        }, 20);',
+  '        continue;',
+  '      }',
   '      if (scenario.richTurn && promptCount === 1) {',
   '        pendingPromptId = msg.id;',
   "        send({ jsonrpc: '2.0', id: 'permission-1', method: 'session/request_permission', params: { sessionId, toolCall: { toolCallId: 'agy-tool-1' }, options: [{ optionId: 'reject', kind: 'reject_once', name: 'Reject' }, { optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'allow-always', kind: 'allow_always', name: 'Always allow' }] } });",
   '        continue;',
   '      }',
+  "      if (scenario.wake === 'joined' && promptCount === 2) {",
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-joined-tool', title: 'File notes/summary.md', kind: 'edit', status: 'in_progress', locations: [{ path: '/work/notes/summary.md' }] });",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-joined-tool', status: 'completed' });",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Saved the summary and answered.' } });",
+  "        update({ sessionUpdate: 'usage_update', used: 5200, size: 1048576 });",
+  '        runStopHook(sessionId, true);',
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  '        continue;',
+  '      }',
   "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: scenario.richTurn ? ' + appended' : 'reply ' + promptCount } });",
+  '      if (scenario.wake) runStopHook(sessionId, wakeDone);',
   "      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
   '    }',
   '  }',
@@ -238,7 +310,7 @@ test('antigravity-cli writes its system prompt as a custom agent that replaces t
       'name: anima-runtime',
       'description: Anima agent runtime',
       'excludeDefaultComponents: true',
-      'tools: [read_file, write_file, edit_file, run_command, search_web]',
+      'tools: [read_file, write_file, edit_file, run_command, search_web, define_subagent, invoke_subagent, manage_subagents, send_message]',
       '---',
       'You are Wren.',
       '',
@@ -248,6 +320,51 @@ test('antigravity-cli writes its system prompt as a custom agent that replaces t
       '',
     ].join('\n'),
   );
+});
+
+test('antigravity-cli registers a Stop hook that records only the conversation, idle state and reason', async () => {
+  assert.deepEqual(JSON.parse(antigravityHooksDefinition("/opt/node's/bin/node", '/dist/hook.js')), {
+    anima: { Stop: [{ command: `'/opt/node'\\''s/bin/node' '/dist/hook.js'`, timeout: 10, type: 'command' }] },
+  });
+  const dir = await mkdtemp(join(tmpdir(), 'anima-agy-hook-'));
+  try {
+    const script = fileURLToPath(new URL('../providers/antigravity-stop-hook.js', import.meta.url));
+    const definition = JSON.parse(antigravityHooksDefinition(process.execPath, script)) as {
+      anima: { Stop: Array<{ command: string }> };
+    };
+    const command = definition.anima.Stop[0]!.command;
+    const events = join(dir, 'events.jsonl');
+    const payload = JSON.stringify({
+      conversationId: 'conv-1',
+      fullyIdle: false,
+      hookEventName: 'Stop',
+      lastUserInput: 'private words',
+      terminationReason: 'NO_TOOL_CALL',
+      transcriptPath: '/private/transcript.jsonl',
+    });
+    const run = (input: string, env: NodeJS.ProcessEnv) =>
+      spawnSync('sh', ['-c', command], { encoding: 'utf8', env, input });
+
+    const recorded = run(payload, { ...process.env, ANIMA_ANTIGRAVITY_HOOK_EVENTS: events });
+    assert.equal(recorded.status, 0);
+    assert.equal(recorded.stdout, '{}', 'the hook never blocks the stop');
+    const [event, ...rest] = await readJsonLines(events);
+    assert.equal(rest.length, 0);
+    assert.deepEqual(Object.keys(event ?? {}).sort(), ['at', 'conversationId', 'fullyIdle', 'hookEventName', 'terminationReason']);
+    assert.equal(event?.conversationId, 'conv-1');
+    assert.equal(event?.fullyIdle, false);
+    assert.doesNotMatch(await readFile(events, 'utf8'), /private/);
+
+    const { ANIMA_ANTIGRAVITY_HOOK_EVENTS: _unset, ...withoutTarget } = process.env;
+    for (const [input, env] of [['not json', { ...process.env, ANIMA_ANTIGRAVITY_HOOK_EVENTS: events }], [payload, withoutTarget]] as const) {
+      const result = run(input, env);
+      assert.equal(result.status, 0);
+      assert.equal(result.stdout, '{}');
+    }
+    assert.equal((await readJsonLines(events)).length, 1);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
 });
 
 test('antigravity-cli recognizes the quota notice agy sends as a reply', () => {
@@ -1160,6 +1277,167 @@ test('an Antigravity process that exits cleanly mid-turn is retried as a crash',
     });
   } finally {
     await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli attaches a turn agy starts on its own to the item that left background work', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      const triggerPath = join(stateDir, 'wake-trigger');
+      await installFakeAgy(stateDir);
+      const firstCtx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000030.000001');
+      const secondCtx = await ingestAgyEvent(stateDir, 'Something else.', '1786000030.000002');
+      runtime = new AntigravityCliAgentRuntime(
+        {
+          env: agyEnv(stateDir, { wake: true }, { WAKE_TRIGGER_PATH: triggerPath }),
+          kind: 'antigravity-cli',
+          providerChildIdleTimeoutMs: 50,
+        },
+        'agy',
+        [],
+        // The prompt's answer applies its Stop; the poll applies the self-started turn's Stop,
+        // which nothing follows. A quiet period longer than the test leaves only the Stop to end it.
+        { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+      );
+      const agentDir = join(stateDir, 'run', 'agents', 'anima', 'antigravity-cli-agent');
+      const active = runtime;
+
+      assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'Started a subagent.');
+      const hooks = JSON.parse(await readFile(join(agentDir, '.agents', 'hooks.json'), 'utf8')) as {
+        anima: { Stop: Array<{ command: string }> };
+      };
+      assert.match(hooks.anima.Stop[0]!.command, /antigravity-stop-hook\.js'$/);
+      // The prompt's Stop said a subagent is still running; the subagent's own Stop says nothing about it.
+      assert.equal(active.isProviderQuiescent(), false);
+      assert.deepEqual(active.health().providerWork, { state: 'background' });
+      await realDelay(200);
+      assert.equal(active.health().child?.alive, true, 'the idle reset waits for the background work');
+
+      assert.equal((await active.run(await runtimeInput(active, secondCtx, await loadState()))).text, 'reply 2');
+      assert.equal(active.isProviderQuiescent(), false);
+
+      await writeFile(triggerPath, '');
+      await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
+      assert.equal(active.health().providerWork, undefined);
+      await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+        activity.type === 'agent.text' && activity.payload?.['text'] === 'SUMMARY SAVED'), 5_000);
+      const activities = allActivities(await loadState());
+      const itemOf = (predicate: (activity: (typeof activities)[number]) => boolean) =>
+        activities.filter(predicate).map((activity) => activity.payload?.['itemId']);
+      assert.deepEqual(
+        itemOf((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-wake-tool'),
+        [firstCtx.item.id],
+      );
+      assert.deepEqual(
+        itemOf((activity) => activity.type === 'agent.text' && activity.payload?.['text'] === 'SUMMARY SAVED'),
+        [firstCtx.item.id],
+      );
+      const permission = (await readJsonLines(callsPath)).find((call) => call.id === 'permission-wake');
+      assert.deepEqual(permission?.result, { outcome: { optionId: 'allow', outcome: 'selected' } });
+
+      // Quiescent now, so the idle reset retires agy and its hook file.
+      await pollUntil(() => active.health().child === undefined, 5_000);
+      await pollUntil(async () => (await readdir(join(agentDir, 'events'))).length === 0, 5_000);
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli gives a prompt that joins a self-started turn the output from then on', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-joined-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const triggerPath = join(stateDir, 'wake-trigger');
+      await installFakeAgy(stateDir);
+      const firstCtx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000032.000001');
+      const secondCtx = await ingestAgyEvent(stateDir, 'A new question.', '1786000032.000002');
+      runtime = new AntigravityCliAgentRuntime(
+        { env: agyEnv(stateDir, { wake: 'joined' }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+        'agy',
+        [],
+        // A quiet period longer than the test, so only the prompt can close the self-started turn.
+        { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+      );
+      const active = runtime;
+      assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'Started a subagent.');
+
+      await writeFile(triggerPath, '');
+      await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+        activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-wake-read'), 5_000);
+      assert.deepEqual(active.health().providerWork, { state: 'working' });
+
+      const second = await active.run(await runtimeInput(active, secondCtx, await loadState()));
+      assert.equal(second.text, 'Saved the summary and answered.');
+      await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
+      const activities = allActivities(await loadState());
+      const itemOf = (predicate: (activity: (typeof activities)[number]) => boolean) =>
+        activities.filter(predicate).map((activity) => activity.payload?.['itemId']);
+      assert.deepEqual(
+        itemOf((activity) => activity.type === 'agent.text' && activity.payload?.['text'] === 'Reading the report.'),
+        [firstCtx.item.id],
+      );
+      assert.deepEqual(
+        itemOf((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-wake-read'),
+        [firstCtx.item.id],
+      );
+      assert.deepEqual(
+        itemOf((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-joined-tool'),
+        [secondCtx.item.id],
+      );
+      // The self-started turn's text is recorded before the prompt that joined it runs.
+      const wakeText = activities.findIndex((activity) =>
+        activity.type === 'agent.text' && activity.payload?.['text'] === 'Reading the report.');
+      const joinedTool = activities.findIndex((activity) =>
+        activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-joined-tool');
+      assert.ok(wakeText >= 0 && joinedTool > wakeText, `wake text at ${wakeText}, joined tool at ${joinedTool}`);
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli ends a turn agy starts on its own after a quiet period when agy runs no hooks', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-nohook-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const triggerPath = join(stateDir, 'wake-trigger');
+      await installFakeAgy(stateDir);
+      const ctx = await ingestAgyEvent(stateDir, 'Delegate without hooks.', '1786000031.000001');
+      runtime = new AntigravityCliAgentRuntime(
+        {
+          env: agyEnv(stateDir, { agents: 'none', appendSystemPrompt: true, wake: true }, { WAKE_TRIGGER_PATH: triggerPath }),
+          kind: 'antigravity-cli',
+        },
+        'agy',
+        [],
+        { wake: { pollMs: 20, quietMs: 1_000 } },
+      );
+      const active = runtime;
+      assert.equal((await active.run(await runtimeInput(active, ctx, await loadState()))).text, 'Started a subagent.');
+      assert.equal(active.isProviderQuiescent(), true, 'without hooks nothing reports background work');
+
+      await writeFile(triggerPath, '');
+      await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+        activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-wake-tool'), 5_000);
+      assert.equal(active.isProviderQuiescent(), false, 'the self-started turn is still open');
+      assert.deepEqual(active.health().providerWork, { state: 'working' });
+      await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
+      await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+        activity.type === 'agent.text'
+          && activity.payload?.['text'] === 'SUMMARY SAVED'
+          && activity.payload?.['itemId'] === ctx.item.id), 5_000);
+    });
+  } finally {
+    await runtime?.close();
     await rm(stateDir, { force: true, recursive: true });
   }
 });
