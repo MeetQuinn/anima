@@ -661,14 +661,14 @@ Current process model:
 - Antigravity subagents always run in the background, and `run_command` can send a command there.
   Their results arrive in a turn `agy` starts on its own after the prompt has ended, with no
   prompt and no end marker. To see where such a turn ends, the same directory holds
-  `.agents/hooks.json`, which registers a `Stop` hook and a `PostToolUse` hook for
-  `invoke_subagent`. `agy` runs the `Stop` hook at the end of every execution loop: a prompt, a
-  self-started turn, or a subagent's run. The hook appends the conversation id, `fullyIdle`, the
-  termination reason, and a keyed digest of the payload's last user input to a per-launch file
-  under `events/`, named in the child's environment and removed when the child exits; after an
-  `invoke_subagent` call it appends the call's id and whether it failed. The text and the call's
-  arguments are never written; the key is random per launch. The session's own Stops
-  end its loops; a subagent's Stop ends that subagent's run. A Stop of the session with
+  `.agents/hooks.json`, which registers a `Stop` hook and a `PreInvocation` hook. `agy` runs the
+  `Stop` hook at the end of every execution loop: a prompt, a self-started turn, or a subagent's
+  run; it runs the `PreInvocation` hook before every model call, in the session and in each
+  subagent. The hook appends the conversation id, the hook's name, `fullyIdle` and the termination
+  reason (for a Stop), and a keyed digest of the payload's last user input to a per-launch file under
+  `events/`, named in the child's environment and removed when the child exits. The text is never
+  written; the key is random per launch. The session's own Stops end its loops; a subagent's Stop
+  ends that subagent's run. A Stop of the session with
   `fullyIdle: false` keeps the controller non-quiescent and reports `providerWork` (`working` or
   `background`, without a count), so the idle reset and a restart drain wait for the background
   work as they do for Claude.
@@ -704,22 +704,20 @@ Current process model:
   reports are over, and the next turn that leaves work owns the next ones.
 - A subagent hands its report to the session before its own run ends, so the session can end the
   loop that reads the report with `fullyIdle: false` and then run no further loop: no Stop of the
-  session says the work is done. Anima therefore counts, from the hook file, the `invoke_subagent`
-  calls since the session was last idle, leaving out calls that failed (they started no subagent),
-  and the subagent conversations whose Stop says they are idle. `agy` runs the `PostToolUse` hook
-  when a call ends, in the session or in a subagent, before the subagent it starts runs. Hooks run
-  one at a time and hold up `agy`'s loop, so the file has every event in the order `agy` got to it,
-  whenever Anima reads `agy`'s output: a Stop that says the session is idle comes after every call
-  it covers, and clears the count. The tool calls in the output are not counted, since where they
-  fall among the Stops depends on when Anima reads them. Once every subagent the session invoked
-  has stopped, the last of them after the session's last Stop, no tool call is still open, and
-  `agy` has then been silent for 10 seconds, the background work counts as done. That holds when a
-  failed call leaves the count complete, too. A subagent Stop with `fullyIdle: false` takes that
-  subagent off the count again. A call whose hook could not write its event is missing from the
-  count, so its subagent's work can count as done early; a missing Stop only keeps the work open.
-  In every other case (a command sent to the background still runs, the last subagent stopped
-  before the session's last Stop, or the counts never match) the background work stays until
-  `agy`'s next loop ends.
+  session says the work is done. Anima therefore tracks, from the hook file, which subagent
+  conversations are running since the session was last idle. Each subagent has a conversation of
+  its own, however many one `invoke_subagent` call starts, and calls the model as soon as it starts;
+  a subagent that stopped and is woken by a message (`send_message`) calls the model again. So a
+  subagent's model call marks it running, and its Stop marks it stopped, unless the Stop says it
+  still has work (`fullyIdle: false`). Hooks run one at a time and hold up `agy`'s loop, so the file
+  has every event in the order `agy` got to it, whenever Anima reads `agy`'s output: a Stop that
+  says the session is idle comes after everything it covers, and clears the tracking. Once no
+  subagent is running, the last one having stopped after the session's last model call and Stop,
+  no tool call is still open, and `agy` has then been silent for 10 seconds, the background work
+  counts as done. A model call whose hook could not write its event leaves that subagent out, so
+  the work can count as done while it runs; a missing Stop only keeps the work open. In every
+  other case (a command sent to the background still runs, or the last subagent stopped before
+  the session's last model call or Stop) the background work stays until `agy`'s next loop ends.
 - Nothing on the wire separates two self-started turns, so when both end within those two
   seconds, their text is recorded as one.
 - Stopping a run while `agy` starts the session for it, or works on one of its prompts, shuts the

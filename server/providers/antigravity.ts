@@ -73,9 +73,6 @@ const ANTIGRAVITY_AGENT_TOOLS = [
   'send_message',
 ];
 
-/** The name agy's hooks give the tool that starts a subagent. */
-const ANTIGRAVITY_INVOKE_SUBAGENT_TOOL = 'invoke_subagent';
-
 /** Names the file the hooks append to; one file per `agy acp` process. */
 const ANTIGRAVITY_HOOK_EVENTS_ENV = 'ANIMA_ANTIGRAVITY_HOOK_EVENTS';
 const ANTIGRAVITY_HOOK_KEY_ENV = 'ANIMA_ANTIGRAVITY_HOOK_KEY';
@@ -122,19 +119,14 @@ export function antigravityAgentDefinition(systemPrompt: string, cwd: string): s
  * agy reads lifecycle hooks from `.agents/hooks.json` in the same directory as the
  * custom agent. The Stop hook runs each time an execution loop ends, and its
  * `fullyIdle` says whether background work (subagents, commands that went to the
- * background) is still running. The PostToolUse hook runs after each
- * `invoke_subagent` call, before the subagent it starts runs. agy runs hooks
- * synchronously and in order, so the events are on disk in the order agy got to
- * them, before agy sends its next message.
+ * background) is still running. The PreInvocation hook runs before each model
+ * call, in the session and in every subagent, including a subagent that a message
+ * woke after it stopped. agy runs hooks synchronously and in order, so the events
+ * are on disk in the order agy got to them, before agy sends its next message.
  */
 export function antigravityHooksDefinition(nodePath: string, scriptPath: string): string {
   const handler = { command: `${shellQuote(nodePath)} ${shellQuote(scriptPath)}`, timeout: 10, type: 'command' };
-  return `${JSON.stringify({
-    anima: {
-      PostToolUse: [{ hooks: [handler], matcher: ANTIGRAVITY_INVOKE_SUBAGENT_TOOL }],
-      Stop: [handler],
-    },
-  }, null, 2)}\n`;
+  return `${JSON.stringify({ anima: { PreInvocation: [handler], Stop: [handler] } }, null, 2)}\n`;
 }
 
 function antigravityHookScript(): string {
@@ -510,16 +502,14 @@ interface PendingTool {
 }
 
 interface AntigravitySubagentRuns {
-  /** When `stopped` came to cover every call. */
+  /** When the last running subagent stopped, with no model call since. */
   doneAt?: number;
-  /** `invoke_subagent` calls that did not fail, by tool call id. */
-  invoked: Set<string>;
-  /** Subagent conversations whose last Stop said they were done. */
-  stopped: Set<string>;
+  /** Subagent conversations that made a model call, or said work goes on, since their last Stop. */
+  running: Set<string>;
 }
 
 function newSubagentRuns(): AntigravitySubagentRuns {
-  return { invoked: new Set(), stopped: new Set() };
+  return { running: new Set() };
 }
 
 /**
@@ -555,14 +545,10 @@ interface AntigravityWake {
 interface AntigravityHookEvent {
   at: number;
   conversationId?: string;
-  /** For a tool call: whether it failed. */
-  failed?: boolean;
   fullyIdle?: boolean;
   hookEventName?: string;
   /** Digest of the loop's last user input; see antigravityInputTag. */
   input?: string;
-  toolCallId?: string;
-  toolName?: string;
 }
 
 /**
@@ -630,17 +616,12 @@ function parseAntigravityHookEvent(line: string): AntigravityHookEvent | undefin
   const conversationId = stringField(value, 'conversationId');
   const hookEventName = stringField(value, 'hookEventName');
   const input = stringField(value, 'input');
-  const toolCallId = stringField(value, 'toolCallId');
-  const toolName = stringField(value, 'toolName');
   return {
     at,
     ...(conversationId ? { conversationId } : {}),
-    ...(typeof value['failed'] === 'boolean' ? { failed: value['failed'] } : {}),
     ...(typeof value['fullyIdle'] === 'boolean' ? { fullyIdle: value['fullyIdle'] } : {}),
     ...(hookEventName ? { hookEventName } : {}),
     ...(input ? { input } : {}),
-    ...(toolCallId ? { toolCallId } : {}),
-    ...(toolName ? { toolName } : {}),
   };
 }
 
@@ -664,10 +645,10 @@ class AntigravityAcpController {
   /** The input of the turn that left background work; turns agy starts on its own report here. */
   private observer?: AgentRuntimeInput;
   /**
-   * Subagents since the session's own conversation was last fully idle: the
-   * `invoke_subagent` calls, which subagent conversations have stopped since, and
-   * the Stop that made those cover every call, unless the session said more work was
-   * running after it. See subagentsDone.
+   * Subagents since the session's own conversation was last fully idle: which
+   * subagent conversations are running, and the Stop that left none running, unless
+   * the session called the model or said more work was running after it. See
+   * subagentsDone.
    */
   private subagents: AntigravitySubagentRuns = newSubagentRuns();
   /** The digest of the last prompt written; see AntigravityPromptOnWire.repeatsPrevious. */
@@ -1326,17 +1307,17 @@ class AntigravityAcpController {
    * execution loop that was running, so a turn agy started on its own is over,
    * and `fullyIdle` says whether background work remains. Work that is done has
    * nothing left to report, so the next turn that leaves work, `answered`, owns
-   * the reports. `invoke_subagent` calls and the Stops of subagent conversations
-   * count the subagents still running (see subagentsDone). Every event is in the
-   * file in the order agy got to it, so the calls a Stop that finds no work left
-   * comes after are the ones it covers, however late Anima reads agy's output.
+   * the reports. Model calls and Stops of subagent conversations tell which
+   * subagents are running (see subagentsDone). Every event is in the file in the
+   * order agy got to it, so what a Stop that finds no work left covers is what came
+   * before it, however late Anima reads agy's output.
    */
   private applyHookEvents(ready: (event: AntigravityHookEvent) => boolean, answered?: AgentRuntimeInput): void {
     if (this.exited) return;
     let stopped = false;
     for (const event of this.hookEvents?.take(ready) ?? []) {
-      if (event.hookEventName === 'PostToolUse') {
-        if (event.toolName === ANTIGRAVITY_INVOKE_SUBAGENT_TOOL) this.noteInvoke(event);
+      if (event.hookEventName === 'PreInvocation') {
+        this.noteModelCall(event);
         continue;
       }
       if (!this.isOwnStop(event)) {
@@ -1364,34 +1345,30 @@ class AntigravityAcpController {
     return event.hookEventName === 'Stop' && Boolean(this.sessionId) && event.conversationId === this.sessionId;
   }
 
+  /**
+   * A conversation is about to call the model. A subagent's call means it is
+   * running: one an `invoke_subagent` call just started (each subagent has a
+   * conversation of its own, however many one call starts), or one a message woke
+   * after it stopped. A call of the session's own means a loop of its own is
+   * running, which its Stop decides.
+   */
+  private noteModelCall(event: AntigravityHookEvent): void {
+    const runs = this.subagents;
+    runs.doneAt = undefined;
+    if (event.conversationId && event.conversationId !== this.sessionId) runs.running.add(event.conversationId);
+  }
+
   /** A subagent's conversation stopped; its run is over unless it says work of its own is still running. */
   private noteSubagentStop(event: AntigravityHookEvent): void {
     if (event.hookEventName !== 'Stop' || !event.conversationId) return;
     const runs = this.subagents;
     if (event.fullyIdle === false) {
-      runs.stopped.delete(event.conversationId);
+      runs.running.add(event.conversationId);
       runs.doneAt = undefined;
       return;
     }
-    runs.stopped.add(event.conversationId);
-    if (this.subagentsAllStopped()) runs.doneAt = event.at;
-  }
-
-  /**
-   * An `invoke_subagent` call ended, in the session or in a subagent. agy runs the
-   * hook before the subagent the call starts runs, so its Stop comes later. A call
-   * that failed started no subagent, so no Stop is owed for it.
-   */
-  private noteInvoke(event: AntigravityHookEvent): void {
-    if (event.failed) return;
-    const runs = this.subagents;
-    runs.invoked.add(event.toolCallId ?? `${event.at}:${runs.invoked.size}`);
-    runs.doneAt = undefined;
-  }
-
-  private subagentsAllStopped(): boolean {
-    const invoked = this.subagents.invoked.size;
-    return invoked > 0 && this.subagents.stopped.size >= invoked;
+    runs.running.delete(event.conversationId);
+    if (runs.running.size === 0) runs.doneAt = event.at;
   }
 
   /**
@@ -1399,11 +1376,10 @@ class AntigravityAcpController {
    * session can end the turn that reads the report with `fullyIdle: false` while
    * the subagent is still finishing. When that was the last background work, agy
    * runs no further loop and no Stop says the work is done. So the work counts as
-   * done once as many subagent conversations as `invoke_subagent` calls that did
-   * not fail have stopped, the last of them after the session's last Stop; no tool
-   * call is still open (a command sent to the background); and agy has stayed
-   * silent for `subagentsDoneMs`. A turn agy starts in that time, or a prompt, ends
-   * with a Stop that decides instead.
+   * done once every subagent that ran has stopped, the last of them after the
+   * session's last model call and Stop; no tool call is still open (a command sent
+   * to the background); and agy has stayed silent for `subagentsDoneMs`. A turn agy
+   * starts in that time, or a prompt, ends with a Stop that decides instead.
    */
   private subagentsDone(now: number): boolean {
     const doneAt = this.subagents.doneAt;
