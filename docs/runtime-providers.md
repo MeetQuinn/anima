@@ -648,11 +648,22 @@ Current process model:
 - Anima starts one persistent `agy acp --dangerously-skip-permissions` process and speaks ACP over
   stdio. Operator **Arguments** go after `acp`. Anima refuses the Antigravity desktop app's `agy`
   editor launcher, which would open an editor window instead of an ACP server.
-- Fresh work uses `session/new`. When `initialize` advertises
-  `agentCapabilities._meta.antigravity.systemPrompt.append`, the Anima runtime profile is appended
-  to Antigravity's system prompt through `_meta.antigravity.systemPrompt.append`, and it persists
-  in the session across process restarts. An older CLI without that capability gets the profile
-  prepended to the first prompt instead. Because the profile lives in the session, a profile
+- The Anima runtime profile replaces Antigravity's own system prompt. Before it starts the
+  process, Anima writes the profile as a custom agent, `.agents/agents/anima-runtime.md` under
+  `~/.anima/run/agents/<id>/antigravity-cli-agent/`, with `excludeDefaultComponents: true` and a
+  short tool list, and adds `--add-dir <that directory> --agent anima-runtime` to the launch. The
+  agent keeps `read_file`, `write_file`, `edit_file`, `run_command`, and `search_web` (`agy`
+  always adds `manage_task`). Questions, reminders, and delegation go through Anima, so
+  Antigravity's question, schedule, subagent, swarm, and workflow tools are left out. Without the
+  default prompt the model is not told its working directory, so the agent file states it.
+- `agy` runs an unknown `--agent` as its default agent without an error, which would drop the
+  profile. Anima therefore checks that `agy --add-dir <directory> agents` lists `anima-runtime`
+  before using it. When it does not, Anima records `antigravity.agent.unavailable` and falls back:
+  if `initialize` advertises `agentCapabilities._meta.antigravity.systemPrompt.append`, the profile
+  is appended to Antigravity's system prompt on `session/new`; an older CLI without that
+  capability gets the profile prepended to the first prompt.
+- Fresh work uses `session/new`. `agy` stores a session's agent and system prompt with the
+  session, so they persist across process restarts and a resumed session keeps them. A profile
   edit reaches an Antigravity agent when it next starts a fresh provider session.
 - A stored provider session uses `session/resume`. `agy` reports an unknown session as
   `Failed to read session …`; only that missing-session answer falls back to `session/new`
@@ -675,6 +686,11 @@ Current process model:
   into the same Anima activity and health surfaces as the other providers.
 - An ACP `Authentication required` error (-32000) becomes sign-in guidance: run `agy` once on the
   host and sign in.
+- When the account runs out of quota, `agy` ends the turn normally with a notice as the reply
+  (`Individual quota reached. … Resets in 3h20m5s.`). Anima does not deliver that notice as the
+  agent's answer. The turn fails as quota exhausted, and the item waits until the reset time the
+  notice gives, within the usual rate-limit bounds (`provider.rate_limit.defer`). The same notice
+  in an ACP error is handled the same way.
 
 Sign-in is machine-level (the OS keychain and `~/.gemini`), so Anima pins `HOME` to the service
 environment. `agy` has no check-only update mode, so **Settings > Providers** shows the installed

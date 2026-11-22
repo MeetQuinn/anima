@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,12 +8,15 @@ import { createAgentRuntime } from '../providers/factory.js';
 import type { AgentRuntime } from '../providers/contract.js';
 import {
   antigravityAcpLaunchArgs,
+  antigravityAgentDefinition,
   antigravityCommandProblem,
   antigravityLaunchEnvironment,
+  antigravityQuotaNotice,
+  antigravityQuotaResetsAt,
   antigravityToolName,
   parseAcpSelectOptions,
 } from '../providers/antigravity.js';
-import { classifyProviderRetry } from '../providers/provider-retry.js';
+import { classifyProviderRetry, providerRateLimitResumeAt } from '../providers/provider-retry.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
 import { antigravityAcpModelCatalog, parseAntigravityConfigOptions } from '../services/system.service.js';
 import { withAnimaHome } from './anima-home.js';
@@ -70,12 +73,27 @@ const CONFIG_OPTIONS = [
  * - resume: 'ok' | 'missing'
  * - newError / promptError: JSON-RPC error objects
  * - richTurn: emit permission request, thought, tool call and usage on the first prompt
+ * - agents: 'none' lists no agents (an agy that cannot find Anima's agent), 'fail' exits 1
+ * - quotaNotice / quotaError: answer the prompt with agy's quota notice, as a reply or an error
+ * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`.
  */
 const FAKE_AGY = [
   "const fs = require('fs');",
+  "const path = require('path');",
   "const scenario = JSON.parse(process.env.AGY_SCENARIO || '{}');",
   "const configOptions = JSON.parse(process.env.AGY_CONFIG_OPTIONS);",
-  "if (process.env.LAUNCH_PATH) fs.writeFileSync(process.env.LAUNCH_PATH, JSON.stringify({ argv: process.argv.slice(2), home: process.env.HOME }));",
+  "const argv = process.argv.slice(2);",
+  "if (argv[argv.length - 1] === 'agents') {",
+  "  if (process.env.AGENTS_PATH) fs.writeFileSync(process.env.AGENTS_PATH, JSON.stringify({ argv, cwd: process.cwd() }));",
+  "  if (scenario.agents === 'fail') { process.stderr.write('unknown command'); process.exit(1); }",
+  "  const dir = argv[argv.indexOf('--add-dir') + 1];",
+  "  if (scenario.agents !== 'none' && dir) for (const file of fs.readdirSync(path.join(dir, '.agents', 'agents'))) {",
+  "    const name = /^name: (.+)$/m.exec(fs.readFileSync(path.join(dir, '.agents', 'agents', file), 'utf8'));",
+  "    if (name) process.stdout.write(name[1] + '\\n');",
+  "  }",
+  "  process.exit(0);",
+  "}",
+  "if (process.env.LAUNCH_PATH) fs.writeFileSync(process.env.LAUNCH_PATH, JSON.stringify({ argv, home: process.env.HOME }));",
   "process.stdin.setEncoding('utf8');",
   "let buffer = '';",
   "let sessionId = 'agy-session-1';",
@@ -142,6 +160,12 @@ const FAKE_AGY = [
   '    }',
   "    if (msg.method === 'session/prompt') {",
   "      if (scenario.promptError) { send({ jsonrpc: '2.0', id: msg.id, error: scenario.promptError }); continue; }",
+  "      if (scenario.quotaError) { send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h30m.' } }); continue; }",
+  "      if (scenario.quotaNotice) {",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 3h20m5s.' } });",
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  "        continue;",
+  "      }",
   "      if (scenario.exitOnPrompt) process.exit(0);",
   '      promptCount += 1;',
   '      if (scenario.hang) { pendingPromptId = msg.id; continue; }',
@@ -164,12 +188,57 @@ test('antigravity-cli launches `agy acp` with permissions pre-approved and the m
     '--disable-telemetry',
     '--dangerously-skip-permissions',
   ]);
+  assert.deepEqual(antigravityAcpLaunchArgs(['--disable-telemetry'], '/run/agent'), [
+    'acp',
+    '--disable-telemetry',
+    '--dangerously-skip-permissions',
+    '--add-dir',
+    '/run/agent',
+    '--agent',
+    'anima-runtime',
+  ]);
   const env = antigravityLaunchEnvironment(
     { HOME: '/agent/home', PATH: '/agent/bin' },
     { HOME: '/machine/home', PATH: '/machine/bin' },
   );
   assert.equal(env.HOME, '/machine/home');
   assert.equal(env.PATH, '/agent/bin');
+});
+
+test('antigravity-cli writes its system prompt as a custom agent that replaces the default one', () => {
+  assert.equal(
+    antigravityAgentDefinition('  You are Wren.\n\nBe brief.  ', '/agents/wren'),
+    [
+      '---',
+      'name: anima-runtime',
+      'description: Anima agent runtime',
+      'excludeDefaultComponents: true',
+      'tools: [read_file, write_file, edit_file, run_command, search_web]',
+      '---',
+      'You are Wren.',
+      '',
+      'Be brief.',
+      '',
+      'Your working directory is /agents/wren.',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('antigravity-cli recognizes the quota notice agy sends as a reply', () => {
+  const notice = 'Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 3h20m5s.';
+  assert.equal(antigravityQuotaNotice(`⚠ ${notice}`), notice);
+  assert.equal(antigravityQuotaNotice(`⚠️ ${notice}\n`), notice);
+  assert.equal(antigravityQuotaNotice(`Working on it.\n${notice}`), notice);
+  assert.equal(antigravityQuotaNotice(`⚠ ${notice}\nMore text.`), undefined);
+  assert.equal(antigravityQuotaNotice(`agy said: ${notice}`), undefined);
+  assert.equal(antigravityQuotaNotice('All done.'), undefined);
+
+  const now = new Date('2026-11-22T00:00:00.000Z');
+  assert.equal(antigravityQuotaResetsAt(notice, now)?.toISOString(), '2026-11-22T03:20:05.000Z');
+  assert.equal(antigravityQuotaResetsAt('Resets in 2d1h.', now)?.toISOString(), '2026-11-24T01:00:00.000Z');
+  assert.equal(antigravityQuotaResetsAt('Resets in 45s.', now)?.toISOString(), '2026-11-22T00:00:45.000Z');
+  assert.equal(antigravityQuotaResetsAt('Individual quota reached.', now), undefined);
 });
 
 test('antigravity-cli refuses the Antigravity app editor launcher', async () => {
@@ -329,19 +398,24 @@ test('antigravity-cli catalog probe refuses the app editor launcher without star
   }
 });
 
-test('antigravity-cli puts the system prompt in the session, selects model and thinking, and appends follow-ups', async () => {
+test('antigravity-cli runs the system prompt as a custom agent, selects model and thinking, and appends follow-ups', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-runtime-'));
   let runtime: AgentRuntime | undefined;
   try {
     await withAnimaHome(stateDir, async () => {
       const callsPath = join(stateDir, 'calls.jsonl');
       const launchPath = join(stateDir, 'launch.json');
+      const agentsPath = join(stateDir, 'agents.json');
       await installFakeAgy(stateDir);
       const firstCtx = await ingestAgyEvent(stateDir, 'Start Antigravity.', '1786000000.000001');
       const secondCtx = await ingestAgyEvent(stateDir, 'Steer Antigravity.', '1786000000.000002');
       runtime = createAgentRuntime(
         {
-          env: agyEnv(stateDir, { appendSystemPrompt: true, richTurn: true }, { LAUNCH_PATH: launchPath }),
+          env: agyEnv(
+            stateDir,
+            { appendSystemPrompt: true, richTurn: true },
+            { AGENTS_PATH: agentsPath, LAUNCH_PATH: launchPath },
+          ),
           kind: 'antigravity-cli',
           model: 'claude-sonnet-4-6',
           reasoningEffort: 'low',
@@ -359,9 +433,25 @@ test('antigravity-cli puts the system prompt in the session, selects model and t
       );
       assert.equal((await withTimeout(runPromise, 3_000)).text, 'handled first + appended');
 
+      const agentDir = join(stateDir, 'run', 'agents', 'anima', 'antigravity-cli-agent');
       const launch = JSON.parse(await readFile(launchPath, 'utf8')) as Record<string, unknown>;
-      assert.deepEqual(launch.argv, ['acp', '--disable-telemetry', '--dangerously-skip-permissions']);
+      assert.deepEqual(launch.argv, [
+        'acp',
+        '--disable-telemetry',
+        '--dangerously-skip-permissions',
+        '--add-dir',
+        agentDir,
+        '--agent',
+        'anima-runtime',
+      ]);
       assert.equal(launch.home, process.env.HOME);
+      assert.deepEqual(JSON.parse(await readFile(agentsPath, 'utf8')), {
+        argv: ['--add-dir', agentDir, 'agents'],
+        cwd: await realpath(stateDir),
+      });
+      const definition = await readFile(join(agentDir, '.agents', 'agents', 'anima-runtime.md'), 'utf8');
+      assert.match(definition, /^---\nname: anima-runtime\n[\s\S]*excludeDefaultComponents: true\n[\s\S]*\n---\n## Who you are\n\nYou are Anima/);
+      assert.ok(definition.endsWith(`\n\nYour working directory is ${stateDir}.\n`));
       assert.deepEqual(JSON.parse(await readFile(`${callsPath}.permission`, 'utf8')), {
         outcome: { optionId: 'allow-always', outcome: 'selected' },
       });
@@ -376,8 +466,7 @@ test('antigravity-cli puts the system prompt in the session, selects model and t
         'session/prompt',
       ]);
       const sessionNew = calls.find((call) => call.method === 'session/new')?.params as Record<string, unknown>;
-      const meta = sessionNew._meta as { antigravity?: { systemPrompt?: { append?: string } } };
-      assert.match(meta.antigravity?.systemPrompt?.append ?? '', /You are Anima/);
+      assert.equal('_meta' in sessionNew, false, 'the custom agent carries the system prompt');
       assert.deepEqual(
         calls.filter((call) => call.method === 'session/set_config_option').map((call) => call.params),
         [
@@ -469,7 +558,7 @@ test('antigravity-cli rejects the turn when the final transcript write fails', a
   }
 });
 
-test('antigravity-cli keeps the current model, skips an unavailable thinking level, and prepends the prompt when append is unsupported', async () => {
+test('antigravity-cli keeps the current model, skips an unavailable thinking level, and prepends the prompt when neither agent nor append is available', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-defaults-'));
   let runtime: AgentRuntime | undefined;
   try {
@@ -478,7 +567,7 @@ test('antigravity-cli keeps the current model, skips an unavailable thinking lev
       await installFakeAgy(stateDir);
       const ctx = await ingestAgyEvent(stateDir, 'Use defaults.', '1786000010.000001');
       runtime = createAgentRuntime({
-        env: agyEnv(stateDir, {}),
+        env: agyEnv(stateDir, { agents: 'none' }),
         kind: 'antigravity-cli',
         model: 'gemini-3.8-flash',
         reasoningEffort: 'max',
@@ -499,6 +588,77 @@ test('antigravity-cli keeps the current model, skips an unavailable thinking lev
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+for (const agents of ['none', 'fail'] as const) {
+  test(`antigravity-cli appends the system prompt when agy ${agents === 'none' ? 'does not find' : 'cannot list'} the custom agent`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-agent-missing-'));
+    let runtime: AgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const callsPath = join(stateDir, 'calls.jsonl');
+        const launchPath = join(stateDir, 'launch.json');
+        await installFakeAgy(stateDir);
+        const ctx = await ingestAgyEvent(stateDir, 'Append instead.', '1786000012.000001');
+        runtime = createAgentRuntime({
+          env: agyEnv(stateDir, { agents, appendSystemPrompt: true }, { LAUNCH_PATH: launchPath }),
+          kind: 'antigravity-cli',
+        });
+
+        assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'reply 1');
+        const launch = JSON.parse(await readFile(launchPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(launch.argv, ['acp', '--dangerously-skip-permissions']);
+        const calls = await readJsonLines(callsPath);
+        const sessionNew = calls.find((call) => call.method === 'session/new')?.params as Record<string, unknown>;
+        const meta = sessionNew._meta as { antigravity?: { systemPrompt?: { append?: string } } };
+        assert.match(meta.antigravity?.systemPrompt?.append ?? '', /You are Anima/);
+        assert.doesNotMatch(promptTexts(calls)[0] ?? '', /You are Anima/);
+        const unavailable = allActivities(await loadState()).find((activity) =>
+          activity.payload?.['eventType'] === 'antigravity.agent.unavailable');
+        assert.match(
+          String(unavailable?.payload?.['problem']),
+          agents === 'none' ? /did not list the agent/ : /unknown command|Command failed/,
+        );
+      });
+    } finally {
+      await runtime?.close?.();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
+for (const scenario of [
+  { name: 'reply', quotaNotice: true, resetMs: (3 * 3600 + 20 * 60 + 5) * 1000 },
+  { name: 'error', quotaError: true, resetMs: 90 * 60 * 1000 },
+]) {
+  test(`antigravity-cli treats a quota notice ${scenario.name} as quota exhausted until it resets`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-quota-'));
+    let runtime: AgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        await installFakeAgy(stateDir);
+        const ctx = await ingestAgyEvent(stateDir, 'Out of quota.', '1786000014.000001');
+        runtime = createAgentRuntime({ env: agyEnv(stateDir, scenario), kind: 'antigravity-cli' });
+        const before = Date.now();
+        const error = await runtime.run(await runtimeInput(runtime, ctx, await loadState())).then(
+          () => assert.fail('the turn should fail'),
+          (failure: unknown) => failure,
+        );
+        assert.match(String(error), /Antigravity: Individual quota reached\./);
+        assert.equal(classifyProviderRetry(error), 'rate_limited');
+        const resumeAt = providerRateLimitResumeAt(error, new Date(before)).getTime();
+        assert.ok(Math.abs(resumeAt - (before + scenario.resetMs)) < 60_000, String(new Date(resumeAt)));
+        assert.equal(
+          allActivities(await loadState()).some((activity) => activity.type === 'agent.text'),
+          false,
+          'the notice is not recorded as the agent reply',
+        );
+      });
+    } finally {
+      await runtime?.close?.();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
 
 test('antigravity-cli fails clearly when the account does not offer the configured model', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-model-'));
@@ -575,7 +735,7 @@ test('antigravity-cli creates a fresh session when the persisted one is gone', a
         updatedAt: '2026-11-08T00:00:00.000Z',
       });
       runtime = createAgentRuntime({
-        env: agyEnv(stateDir, { appendSystemPrompt: true, resume: 'missing' }),
+        env: agyEnv(stateDir, { agents: 'none', appendSystemPrompt: true, resume: 'missing' }),
         kind: 'antigravity-cli',
       });
 

@@ -1,8 +1,11 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { accessSync, constants as fsConstants, realpathSync } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { promisify } from 'node:util';
 
-import { nowIso } from '../ids.js';
+import { errorMessage, nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
 import { truncateForActivity } from '../activities/format.js';
 import { raceWithTimeout } from '../race-timeout.js';
@@ -41,15 +44,101 @@ import {
 } from './contract.js';
 
 const ANTIGRAVITY_RUNTIME_KIND = 'antigravity-cli';
+const execFileAsync = promisify(execFile);
+
+/** The custom agent Anima writes for `agy acp --agent`. */
+const ANTIGRAVITY_AGENT_NAME = 'anima-runtime';
+
+/**
+ * The Antigravity tools an Anima agent keeps. A custom agent that excludes the
+ * default components starts with none of them (agy always adds manage_task).
+ * Questions, reminders and delegation go through Anima, so ask_question,
+ * schedule, the subagent tools, swarm and run_workflow stay out.
+ */
+const ANTIGRAVITY_AGENT_TOOLS = ['read_file', 'write_file', 'edit_file', 'run_command', 'search_web'];
 
 /**
  * `agy acp` is Antigravity CLI's official ACP server — the same entry point Zed,
  * JetBrains and Xcode launch. Flags go after `acp`. An Anima agent has no one to
  * answer permission prompts, so tool calls are approved up front, as with the
- * other providers.
+ * other providers. With `agentDir`, the session runs Anima's custom agent from
+ * that directory (see antigravityAgentDefinition).
  */
-export function antigravityAcpLaunchArgs(providerArgs: readonly string[] = []): string[] {
-  return ['acp', ...providerArgs, '--dangerously-skip-permissions'];
+export function antigravityAcpLaunchArgs(providerArgs: readonly string[] = [], agentDir?: string): string[] {
+  return [
+    'acp',
+    ...providerArgs,
+    '--dangerously-skip-permissions',
+    ...(agentDir ? ['--add-dir', agentDir, '--agent', ANTIGRAVITY_AGENT_NAME] : []),
+  ];
+}
+
+/**
+ * `agy acp` can only append to its own system prompt, which describes Antigravity
+ * and a dozen tools Anima does not use. A custom agent with
+ * `excludeDefaultComponents: true` replaces it: the body becomes the whole system
+ * prompt and `tools` the whole tool set. Without the default prompt the model is
+ * not told its working directory, so the definition says it.
+ */
+export function antigravityAgentDefinition(systemPrompt: string, cwd: string): string {
+  return [
+    '---',
+    `name: ${ANTIGRAVITY_AGENT_NAME}`,
+    'description: Anima agent runtime',
+    'excludeDefaultComponents: true',
+    `tools: [${ANTIGRAVITY_AGENT_TOOLS.join(', ')}]`,
+    '---',
+    systemPrompt.trim(),
+    '',
+    `Your working directory is ${cwd}.`,
+    '',
+  ].join('\n');
+}
+
+/**
+ * agy reads custom agents from `<workspace>/.agents/agents/<name>.md`, and `--add-dir`
+ * adds a workspace directory without changing the session's cwd. The directory sits
+ * beside the agent's other provider files in Anima's run directory.
+ */
+function antigravityAgentDir(systemPromptFilePath: string): string {
+  return join(dirname(systemPromptFilePath), 'antigravity-cli-agent');
+}
+
+/**
+ * Writes Anima's custom agent and checks that this `agy` finds it. agy runs an
+ * unknown `--agent` as its default agent without saying so, which would drop the
+ * system prompt entirely, so the session uses the agent only when `agy agents`
+ * lists it; otherwise the prompt is appended as before. Undefined when there is
+ * no system prompt to carry.
+ */
+async function prepareAntigravityAgent(
+  command: string,
+  input: AgentRuntimeInput,
+  env: NodeJS.ProcessEnv,
+): Promise<{ dir: string } | { problem: string } | undefined> {
+  const systemPrompt = input.systemPrompt?.trim();
+  if (!systemPrompt) return undefined;
+  if (!input.systemPromptFilePath) return { problem: 'no runtime directory' };
+  const dir = antigravityAgentDir(input.systemPromptFilePath);
+  try {
+    const file = join(dir, '.agents', 'agents', `${ANTIGRAVITY_AGENT_NAME}.md`);
+    await mkdir(dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temp, antigravityAgentDefinition(systemPrompt, input.cwd), 'utf8');
+    await rename(temp, file);
+    const { stdout } = await execFileAsync(command, ['--add-dir', dir, 'agents'], {
+      cwd: input.cwd,
+      env,
+      maxBuffer: 1024 * 1024,
+      ...(input.signal ? { signal: input.signal } : {}),
+      timeout: 15_000,
+    });
+    const listed = String(stdout).split(/\r?\n/).some((line) => line.trim() === ANTIGRAVITY_AGENT_NAME);
+    return listed ? { dir } : { problem: '`agy agents` did not list the agent' };
+  } catch (error) {
+    if (input.signal?.aborted) throw error;
+    return { problem: truncateForActivity(errorMessage(error)) };
+  }
 }
 
 /**
@@ -182,14 +271,24 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
         const env = antigravityLaunchEnvironment(input.env);
         const problem = antigravityCommandProblem(this.command, env);
         if (problem) throw new Error(problem);
+        const agent = await prepareAntigravityAgent(this.command, input, env);
+        if (agent && 'problem' in agent) {
+          await input.effects.recordEvent({
+            eventType: 'antigravity.agent.unavailable',
+            problem: agent.problem,
+            runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
+            transport: 'acp',
+          });
+        }
+        const agentDir = agent && 'dir' in agent ? agent.dir : undefined;
         return this.spawnController(
           {
-            args: antigravityAcpLaunchArgs(this.providerArgs),
+            args: antigravityAcpLaunchArgs(this.providerArgs, agentDir),
             command: this.command,
             label: 'Antigravity ACP runtime',
           },
           { ...input, env },
-          (child) => new AntigravityAcpController(child),
+          (child) => new AntigravityAcpController(child, agentDir !== undefined),
         );
       });
 
@@ -241,12 +340,15 @@ class AntigravityAcpController {
   private promptInFlight = false;
   /** Whether `agy acp` takes an appended system prompt on session/new. */
   private supportsSystemPromptAppend = false;
+  /** Whether this process runs Anima's custom agent, whose body is the system prompt. */
+  private readonly usesCustomAgent: boolean;
   /** Whether this session already carries Anima's system prompt. */
   private sessionHasSystemPrompt = false;
   readonly completion: Promise<{ stdout: string; stderr: string }>;
   sessionId = '';
 
-  constructor(private readonly child: RunningChildProcess) {
+  constructor(private readonly child: RunningChildProcess, usesCustomAgent = false) {
+    this.usesCustomAgent = usesCustomAgent;
     this.rpc = new AcpJsonRpcPeer(child, {
       label: 'Antigravity',
       onNotification: (message) => this.handleNotification(message),
@@ -272,9 +374,11 @@ class AntigravityAcpController {
   }
 
   /**
-   * The system prompt goes into the session itself when `agy acp` supports it
-   * (`_meta.antigravity.systemPrompt.append` on session/new); a resumed session
-   * already has it. Only an older CLI without that capability gets it prepended.
+   * The system prompt goes into the session itself: as Anima's custom agent, or
+   * appended on session/new (`_meta.antigravity.systemPrompt.append`) when the
+   * agent is unavailable. agy keeps a session's agent and prompt when it is
+   * resumed, so a resumed session already has it. Only an older CLI with neither
+   * gets the prompt prepended.
    */
   primaryPrompt(input: AgentRuntimeInput): string {
     const systemPrompt = input.systemPrompt?.trim();
@@ -385,7 +489,7 @@ class AntigravityAcpController {
         });
         this.sessionId = extractSessionId(result) ?? requestedSessionId;
         this.captureConfigOptions(result);
-        this.sessionHasSystemPrompt = this.supportsSystemPromptAppend;
+        this.sessionHasSystemPrompt = this.usesCustomAgent || this.supportsSystemPromptAppend;
       } catch (error) {
         if (!isAntigravitySessionNotFoundError(error)) throw error;
         await input.effects.recordEvent({
@@ -416,7 +520,7 @@ class AntigravityAcpController {
 
   private async createSession(input: AgentRuntimeInput): Promise<string> {
     const systemPrompt = input.systemPrompt?.trim();
-    const appendSystemPrompt = Boolean(systemPrompt && this.supportsSystemPromptAppend);
+    const appendSystemPrompt = Boolean(systemPrompt && !this.usesCustomAgent && this.supportsSystemPromptAppend);
     const result = await this.rpc.request('session/new', {
       cwd: input.cwd,
       mcpServers: [],
@@ -427,7 +531,7 @@ class AntigravityAcpController {
     const sessionId = extractSessionId(result);
     if (!sessionId) throw new Error('Antigravity ACP session/new returned no sessionId');
     this.captureConfigOptions(result);
-    this.sessionHasSystemPrompt = appendSystemPrompt;
+    this.sessionHasSystemPrompt = this.usesCustomAgent || appendSystemPrompt;
     return sessionId;
   }
 
@@ -531,12 +635,18 @@ class AntigravityAcpController {
       this.activeToolIds.clear();
       this.pendingTools.clear();
       await turn.input.effects.recordUsage(providerUsageFromStats(sourceId, this.latestUsage, { model }));
-      throw error;
+      throw antigravityQuotaErrorFromRpc(error) ?? error;
     }
     const stopReason = stringField(result, 'stopReason');
     if (rollbackCancelledAcpPromptText(turn, textCheckpoint, stopReason)) {
       this.activeToolIds.clear();
       this.pendingTools.clear();
+    }
+    const quotaNotice = antigravityQuotaNotice(turn.text.slice(textCheckpoint).join(''));
+    if (quotaNotice) {
+      turn.text.length = textCheckpoint;
+      await turn.input.effects.recordUsage(providerUsageFromStats(sourceId, this.latestUsage, { model }));
+      throw new AntigravityQuotaError(quotaNotice);
     }
     const usage = acpUsagePayload(result);
     if (usage) {
@@ -819,6 +929,49 @@ function isAntigravitySessionNotFoundError(error: unknown): boolean {
   return /failed\s+to\s+(?:read|load|find)\s+session|session.{0,40}(?:not\s+found|missing|unknown|does\s+not\s+exist)|(?:not\s+found|missing|unknown|no\s+such).{0,40}(?:session|conversation)/i.test(
     error.message,
   );
+}
+
+const ANTIGRAVITY_QUOTA_NOTICE = /(?:^|\n)[^\S\n]*(?:\u26A0\uFE0F?[^\S\n]*)?(Individual quota reached\.[^\n]*)\s*$/u;
+
+/**
+ * When the account is out of quota, agy ends the turn normally (`end_turn`) with a
+ * notice as the agent's reply: `⚠ Individual quota reached. Please upgrade your
+ * subscription to increase your limits. Resets in 3h20m5s.` Returns the notice
+ * when it is the end of the prompt's text.
+ */
+export function antigravityQuotaNotice(text: string): string | undefined {
+  return ANTIGRAVITY_QUOTA_NOTICE.exec(text)?.[1]?.trim();
+}
+
+/** `Resets in 1d2h3m4s` as a time, if the notice says. */
+export function antigravityQuotaResetsAt(notice: string, now: Date = new Date()): Date | undefined {
+  const match = /\bresets\s+in\s+((?:\d+\s*[dhms]\s*)+)/i.exec(notice);
+  if (!match?.[1]) return undefined;
+  const unitMs: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1_000 };
+  let total = 0;
+  for (const [, amount, unit] of match[1].matchAll(/(\d+)\s*([dhms])/gi)) {
+    total += Number(amount) * (unitMs[unit!.toLowerCase()] ?? 0);
+  }
+  return total > 0 ? new Date(now.getTime() + total) : undefined;
+}
+
+/** Classified as quota exhausted; the item is retried once the quota resets. */
+export class AntigravityQuotaError extends Error {
+  readonly reason = 'provider_quota_exhausted';
+  readonly resetsAt?: string;
+
+  constructor(notice: string, options?: ErrorOptions) {
+    super(`Antigravity: ${notice}`, options);
+    this.name = 'AntigravityQuotaError';
+    const resetsAt = antigravityQuotaResetsAt(notice);
+    if (resetsAt) this.resetsAt = resetsAt.toISOString();
+  }
+}
+
+function antigravityQuotaErrorFromRpc(error: unknown): AntigravityQuotaError | undefined {
+  if (!(error instanceof AcpJsonRpcError)) return undefined;
+  const notice = /Individual quota reached\.[^\n]*/u.exec(error.message)?.[0];
+  return notice ? new AntigravityQuotaError(notice.trim(), { cause: error }) : undefined;
 }
 
 /** ACP `Authentication required` (-32000): the CLI on this machine is not signed in. */
