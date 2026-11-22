@@ -117,7 +117,8 @@ const CONFIG_OPTIONS = [
  *   the subagent's Stop says work of its own is still running. wakeLeavesWork: the subagent stops
  *   as usual, but the self-started turn's Stop says work is still running. invokeTitle: the title
  *   of the first prompt's invoke_subagent call. subagentStops: [conversation, idle] Stops that
- *   follow the self-started turn 50ms apart (with lateSubagentStop). earlierWork: before its
+ *   follow the self-started turn 50ms apart (with lateSubagentStop); idle 'call' is a model call
+ *   instead, and conversation 'session' is the session's own. earlierWork: before its
  *   calls, the first prompt shows earlier work that has just ended: a subagent started by a call
  *   Anima cannot tell apart and one started by invoke_subagent, their Stops, then the session's
  *   own Stop, still being written when the prompt went out; then WAKE_TRIGGER_PATH.earlier is
@@ -125,6 +126,8 @@ const CONFIG_OPTIONS = [
  *   prompt first makes an invoke_subagent call that fails;
  *   'afterStop': the call is still open when the prompt ends and fails 350ms after the subagent Stops.
  *   tailEnds: once 'tail-seen' is answered, wake 'joined' says REPORT-A. and stops.
+ *   replyAfterStop: the reply of that turn comes 300ms after its Stop, as when Anima reads
+ *   agy's output late.
  * - lateUsage: a usage update follows the answer of a plain prompt
  * - doneFirst: the first prompt invokes subagent a, which stops before the prompt's own Stop
  *   says the session is idle (then WAKE_TRIGGER_PATH.a-idle is written); 'report': the prompt
@@ -149,6 +152,14 @@ const CONFIG_OPTIONS = [
  *   then starts subagent 1, which stops before the prompt's Stop(false). The call fails before
  *   those Stops, or 100ms after the answer. Once WAKE_TRIGGER_PATH exists, the session says
  *   FINAL REPORT. and stops idle.
+ * - reportLoop 'beforeStop' | 'afterStop': the first prompt starts subagent r and ends with
+ *   Stop(false). 50ms later r stops, and the session's loop for r's report calls the model just
+ *   before that Stop, or callAfterMs after it; the loop says 'PRIMARY REPORT.' and stops idle
+ *   once WAKE_TRIGGER_PATH.report-go exists.
+ * - nested: the first prompt starts coordinator c, which starts a leaf, and ends with
+ *   Stop(false). 50ms later c calls the model and stops saying work goes on, and the session's
+ *   loop says 'COORDINATOR REPORT.' and stops the same way; the leaf stops once
+ *   WAKE_TRIGGER_PATH.leaf-go exists.
  * - barrierUnanswered 'always' | 'afterFirst': a request for a method agy does not know gets no
  *   answer (agy answers it with an error), or none once a prompt has come. barrierLateMs: it is
  *   answered that much later. textBeforeBarrier: once a prompt has come, agy says EARLIER. just
@@ -268,6 +279,8 @@ const FAKE_AGY = [
   '}',
   'let heldStop;',
   'function startWake() {',
+  // The subagent's report starts the turn, which calls the model, before the subagent stops.
+  '  modelCall(sessionId);',
   // The subagent's own conversation stops; its Stop says nothing about the session's work.
   "  if (!scenario.lateSubagentStop) runStopHook('agy-subagent-1', true);",
   "  if (scenario.wake === 'joined') {",
@@ -293,6 +306,15 @@ const FAKE_AGY = [
   'function finishWake() {',
   "  update({ sessionUpdate: 'tool_call', toolCallId: 'agy-wake-tool', title: 'File notes/summary.md', kind: 'edit', status: 'in_progress', locations: [{ path: '/work/notes/summary.md' }] });",
   "  update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-wake-tool', status: 'completed' });",
+  '  if (scenario.replyAfterStop) {',
+  '    runStopHook(sessionId, true);',
+  '    setTimeout(() => {',
+  "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'SUMMARY SAVED' } });",
+  "      update({ sessionUpdate: 'usage_update', used: 5000, size: 1048576 });",
+  "      fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.stopped', '');",
+  '    }, 300);',
+  '    return;',
+  '  }',
   "  update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'SUMMARY SAVED' } });",
   "  if (scenario.openTool) update({ sessionUpdate: 'tool_call', toolCallId: 'agy-bg-command', title: 'sleep 600', kind: 'execute', status: 'in_progress', rawInput: { command: 'sleep 600' } });",
   '  wakeDone = !scenario.lateSubagentStop && !scenario.wakeLeavesWork;',
@@ -305,8 +327,12 @@ const FAKE_AGY = [
   '  }',
   '  if (scenario.lateSubagentStop) {',
   "    const stops = scenario.subagentStops || [['agy-subagent-1', !scenario.subagentBusy]];",
-  // A 'call' entry is a model call of that subagent: a message woke it.
-  "    stops.forEach(([conversationId, idle], index) => setTimeout(() => (idle === 'call' ? modelCall(conversationId) : runStopHook(conversationId, idle)), 50 * (index + 1)));",
+  // A 'call' entry is a model call: a message woke that subagent. 'session' is the session's own conversation.
+  "    stops.forEach(([name, idle], index) => setTimeout(() => {",
+  "      const conversationId = name === 'session' ? sessionId : name;",
+  "      if (idle === 'call') modelCall(conversationId);",
+  '      else runStopHook(conversationId, idle);',
+  '    }, 50 * (index + 1)));',
   "    if (scenario.invokeFails === 'afterStop') setTimeout(failInvoke, 50 * stops.length + 350);",
   "    if (scenario.lateStart) setTimeout(() => startSubagent('agy-subagent-late'), 50 * stops.length + 100);",
   '    if (scenario.sessionCall) setTimeout(() => modelCall(sessionId), 50 * stops.length + 100);',
@@ -448,6 +474,8 @@ const FAKE_AGY = [
   '        pendingStop = undefined;',
   '        stop();',
   '      }',
+  // Like agy, the prompt's loop calls the model first.
+  '      modelCall(sessionId);',
   '      if (scenario.hang) { pendingPromptId = msg.id; continue; }',
   '      if (scenario.doneFirst && promptCount === 1) {',
   "        fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.prompt1', lastUserInput);",
@@ -638,6 +666,49 @@ const FAKE_AGY = [
   '        continue;',
   '      }',
   // One call starts a reader and a writer, or (split) one call each; the reader stops at once.
+  // The reader's report starts the session's report loop, whose model call comes before the reader
+  // stops ('beforeStop') or after it ('afterStop', callAfterMs later); its output waits for .report-go.
+  // A coordinator starts a leaf; the coordinator's report starts the session's loop, and both
+  // the coordinator and that loop stop saying work goes on while the leaf runs, until .leaf-go.
+  '      if (scenario.nested && promptCount === 1) {',
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-c', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Subagents: [] } });",
+  "        modelCall('agy-subagent-c');",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-c', status: 'completed' });",
+  "        modelCall('agy-subagent-leaf');",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started a coordinator.' } });",
+  "        update({ sessionUpdate: 'usage_update', used: 3000, size: 1048576 });",
+  '        runStopHook(sessionId, false);',
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  '        setTimeout(() => {',
+  "          modelCall('agy-subagent-c');",
+  "          runStopHook('agy-subagent-c', false);",
+  '          modelCall(sessionId);',
+  "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'COORDINATOR REPORT.' } });",
+  "          update({ sessionUpdate: 'usage_update', used: 3500, size: 1048576 });",
+  '          runStopHook(sessionId, false);',
+  '        }, 50);',
+  "        whenTriggered('.leaf-go', () => runStopHook('agy-subagent-leaf', true));",
+  '        continue;',
+  '      }',
+  '      if (scenario.reportLoop && promptCount === 1) {',
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-r', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Subagents: [] } });",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-r', status: 'completed' });",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started a reader.' } });",
+  "        update({ sessionUpdate: 'usage_update', used: 3000, size: 1048576 });",
+  '        runStopHook(sessionId, false);',
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  '        setTimeout(() => {',
+  "          if (scenario.reportLoop === 'beforeStop') modelCall(sessionId);",
+  "          runStopHook('agy-subagent-r', true);",
+  "          if (scenario.reportLoop === 'afterStop') setTimeout(() => modelCall(sessionId), scenario.callAfterMs || 0);",
+  '        }, 50);',
+  "        whenTriggered('.report-go', () => {",
+  "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'PRIMARY REPORT.' } });",
+  "          update({ sessionUpdate: 'usage_update', used: 3500, size: 1048576 });",
+  '          runStopHook(sessionId, true);',
+  '        });',
+  '        continue;',
+  '      }',
   '      if (scenario.twoSubagents && promptCount === 1) {',
   "        for (const id of scenario.twoSubagents === 'split' ? ['agy-invoke-r', 'agy-invoke-w'] : ['agy-invoke-rw']) {",
   "          update({ sessionUpdate: 'tool_call', toolCallId: id, title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Subagents: [] } });",
@@ -2676,6 +2747,11 @@ for (const variant of [
   { done: true, invokeTitle: 'Run start_helper', name: 'once its last subagent has stopped, whatever the call that started it is called' },
   { done: false, lateStart: true, name: 'not when another subagent starts after the last one stopped' },
   { done: false, name: 'not while the session calls the model after its last subagent stopped', sessionCall: true },
+  {
+    done: false,
+    name: 'not while a loop of the session that called the model before its last subagent stopped is running',
+    subagentStops: [['session', 'call'], ['agy-subagent-1', true]],
+  },
   { batch: true, done: false, name: 'not while the second subagent one call started is still running' },
   {
     batch: true,
@@ -2696,11 +2772,39 @@ for (const variant of [
     subagentStops: [['agy-subagent-1', true], ['agy-subagent-1', 'call'], ['agy-subagent-2', true], ['agy-subagent-1', true]],
   },
   { done: false, name: 'not when its subagent goes back to work after it stopped', subagentStops: [['agy-subagent-1', true], ['agy-subagent-1', false]] },
+  // A loop of the session whose model call never reached the file still ends with its own Stop.
   {
     done: false,
+    name: 'not when the session says work goes on after its last subagent stopped, with no model call of that loop seen',
+    subagentStops: [['agy-subagent-1', true], ['session', false]],
+  },
+  // Hook events do not say which conversation started which: a subagent's Stop that says work of its
+  // own goes on counts on the subagents running then, as the session's own Stop does.
+  {
+    done: true,
     invokeTwice: true,
-    name: 'not when the other subagent stops while the first is back at work',
+    name: 'once the other subagent stops, when the first said work of its own goes on while that one was running',
     subagentStops: [['agy-subagent-1', true], ['agy-subagent-1', false], ['agy-subagent-2', true]],
+  },
+  {
+    done: false,
+    name: 'not while the subagent its subagent started is running',
+    subagentStops: [['agy-subagent-leaf', 'call'], ['agy-subagent-1', false]],
+  },
+  {
+    done: true,
+    name: 'once the subagent its subagent started has stopped, after the first said work of its own goes on',
+    subagentStops: [['agy-subagent-leaf', 'call'], ['agy-subagent-1', false], ['agy-subagent-leaf', true]],
+  },
+  {
+    done: false,
+    name: 'not when its subagent says work of its own goes on after the subagent it started has stopped',
+    subagentStops: [['agy-subagent-leaf', 'call'], ['agy-subagent-leaf', true], ['agy-subagent-1', false]],
+  },
+  {
+    done: true,
+    name: 'once its subagent, after saying work of its own goes on with none running, runs again and stops',
+    subagentStops: [['agy-subagent-leaf', 'call'], ['agy-subagent-leaf', true], ['agy-subagent-1', false], ['agy-subagent-1', 'call'], ['agy-subagent-1', true]],
   },
   { done: true, earlierWork: true, name: 'once its last subagent has stopped, counting only calls after earlier work ended' },
   { done: false, earlierWork: true, invokeTwice: true, name: 'not counting a subagent of earlier work as one of its own' },
@@ -3289,6 +3393,46 @@ for (const reload of ['whenIdle', 'provider-env'] as const) {
       whileReloadWaits: waitsFor('reader-go'),
     });
   });
+
+  test(`antigravity-cli lets a ${reload} reload go ahead once the subagent a subagent started has stopped, after both the coordinator and the session said work goes on`, async () => {
+    let first: string | undefined;
+    await reloadsOnceWorkIsDone(reload, {
+      async afterReload() {
+        assert.deepEqual(await reportedOn('COORDINATOR REPORT.'), [first]);
+      },
+      async deliver({ deliver, texts }) {
+        first = (await deliver('Have a coordinator start.', '1786000049.000003')).item.id;
+        assert.equal(texts[0], 'Started a coordinator.');
+      },
+      scenario: { nested: true },
+      wake: fast,
+      whileReloadWaits: waitsFor('leaf-go'),
+    });
+  });
+
+  // New hook events wait for the settle time before they are applied.
+  const settling: AntigravityWakeTiming = { pollMs: 20, quietMs: 60_000, settleMs: 400, subagentsDoneMs: 800 };
+  for (const [when, scenario] of [
+    ['after its subagent stopped', { reportLoop: 'afterStop' }],
+    ['before its subagent stopped', { reportLoop: 'beforeStop' }],
+    ['600ms after its subagent stopped, so that call is still settling when the silence window ends', { callAfterMs: 600, reportLoop: 'afterStop' }],
+  ] as const) {
+    test(`antigravity-cli lets a ${reload} reload go ahead only once the session's report loop that called the model ${when} has stopped`, async () => {
+      let first: string | undefined;
+      await reloadsOnceWorkIsDone(reload, {
+        async afterReload() {
+          assert.deepEqual(await reportedOn('PRIMARY REPORT.'), [first]);
+        },
+        async deliver({ deliver, texts }) {
+          first = (await deliver('Have a reader start.', '1786000049.000001')).item.id;
+          assert.equal(texts[0], 'Started a reader.');
+        },
+        scenario,
+        wake: settling,
+        whileReloadWaits: waitsFor('report-go'),
+      });
+    });
+  }
 }
 
 for (const failure of ['before', 'after'] as const) {
@@ -3333,6 +3477,58 @@ for (const failure of ['before', 'after'] as const) {
     }
   });
 }
+
+test('antigravity-cli keeps a Stop for the settle time, so output of its turn that Anima reads late stays in that turn', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-settle-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const triggerPath = join(stateDir, 'wake-trigger');
+      await installFakeAgy(stateDir);
+      const ctx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000035.000001');
+      runtime = new AntigravityCliAgentRuntime(
+        { env: agyEnv(stateDir, { replyAfterStop: true, wake: true }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+        'agy',
+        [],
+        // The reply comes 300ms after the Stop; the poll applies the Stop only once it is 2s old.
+        { wake: { pollMs: 20, quietMs: 60_000, settleMs: 2_000 } },
+      );
+      const active = runtime;
+      const input = await runtimeInput(active, ctx, await loadState());
+      let replied = false;
+      let quiescentEarly = false;
+      const reply = await active.run({
+        ...input,
+        effects: {
+          ...input.effects,
+          async recordAgentText(text, payload) {
+            if (text === 'SUMMARY SAVED') replied = true;
+            return input.effects.recordAgentText(text, payload);
+          },
+        },
+      });
+      assert.equal(reply.text, 'Started a subagent.');
+      const sampler = setInterval(() => {
+        if (!replied && active.isProviderQuiescent() === true) quiescentEarly = true;
+      }, 5);
+      try {
+        await writeFile(triggerPath, '');
+        await pollUntil(() => replied || quiescentEarly, 5_000);
+        assert.equal(quiescentEarly, false, 'the work stays until the reply before the Stop is handled');
+        await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
+      } finally {
+        clearInterval(sampler);
+      }
+      await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+        activity.type === 'agent.text'
+          && activity.payload?.['text'] === 'SUMMARY SAVED'
+          && activity.payload?.['itemId'] === ctx.item.id), 5_000);
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
 
 test('antigravity-cli does not let a settled Stop overtake output it has read but not yet handled', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-drain-'));

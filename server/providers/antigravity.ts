@@ -502,14 +502,18 @@ interface PendingTool {
 }
 
 interface AntigravitySubagentRuns {
-  /** When the last running subagent stopped, with no model call since. */
+  /** When a subagent's Stop left nothing running or waiting, with no model call since. */
   doneAt?: number;
-  /** Subagent conversations that made a model call, or said work goes on, since their last Stop. */
+  /** The session's own conversation called the model since its last Stop: a loop of its own is running. */
+  ownLoop: boolean;
+  /** Subagent conversations that called the model since their last Stop. */
   running: Set<string>;
+  /** Subagent conversations whose last Stop said work of their own goes on while no other subagent was running. */
+  waiting: Set<string>;
 }
 
 function newSubagentRuns(): AntigravitySubagentRuns {
-  return { running: new Set() };
+  return { ownLoop: false, running: new Set(), waiting: new Set() };
 }
 
 /**
@@ -646,9 +650,9 @@ class AntigravityAcpController {
   private observer?: AgentRuntimeInput;
   /**
    * Subagents since the session's own conversation was last fully idle: which
-   * subagent conversations are running, and the Stop that left none running, unless
-   * the session called the model or said more work was running after it. See
-   * subagentsDone.
+   * subagent conversations are running or said work of their own goes on,
+   * whether a loop of the session's own is running, and the Stop that left
+   * nothing running, unless a model call came after it. See subagentsDone.
    */
   private subagents: AntigravitySubagentRuns = newSubagentRuns();
   /** The digest of the last prompt written; see AntigravityPromptOnWire.repeatsPrevious. */
@@ -1327,6 +1331,7 @@ class AntigravityAcpController {
       stopped = true;
       this.backgroundPending = event.fullyIdle === false;
       if (this.backgroundPending) {
+        this.subagents.ownLoop = false;
         this.subagents.doneAt = undefined;
       } else {
         this.observer = undefined;
@@ -1350,36 +1355,56 @@ class AntigravityAcpController {
    * running: one an `invoke_subagent` call just started (each subagent has a
    * conversation of its own, however many one call starts), or one a message woke
    * after it stopped. A call of the session's own means a loop of its own is
-   * running, which its Stop decides.
+   * running until its own Stop. That loop can start before the last subagent
+   * stops (a subagent hands over its report before its run ends), and its first
+   * output can take longer than the silence window, so no subagent's Stop counts
+   * the work done while it runs.
    */
   private noteModelCall(event: AntigravityHookEvent): void {
     const runs = this.subagents;
     runs.doneAt = undefined;
-    if (event.conversationId && event.conversationId !== this.sessionId) runs.running.add(event.conversationId);
+    if (!event.conversationId) return;
+    if (event.conversationId === this.sessionId) {
+      runs.ownLoop = true;
+    } else {
+      runs.running.add(event.conversationId);
+    }
   }
 
-  /** A subagent's conversation stopped; its run is over unless it says work of its own is still running. */
+  /**
+   * A subagent's conversation stopped: its run is over. Its Stop says work of
+   * its own goes on while subagents it started are running, and those call the
+   * model and stop on their own. Like the session, it may then run no further
+   * loop: in real nested runs agy ran a coordinator again when its leaf ended
+   * without messaging it, but never ran the session again after its coordinator
+   * ended. Hook events do not say which conversation started which, so the work
+   * such a Stop refers to is the subagents running at that moment, as for the
+   * session's own Stop. With none running, the work is out of Anima's sight, and
+   * it waits until that subagent runs again and stops.
+   */
   private noteSubagentStop(event: AntigravityHookEvent): void {
     if (event.hookEventName !== 'Stop' || !event.conversationId) return;
     const runs = this.subagents;
-    if (event.fullyIdle === false) {
-      runs.running.add(event.conversationId);
-      runs.doneAt = undefined;
-      return;
-    }
     runs.running.delete(event.conversationId);
-    if (runs.running.size === 0) runs.doneAt = event.at;
+    if (event.fullyIdle === false && runs.running.size === 0) runs.waiting.add(event.conversationId);
+    else runs.waiting.delete(event.conversationId);
+    runs.doneAt = runs.running.size === 0 && runs.waiting.size === 0 && !runs.ownLoop ? event.at : undefined;
   }
 
   /**
    * A subagent hands its report to the session before its own run ends, so the
    * session can end the turn that reads the report with `fullyIdle: false` while
    * the subagent is still finishing. When that was the last background work, agy
-   * runs no further loop and no Stop says the work is done. So the work counts as
-   * done once every subagent that ran has stopped, the last of them after the
-   * session's last model call and Stop; no tool call is still open (a command sent
-   * to the background); and agy has stayed silent for `subagentsDoneMs`. A turn agy
-   * starts in that time, or a prompt, ends with a Stop that decides instead.
+   * runs no further loop and no Stop says the work is done; a subagent that
+   * started subagents of its own can end the same way. So the work counts as
+   * done once every subagent that called the model has stopped, the last of them
+   * after the session's last model call and Stop, and none said work of its own
+   * goes on while no other was running (see noteSubagentStop); no loop of the
+   * session's own is running; no tool call is still open (a command sent to the
+   * background); every event agy wrote has been applied (the poll keeps new ones
+   * for the settle time, and a model call among them means work goes on); and
+   * agy has stayed silent for `subagentsDoneMs`. A turn agy starts in that time,
+   * or a prompt, ends with a Stop that decides instead.
    */
   private subagentsDone(now: number): boolean {
     const doneAt = this.subagents.doneAt;
@@ -1389,7 +1414,8 @@ class AntigravityAcpController {
       && !this.wake
       && !this.currentTurn
       && !this.promptOnWire
-      && this.pendingTools.size === 0;
+      && this.pendingTools.size === 0
+      && (this.hookEvents?.pending().length ?? 0) === 0;
   }
 
   /** Ends the turn agy started on its own; tool calls still open in it went to the background. */

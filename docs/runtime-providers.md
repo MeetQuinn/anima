@@ -704,20 +704,30 @@ Current process model:
   reports are over, and the next turn that leaves work owns the next ones.
 - A subagent hands its report to the session before its own run ends, so the session can end the
   loop that reads the report with `fullyIdle: false` and then run no further loop: no Stop of the
-  session says the work is done. Anima therefore tracks, from the hook file, which subagent
-  conversations are running since the session was last idle. Each subagent has a conversation of
-  its own, however many one `invoke_subagent` call starts, and calls the model as soon as it starts;
-  a subagent that stopped and is woken by a message (`send_message`) calls the model again. So a
-  subagent's model call marks it running, and its Stop marks it stopped, unless the Stop says it
-  still has work (`fullyIdle: false`). Hooks run one at a time and hold up `agy`'s loop, so the file
-  has every event in the order `agy` got to it, whenever Anima reads `agy`'s output: a Stop that
-  says the session is idle comes after everything it covers, and clears the tracking. Once no
-  subagent is running, the last one having stopped after the session's last model call and Stop,
-  no tool call is still open, and `agy` has then been silent for 10 seconds, the background work
-  counts as done. A model call whose hook could not write its event leaves that subagent out, so
-  the work can count as done while it runs; a missing Stop only keeps the work open. In every
-  other case (a command sent to the background still runs, or the last subagent stopped before
-  the session's last model call or Stop) the background work stays until `agy`'s next loop ends.
+  session says the work is done. Anima therefore tracks, from the hook file, which conversations
+  are running since the session was last idle. Each subagent has a conversation of its own, however
+  many one `invoke_subagent` call starts, and calls the model as soon as it starts; a subagent that
+  stopped and is woken by a message (`send_message`) calls the model again. So a model call marks
+  its conversation running until that conversation's next Stop. For the session's own
+  conversation, this covers a loop that starts before the last subagent stops (the report arrives
+  before the subagent's run ends) and whose first output takes longer than the silence below.
+- A Stop with `fullyIdle: false` says that subagents the conversation started are still running,
+  or that work Anima cannot see is (a command sent to the background). A subagent that started
+  subagents of its own can end that way, just like the session: in real nested runs, `agy` ran a
+  coordinator again when its leaf ended without messaging it, but never ran the session again after
+  its coordinator ended. The hook events do not say which conversation started which, so such a
+  Stop, the session's or a subagent's, counts on the subagents running at that moment. With none
+  running, the work is out of Anima's sight, and it stays until that conversation runs again.
+- Hooks run one at a time and hold up `agy`'s loop, so the file has every event in the order `agy`
+  got to it, whenever Anima reads `agy`'s output: a Stop that says the session is idle comes after
+  everything it covers, and clears the tracking. Once nothing is running (the last subagent having
+  stopped after the session's last model call and Stop), no tool call is still open, every event
+  written has been applied (new ones wait out the two seconds above, and a model call among them
+  means work goes on), and `agy` has then been silent for 10 seconds, the background work counts
+  as done. A model call whose hook could not write its event leaves that conversation out, so the
+  work can count as done while it runs; a missing Stop only keeps the work open. A subagent whose
+  Stop says work goes on because of a command in the background, while another subagent runs, is
+  taken for that one's parent, so the work can count as done once that one stops.
 - Nothing on the wire separates two self-started turns, so when both end within those two
   seconds, their text is recorded as one.
 - Stopping a run while `agy` starts the session for it, or works on one of its prompts, shuts the
