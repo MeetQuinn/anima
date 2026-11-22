@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { accessSync, constants as fsConstants, realpathSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
-import { promisify } from 'node:util';
 
 import { errorMessage, nowIso } from '../ids.js';
 import { isRecord, numberField, singleLineForActivity, stringField } from '../json.js';
@@ -44,7 +43,6 @@ import {
 } from './contract.js';
 
 const ANTIGRAVITY_RUNTIME_KIND = 'antigravity-cli';
-const execFileAsync = promisify(execFile);
 
 /** The custom agent Anima writes for `agy acp --agent`. */
 const ANTIGRAVITY_AGENT_NAME = 'anima-runtime';
@@ -52,8 +50,10 @@ const ANTIGRAVITY_AGENT_NAME = 'anima-runtime';
 /**
  * The Antigravity tools an Anima agent keeps. A custom agent that excludes the
  * default components starts with none of them (agy always adds manage_task).
- * Questions, reminders and delegation go through Anima, so ask_question,
- * schedule, the subagent tools, swarm and run_workflow stay out.
+ * Questions and reminders go through Anima, so ask_question and schedule stay
+ * out. Subagents always run in the background and report in a turn agy starts
+ * after the prompt has ended, which Anima does not attach to the item yet, so
+ * the subagent tools, swarm and run_workflow stay out too.
  */
 const ANTIGRAVITY_AGENT_TOOLS = ['read_file', 'write_file', 'edit_file', 'run_command', 'search_web'];
 
@@ -115,6 +115,7 @@ async function prepareAntigravityAgent(
   command: string,
   input: AgentRuntimeInput,
   env: NodeJS.ProcessEnv,
+  check: AntigravityAgentCheckOptions,
 ): Promise<{ dir: string } | { problem: string } | undefined> {
   const systemPrompt = input.systemPrompt?.trim();
   if (!systemPrompt) return undefined;
@@ -126,18 +127,80 @@ async function prepareAntigravityAgent(
     const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temp, antigravityAgentDefinition(systemPrompt, input.cwd), 'utf8');
     await rename(temp, file);
-    const { stdout } = await execFileAsync(command, ['--add-dir', dir, 'agents'], {
-      cwd: input.cwd,
-      env,
-      maxBuffer: 1024 * 1024,
-      ...(input.signal ? { signal: input.signal } : {}),
-      timeout: 15_000,
-    });
-    const listed = String(stdout).split(/\r?\n/).some((line) => line.trim() === ANTIGRAVITY_AGENT_NAME);
+    const stdout = await listAntigravityAgents(command, dir, { cwd: input.cwd, env, signal: input.signal }, check);
+    const listed = stdout.split(/\r?\n/).some((line) => line.trim() === ANTIGRAVITY_AGENT_NAME);
     return listed ? { dir } : { problem: '`agy agents` did not list the agent' };
   } catch (error) {
     if (input.signal?.aborted) throw error;
     return { problem: truncateForActivity(errorMessage(error)) };
+  }
+}
+
+export interface AntigravityAgentCheckOptions {
+  killGraceMs?: number;
+  timeoutMs?: number;
+}
+
+/**
+ * Runs `agy --add-dir <dir> agents` and returns what it prints. The check runs
+ * while the provider launch permit is held, so it is bounded: on timeout or
+ * abort the child gets SIGTERM, then SIGKILL after a grace period, and the check
+ * waits for it to exit before returning.
+ */
+async function listAntigravityAgents(
+  command: string,
+  dir: string,
+  input: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal | undefined },
+  options: AntigravityAgentCheckOptions,
+): Promise<string> {
+  input.signal?.throwIfAborted();
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const killGraceMs = options.killGraceMs ?? 2_000;
+  const child = spawn(command, ['--add-dir', dir, 'agents'], {
+    cwd: input.cwd,
+    env: input.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const exited = new Promise<void>((resolve) => {
+    child.once('exit', () => resolve());
+    child.once('error', () => resolve());
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    if (stdout.length < 1024 * 1024) stdout += chunk;
+  });
+  child.stderr.on('data', (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-4096);
+  });
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => {
+        if (code === 0) {
+          resolve(stdout);
+          return;
+        }
+        const detail = stderr.trim() ? `: ${stderr.trim()}` : '';
+        reject(new Error(`\`agy agents\` exited with ${signal ?? `code ${String(code)}`}${detail}`));
+      });
+      timer = setTimeout(() => reject(new Error(`\`agy agents\` did not finish within ${timeoutMs} ms`)), timeoutMs);
+      onAbort = () => reject(input.signal?.reason);
+      input.signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) input.signal?.removeEventListener('abort', onAbort);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      const force = setTimeout(() => child.kill('SIGKILL'), killGraceMs);
+      await raceWithTimeout(exited, killGraceMs + 1_000, undefined);
+      clearTimeout(force);
+    }
   }
 }
 
@@ -199,6 +262,7 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
   readonly command: string;
   readonly env: Record<string, string> | undefined;
   readonly kind = ANTIGRAVITY_RUNTIME_KIND;
+  private readonly agentCheck: AntigravityAgentCheckOptions;
   private readonly config: AntigravityCliAgentProviderConfig;
   private readonly providerArgs: readonly string[];
 
@@ -206,8 +270,10 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
     config: AntigravityCliAgentProviderConfig,
     command: string,
     providerArgs: readonly string[] = [],
+    options: { agentCheck?: AntigravityAgentCheckOptions } = {},
   ) {
     super({ providerChildIdleTimeoutMs: config.providerChildIdleTimeoutMs });
+    this.agentCheck = options.agentCheck ?? {};
     this.config = config;
     this.command = command;
     this.env = config.env;
@@ -271,7 +337,7 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
         const env = antigravityLaunchEnvironment(input.env);
         const problem = antigravityCommandProblem(this.command, env);
         if (problem) throw new Error(problem);
-        const agent = await prepareAntigravityAgent(this.command, input, env);
+        const agent = await prepareAntigravityAgent(this.command, input, env, this.agentCheck);
         if (agent && 'problem' in agent) {
           await input.effects.recordEvent({
             eventType: 'antigravity.agent.unavailable',
@@ -281,6 +347,8 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
           });
         }
         const agentDir = agent && 'dir' in agent ? agent.dir : undefined;
+        // A Stop that landed during the awaits above must not start agy or a session.
+        input.signal?.throwIfAborted();
         return this.spawnController(
           {
             args: antigravityAcpLaunchArgs(this.providerArgs, agentDir),
@@ -338,6 +406,8 @@ class AntigravityAcpController {
   private turnCompletion?: Promise<string>;
   /** True while a session/prompt RPC is outstanding. */
   private promptInFlight = false;
+  // Length of the turn text when the current prompt last reported a tool step.
+  private textAtLastStep = 0;
   /** Whether `agy acp` takes an appended system prompt on session/new. */
   private supportsSystemPromptAppend = false;
   /** Whether this process runs Anima's custom agent, whose body is the system prompt. */
@@ -619,6 +689,7 @@ class AntigravityAcpController {
     // Assistant chunks stream into turn.text; if this prompt is cancelled for a
     // mid-turn follow-up, discard only the chunks produced by this prompt.
     const textCheckpoint = turn.text.length;
+    this.textAtLastStep = textCheckpoint;
     let result: Record<string, unknown> | undefined;
     try {
       result = await withAcpPromptInFlight(
@@ -642,12 +713,6 @@ class AntigravityAcpController {
       this.activeToolIds.clear();
       this.pendingTools.clear();
     }
-    const quotaNotice = antigravityQuotaNotice(turn.text.slice(textCheckpoint).join(''));
-    if (quotaNotice) {
-      turn.text.length = textCheckpoint;
-      await turn.input.effects.recordUsage(providerUsageFromStats(sourceId, this.latestUsage, { model }));
-      throw new AntigravityQuotaError(quotaNotice);
-    }
     const usage = acpUsagePayload(result);
     if (usage) {
       this.latestUsage = { ...(this.latestUsage ?? {}), ...usage };
@@ -660,6 +725,14 @@ class AntigravityAcpController {
       });
     }
     await turn.input.effects.recordUsage(providerUsageFromStats(sourceId, usage ?? this.latestUsage, { model }));
+    // agy's quota notice is a step of its own: the whole reply since the last tool step.
+    const quotaNotice = stopReason === 'end_turn'
+      ? antigravityQuotaNotice(turn.text.slice(Math.max(textCheckpoint, this.textAtLastStep)).join(''))
+      : undefined;
+    if (quotaNotice) {
+      turn.text.length = textCheckpoint;
+      throw new AntigravityQuotaError(quotaNotice);
+    }
     await turn.input.effects.recordEvent({
       eventType: 'antigravity.turn.completed',
       runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
@@ -721,11 +794,8 @@ class AntigravityAcpController {
       }));
       return;
     }
-    if (type === 'tool_call') {
-      await this.handleToolCall(turn.input, data);
-      return;
-    }
-    if (type === 'tool_call_update') {
+    if (type === 'tool_call' || type === 'tool_call_update') {
+      this.textAtLastStep = turn.text.length;
       await this.handleToolCall(turn.input, data);
       return;
     }
@@ -931,16 +1001,17 @@ function isAntigravitySessionNotFoundError(error: unknown): boolean {
   );
 }
 
-const ANTIGRAVITY_QUOTA_NOTICE = /(?:^|\n)[^\S\n]*(?:\u26A0\uFE0F?[^\S\n]*)?(Individual quota reached\.[^\n]*)\s*$/u;
+const ANTIGRAVITY_QUOTA_NOTICE =
+  /^\u26A0\uFE0F?[^\S\n]*(Individual quota reached\. Please upgrade your subscription to increase your limits\. Resets in (?:\d+[dhms])+\.)$/u;
 
 /**
  * When the account is out of quota, agy ends the turn normally (`end_turn`) with a
  * notice as the agent's reply: `⚠ Individual quota reached. Please upgrade your
- * subscription to increase your limits. Resets in 3h20m5s.` Returns the notice
- * when it is the end of the prompt's text.
+ * subscription to increase your limits. Resets in 3h20m5s.` Returns the notice when
+ * `text` is exactly that notice; a model reply that only mentions a quota is not one.
  */
 export function antigravityQuotaNotice(text: string): string | undefined {
-  return ANTIGRAVITY_QUOTA_NOTICE.exec(text)?.[1]?.trim();
+  return ANTIGRAVITY_QUOTA_NOTICE.exec(text.trim())?.[1];
 }
 
 /** `Resets in 1d2h3m4s` as a time, if the notice says. */
