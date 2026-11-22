@@ -352,6 +352,8 @@ function resolveExecutable(command: string, env: NodeJS.ProcessEnv): string | un
  * stays silent for `quietMs` is over.
  */
 export interface AntigravityWakeTiming {
+  /** How long a prompt waits for agy's answer to ANTIGRAVITY_BARRIER_METHOD before it goes out anyway. */
+  barrierWaitMs?: number;
   pollMs?: number;
   quietMs?: number;
   settleMs?: number;
@@ -530,12 +532,26 @@ function newSubagentRuns(invoked: Map<string, AntigravityInvoke> = new Map()): A
 /** How many prompt digests Anima keeps to tell which prompt a Stop's loop ran for. */
 const ANTIGRAVITY_PROMPT_TAGS_KEPT = 64;
 
+/**
+ * A request agy does not know. agy writes its answer to a request after everything
+ * it wrote before reading it, and answers a method it does not know with an error
+ * (-32601 on agy 1.5.14, within a millisecond, also mid-prompt), so reading that
+ * answer means having read all agy wrote before it. The leading underscore marks
+ * an ACP extension method.
+ */
+const ANTIGRAVITY_BARRIER_METHOD = '_anima/barrier';
+
 /** A prompt Anima has written to agy and whose answer it has not read yet. */
 interface AntigravityPromptOnWire {
   /** This prompt's place in promptGeneration. */
   generation: number;
   /** The digest the Stop hook writes for this prompt's text; see antigravityInputTag. */
   inputTag?: string;
+  /**
+   * The prompt before had the same text, so the Stop of a loop from before this
+   * prompt carries this prompt's digest too.
+   */
+  repeatsPrevious?: boolean;
   sentAt: number;
   turn: AntigravityTurn;
 }
@@ -671,6 +687,8 @@ class AntigravityAcpController {
   private wake?: AntigravityWake;
   private wakePoll?: NodeJS.Timeout;
   private readonly wakeTiming: Required<AntigravityWakeTiming>;
+  /** agy left the last ANTIGRAVITY_BARRIER_METHOD request unanswered past barrierWaitMs. */
+  private barrierUnanswered = false;
   private configOptions: AcpSelectOption[] = [];
   private currentTurn?: AntigravityTurn;
   private initialized?: Promise<void>;
@@ -704,6 +722,7 @@ class AntigravityAcpController {
     if (options.hookEvents) this.hookEvents = new AntigravityHookEvents(options.hookEvents);
     if (options.hookKey) this.hookKey = options.hookKey;
     this.wakeTiming = {
+      barrierWaitMs: options.wakeTiming?.barrierWaitMs ?? 10_000,
       pollMs: options.wakeTiming?.pollMs ?? 1_000,
       quietMs: options.wakeTiming?.quietMs ?? 120_000,
       settleMs: options.wakeTiming?.settleMs ?? 2_000,
@@ -870,6 +889,41 @@ class AntigravityAcpController {
     while (this.outputPending()) await settledUnlessAborted(this.child.outputSettled!(), signal);
   }
 
+  /**
+   * Reads and handles everything agy wrote until now, also what is still unread:
+   * once the answer to ANTIGRAVITY_BARRIER_METHOD is read, so is all agy wrote before.
+   * Any answer will do; if agy has exited, writing the prompt fails as before. An agy
+   * that leaves the request unanswered for barrierWaitMs gets no more of them until
+   * that answer comes, so it holds up one prompt, not every one.
+   */
+  private async outputSoFarHandled(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw signal.reason ?? new Error('Drain wait aborted');
+    if (!this.barrierUnanswered) {
+      let answered = false;
+      const answer = this.rpc.request(ANTIGRAVITY_BARRIER_METHOD, {}).then(() => undefined, () => undefined).then(() => {
+        answered = true;
+        this.barrierUnanswered = false;
+      });
+      let timer: NodeJS.Timeout | undefined;
+      const waited = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, this.wakeTiming.barrierWaitMs);
+      });
+      try {
+        await settledUnlessAborted(Promise.race([answer, waited]), signal);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!answered) {
+        // The timer can fire before output already waiting is read, as when Anima's
+        // event loop was held, so what is there is read and handled before giving up.
+        await new Promise((resolve) => setImmediate(resolve));
+        await this.outputHandled(signal);
+        if (!answered) this.barrierUnanswered = true;
+      }
+    }
+    await this.outputHandled(signal);
+  }
+
   workSnapshot(): ProviderWorkSnapshot | undefined {
     if (!this.wake && !this.backgroundPending) return undefined;
     return { state: this.currentTurn || this.wake ? 'working' : 'background' };
@@ -1026,11 +1080,12 @@ class AntigravityAcpController {
       userInputLength: prompt.length,
     });
     // What agy wrote before this prompt belongs to the turn it was part of, so it
-    // is handled first. A Stop during that wait means the prompt is never sent;
-    // nothing between the check and the write yields. A stopped turn may already be
-    // gone (see cancelActiveTurn), so the check comes before any shared state.
+    // is read and handled first, however long Anima has left it unread. A Stop
+    // during that wait means the prompt is never sent; nothing between the check
+    // and the write yields. A stopped turn may already be gone (see
+    // cancelActiveTurn), so the check comes before any shared state.
     const signal = turn.input.signal;
-    const handled = await this.outputHandled(signal).then(() => true, () => false);
+    const handled = await this.outputSoFarHandled(signal).then(() => true, () => false);
     if (!handled || signal?.aborted) {
       await turn.input.effects.recordEvent({
         eventType: 'antigravity.turn.completed',
@@ -1101,9 +1156,12 @@ class AntigravityAcpController {
    */
   private sendPrompt(turn: AntigravityTurn, prompt: string): Promise<Record<string, unknown> | undefined> {
     this.recordWakeText(this.detachWake());
+    const inputTag = this.hookKey ? antigravityInputTag(this.hookKey, prompt) : undefined;
+    // promptGeneration is still the prompt written last.
+    const repeatsPrevious = inputTag !== undefined && this.promptTags.get(inputTag) === this.promptGeneration;
     const wire: AntigravityPromptOnWire = {
       generation: ++this.promptGeneration,
-      ...(this.hookKey ? { inputTag: antigravityInputTag(this.hookKey, prompt) } : {}),
+      ...(inputTag !== undefined ? { inputTag, repeatsPrevious } : {}),
       sentAt: Date.now(),
       turn,
     };
@@ -1129,7 +1187,13 @@ class AntigravityAcpController {
    * the prompt's Stop is the first own Stop after the send with this prompt's
    * input, or without digests the first own Stop after the send. Stops before it
    * end earlier loops; any after it end later loops and wait for the poll, however
-   * late the answer is read.
+   * late the answer is read. When the prompt before had the same text, that
+   * earlier Stop carries this prompt's input too. agy runs one loop at a time,
+   * runs its Stop before the next loop starts, and answers right after the
+   * prompt's Stop, so the prompt's Stop is then the last own Stop with its input
+   * so far. Should the answer be read so late that a later loop has also ended,
+   * that loop's Stop is taken: it holds the later state, and output of that loop
+   * read afterwards ends with the quiet period.
    */
   private promptAnswered(wire: AntigravityPromptOnWire): void {
     if (this.promptOnWire !== wire) return;
@@ -1138,7 +1202,8 @@ class AntigravityAcpController {
     // Tool calls still open went to the background; their updates now arrive outside a prompt.
     this.activeToolIds.clear();
     const sinceSend = (this.hookEvents?.pending() ?? []).filter((event) => event.at > wire.sentAt && this.isOwnStop(event));
-    const promptStop = sinceSend.find((event) => wire.inputTag !== undefined && event.input === wire.inputTag) ?? sinceSend[0];
+    const tagged = sinceSend.filter((event) => wire.inputTag !== undefined && event.input === wire.inputTag);
+    const promptStop = (wire.repeatsPrevious ? tagged.at(-1) : tagged[0]) ?? sinceSend[0];
     let reached = false;
     this.applyHookEvents((event) => {
       if (reached) return false;
