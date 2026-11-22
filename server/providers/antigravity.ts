@@ -73,6 +73,9 @@ const ANTIGRAVITY_AGENT_TOOLS = [
   'send_message',
 ];
 
+/** The tool name of agy's `invoke_subagent` call (titled `Run invoke_subagent`); see antigravityToolName. */
+const ANTIGRAVITY_INVOKE_SUBAGENT_TOOL = 'RunInvokeSubagent';
+
 /** Names the file the Stop hook appends to; one file per `agy acp` process. */
 const ANTIGRAVITY_HOOK_EVENTS_ENV = 'ANIMA_ANTIGRAVITY_HOOK_EVENTS';
 const ANTIGRAVITY_HOOK_KEY_ENV = 'ANIMA_ANTIGRAVITY_HOOK_KEY';
@@ -352,6 +355,8 @@ export interface AntigravityWakeTiming {
   pollMs?: number;
   quietMs?: number;
   settleMs?: number;
+  /** How long agy stays silent after its last subagent stopped before its background work counts as done. */
+  subagentsDoneMs?: number;
 }
 
 export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<AntigravityAcpController> {
@@ -386,7 +391,10 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
         transport: 'acp',
       },
       abort: async (signal) => {
-        await this.slot.get()?.cancelActiveTurn();
+        const controller = this.slot.get();
+        // agy is stopped only when it is working on this run; a turn it started on
+        // its own for an earlier item keeps going.
+        if (controller && !(await controller.cancelActiveTurn())) return;
         await this.slot.reset(signal);
       },
       turn: async () => {
@@ -490,6 +498,18 @@ interface AntigravityTurn {
 interface PendingTool {
   input?: Record<string, unknown>;
   name: string;
+}
+
+interface AntigravitySubagentRuns {
+  /** When a subagent Stop made `stopped` cover every call. */
+  doneAt?: number;
+  /** When Anima handled each `invoke_subagent` call. */
+  invokedAt: number[];
+  stopped: Set<string>;
+}
+
+function newSubagentRuns(invokedAt: number[] = []): AntigravitySubagentRuns {
+  return { invokedAt, stopped: new Set() };
 }
 
 /** A prompt Anima has written to agy and whose answer it has not read yet. */
@@ -611,6 +631,13 @@ class AntigravityAcpController {
   /** The input of the turn that left background work; turns agy starts on its own report here. */
   private observer?: AgentRuntimeInput;
   /**
+   * Subagents since the session's own conversation was last fully idle: when it made
+   * each `invoke_subagent` call, which subagent conversations have stopped since, and
+   * the Stop that made those cover every call, unless the session said more work was
+   * running after it. See subagentsDone.
+   */
+  private subagents: AntigravitySubagentRuns = newSubagentRuns();
+  /**
    * The turn whose `session/prompt` Anima has written and whose answer it has not
    * yet read, and when it was written. agy's updates belong to it only in that window.
    */
@@ -623,6 +650,8 @@ class AntigravityAcpController {
   private configOptions: AcpSelectOption[] = [];
   private currentTurn?: AntigravityTurn;
   private initialized?: Promise<void>;
+  /** Whether agy has started the session; until then it works only for the run that started it. */
+  private sessionReady = false;
   private latestUsage?: Record<string, unknown>;
   private readonly usageCaptureId = randomUUID();
   private usageSequence = 0;
@@ -654,6 +683,7 @@ class AntigravityAcpController {
       pollMs: options.wakeTiming?.pollMs ?? 1_000,
       quietMs: options.wakeTiming?.quietMs ?? 120_000,
       settleMs: options.wakeTiming?.settleMs ?? 2_000,
+      subagentsDoneMs: options.wakeTiming?.subagentsDoneMs ?? 10_000,
     };
     this.rpc = new AcpJsonRpcPeer(child, {
       label: 'Antigravity',
@@ -701,6 +731,9 @@ class AntigravityAcpController {
   ): Promise<void> {
     if (!this.initialized) {
       this.initialized = this.initializeSession(input, model?.trim() || undefined, reasoningEffort?.trim() || undefined)
+        .then(() => {
+          this.sessionReady = true;
+        })
         .catch((error) => {
           this.initialized = undefined;
           throw error;
@@ -729,17 +762,25 @@ class AntigravityAcpController {
     });
   }
 
-  async cancelActiveTurn(): Promise<void> {
+  /**
+   * Stops the active turn of a run whose signal has aborted, and says whether agy
+   * has to be stopped too. That is so only while agy works for the run: while it
+   * starts the session, or works on one of the turn's prompts. A run with no prompt
+   * on the wire sends none from here on (each send checks the signal first), and agy
+   * may meanwhile be running a turn it started on its own for an earlier item, so a
+   * cancel or a reset would stop that turn instead. A turn that does not end within
+   * 2s is left to the reset all the same.
+   */
+  async cancelActiveTurn(): Promise<boolean> {
     const turn = this.currentTurn;
-    if (!turn || !this.sessionId) return;
+    if (!turn) return !this.sessionReady;
     turn.acceptingFollowups = false;
     turn.followups.length = 0;
-    // With no prompt of this turn on the wire, agy is not working on it, and a cancel
-    // would stop a turn agy started on its own instead.
-    if (this.promptOnWire?.turn === turn) this.rpc.notify('session/cancel', { sessionId: this.sessionId });
+    const onWire = this.promptOnWire?.turn === turn;
+    if (onWire && this.sessionId) this.rpc.notify('session/cancel', { sessionId: this.sessionId });
     const completion = this.turnCompletion;
-    if (!completion) return;
-    await raceWithTimeout(completion.catch(() => undefined), 2_000, undefined);
+    const ended = !completion || await raceWithTimeout(completion.then(() => true, () => true), 2_000, false);
+    return onWire || !ended;
   }
 
   appendPrompt(prompt: string): boolean {
@@ -1202,10 +1243,20 @@ class AntigravityAcpController {
     if (this.exited) return;
     let stopped = false;
     for (const event of this.hookEvents?.take(ready) ?? []) {
-      if (!this.isOwnStop(event)) continue;
+      if (!this.isOwnStop(event)) {
+        this.noteSubagentStop(event);
+        continue;
+      }
       stopped = true;
       this.backgroundPending = event.fullyIdle === false;
-      if (!this.backgroundPending) this.observer = undefined;
+      if (this.backgroundPending) {
+        this.subagents.doneAt = undefined;
+      } else {
+        this.observer = undefined;
+        // A Stop can be applied after later output was handled; calls made after it start the next
+        // work. A call in the same millisecond stays: counting a call too many only waits longer.
+        this.subagents = newSubagentRuns(this.subagents.invokedAt.filter((at) => at >= event.at));
+      }
     }
     if (answered && this.backgroundPending) this.observer ??= answered;
     if (stopped && !this.promptOnWire) {
@@ -1217,6 +1268,42 @@ class AntigravityAcpController {
 
   private isOwnStop(event: AntigravityStopEvent): boolean {
     return event.hookEventName === 'Stop' && Boolean(this.sessionId) && event.conversationId === this.sessionId;
+  }
+
+  /** A subagent's conversation stopped; its run is over unless it says work of its own is still running. */
+  private noteSubagentStop(event: AntigravityStopEvent): void {
+    if (event.hookEventName !== 'Stop' || !event.conversationId) return;
+    const runs = this.subagents;
+    if (event.fullyIdle === false) {
+      runs.stopped.delete(event.conversationId);
+      runs.doneAt = undefined;
+      return;
+    }
+    runs.stopped.add(event.conversationId);
+    const invoked = runs.invokedAt.length;
+    if (invoked > 0 && runs.stopped.size >= invoked) runs.doneAt = event.at;
+  }
+
+  /**
+   * A subagent hands its report to the session before its own run ends, so the
+   * session can end the turn that reads the report with `fullyIdle: false` while
+   * the subagent is still finishing. When that was the last background work, agy
+   * runs no further loop and no Stop says the work is done. So the work counts as
+   * done once as many subagent conversations as `invoke_subagent` calls have
+   * stopped, the last of them after the session's last Stop; no tool call is
+   * still open (a command sent to the background); and agy has stayed silent for
+   * `subagentsDoneMs`. A turn agy starts in that time, or a prompt, ends with a
+   * Stop that decides instead.
+   */
+  private subagentsDone(now: number): boolean {
+    const doneAt = this.subagents.doneAt;
+    return this.backgroundPending
+      && doneAt !== undefined
+      && now - doneAt >= this.wakeTiming.subagentsDoneMs
+      && !this.wake
+      && !this.currentTurn
+      && !this.promptOnWire
+      && this.pendingTools.size === 0;
   }
 
   /** Ends the turn agy started on its own; tool calls still open in it went to the background. */
@@ -1293,6 +1380,10 @@ class AntigravityAcpController {
     if (this.wake && now - this.wake.lastUpdateAt >= this.wakeTiming.quietMs) {
       this.endWake();
       this.settleBackground();
+    } else if (this.subagentsDone(now)) {
+      this.backgroundPending = false;
+      this.subagents = newSubagentRuns();
+      this.settleBackground();
     }
   }
 
@@ -1306,6 +1397,7 @@ class AntigravityAcpController {
     const rawInput = toolInput(data) ?? pending?.input;
     if (!pending) {
       const name = antigravityToolName(data);
+      if (name === ANTIGRAVITY_INVOKE_SUBAGENT_TOOL) this.subagents.invokedAt.push(Date.now());
       this.activeToolIds.add(id);
       this.pendingTools.set(id, { ...(rawInput ? { input: rawInput } : {}), name });
       const summary = summarizeAntigravityToolCall(name, rawInput ?? {}, data);

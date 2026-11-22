@@ -79,6 +79,7 @@ const CONFIG_OPTIONS = [
  * - appendSystemPrompt: advertise `_meta.antigravity.systemPrompt.append`
  * - resume: 'ok' | 'missing'
  * - newError / promptError: JSON-RPC error objects
+ * - newHangs: session/new is never answered
  * - richTurn: emit permission request, thought, tool call and usage on the first prompt
  * - agents: 'none' lists no agents (an agy that cannot find Anima's agent), 'fail' exits 1,
  *   'hang' ignores SIGTERM and never answers (its pid goes to AGENTS_PID_PATH)
@@ -100,6 +101,18 @@ const CONFIG_OPTIONS = [
  *   Stop, the report's Stop is on disk and the answer and the report come in one write.
  *   WAKE_TRIGGER_PATH.stopped is written after the self-started turn's Stop. crossing: that Stop
  *   is still being written when the next prompt arrives, so it lands after that prompt's send.
+ *   A subagent's own conversation stops as its report starts (subagent 2 with REPORT-B.).
+ *   lateSubagentStop: it stops 50ms after the self-started turn, whose Stop still counts it as
+ *   running; invokeTwice: the first prompt invokes two subagents, and only one ever stops;
+ *   openTool: the self-started turn leaves a command running in the background; subagentBusy:
+ *   the subagent's Stop says work of its own is still running. wakeLeavesWork: the subagent stops
+ *   as usual, but the self-started turn's Stop says work is still running. invokeTitle: the title
+ *   of the first prompt's invoke_subagent call. subagentStops: [conversation, idle] Stops that
+ *   follow the self-started turn 50ms apart (with lateSubagentStop). earlierWork: before its
+ *   calls, the first prompt shows earlier work that has just ended: a subagent started by a call
+ *   Anima cannot tell apart and one started by invoke_subagent, their Stops, then the session's
+ *   own Stop, still being written when the prompt went out.
+ *   tailEnds: once 'tail-seen' is answered, wake 'joined' says REPORT-A. and stops.
  * - lateUsage: a usage update follows the answer of a plain prompt
  * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`. Stop runs
  * the Stop hooks in `<dir>/.agents/hooks.json` the way agy does: `sh -c`, synchronously,
@@ -154,6 +167,8 @@ const FAKE_AGY = [
   '  }',
   '}',
   'function startWake() {',
+  // The subagent's own conversation stops; its Stop says nothing about the session's work.
+  "  if (!scenario.lateSubagentStop) runStopHook('agy-subagent-1', true);",
   "  if (scenario.wake === 'joined') {",
   "    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Reading the report.' } });",
   "    update({ sessionUpdate: 'tool_call', toolCallId: 'agy-wake-read', title: 'Read report.md', kind: 'read', status: 'in_progress', locations: [{ path: '/work/report.md' }] });",
@@ -178,13 +193,18 @@ const FAKE_AGY = [
   "  update({ sessionUpdate: 'tool_call', toolCallId: 'agy-wake-tool', title: 'File notes/summary.md', kind: 'edit', status: 'in_progress', locations: [{ path: '/work/notes/summary.md' }] });",
   "  update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-wake-tool', status: 'completed' });",
   "  update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'SUMMARY SAVED' } });",
-  '  wakeDone = true;',
+  "  if (scenario.openTool) update({ sessionUpdate: 'tool_call', toolCallId: 'agy-bg-command', title: 'sleep 600', kind: 'execute', status: 'in_progress', rawInput: { command: 'sleep 600' } });",
+  '  wakeDone = !scenario.lateSubagentStop && !scenario.wakeLeavesWork;',
   "  update({ sessionUpdate: 'usage_update', used: 5000, size: 1048576 });",
   '  if (scenario.crossing) {',
   '    const input = lastUserInput;',
   '    pendingStop = () => runStopHook(sessionId, true, input);',
   '  } else {',
-  '    runStopHook(sessionId, true);',
+  '    runStopHook(sessionId, wakeDone);',
+  '  }',
+  '  if (scenario.lateSubagentStop) {',
+  "    const stops = scenario.subagentStops || [['agy-subagent-1', !scenario.subagentBusy]];",
+  '    stops.forEach(([conversationId, idle], index) => setTimeout(() => runStopHook(conversationId, idle), 50 * (index + 1)));',
   '  }',
   "  fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.stopped', '');",
   '}',
@@ -204,6 +224,12 @@ const FAKE_AGY = [
   "    fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg) + '\\n');",
   "    if (msg.id === 'permission-wake' && msg.result) {",
   '      finishWake();',
+  '      continue;',
+  '    }',
+  "    if (msg.id === 'tail-seen' && msg.result && scenario.tailEnds) {",
+  "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'REPORT-A.' } });",
+  "      update({ sessionUpdate: 'usage_update', used: 4200, size: 1048576 });",
+  '      runStopHook(sessionId, true);',
   '      continue;',
   '    }',
   "    if (msg.id === 'permission-1' && msg.result) {",
@@ -226,6 +252,7 @@ const FAKE_AGY = [
   '    }',
   "    if (msg.method === 'session/new') {",
   "      if (scenario.newError) { send({ jsonrpc: '2.0', id: msg.id, error: scenario.newError }); continue; }",
+  '      if (scenario.newHangs) continue;',
   "      sessionId = 'agy-session-new';",
   "      send({ jsonrpc: '2.0', id: msg.id, result: { sessionId, configOptions } });",
   '      continue;',
@@ -279,13 +306,24 @@ const FAKE_AGY = [
   '      }',
   '      if (scenario.hang) { pendingPromptId = msg.id; continue; }',
   '      if (scenario.wake && promptCount === 1) {',
-  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-1', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'reader' } });",
+  '        if (scenario.earlierWork) {',
+  "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-helper-0', title: 'Run start_helper', status: 'in_progress', rawInput: { Name: 'helper' } });",
+  "          update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-helper-0', status: 'completed' });",
+  "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-0', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'counter' } });",
+  "          update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-0', status: 'completed' });",
+  "          runStopHook('agy-helper-0', true);",
+  "          runStopHook('agy-subagent-0', true);",
+  "          runStopHook(sessionId, true, 'an earlier loop');",
+  '        }',
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-1', title: scenario.invokeTitle || 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'reader' } });",
   "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-1', status: 'completed' });",
+  '        if (scenario.invokeTwice) {',
+  "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-1b', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'writer' } });",
+  "          update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-1b', status: 'completed' });",
+  '        }',
   "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started a subagent.' } });",
   "        update({ sessionUpdate: 'usage_update', used: 3000, size: 1048576 });",
   '        runStopHook(sessionId, false);',
-  // A subagent's conversation stops too; its Stop says nothing about the session's work.
-  "        runStopHook('agy-subagent-1', true);",
   '        if (scenario.early) {',
   "          const report = { jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'EARLY REPORT.' } } } };",
   "          const answerAndReport = () => process.stdout.write([{ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }, report].map((value) => JSON.stringify(value)).join('\\n') + '\\n');",
@@ -344,6 +382,7 @@ const FAKE_AGY = [
   '        const second = setInterval(() => {',
   "          if (!fs.existsSync(process.env.WAKE_TRIGGER_PATH + '.second')) return;",
   '          clearInterval(second);',
+  "          runStopHook('agy-subagent-2', true);",
   "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'REPORT-B.' } });",
   "          update({ sessionUpdate: 'usage_update', used: 6500, size: 1048576 });",
   '          runStopHook(sessionId, true);',
@@ -1342,6 +1381,9 @@ test('antigravity-cli sends ACP cancel before tearing down an aborted turn', asy
       await assert.rejects(run, /Antigravity turn cancelled/);
       const cancel = (await readJsonLines(callsPath)).find((call) => call.method === 'session/cancel');
       assert.deepEqual(cancel?.params, { sessionId: 'agy-session-new' });
+      // agy was working on this run's prompt, so it is stopped too.
+      const active = runtime;
+      await pollUntil(() => active.health?.().child?.alive !== true, 5_000);
     });
   } finally {
     await runtime?.close?.();
@@ -1694,8 +1736,8 @@ test('antigravity-cli tells a Stop still being written when a prompt is sent fro
   }
 });
 
-for (const when of ['while it waits for output agy already sent', 'before that wait']) {
-  test(`antigravity-cli never sends a prompt stopped ${when}`, async () => {
+for (const when of ['while it waits for output agy already sent', 'before that wait', 'before its turn starts']) {
+  test(`antigravity-cli never sends a prompt stopped ${when}, and agy goes on with its own turn`, async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-stop-'));
     let runtime: AntigravityCliAgentRuntime | undefined;
     try {
@@ -1706,13 +1748,14 @@ for (const when of ['while it waits for output agy already sent', 'before that w
         const firstCtx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000042.000001');
         const secondCtx = await ingestAgyEvent(stateDir, 'A new question.', '1786000042.000002');
         runtime = new AntigravityCliAgentRuntime(
-          { env: agyEnv(stateDir, { wake: 'joined' }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+          { env: agyEnv(stateDir, { tailEnds: true, wake: 'joined' }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
           'agy',
           [],
           { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
         );
         const active = runtime;
         const waiting = when.startsWith('while');
+        const beforeTurn = when === 'before its turn starts';
         const firstInput = await runtimeInput(active, firstCtx, await loadState());
         const held = deferred();
         const release = deferred();
@@ -1744,11 +1787,19 @@ for (const when of ['while it waits for output agy already sent', 'before that w
             ...secondInput,
             effects: {
               ...secondInput.effects,
+              async persistProviderSession(session) {
+                // Stopped before the turn exists, so the turn never starts; agy is running item 1's turn.
+                if (beforeTurn) {
+                  stop.abort('operator_stop');
+                  started.resolve();
+                }
+                return secondInput.effects.persistProviderSession(session);
+              },
               async recordEvent(payload) {
                 const recorded = await secondInput.effects.recordEvent(payload);
                 if (payload['eventType'] === 'antigravity.turn.started') {
                   // Stopped before the wait: nothing is pending, so only the check before the write stops it.
-                  if (!waiting) stop.abort('operator_stop');
+                  if (!waiting && !beforeTurn) stop.abort('operator_stop');
                   started.resolve();
                 }
                 return recorded;
@@ -1756,6 +1807,8 @@ for (const when of ['while it waits for output agy already sent', 'before that w
             },
             signal: stop.signal,
           });
+          // A run stopped before its turn can end before the test gets here; it is checked below.
+          second.catch(() => undefined);
           await withTimeout(started.promise, 5_000);
           if (waiting) {
             await realDelay(100);
@@ -1763,10 +1816,20 @@ for (const when of ['while it waits for output agy already sent', 'before that w
           }
           // The stop ends the run while agy's earlier output is still being handled.
           await assert.rejects(withTimeout(second, 2_000), /cancelled/);
+          // agy is still running item 1's turn, so the stop leaves it running.
+          assert.equal(active.health().child?.alive, true);
         } finally {
           release.resolve();
         }
-        await pollUntil(() => active.health().child === undefined, 10_000);
+        if (!waiting) await writeFile(`${triggerPath}.tail`, '');
+        await withTimeout(active.waitForProviderQuiescent(), 5_000);
+        const texts = allActivities(await loadState())
+          .filter((activity) => activity.type === 'agent.text')
+          .map((activity) => ({ item: activity.payload?.['itemId'], text: activity.payload?.['text'] }));
+        assert.deepEqual(texts.filter((entry) => String(entry.text).includes('REPORT-A.')), [
+          { item: firstCtx.item.id, text: 'Reading the report.A-TAIL.REPORT-A.' },
+        ]);
+        assert.equal(active.health().child?.alive, true, 'the same agy finished the turn');
         const methods = methodsOf(await readJsonLines(callsPath));
         assert.equal(methods.filter((method) => method === 'session/prompt').length, 1, 'agy only ever got the first prompt');
         assert.equal(methods.includes('session/cancel'), false, 'nothing of the stopped run was on the wire to cancel');
@@ -1899,6 +1962,157 @@ for (const variant of [
           .map((activity) => activity.payload?.['itemId']);
         assert.deepEqual(itemOf('SUMMARY SAVED'), [firstCtx.item.id]);
         assert.deepEqual(itemOf('REPORT-B.'), [secondCtx.item.id]);
+      });
+    } finally {
+      await runtime?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
+test('antigravity-cli still ends a stopped run that is stuck before it sends its prompt', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-stop-stuck-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeAgy(stateDir);
+      const firstCtx = await ingestAgyEvent(stateDir, 'Hello.', '1786000044.000001');
+      const secondCtx = await ingestAgyEvent(stateDir, 'Hello again.', '1786000044.000002');
+      runtime = new AntigravityCliAgentRuntime({ env: agyEnv(stateDir, {}), kind: 'antigravity-cli' }, 'agy');
+      const active = runtime;
+      assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'reply 1');
+      const stop = new AbortController();
+      const stuck = deferred();
+      const release = deferred();
+      const secondInput = await runtimeInput(active, secondCtx, await loadState());
+      const second = active.run({
+        ...secondInput,
+        effects: {
+          ...secondInput.effects,
+          async recordEvent(payload) {
+            if (payload['eventType'] === 'antigravity.turn.started') {
+              stuck.resolve();
+              await release.promise;
+            }
+            return secondInput.effects.recordEvent(payload);
+          },
+        },
+        signal: stop.signal,
+      });
+      try {
+        await withTimeout(stuck.promise, 5_000);
+        stop.abort('operator_stop');
+        // The turn cannot end on its own, so after 2s agy is stopped, and that ends the run.
+        const ended = await withTimeout(second.then(() => 'resolved', () => 'rejected'), 5_000);
+        assert.equal(ended, 'rejected');
+        assert.notEqual(active.health().child?.alive, true);
+      } finally {
+        release.resolve();
+      }
+      assert.equal(methodsOf(await readJsonLines(callsPath)).filter((method) => method === 'session/prompt').length, 1);
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli stops agy when a run is stopped while agy starts its session', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-stop-session-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeAgy(stateDir);
+      const ctx = await ingestAgyEvent(stateDir, 'Hello.', '1786000045.000001');
+      runtime = new AntigravityCliAgentRuntime({ env: agyEnv(stateDir, { newHangs: true }), kind: 'antigravity-cli' }, 'agy');
+      const active = runtime;
+      const stop = new AbortController();
+      const run = active.run({ ...(await runtimeInput(active, ctx, await loadState())), signal: stop.signal });
+      await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/new"')));
+      stop.abort('operator_stop');
+      // agy never answers session/new; only stopping it ends the run.
+      const ended = await withTimeout(run.then(() => 'resolved', () => 'rejected'), 5_000);
+      assert.equal(ended, 'rejected');
+      assert.notEqual(active.health().child?.alive, true);
+      assert.equal(methodsOf(await readJsonLines(callsPath)).includes('session/prompt'), false);
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+for (const variant of [
+  { done: true, name: 'once its last subagent has stopped after the session went quiet' },
+  { done: false, invokeTwice: true, name: 'not while another subagent it invoked is still running' },
+  { done: false, name: 'not while a command it sent to the background is running', openTool: true },
+  { done: false, name: 'not while its subagent still has work of its own', subagentBusy: true },
+  { done: false, lateSubagentStop: false, name: 'not when the session says work goes on after its subagent stopped', wakeLeavesWork: true },
+  { done: false, invokeTitle: 'Run start_helper', name: 'not when it cannot tell which calls started subagents' },
+  { done: false, name: 'not when its subagent goes back to work after it stopped', subagentStops: [['agy-subagent-1', true], ['agy-subagent-1', false]] },
+  {
+    done: false,
+    invokeTwice: true,
+    name: 'not when the other subagent stops while the first is back at work',
+    subagentStops: [['agy-subagent-1', true], ['agy-subagent-1', false], ['agy-subagent-2', true]],
+  },
+  { done: true, earlierWork: true, name: 'once its last subagent has stopped, counting only calls after earlier work ended' },
+  { done: false, earlierWork: true, invokeTwice: true, name: 'not counting a subagent of earlier work as one of its own' },
+]) {
+  test(`antigravity-cli ends background work ${variant.name}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-late-'));
+    let runtime: AntigravityCliAgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const triggerPath = join(stateDir, 'wake-trigger');
+        await installFakeAgy(stateDir);
+        const ctx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000043.000001');
+        runtime = new AntigravityCliAgentRuntime(
+          {
+            env: agyEnv(
+              stateDir,
+              {
+                earlierWork: variant.earlierWork === true,
+                invokeTitle: variant.invokeTitle,
+                invokeTwice: variant.invokeTwice === true,
+                lateSubagentStop: variant.lateSubagentStop ?? true,
+                openTool: variant.openTool === true,
+                subagentBusy: variant.subagentBusy === true,
+                subagentStops: variant.subagentStops,
+                wake: true,
+                wakeLeavesWork: variant.wakeLeavesWork === true,
+              },
+              { WAKE_TRIGGER_PATH: triggerPath },
+            ),
+            kind: 'antigravity-cli',
+            providerChildIdleTimeoutMs: 200,
+          },
+          'agy',
+          [],
+          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100, subagentsDoneMs: 800 } },
+        );
+        const active = runtime;
+        assert.equal((await active.run(await runtimeInput(active, ctx, await loadState()))).text, 'Started a subagent.');
+        await writeFile(triggerPath, '');
+        await pollUntil(() => fileExists(`${triggerPath}.stopped`), 5_000);
+        await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+          activity.type === 'agent.text' && activity.payload?.['text'] === 'SUMMARY SAVED'), 5_000);
+        // The turn's Stop still counts the subagent as running; the subagent's own Stop lands just after.
+        await realDelay(400);
+        assert.deepEqual(active.health().providerWork, { state: 'background' });
+        assert.equal(active.health().child?.alive, true);
+        if (variant.done) {
+          await withTimeout(active.waitForProviderQuiescent(), 5_000);
+          assert.equal(active.health().providerWork, undefined);
+          await pollUntil(() => active.health().child === undefined, 5_000);
+        } else {
+          await realDelay(1_200);
+          assert.equal(active.isProviderQuiescent(), false);
+          assert.deepEqual(active.health().providerWork, { state: 'background' });
+          assert.equal(active.health().child?.alive, true);
+        }
       });
     } finally {
       await runtime?.close();
