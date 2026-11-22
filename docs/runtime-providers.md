@@ -663,9 +663,10 @@ Current process model:
   prompt and no end marker. To see where such a turn ends, the same directory holds
   `.agents/hooks.json`, which registers a `Stop` hook. `agy` runs it at the end of every execution
   loop: a prompt, a self-started turn, or a subagent's run. The hook appends the conversation id,
-  `fullyIdle`, and the termination reason (never the payload's last user input) to a per-launch
-  file under `events/`, named in the child's environment and removed when the child exits. Only
-  the session's own conversation counts. A Stop with `fullyIdle: false` keeps the controller
+  `fullyIdle`, the termination reason, and a keyed digest of the payload's last user input to a
+  per-launch file under `events/`, named in the child's environment and removed when the child
+  exits. The text itself is never written; the key is random per launch. Only the session's own
+  conversation counts. A Stop with `fullyIdle: false` keeps the controller
   non-quiescent and reports `providerWork` (`working` or `background`, without a count), so the
   idle reset and a restart drain wait for the background work as they do for Claude.
 - Output belongs to a prompt from the moment Anima writes the prompt until it reads `agy`'s
@@ -678,14 +679,24 @@ Current process model:
   The turn ends at its Stop, when Anima writes a prompt (the prompt joins it, so the output from
   then on goes to the new item), or after two minutes of silence, which also covers an `agy` that
   runs no hooks.
-- `agy` runs a prompt's Stop just before it answers, so the prompt's Stop is the first Stop of the
-  session's own conversation written after the prompt was sent. Reading the answer applies that
-  Stop and any earlier ones; later ones end later loops, however late the answer is read. Nothing
-  follows the Stop of a self-started turn, so Anima applies that one once it is two seconds old
-  and the output read before it has been handled; a Stop written after a prompt was sent waits
-  until that prompt's answer is read. Stops are applied one at a time: once one says the
-  background work is done, its reports are over, and the next turn that leaves work owns the next
-  ones.
+- `agy` runs a prompt's Stop just before it answers, so that Stop is on disk, after the send, when
+  Anima reads the answer. The last user input in a Stop is the prompt the loop ran for, or for a
+  self-started turn the prompt before it. A Stop that was still being written when the prompt went
+  out lands after the send too, but with the earlier input. So the prompt's Stop is the first Stop
+  of the session's own conversation after the send whose digest matches the prompt (the first one
+  after the send if none matches). Reading the answer applies that Stop and any earlier ones;
+  later ones end later loops, however late the answer is read. Nothing follows the Stop of a
+  self-started turn, so Anima applies that one once it is two seconds old and the output read
+  before it has been handled; a Stop written after a prompt was sent waits until that prompt's
+  answer is read. Stops are applied one at a time: once one says the background work is done, its
+  reports are over, and the next turn that leaves work owns the next ones.
+- Nothing on the wire separates two self-started turns, so when both end within those two
+  seconds, their text is recorded as one. And when a subagent's own run ends after the session's
+  last loop, that loop's Stop still counts it as running; Anima shows the background work until
+  `agy`'s next loop ends.
+- Stopping a run before its prompt is written ends the wait for earlier output, and the prompt
+  is never sent. With none of the run's prompts on the wire there is nothing in `agy` to cancel,
+  so Anima sends no `session/cancel`, which would stop a self-started turn instead.
 - The controller is not quiescent while output it has read is still being handled or a
   self-started turn's text is still being written, and it reports the child as finished only
   after that write, so a drain or `close` does not return before the report is stored.

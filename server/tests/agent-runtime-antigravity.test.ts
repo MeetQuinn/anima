@@ -20,6 +20,7 @@ import {
   antigravityToolName,
   parseAcpSelectOptions,
 } from '../providers/antigravity.js';
+import { antigravityInputTag } from '../providers/antigravity-input-tag.js';
 import { providerFailureReasonFromError } from '../providers/provider-failure.js';
 import { classifyProviderRetry, providerRateLimitResumeAt } from '../providers/provider-retry.js';
 import { isProviderRateLimitedError, runProviderWithCrashRetries } from '../runtime/provider-runner.js';
@@ -97,7 +98,8 @@ const CONFIG_OPTIONS = [
  *   second: the second prompt starts another subagent; once WAKE_TRIGGER_PATH.second exists,
  *   that one reports in a turn of its own. second 'slowLateRead': 400ms after the second prompt's
  *   Stop, the report's Stop is on disk and the answer and the report come in one write.
- *   WAKE_TRIGGER_PATH.stopped is written after the self-started turn's Stop.
+ *   WAKE_TRIGGER_PATH.stopped is written after the self-started turn's Stop. crossing: that Stop
+ *   is still being written when the next prompt arrives, so it lands after that prompt's send.
  * - lateUsage: a usage update follows the answer of a plain prompt
  * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`. Stop runs
  * the Stop hooks in `<dir>/.agents/hooks.json` the way agy does: `sh -c`, synchronously,
@@ -133,14 +135,18 @@ const FAKE_AGY = [
   'let promptCount = 0;',
   'let pendingPromptId;',
   'let wakeDone = false;',
+  // agy's Stop carries the conversation's last user input: the prompt a loop ran for, or for a
+  // turn agy starts on its own, the prompt before it. A subagent's carries none.
+  "let lastUserInput = '';",
+  'let pendingStop;',
   "function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }",
   "function update(value) { send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } }); }",
-  'function runStopHook(conversationId, fullyIdle) {',
+  "function runStopHook(conversationId, fullyIdle, input = conversationId !== sessionId ? '' : scenario.otherInput ? 'not the prompt' : lastUserInput) {",
   "  const at = argv.indexOf('--add-dir');",
   '  if (at < 0) return;',
   "  const hooksPath = path.join(argv[at + 1], '.agents', 'hooks.json');",
   '  if (!fs.existsSync(hooksPath)) return;',
-  "  const payload = JSON.stringify({ conversationId, continuationActive: false, executionNum: 0, fullyIdle, hookEventName: 'Stop', lastUserInput: 'private words', terminationReason: 'NO_TOOL_CALL' });",
+  "  const payload = JSON.stringify({ conversationId, continuationActive: false, executionNum: 0, fullyIdle, hookEventName: 'Stop', lastUserInput: input, terminationReason: 'NO_TOOL_CALL' });",
   "  for (const hooks of Object.values(JSON.parse(fs.readFileSync(hooksPath, 'utf8')))) {",
   '    for (const hook of hooks.Stop || []) {',
   "      require('child_process').spawnSync('sh', ['-c', hook.command], { cwd: path.dirname(hooksPath), env: process.env, input: payload });",
@@ -174,7 +180,12 @@ const FAKE_AGY = [
   "  update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'SUMMARY SAVED' } });",
   '  wakeDone = true;',
   "  update({ sessionUpdate: 'usage_update', used: 5000, size: 1048576 });",
-  '  runStopHook(sessionId, true);',
+  '  if (scenario.crossing) {',
+  '    const input = lastUserInput;',
+  '    pendingStop = () => runStopHook(sessionId, true, input);',
+  '  } else {',
+  '    runStopHook(sessionId, true);',
+  '  }',
   "  fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.stopped', '');",
   '}',
   'function select(category, value) {',
@@ -240,6 +251,7 @@ const FAKE_AGY = [
   '      continue;',
   '    }',
   "    if (msg.method === 'session/prompt') {",
+  "      lastUserInput = (msg.params.prompt || []).map((block) => block.text || '').join('');",
   "      if (scenario.promptError) { send({ jsonrpc: '2.0', id: msg.id, error: scenario.promptError }); continue; }",
   "      if (scenario.quotaError) { send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h30m.' } }); continue; }",
   "      const usage = { inputTokens: 100, outputTokens: 20, totalTokens: 120 };",
@@ -260,6 +272,11 @@ const FAKE_AGY = [
   "      }",
   "      if (scenario.exitOnPrompt) process.exit(0);",
   '      promptCount += 1;',
+  '      if (pendingStop) {',
+  '        const stop = pendingStop;',
+  '        pendingStop = undefined;',
+  '        stop();',
+  '      }',
   '      if (scenario.hang) { pendingPromptId = msg.id; continue; }',
   '      if (scenario.wake && promptCount === 1) {',
   "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-1', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'reader' } });",
@@ -386,7 +403,7 @@ test('antigravity-cli writes its system prompt as a custom agent that replaces t
   );
 });
 
-test('antigravity-cli registers a Stop hook that records only the conversation, idle state and reason', async () => {
+test('antigravity-cli registers a Stop hook that records only the conversation, idle state, reason and an input digest', async () => {
   assert.deepEqual(JSON.parse(antigravityHooksDefinition("/opt/node's/bin/node", '/dist/hook.js')), {
     anima: { Stop: [{ command: `'/opt/node'\\''s/bin/node' '/dist/hook.js'`, timeout: 10, type: 'command' }] },
   });
@@ -409,15 +426,22 @@ test('antigravity-cli registers a Stop hook that records only the conversation, 
     const run = (input: string, env: NodeJS.ProcessEnv) =>
       spawnSync('sh', ['-c', command], { encoding: 'utf8', env, input });
 
-    const recorded = run(payload, { ...process.env, ANIMA_ANTIGRAVITY_HOOK_EVENTS: events });
+    const key = 'a'.repeat(64);
+    const recorded = run(payload, { ...process.env, ANIMA_ANTIGRAVITY_HOOK_EVENTS: events, ANIMA_ANTIGRAVITY_HOOK_KEY: key });
     assert.equal(recorded.status, 0);
     assert.equal(recorded.stdout, '{}', 'the hook never blocks the stop');
     const [event, ...rest] = await readJsonLines(events);
     assert.equal(rest.length, 0);
-    assert.deepEqual(Object.keys(event ?? {}).sort(), ['at', 'conversationId', 'fullyIdle', 'hookEventName', 'terminationReason']);
+    assert.deepEqual(Object.keys(event ?? {}).sort(), ['at', 'conversationId', 'fullyIdle', 'hookEventName', 'input', 'terminationReason']);
     assert.equal(event?.conversationId, 'conv-1');
     assert.equal(event?.fullyIdle, false);
+    assert.equal(event?.input, antigravityInputTag(key, 'private words'));
+    assert.notEqual(antigravityInputTag(key, 'private words'), antigravityInputTag('b'.repeat(64), 'private words'));
     assert.doesNotMatch(await readFile(events, 'utf8'), /private/);
+    // Without a key the input is left out.
+    assert.equal(run(payload, { ...process.env, ANIMA_ANTIGRAVITY_HOOK_EVENTS: events }).status, 0);
+    const unkeyed = (await readJsonLines(events))[1];
+    assert.deepEqual(Object.keys(unkeyed ?? {}).sort(), ['at', 'conversationId', 'fullyIdle', 'hookEventName', 'terminationReason']);
 
     const { ANIMA_ANTIGRAVITY_HOOK_EVENTS: _unset, ...withoutTarget } = process.env;
     for (const [input, env] of [['not json', { ...process.env, ANIMA_ANTIGRAVITY_HOOK_EVENTS: events }], [payload, withoutTarget]] as const) {
@@ -425,7 +449,7 @@ test('antigravity-cli registers a Stop hook that records only the conversation, 
       assert.equal(result.status, 0);
       assert.equal(result.stdout, '{}');
     }
-    assert.equal((await readJsonLines(events)).length, 1);
+    assert.equal((await readJsonLines(events)).length, 2);
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
@@ -1625,6 +1649,135 @@ test('antigravity-cli leaves a later Stop to the poll while a prompt waits for i
   }
 });
 
+test('antigravity-cli tells a Stop still being written when a prompt is sent from that prompt\'s own', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-crossing-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const triggerPath = join(stateDir, 'wake-trigger');
+      await installFakeAgy(stateDir);
+      const firstCtx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000041.000001');
+      const secondCtx = await ingestAgyEvent(stateDir, 'Delegate more.', '1786000041.000002');
+      runtime = new AntigravityCliAgentRuntime(
+        {
+          env: agyEnv(stateDir, { crossing: true, second: true, wake: true }, { WAKE_TRIGGER_PATH: triggerPath }),
+          kind: 'antigravity-cli',
+          providerChildIdleTimeoutMs: 200,
+        },
+        'agy',
+        [],
+        { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+      );
+      const active = runtime;
+      assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'Started a subagent.');
+      await writeFile(triggerPath, '');
+      await pollUntil(() => fileExists(`${triggerPath}.stopped`), 5_000);
+      // The first item's report is out, but its Stop (work done) lands only after the second
+      // prompt is sent, just before that prompt's own Stop (a new subagent is running).
+      assert.equal((await active.run(await runtimeInput(active, secondCtx, await loadState()))).text, 'Started another subagent.');
+      assert.equal(active.isProviderQuiescent(), false);
+      assert.deepEqual(active.health().providerWork, { state: 'background' });
+      await realDelay(500);
+      assert.equal(active.health().child?.alive, true, 'the idle reset waits for the second subagent');
+      await writeFile(`${triggerPath}.second`, '');
+      await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
+      const activities = allActivities(await loadState());
+      const itemOf = (text: string) => activities
+        .filter((activity) => activity.type === 'agent.text' && activity.payload?.['text'] === text)
+        .map((activity) => activity.payload?.['itemId']);
+      assert.deepEqual(itemOf('SUMMARY SAVED'), [firstCtx.item.id]);
+      assert.deepEqual(itemOf('REPORT-B.'), [secondCtx.item.id]);
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+for (const when of ['while it waits for output agy already sent', 'before that wait']) {
+  test(`antigravity-cli never sends a prompt stopped ${when}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-stop-'));
+    let runtime: AntigravityCliAgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const callsPath = join(stateDir, 'calls.jsonl');
+        const triggerPath = join(stateDir, 'wake-trigger');
+        await installFakeAgy(stateDir);
+        const firstCtx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000042.000001');
+        const secondCtx = await ingestAgyEvent(stateDir, 'A new question.', '1786000042.000002');
+        runtime = new AntigravityCliAgentRuntime(
+          { env: agyEnv(stateDir, { wake: 'joined' }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+          'agy',
+          [],
+          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+        );
+        const active = runtime;
+        const waiting = when.startsWith('while');
+        const firstInput = await runtimeInput(active, firstCtx, await loadState());
+        const held = deferred();
+        const release = deferred();
+        assert.equal((await active.run({
+          ...firstInput,
+          effects: {
+            ...firstInput.effects,
+            async recordToolStarted(payload) {
+              if (waiting && payload['providerToolId'] === 'agy-tail-tool') {
+                held.resolve();
+                await release.promise;
+              }
+              return firstInput.effects.recordToolStarted(payload);
+            },
+          },
+        })).text, 'Started a subagent.');
+        await writeFile(triggerPath, '');
+        await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+          activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-wake-read'), 5_000);
+        const stop = new AbortController();
+        const started = deferred();
+        const secondInput = await runtimeInput(active, secondCtx, await loadState());
+        try {
+          if (waiting) {
+            await writeFile(`${triggerPath}.tail`, '');
+            await withTimeout(held.promise, 5_000);
+          }
+          const second = active.run({
+            ...secondInput,
+            effects: {
+              ...secondInput.effects,
+              async recordEvent(payload) {
+                const recorded = await secondInput.effects.recordEvent(payload);
+                if (payload['eventType'] === 'antigravity.turn.started') {
+                  // Stopped before the wait: nothing is pending, so only the check before the write stops it.
+                  if (!waiting) stop.abort('operator_stop');
+                  started.resolve();
+                }
+                return recorded;
+              },
+            },
+            signal: stop.signal,
+          });
+          await withTimeout(started.promise, 5_000);
+          if (waiting) {
+            await realDelay(100);
+            stop.abort('operator_stop');
+          }
+          // The stop ends the run while agy's earlier output is still being handled.
+          await assert.rejects(withTimeout(second, 2_000), /cancelled/);
+        } finally {
+          release.resolve();
+        }
+        await pollUntil(() => active.health().child === undefined, 10_000);
+        const methods = methodsOf(await readJsonLines(callsPath));
+        assert.equal(methods.filter((method) => method === 'session/prompt').length, 1, 'agy only ever got the first prompt');
+        assert.equal(methods.includes('session/cancel'), false, 'nothing of the stopped run was on the wire to cancel');
+      });
+    } finally {
+      await runtime?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
 test('antigravity-cli handles what agy has already said before it sends the next prompt', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-boundary-'));
   let runtime: AntigravityCliAgentRuntime | undefined;
@@ -1698,6 +1851,13 @@ test('antigravity-cli handles what agy has already said before it sends the next
 for (const variant of [
   // The first report's Stop is still waiting for the poll when the second item runs.
   { name: 'before the first report has settled', settled: false, timing: { pollMs: 20, quietMs: 300, settleMs: 60_000 } },
+  // An agy whose Stops carry input other than the prompt: the first own Stop after the send is the prompt's.
+  {
+    name: 'before the first report has settled, with Stops that never match the prompt',
+    otherInput: true,
+    settled: false,
+    timing: { pollMs: 20, quietMs: 300, settleMs: 60_000 },
+  },
   { name: 'after the first report has settled', settled: true, timing: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
 ]) {
   test(`antigravity-cli gives a second item's report to that item when it delegates ${variant.name}`, async () => {
@@ -1710,7 +1870,14 @@ for (const variant of [
         const firstCtx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000035.000001');
         const secondCtx = await ingestAgyEvent(stateDir, 'Delegate more.', '1786000035.000002');
         runtime = new AntigravityCliAgentRuntime(
-          { env: agyEnv(stateDir, { second: true, wake: true }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+          {
+            env: agyEnv(
+              stateDir,
+              { otherInput: variant.otherInput === true, second: true, wake: true },
+              { WAKE_TRIGGER_PATH: triggerPath },
+            ),
+            kind: 'antigravity-cli',
+          },
           'agy',
           [],
           { wake: variant.timing },
