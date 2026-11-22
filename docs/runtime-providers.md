@@ -695,11 +695,16 @@ Current process model:
   loop that reads the report with `fullyIdle: false` and then run no further loop: no Stop of the
   session says the work is done. Anima therefore counts the `invoke_subagent` calls since the
   session was last idle, leaving out calls that failed (they started no subagent), and the
-  subagent conversations whose Stop says they are idle. A call belongs to the loop `agy` wrote it
-  in, so Anima dates it by when it read the call, not when it handled it. Once every
-  subagent the session invoked has stopped, the last of them after the session's last Stop, no
-  tool call is still open, and `agy` has then been silent for 10 seconds, the background work
-  counts as done. A subagent Stop with `fullyIdle: false` takes that subagent off the count again.
+  subagent conversations whose Stop says they are idle. A call belongs to the last prompt Anima
+  wrote before it handled the call: Anima writes a prompt only once it has handled everything it
+  has read, so a call of an earlier prompt never counts toward a later one, however late Anima
+  reads it. A Stop that says the session is idle clears the calls of the prompt that Stop carries
+  and of earlier prompts. If the Stop's input matches no prompt Anima wrote, it clears the calls
+  Anima read before the Stop. Once every subagent the session invoked has stopped, the last of
+  them after the session's last Stop, no tool call is still open, and `agy` has then been silent
+  for 10 seconds, the background work counts as done. That holds when a failed call leaves the
+  count complete, too. A subagent Stop with `fullyIdle: false` takes that subagent off the count
+  again.
   In every other case (a command sent to the background still runs, the last subagent stopped
   before the session's last Stop, or the counts never match) the background work stays until
   `agy`'s next loop ends.

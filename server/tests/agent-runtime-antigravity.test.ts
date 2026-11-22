@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,6 +117,17 @@ const CONFIG_OPTIONS = [
  *   'afterStop': the call is still open when the prompt ends and fails 350ms after the subagent Stops.
  *   tailEnds: once 'tail-seen' is answered, wake 'joined' says REPORT-A. and stops.
  * - lateUsage: a usage update follows the answer of a plain prompt
+ * - doneFirst: the first prompt invokes subagent a, which stops before the prompt's own Stop
+ *   says the session is idle (then WAKE_TRIGGER_PATH.a-idle is written); 'report': the prompt
+ *   ends with Stop(false), and 50ms later a stops and the session reports in a turn of its own
+ *   whose Stop says it is idle. The second prompt invokes subagent b, ends with Stop(false), and
+ *   b stops 50ms later. Each prompt's text goes to WAKE_TRIGGER_PATH.prompt1 and .prompt2.
+ *   readLate: before its call, the first prompt writes WAKE_TRIGGER_PATH.about and waits for
+ *   WAKE_TRIGGER_PATH.reading.
+ * - failsAround 'before' | 'after': the first prompt makes an invoke_subagent call that fails,
+ *   then starts subagent 1, which stops before the prompt's Stop(false). The call fails before
+ *   those Stops, or 100ms after the answer. Once WAKE_TRIGGER_PATH exists, the session says
+ *   FINAL REPORT. and stops idle.
  * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`. Stop runs
  * the Stop hooks in `<dir>/.agents/hooks.json` the way agy does: `sh -c`, synchronously,
  * with the hook payload on stdin.
@@ -311,6 +323,70 @@ const FAKE_AGY = [
   '        stop();',
   '      }',
   '      if (scenario.hang) { pendingPromptId = msg.id; continue; }',
+  '      if (scenario.doneFirst && promptCount === 1) {',
+  "        fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.prompt1', lastUserInput);",
+  "        update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Delegating.' } });",
+  '        if (scenario.readLate) {',
+  "          fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.about', '');",
+  '          const end = Date.now() + 5000;',
+  "          while (!fs.existsSync(process.env.WAKE_TRIGGER_PATH + '.reading')) {",
+  "            if (Date.now() > end) throw new Error('nobody is reading');",
+  '            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);',
+  '          }',
+  '        }',
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-a', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'reader' } });",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-a', status: 'completed' });",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'The reader is done.' } });",
+  "        update({ sessionUpdate: 'usage_update', used: 3000, size: 1048576 });",
+  "        if (scenario.doneFirst === 'report') {",
+  '          runStopHook(sessionId, false);',
+  "          send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  '          setTimeout(() => {',
+  "            runStopHook('agy-subagent-a', true);",
+  "            update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'REPORT-A.' } });",
+  "            update({ sessionUpdate: 'usage_update', used: 3500, size: 1048576 });",
+  '            runStopHook(sessionId, true);',
+  "            fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.a-idle', '');",
+  '          }, 50);',
+  '          continue;',
+  '        }',
+  "        runStopHook('agy-subagent-a', true);",
+  '        runStopHook(sessionId, true);',
+  "        fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.a-idle', '');",
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  '        continue;',
+  '      }',
+  '      if (scenario.doneFirst && promptCount === 2) {',
+  "        fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.prompt2', lastUserInput);",
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-b', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'writer' } });",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-b', status: 'completed' });",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started another subagent.' } });",
+  "        update({ sessionUpdate: 'usage_update', used: 4000, size: 1048576 });",
+  '        runStopHook(sessionId, false);',
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  "        setTimeout(() => runStopHook('agy-subagent-b', true), 50);",
+  '        continue;',
+  '      }',
+  '      if (scenario.failsAround && promptCount === 1) {',
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-x', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'nobody' } });",
+  "        if (scenario.failsAround === 'before') failInvoke();",
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-1', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'reader' } });",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-1', status: 'completed' });",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started a subagent.' } });",
+  "        update({ sessionUpdate: 'usage_update', used: 3000, size: 1048576 });",
+  "        runStopHook('agy-subagent-1', true);",
+  '        runStopHook(sessionId, false);',
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  "        if (scenario.failsAround === 'after') setTimeout(failInvoke, 100);",
+  '        const finish = setInterval(() => {',
+  '          if (!fs.existsSync(process.env.WAKE_TRIGGER_PATH)) return;',
+  '          clearInterval(finish);',
+  "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'FINAL REPORT.' } });",
+  "          update({ sessionUpdate: 'usage_update', used: 3500, size: 1048576 });",
+  '          runStopHook(sessionId, true);',
+  '        }, 10);',
+  '        continue;',
+  '      }',
   '      if (scenario.wake && promptCount === 1) {',
   '        if (scenario.earlierWork) {',
   "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-helper-0', title: 'Run start_helper', status: 'in_progress', rawInput: { Name: 'helper' } });",
@@ -2229,6 +2305,122 @@ for (const variant of [
           assert.deepEqual(active.health().providerWork, { state: 'background' });
           assert.equal(active.health().child?.alive, true);
         }
+      });
+    } finally {
+      await runtime?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
+for (const variant of [
+  { late: false, name: 'read on time' },
+  { late: true, name: 'read only after that prompt\'s Stop said the session was idle' },
+  { late: true, name: 'read only after the session\'s own turn said it was idle', report: true },
+  // The second prompt is the first one's text again (so the self-started turn's Stop carries
+  // its digest), and that Stop is applied only when the second answer is read.
+  { late: false, name: 'with the same text, ended by a turn of agy\'s own', report: true, sameText: true },
+]) {
+  test(`antigravity-cli ends the next prompt's background work once its subagent stops, not counting a call of an earlier prompt ${variant.name}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-rounds-'));
+    let runtime: AntigravityCliAgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const triggerPath = join(stateDir, 'wake-trigger');
+        const late = variant.late;
+        await installFakeAgy(stateDir);
+        const firstCtx = await ingestAgyEvent(stateDir, 'Have the reader check.', '1786000047.000001');
+        const secondCtx = await ingestAgyEvent(stateDir, 'Have the writer start.', '1786000047.000002');
+        runtime = new AntigravityCliAgentRuntime(
+          {
+            env: agyEnv(stateDir, { doneFirst: variant.report ? 'report' : true, readLate: late }, { WAKE_TRIGGER_PATH: triggerPath }),
+            kind: 'antigravity-cli',
+            providerChildIdleTimeoutMs: 200,
+          },
+          'agy',
+          [],
+          { wake: { pollMs: 20, quietMs: 60_000, settleMs: variant.sameText ? 1_000 : 100, subagentsDoneMs: 800 } },
+        );
+        const active = runtime;
+        const firstInput = await runtimeInput(active, firstCtx, await loadState());
+        let idleWhenHandled: boolean | undefined;
+        const first = active.run({
+          ...firstInput,
+          effects: {
+            ...firstInput.effects,
+            async recordToolStarted(payload) {
+              if (payload['providerToolId'] === 'agy-invoke-a') idleWhenHandled = await fileExists(`${triggerPath}.a-idle`);
+              return firstInput.effects.recordToolStarted(payload);
+            },
+          },
+        });
+        if (late) {
+          await pollUntil(() => fileExists(`${triggerPath}.about`), 5_000);
+          // Anima reads nothing more until the prompt's Stop, saying the session is idle, is on disk.
+          writeFileSync(`${triggerPath}.reading`, '');
+          const end = Date.now() + 5_000;
+          while (!existsSync(`${triggerPath}.a-idle`) && Date.now() < end) {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+          }
+        }
+        assert.equal((await first).text, 'The reader is done.');
+        if (late) assert.equal(idleWhenHandled, true);
+        if (variant.report) {
+          await pollUntil(() => fileExists(`${triggerPath}.a-idle`), 5_000);
+          if (late) await pollUntil(() => active.health().providerWork === undefined, 5_000);
+        }
+        if (!variant.sameText) assert.equal(active.health().providerWork, undefined);
+        const secondInput = await runtimeInput(active, secondCtx, await loadState());
+        const second = variant.sameText ? { ...secondInput, prompt: firstInput.prompt, systemPrompt: firstInput.systemPrompt } : secondInput;
+        assert.equal((await active.run(second)).text, 'Started another subagent.');
+        if (variant.sameText) assert.equal(await readFile(`${triggerPath}.prompt2`, 'utf8'), await readFile(`${triggerPath}.prompt1`, 'utf8'));
+        assert.deepEqual(active.health().providerWork, { state: 'background' });
+        await withTimeout(active.waitForProviderQuiescent(), 5_000);
+        assert.equal(active.health().providerWork, undefined);
+        await pollUntil(() => active.health().child === undefined, 5_000);
+      });
+    } finally {
+      await runtime?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
+for (const failure of ['before', 'after'] as const) {
+  test(`antigravity-cli keeps background work for the session's report when an invoke_subagent call fails ${failure} the subagent's and the session's Stops`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-fail-'));
+    let runtime: AntigravityCliAgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const triggerPath = join(stateDir, 'wake-trigger');
+        await installFakeAgy(stateDir);
+        const ctx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000048.000001');
+        runtime = new AntigravityCliAgentRuntime(
+          {
+            env: agyEnv(stateDir, { failsAround: failure }, { WAKE_TRIGGER_PATH: triggerPath }),
+            kind: 'antigravity-cli',
+            providerChildIdleTimeoutMs: 200,
+          },
+          'agy',
+          [],
+          { wake: { pollMs: 20, quietMs: 150, settleMs: 100, subagentsDoneMs: 800 } },
+        );
+        const active = runtime;
+        assert.equal((await active.run(await runtimeInput(active, ctx, await loadState()))).text, 'Started a subagent.');
+        await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+          activity.type === 'tool.call.failed' && activity.payload?.['providerToolId'] === 'agy-invoke-x'), 5_000);
+        // The subagent stopped before the session's last Stop, which said work goes on: the
+        // session still owes its report, however long the silence.
+        await realDelay(1_500);
+        assert.deepEqual(active.health().providerWork, { state: 'background' });
+        assert.equal(active.health().child?.alive, true);
+        await writeFile(triggerPath, '');
+        const reported = async () => allActivities(await loadState())
+          .filter((activity) => activity.type === 'agent.text' && activity.payload?.['text'] === 'FINAL REPORT.')
+          .map((activity) => activity.payload?.['itemId']);
+        await pollUntil(async () => (await reported()).length > 0, 5_000);
+        assert.deepEqual(await reported(), [ctx.item.id]);
+        await withTimeout(active.waitForProviderQuiescent(), 5_000);
       });
     } finally {
       await runtime?.close();

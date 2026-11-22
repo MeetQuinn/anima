@@ -500,24 +500,40 @@ interface PendingTool {
   name: string;
 }
 
+/** An `invoke_subagent` call, and when Anima read it. */
+interface AntigravityInvoke {
+  /**
+   * The last prompt Anima had written when it handled the call (see promptGeneration).
+   * Anima writes a prompt only once it has handled all it has read, so this is the
+   * prompt whose loop made the call, or for a loop agy started on its own the prompt
+   * before it: the prompt that loop's Stop carries.
+   */
+  generation: number;
+  /** When the chunk holding the call was read from agy. */
+  readAt: number;
+}
+
 interface AntigravitySubagentRuns {
   /** When `stopped` came to cover every call. */
   doneAt?: number;
-  /**
-   * `invoke_subagent` calls that have not failed, by tool call id, each with when
-   * Anima read it from agy. agy writes a call before the Stop that ends its loop,
-   * so this time stays before that Stop however late Anima handles the call.
-   */
-  invoked: Map<string, number>;
+  /** `invoke_subagent` calls that have not failed, by tool call id. */
+  invoked: Map<string, AntigravityInvoke>;
   stopped: Set<string>;
+  /** Whether a subagent's Stop came after the session's last one. */
+  subagentStoppedLast?: boolean;
 }
 
-function newSubagentRuns(invoked: Map<string, number> = new Map()): AntigravitySubagentRuns {
+function newSubagentRuns(invoked: Map<string, AntigravityInvoke> = new Map()): AntigravitySubagentRuns {
   return { invoked, stopped: new Set() };
 }
 
+/** How many prompt digests Anima keeps to tell which prompt a Stop's loop ran for. */
+const ANTIGRAVITY_PROMPT_TAGS_KEPT = 64;
+
 /** A prompt Anima has written to agy and whose answer it has not read yet. */
 interface AntigravityPromptOnWire {
+  /** This prompt's place in promptGeneration. */
+  generation: number;
   /** The digest the Stop hook writes for this prompt's text; see antigravityInputTag. */
   inputTag?: string;
   sentAt: number;
@@ -635,12 +651,16 @@ class AntigravityAcpController {
   /** The input of the turn that left background work; turns agy starts on its own report here. */
   private observer?: AgentRuntimeInput;
   /**
-   * Subagents since the session's own conversation was last fully idle: when it made
-   * each `invoke_subagent` call, which subagent conversations have stopped since, and
+   * Subagents since the session's own conversation was last fully idle: its
+   * `invoke_subagent` calls, which subagent conversations have stopped since, and
    * the Stop that made those cover every call, unless the session said more work was
    * running after it. See subagentsDone.
    */
   private subagents: AntigravitySubagentRuns = newSubagentRuns();
+  /** How many prompts Anima has written to agy. */
+  private promptGeneration = 0;
+  /** The last prompt written with each digest, for the recent ones. */
+  private readonly promptTags = new Map<string, number>();
   /**
    * The turn whose `session/prompt` Anima has written and whose answer it has not
    * yet read, and when it was written. agy's updates belong to it only in that window.
@@ -1082,10 +1102,16 @@ class AntigravityAcpController {
   private sendPrompt(turn: AntigravityTurn, prompt: string): Promise<Record<string, unknown> | undefined> {
     this.recordWakeText(this.detachWake());
     const wire: AntigravityPromptOnWire = {
+      generation: ++this.promptGeneration,
       ...(this.hookKey ? { inputTag: antigravityInputTag(this.hookKey, prompt) } : {}),
       sentAt: Date.now(),
       turn,
     };
+    if (wire.inputTag !== undefined) {
+      this.promptTags.delete(wire.inputTag);
+      this.promptTags.set(wire.inputTag, wire.generation);
+      if (this.promptTags.size > ANTIGRAVITY_PROMPT_TAGS_KEPT) this.promptTags.delete(this.promptTags.keys().next().value!);
+    }
     this.promptOnWire = wire;
     return this.rpc.request(
       'session/prompt',
@@ -1118,7 +1144,7 @@ class AntigravityAcpController {
       if (reached) return false;
       reached = event === promptStop;
       return true;
-    }, wire.turn.input);
+    }, wire.turn.input, { generation: wire.generation, promptStop });
   }
 
   private handleAgentRequest(message: Record<string, unknown>): void {
@@ -1246,9 +1272,13 @@ class AntigravityAcpController {
    * execution loop that was running, so a turn agy started on its own is over,
    * and `fullyIdle` says whether background work remains. Work that is done has
    * nothing left to report, so the next turn that leaves work, `answered`, owns
-   * the reports.
+   * the reports. `answering` is the prompt whose answer is being read, and its Stop.
    */
-  private applyHookEvents(ready: (event: AntigravityStopEvent) => boolean, answered?: AgentRuntimeInput): void {
+  private applyHookEvents(
+    ready: (event: AntigravityStopEvent) => boolean,
+    answered?: AgentRuntimeInput,
+    answering?: { generation: number; promptStop?: AntigravityStopEvent },
+  ): void {
     if (this.exited) return;
     let stopped = false;
     for (const event of this.hookEvents?.take(ready) ?? []) {
@@ -1260,12 +1290,16 @@ class AntigravityAcpController {
       this.backgroundPending = event.fullyIdle === false;
       if (this.backgroundPending) {
         this.subagents.doneAt = undefined;
+        this.subagents.subagentStoppedLast = false;
       } else {
         this.observer = undefined;
-        // A Stop can be applied after later output was handled; calls agy wrote after it start
-        // the next work. A call read in the same millisecond stays: counting a call too many
-        // only waits longer.
-        this.subagents = newSubagentRuns(new Map([...this.subagents.invoked].filter(([, at]) => at >= event.at)));
+        // A Stop can be applied after later output was handled; calls of later prompts
+        // start the next work. Without a prompt for the Stop, agy writes a call before
+        // the Stop that ends its loop; a call read in the same millisecond stays, as
+        // counting a call too many only waits longer.
+        const generation = this.stopGeneration(event, answering);
+        const later = (call: AntigravityInvoke) => generation === undefined ? call.readAt >= event.at : call.generation > generation;
+        this.subagents = newSubagentRuns(new Map([...this.subagents.invoked].filter(([, call]) => later(call))));
       }
     }
     if (answered && this.backgroundPending) this.observer ??= answered;
@@ -1274,6 +1308,22 @@ class AntigravityAcpController {
       if (!this.backgroundPending) this.pendingTools.clear();
     }
     this.settleBackground();
+  }
+
+  /**
+   * The prompt whose loops an own Stop ends: the answered prompt for its own Stop,
+   * else the last prompt written with the Stop's input. A Stop applied before a
+   * prompt's own ends loops from before that prompt. Undefined when the input
+   * matches no prompt Anima wrote (no digests, or a prompt from before).
+   */
+  private stopGeneration(
+    event: AntigravityStopEvent,
+    answering?: { generation: number; promptStop?: AntigravityStopEvent },
+  ): number | undefined {
+    if (answering && event === answering.promptStop) return answering.generation;
+    const matched = event.input === undefined ? undefined : this.promptTags.get(event.input);
+    const before = answering ?? this.promptOnWire;
+    return matched === undefined || !before ? matched : Math.min(matched, before.generation - 1);
   }
 
   private isOwnStop(event: AntigravityStopEvent): boolean {
@@ -1290,13 +1340,18 @@ class AntigravityAcpController {
       return;
     }
     runs.stopped.add(event.conversationId);
+    runs.subagentStoppedLast = true;
     if (this.subagentsAllStopped()) runs.doneAt = event.at;
   }
 
-  /** A failed `invoke_subagent` call started no subagent, so no Stop is owed for it. */
+  /**
+   * A failed `invoke_subagent` call started no subagent, so no Stop is owed for it.
+   * If the subagents that did start have all stopped, the work is done only when
+   * the last of them stopped after the session's last Stop, as for subagentsDone.
+   */
   private noteFailedInvoke(id: string, at: number): void {
     const runs = this.subagents;
-    if (runs.invoked.delete(id) && this.subagentsAllStopped()) runs.doneAt ??= at;
+    if (runs.invoked.delete(id) && runs.subagentStoppedLast && this.subagentsAllStopped()) runs.doneAt ??= at;
   }
 
   private subagentsAllStopped(): boolean {
@@ -1418,7 +1473,7 @@ class AntigravityAcpController {
     const readAt = this.child.outputReadAt?.() ?? Date.now();
     if (!pending) {
       const name = antigravityToolName(data);
-      if (name === ANTIGRAVITY_INVOKE_SUBAGENT_TOOL) this.subagents.invoked.set(id, readAt);
+      if (name === ANTIGRAVITY_INVOKE_SUBAGENT_TOOL) this.subagents.invoked.set(id, { generation: this.promptGeneration, readAt });
       this.activeToolIds.add(id);
       this.pendingTools.set(id, { ...(rawInput ? { input: rawInput } : {}), name });
       const summary = summarizeAntigravityToolCall(name, rawInput ?? {}, data);
