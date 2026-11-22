@@ -89,11 +89,14 @@ const CONFIG_OPTIONS = [
  *   a file write, a reply) for the report. Every prompt and that turn end with a Stop, which
  *   agy runs after the usage update that closes the loop and before a prompt's answer.
  *   wake 'joined': that turn reads a file and stops short; the next prompt joins it and finishes it.
- *   Once WAKE_TRIGGER_PATH.tail exists it says one more line, then asks permission 'tail-seen'.
- *   early: the report comes at once: the first prompt's answer and the report's text share one
- *   write, and its Stop follows 200ms later (then WAKE_TRIGGER_PATH.early is written).
+ *   Once WAKE_TRIGGER_PATH.tail exists it runs one more tool and says one more line in a single
+ *   write, then asks permission 'tail-seen'.
+ *   early: the report comes at once, in the same write as the first prompt's answer. 'together':
+ *   the report's Stop follows 200ms later; 'lateRead': it is on disk before that write, as when
+ *   Anima reads agy's output late. Then WAKE_TRIGGER_PATH.early is written.
  *   second: the second prompt starts another subagent; once WAKE_TRIGGER_PATH.second exists,
- *   that one reports in a turn of its own.
+ *   that one reports in a turn of its own. second 'slowLateRead': 400ms after the second prompt's
+ *   Stop, the report's Stop is on disk and the answer and the report come in one write.
  *   WAKE_TRIGGER_PATH.stopped is written after the self-started turn's Stop.
  * - lateUsage: a usage update follows the answer of a plain prompt
  * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`. Stop runs
@@ -152,7 +155,11 @@ const FAKE_AGY = [
   '    const tail = setInterval(() => {',
   "      if (!fs.existsSync(process.env.WAKE_TRIGGER_PATH + '.tail')) return;",
   '      clearInterval(tail);',
-  "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'A-TAIL.' } });",
+  '      process.stdout.write([',
+  "        { sessionUpdate: 'tool_call', toolCallId: 'agy-tail-tool', title: 'Read notes.md', kind: 'read', status: 'in_progress', locations: [{ path: '/work/notes.md' }] },",
+  "        { sessionUpdate: 'tool_call_update', toolCallId: 'agy-tail-tool', status: 'completed' },",
+  "        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'A-TAIL.' } },",
+  "      ].map((value) => JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } })).join('\\n') + '\\n');",
   "      send({ jsonrpc: '2.0', id: 'tail-seen', method: 'session/request_permission', params: { sessionId, toolCall: { toolCallId: 'agy-wake-read' }, options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }] } });",
   '    }, 10);',
   '    return;',
@@ -264,7 +271,14 @@ const FAKE_AGY = [
   "        runStopHook('agy-subagent-1', true);",
   '        if (scenario.early) {',
   "          const report = { jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'EARLY REPORT.' } } } };",
-  "          process.stdout.write([{ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }, report].map((value) => JSON.stringify(value)).join('\\n') + '\\n');",
+  "          const answerAndReport = () => process.stdout.write([{ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }, report].map((value) => JSON.stringify(value)).join('\\n') + '\\n');",
+  '          const lateRead = () => {',
+  '            runStopHook(sessionId, true);',
+  '            answerAndReport();',
+  "            fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.early', '');",
+  '          };',
+  "          if (scenario.early === 'lateRead') { lateRead(); continue; }",
+  '          answerAndReport();',
   '          setTimeout(() => {',
   '            runStopHook(sessionId, true);',
   "            fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.early', '');",
@@ -291,6 +305,16 @@ const FAKE_AGY = [
   "        update({ sessionUpdate: 'usage_update', used: 5200, size: 1048576 });",
   '        runStopHook(sessionId, true);',
   "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  '        continue;',
+  '      }',
+  "      if (scenario.second === 'slowLateRead' && promptCount === 2) {",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started another subagent.' } });",
+  '        runStopHook(sessionId, false);',
+  "        const report = { jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'EARLY REPORT.' } } } };",
+  '        setTimeout(() => {',
+  '          runStopHook(sessionId, true);',
+  "          process.stdout.write([{ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }, report].map((value) => JSON.stringify(value)).join('\\n') + '\\n');",
+  '        }, 400);',
   '        continue;',
   '      }',
   '      if (scenario.second && promptCount === 2) {',
@@ -1444,53 +1468,61 @@ test('antigravity-cli gives a prompt that joins a self-started turn the output f
   }
 });
 
-test('antigravity-cli keeps a report agy sends right after an answer out of that answer', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-early-'));
-  let runtime: AntigravityCliAgentRuntime | undefined;
-  try {
-    await withAnimaHome(stateDir, async () => {
-      const triggerPath = join(stateDir, 'wake-trigger');
-      await installFakeAgy(stateDir);
-      const ctx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000033.000001');
-      runtime = new AntigravityCliAgentRuntime(
-        { env: agyEnv(stateDir, { early: true, wake: true }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
-        'agy',
-        [],
-        { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
-      );
-      const active = runtime;
-      const input = await runtimeInput(active, ctx, await loadState());
-      let held = false;
-      // Holding the prompt's last update means agy's answer, the report after it and the
-      // report's Stop are all read before the answer is handled.
-      const reply = await active.run({
-        ...input,
-        effects: {
-          ...input.effects,
-          async recordEvent(event) {
-            if (!held && event['eventType'] === 'antigravity.context.stats' && event['currentContextTokens'] === 3000) {
-              held = true;
-              await pollUntil(() => fileExists(`${triggerPath}.early`), 5_000);
-            }
-            return input.effects.recordEvent(event);
+for (const variant of [
+  { early: 'together', hold: false, name: 'and Anima reads it at once' },
+  // Holding the prompt's last update: the answer is handled after the report's Stop is on disk.
+  { early: 'together', hold: true, name: 'and Anima handles the answer late' },
+  { early: 'lateRead', hold: false, name: 'and Anima reads it after the report has stopped' },
+]) {
+  test(`antigravity-cli keeps a report agy sends right after an answer out of that answer ${variant.name}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-early-'));
+    let runtime: AntigravityCliAgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const triggerPath = join(stateDir, 'wake-trigger');
+        await installFakeAgy(stateDir);
+        const ctx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000033.000001');
+        runtime = new AntigravityCliAgentRuntime(
+          {
+            env: agyEnv(stateDir, { early: variant.early, wake: true }, { WAKE_TRIGGER_PATH: triggerPath }),
+            kind: 'antigravity-cli',
           },
-        },
+          'agy',
+          [],
+          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+        );
+        const active = runtime;
+        const input = await runtimeInput(active, ctx, await loadState());
+        let held = false;
+        const reply = await active.run({
+          ...input,
+          effects: {
+            ...input.effects,
+            async recordEvent(event) {
+              if (variant.hold && !held && event['eventType'] === 'antigravity.context.stats' && event['currentContextTokens'] === 3000) {
+                held = true;
+                await pollUntil(() => fileExists(`${triggerPath}.early`), 5_000);
+              }
+              return input.effects.recordEvent(event);
+            },
+          },
+        });
+        assert.equal(held, variant.hold);
+        assert.equal(reply.text, 'Started a subagent.');
+        // The prompt's Stop is the first one written after it was sent; the report's Stop
+        // closes the report, however late the answer is read.
+        await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
+        assert.equal(active.health().providerWork, undefined);
+        const reports = allActivities(await loadState()).filter((activity) =>
+          activity.type === 'agent.text' && activity.payload?.['text'] === 'EARLY REPORT.');
+        assert.deepEqual(reports.map((activity) => activity.payload?.['itemId']), [ctx.item.id]);
       });
-      assert.ok(held);
-      assert.equal(reply.text, 'Started a subagent.');
-      // The report's Stop came after the answer was read, so it closes the report, not the prompt.
-      await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
-      assert.equal(active.health().providerWork, undefined);
-      await pollUntil(async () => allActivities(await loadState()).some((activity) =>
-        activity.type === 'agent.text'
-          && activity.payload?.['text'] === 'EARLY REPORT.'
-          && activity.payload?.['itemId'] === ctx.item.id), 5_000);
-    });
-  } finally {
-    await runtime?.close();
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
+    } finally {
+      await runtime?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
 
 test('antigravity-cli keeps what agy says before a prompt is sent on the self-started turn', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-tail-'));
@@ -1548,6 +1580,112 @@ test('antigravity-cli keeps what agy says before a prompt is sent on the self-st
         activities
           .filter((activity) => activity.type === 'agent.text' && activity.payload?.['text'] === 'Reading the report.A-TAIL.')
           .map((activity) => activity.payload?.['itemId']),
+        [firstCtx.item.id],
+      );
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli leaves a later Stop to the poll while a prompt waits for its answer', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-slow-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const triggerPath = join(stateDir, 'wake-trigger');
+      await installFakeAgy(stateDir);
+      const firstCtx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000040.000001');
+      const secondCtx = await ingestAgyEvent(stateDir, 'Delegate more.', '1786000040.000002');
+      runtime = new AntigravityCliAgentRuntime(
+        {
+          env: agyEnv(stateDir, { second: 'slowLateRead', wake: true }, { WAKE_TRIGGER_PATH: triggerPath }),
+          kind: 'antigravity-cli',
+        },
+        'agy',
+        [],
+        { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+      );
+      const active = runtime;
+      assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'Started a subagent.');
+      // The first item's work keeps the poll running through the second prompt, whose Stop
+      // is settled long before its answer is read.
+      assert.deepEqual(active.health().providerWork, { state: 'background' });
+      assert.equal((await active.run(await runtimeInput(active, secondCtx, await loadState()))).text, 'Started another subagent.');
+      await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
+      // The first item's work was still running, so the report goes there.
+      const reports = allActivities(await loadState()).filter((activity) =>
+        activity.type === 'agent.text' && activity.payload?.['text'] === 'EARLY REPORT.');
+      assert.deepEqual(reports.map((activity) => activity.payload?.['itemId']), [firstCtx.item.id]);
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli handles what agy has already said before it sends the next prompt', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-boundary-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      const triggerPath = join(stateDir, 'wake-trigger');
+      await installFakeAgy(stateDir);
+      const firstCtx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000038.000001');
+      const secondCtx = await ingestAgyEvent(stateDir, 'A new question.', '1786000038.000002');
+      runtime = new AntigravityCliAgentRuntime(
+        { env: agyEnv(stateDir, { wake: 'joined' }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+        'agy',
+        [],
+        { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+      );
+      const active = runtime;
+      // The self-started turn reports to the first item; hold its tool call, the first line
+      // of a chunk whose last line is more of that turn's text.
+      const firstInput = await runtimeInput(active, firstCtx, await loadState());
+      const held = deferred();
+      const release = deferred();
+      const first = await active.run({
+        ...firstInput,
+        effects: {
+          ...firstInput.effects,
+          async recordToolStarted(payload) {
+            if (payload['providerToolId'] === 'agy-tail-tool') {
+              held.resolve();
+              await release.promise;
+            }
+            return firstInput.effects.recordToolStarted(payload);
+          },
+        },
+      });
+      assert.equal(first.text, 'Started a subagent.');
+      await writeFile(triggerPath, '');
+      await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+        activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-wake-read'), 5_000);
+      let second: ReturnType<AntigravityCliAgentRuntime['run']> | undefined;
+      try {
+        await writeFile(`${triggerPath}.tail`, '');
+        await withTimeout(held.promise, 5_000);
+        second = active.run(await runtimeInput(active, secondCtx, await loadState()));
+        await realDelay(300);
+        assert.equal(promptTexts(await readJsonLines(callsPath)).length, 1, 'the second prompt waits for the chunk');
+      } finally {
+        release.resolve();
+      }
+      assert.ok(second);
+      assert.equal((await withTimeout(second, 5_000)).text, 'Saved the summary and answered.');
+      await pollUntil(() => active.isProviderQuiescent() === true, 5_000);
+      const activities = allActivities(await loadState());
+      const itemOf = (predicate: (activity: (typeof activities)[number]) => boolean) =>
+        activities.filter(predicate).map((activity) => activity.payload?.['itemId']);
+      assert.deepEqual(
+        itemOf((activity) => activity.type === 'agent.text' && activity.payload?.['text'] === 'Reading the report.A-TAIL.'),
+        [firstCtx.item.id],
+      );
+      assert.deepEqual(
+        itemOf((activity) => activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-tail-tool'),
         [firstCtx.item.id],
       );
     });
@@ -1663,6 +1801,65 @@ test('antigravity-cli does not let a settled Stop overtake output it has read bu
   }
 });
 
+for (const wait of ['quiescence', 'close'] as const) {
+  test(`antigravity-cli lets ${wait} wait until a self-started turn's text is stored`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-store-'));
+    let runtime: AntigravityCliAgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const triggerPath = join(stateDir, 'wake-trigger');
+        await installFakeAgy(stateDir);
+        const ctx = await ingestAgyEvent(stateDir, 'Delegate the reading.', '1786000039.000001');
+        runtime = new AntigravityCliAgentRuntime(
+          { env: agyEnv(stateDir, { wake: true }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+          'agy',
+          [],
+          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+        );
+        const active = runtime;
+        const input = await runtimeInput(active, ctx, await loadState());
+        const held = deferred();
+        const release = deferred();
+        const reply = await active.run({
+          ...input,
+          effects: {
+            ...input.effects,
+            async recordAgentText(text, payload) {
+              if (text === 'SUMMARY SAVED') {
+                held.resolve();
+                await release.promise;
+              }
+              return input.effects.recordAgentText(text, payload);
+            },
+          },
+        });
+        assert.equal(reply.text, 'Started a subagent.');
+        await writeFile(triggerPath, '');
+        let done = false;
+        let waiting: Promise<void> | undefined;
+        try {
+          await withTimeout(held.promise, 5_000);
+          waiting = (wait === 'close' ? active.close() : active.waitForProviderQuiescent()).then(() => {
+            done = true;
+          });
+          await realDelay(300);
+          assert.equal(done, false, `${wait} waits for the write`);
+          assert.equal(active.isProviderQuiescent() === true, false);
+        } finally {
+          release.resolve();
+        }
+        await withTimeout(waiting, 5_000);
+        const stored = allActivities(await loadState()).filter((activity) =>
+          activity.type === 'agent.text' && activity.payload?.['text'] === 'SUMMARY SAVED');
+        assert.deepEqual(stored.map((activity) => activity.payload?.['itemId']), [ctx.item.id]);
+      });
+    } finally {
+      await runtime?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
 test('antigravity-cli is not quiescent while it handles output read after a turn ended', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-late-output-'));
   let runtime: AntigravityCliAgentRuntime | undefined;
@@ -1699,6 +1896,10 @@ test('antigravity-cli is not quiescent while it handles output read after a turn
         assert.equal(reply.text, 'reply 1');
         await withTimeout(held.promise, 5_000);
         assert.equal(active.isProviderQuiescent(), false);
+        const abort = new AbortController();
+        const aborted = active.waitForProviderQuiescent(abort.signal);
+        abort.abort();
+        await assert.rejects(withTimeout(aborted, 1_000), (error: unknown) => (error as { name?: string }).name === 'AbortError');
         waiting = active.waitForProviderQuiescent().then(() => {
           drained = true;
         });

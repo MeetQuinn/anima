@@ -41,8 +41,8 @@ export function startChildProcess(input: {
   cwd?: string;
   env: NodeJS.ProcessEnv;
   label: string;
-  onStderrChunk?: (chunk: string, receivedAt: number) => Promise<void>;
-  onStdoutChunk?: (chunk: string, receivedAt: number) => Promise<void>;
+  onStderrChunk?: (chunk: string) => Promise<void>;
+  onStdoutChunk?: (chunk: string) => Promise<void>;
   signal?: AbortSignal;
   stdin?: 'ignore' | 'inherit' | 'pipe';
 }): RunningChildProcess {
@@ -81,12 +81,8 @@ export function startChildProcess(input: {
   let streamEffectError: unknown;
   let pendingStreamBytes = 0;
   let queuedStreamEffects = 0;
-  function enqueueStreamEffect(
-    chunk: string,
-    callback: ((chunk: string, receivedAt: number) => Promise<void>) | undefined,
-  ): void {
+  function enqueueStreamEffect(chunk: string, callback: ((chunk: string) => Promise<void>) | undefined): void {
     if (!callback) return;
-    const receivedAt = Date.now();
     const bytes = Buffer.byteLength(chunk);
     pendingStreamBytes += bytes;
     queuedStreamEffects += 1;
@@ -97,7 +93,7 @@ export function startChildProcess(input: {
       child.stderr?.pause();
     }
     streamEffects = streamEffects
-      .then(() => callback(chunk, receivedAt))
+      .then(() => callback(chunk))
       .catch((error: unknown) => {
         streamEffectError = error;
       })

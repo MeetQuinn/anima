@@ -487,6 +487,12 @@ interface PendingTool {
   name: string;
 }
 
+/** A prompt Anima has written to agy and whose answer it has not read yet. */
+interface AntigravityPromptOnWire {
+  sentAt: number;
+  turn: AntigravityTurn;
+}
+
 /** A turn agy started on its own, such as a subagent's report. */
 interface AntigravityWake {
   lastUpdateAt: number;
@@ -580,8 +586,6 @@ class AntigravityAcpController {
   private readonly activeToolIds = new Set<string>();
   /** The last Stop of the session's own conversation said background work is still running. */
   private backgroundPending = false;
-  /** When the stdout chunk being handled was read from agy. */
-  private chunkReceivedAt = 0;
   private exited = false;
   private readonly hookEvents?: AntigravityHookEvents;
   /** The input of the last turn, for a self-started turn when no background work was announced. */
@@ -589,10 +593,12 @@ class AntigravityAcpController {
   /** The input of the turn that left background work; turns agy starts on its own report here. */
   private observer?: AgentRuntimeInput;
   /**
-   * The turn whose `session/prompt` agy has received and not yet answered. agy's
-   * updates belong to it only in that window, in the order they are written.
+   * The turn whose `session/prompt` Anima has written and whose answer it has not
+   * yet read, and when it was written. agy's updates belong to it only in that window.
    */
-  private promptOnWire?: AntigravityTurn;
+  private promptOnWire?: AntigravityPromptOnWire;
+  /** Writes of self-started turns' text; quiescence and `completion` wait for them. */
+  private readonly wakeWrites = new Set<Promise<void>>();
   private wake?: AntigravityWake;
   private wakePoll?: NodeJS.Timeout;
   private readonly wakeTiming: Required<AntigravityWakeTiming>;
@@ -640,15 +646,17 @@ class AntigravityAcpController {
       },
     });
     this.completion = child.completion.then(
-      (result) => {
+      async (result) => {
         this.fail(
           new Error('Antigravity ACP runtime exited'),
           new Error('Antigravity ACP runtime exited before completing active turn'),
         );
+        await this.wakeWritesDone();
         return result;
       },
-      (error) => {
+      async (error) => {
         this.fail(error);
+        await this.wakeWritesDone();
         throw error;
       },
     );
@@ -723,8 +731,7 @@ class AntigravityAcpController {
     });
   }
 
-  acceptStdoutChunk(chunk: string, receivedAt = Date.now()): Promise<void> {
-    this.chunkReceivedAt = receivedAt;
+  acceptStdoutChunk(chunk: string): Promise<void> {
     return this.rpc.acceptStdoutChunk(chunk);
   }
 
@@ -745,18 +752,31 @@ class AntigravityAcpController {
   async waitForQuiescent(signal?: AbortSignal): Promise<void> {
     for (;;) {
       await this.quiescentWaiters.waitUntilReady(() => this.isSettled(), signal);
-      await this.child.outputSettled?.();
-      if (this.isQuiescent()) return;
+      if (!this.outputPending()) return;
+      await settledUnlessAborted(this.child.outputSettled!(), signal);
     }
   }
 
   isQuiescent(): boolean {
-    return this.isSettled() && !this.child.outputPending?.();
+    return this.isSettled() && !this.outputPending();
   }
 
-  /** No tool call in flight, no turn agy started on its own, and no background work its last Stop reported. */
+  /**
+   * No tool call in flight, no turn agy started on its own, no background work its
+   * last Stop reported, and no self-started turn's text still being written.
+   */
   private isSettled(): boolean {
-    return this.activeToolIds.size === 0 && !this.wake && !this.backgroundPending;
+    return this.activeToolIds.size === 0 && !this.wake && !this.backgroundPending && this.wakeWrites.size === 0;
+  }
+
+  /** Output has been read from agy but not yet handled. */
+  private outputPending(): boolean {
+    return Boolean(this.child.outputSettled && this.child.outputPending?.());
+  }
+
+  /** Settles once all output read from agy so far has been handled. */
+  private async outputHandled(): Promise<void> {
+    while (this.outputPending()) await this.child.outputSettled!();
   }
 
   workSnapshot(): ProviderWorkSnapshot | undefined {
@@ -922,6 +942,9 @@ class AntigravityAcpController {
     const textCheckpoint = turn.text.length;
     this.textAtLastStep = textCheckpoint;
     let result: Record<string, unknown> | undefined;
+    // What agy wrote before this prompt belongs to the turn it was part of, so it
+    // is handled first; nothing between here and the write yields.
+    await this.outputHandled();
     try {
       result = await withAcpPromptInFlight(
         (value) => {
@@ -975,28 +998,36 @@ class AntigravityAcpController {
    * prompt until its answer is read.
    */
   private sendPrompt(turn: AntigravityTurn, prompt: string): Promise<Record<string, unknown> | undefined> {
-    void this.recordWakeText(this.detachWake());
-    this.promptOnWire = turn;
+    this.recordWakeText(this.detachWake());
+    const wire = { sentAt: Date.now(), turn };
+    this.promptOnWire = wire;
     return this.rpc.request(
       'session/prompt',
       { prompt: [{ text: prompt, type: 'text' }], sessionId: this.sessionId },
-      { onResponse: () => this.promptAnswered(turn) },
+      { onResponse: () => this.promptAnswered(wire) },
     );
   }
 
   /**
    * Runs as agy's answer is read, before the update that follows it on the wire.
-   * The prompt's Stop is on disk before agy answers; a Stop written after the
-   * answer was read belongs to a later loop, so it waits for the poll.
+   * agy runs a prompt's Stop just before it answers, so the prompt's Stop is the
+   * first of the session's own written after the prompt was sent. Stops written
+   * before it belong to earlier loops; any after it end later loops and wait for
+   * the poll, however late the answer is read.
    */
-  private promptAnswered(turn: AntigravityTurn): void {
-    if (this.promptOnWire !== turn) return;
+  private promptAnswered(wire: AntigravityPromptOnWire): void {
+    if (this.promptOnWire !== wire) return;
     this.promptOnWire = undefined;
-    this.lastTurnInput = turn.input;
+    this.lastTurnInput = wire.turn.input;
     // Tool calls still open went to the background; their updates now arrive outside a prompt.
     this.activeToolIds.clear();
-    const answeredAt = this.chunkReceivedAt;
-    this.applyHookEvents((event) => event.at <= answeredAt, turn.input);
+    let ownStopTaken = false;
+    this.applyHookEvents((event) => {
+      if (event.at <= wire.sentAt || !this.isOwnStop(event)) return true;
+      if (ownStopTaken) return false;
+      ownStopTaken = true;
+      return true;
+    }, wire.turn.input);
   }
 
   private handleAgentRequest(message: Record<string, unknown>): void {
@@ -1026,7 +1057,7 @@ class AntigravityAcpController {
       this.captureConfigOptions(data);
       return;
     }
-    const turn = this.promptOnWire;
+    const turn = this.promptOnWire?.turn;
     if (!turn) {
       await this.handleUpdateOutsideTurn(type, data);
       return;
@@ -1130,7 +1161,7 @@ class AntigravityAcpController {
     if (this.exited) return;
     let stopped = false;
     for (const event of this.hookEvents?.take(ready) ?? []) {
-      if (event.hookEventName !== 'Stop' || !this.sessionId || event.conversationId !== this.sessionId) continue;
+      if (!this.isOwnStop(event)) continue;
       stopped = true;
       this.backgroundPending = event.fullyIdle === false;
       if (!this.backgroundPending) this.observer = undefined;
@@ -1143,12 +1174,16 @@ class AntigravityAcpController {
     this.settleBackground();
   }
 
+  private isOwnStop(event: AntigravityStopEvent): boolean {
+    return event.hookEventName === 'Stop' && Boolean(this.sessionId) && event.conversationId === this.sessionId;
+  }
+
   /** Ends the turn agy started on its own; tool calls still open in it went to the background. */
   private endWake(): void {
     const wake = this.detachWake();
     if (!wake) return;
     this.activeToolIds.clear();
-    void this.recordWakeText(wake);
+    this.recordWakeText(wake);
   }
 
   private detachWake(): AntigravityWake | undefined {
@@ -1157,17 +1192,28 @@ class AntigravityAcpController {
     return wake;
   }
 
-  private async recordWakeText(wake: AntigravityWake | undefined): Promise<void> {
+  /** Records a self-started turn's text on its item; quiescence and `completion` wait for the write. */
+  private recordWakeText(wake: AntigravityWake | undefined): void {
     const text = wake?.text.join('').trim();
     if (!wake || !text) return;
-    try {
-      await wake.sink.effects.recordAgentText(text, {
-        eventType: 'antigravity.assistant',
-        transport: 'acp',
-      });
-    } catch {
-      // The item may be gone; the text is a record, not a reply.
-    }
+    const write: Promise<void> = (async () => {
+      try {
+        await wake.sink.effects.recordAgentText(text, {
+          eventType: 'antigravity.assistant',
+          transport: 'acp',
+        });
+      } catch {
+        // The item may be gone; the text is a record, not a reply.
+      }
+    })().finally(() => {
+      this.wakeWrites.delete(write);
+      this.resolveQuiescentWaitersIfReady();
+    });
+    this.wakeWrites.add(write);
+  }
+
+  private async wakeWritesDone(): Promise<void> {
+    while (this.wakeWrites.size > 0) await Promise.all(this.wakeWrites);
   }
 
   /** Drops the observer once nothing is left to report, wakes drain waiters, and starts or stops the poll. */
@@ -1198,9 +1244,11 @@ class AntigravityAcpController {
    */
   private pollWake(): void {
     // Output read before the Stop is recorded before the Stop ends anything.
-    if (this.child.outputPending?.()) return;
+    if (this.outputPending()) return;
     const now = Date.now();
-    this.applyHookEvents((event) => event.at <= now - this.wakeTiming.settleMs);
+    // A prompt's own Stop is for its answer to apply.
+    const before = Math.min(now - this.wakeTiming.settleMs, this.promptOnWire?.sentAt ?? Infinity);
+    this.applyHookEvents((event) => event.at <= before);
     if (this.wake && now - this.wake.lastUpdateAt >= this.wakeTiming.quietMs) {
       this.endWake();
       this.settleBackground();
@@ -1272,7 +1320,7 @@ class AntigravityAcpController {
     this.currentTurn = undefined;
     if (turn) {
       // A prompt agy never answered (a failed write, an exit) leaves no window open.
-      if (this.promptOnWire === turn) this.promptOnWire = undefined;
+      if (this.promptOnWire?.turn === turn) this.promptOnWire = undefined;
       this.lastTurnInput = turn.input;
     }
     // A tool still running went to the background; keep its name for its result.
@@ -1319,7 +1367,7 @@ class AntigravityAcpController {
     this.exited = true;
     this.rpc.rejectAll(error);
     this.quiescentWaiters.reject(error);
-    void this.recordWakeText(this.detachWake());
+    this.recordWakeText(this.detachWake());
     this.backgroundPending = false;
     this.observer = undefined;
     this.promptOnWire = undefined;
@@ -1329,6 +1377,26 @@ class AntigravityAcpController {
     this.updateWakePoll();
     if (this.hookEvents) void unlink(this.hookEvents.path).catch(() => {});
   }
+}
+
+/** Waits for `settled`, or rejects as a drain wait does once `signal` aborts. */
+function settledUnlessAborted(settled: Promise<unknown>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return settled.then(() => undefined);
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error('Drain wait aborted'));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error('Drain wait aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    void settled.then(
+      () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 /**

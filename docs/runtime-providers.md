@@ -669,20 +669,26 @@ Current process model:
   non-quiescent and reports `providerWork` (`working` or `background`, without a count), so the
   idle reset and a restart drain wait for the background work as they do for Claude.
 - Output belongs to a prompt from the moment Anima writes the prompt until it reads `agy`'s
-  answer; everything else belongs to a self-started turn. Such a turn goes to the item whose turn
-  left the background work, or else to the last item. Its thinking, tool calls, and context stats
-  are recorded on that item as they arrive, its permission requests are approved as in a prompt,
-  and its text is recorded there when the turn ends. That text is a record, not a reply; a reply
-  still goes through Anima. The turn ends at its Stop, when Anima writes a prompt (the prompt joins
-  it, so the output from then on goes to the new item), or after two minutes of silence, which
-  also covers an `agy` that runs no hooks.
-- `agy` runs the hook after a loop's last update. A prompt's answer follows its Stop, so when
-  Anima reads the answer it applies the Stops written before that moment; a later one ends a
-  later loop. Nothing follows the Stop of a self-started turn, so Anima applies that one once it
-  is two seconds old and the output read before it has been handled. Stops are applied one at a
-  time: once one says the background work is done, its reports are over, and the next turn that
-  leaves work owns the next ones. The controller is not quiescent while output it has read is
-  still being handled.
+  answer; everything else belongs to a self-started turn. Before writing a prompt, Anima finishes
+  handling the output it has already read, so what `agy` said before the prompt stays with the
+  turn it was part of. A self-started turn goes to the item whose turn left the background work,
+  or else to the last item. Its thinking, tool calls, and context stats are recorded on that item
+  as they arrive, its permission requests are approved as in a prompt, and its text is recorded
+  there when the turn ends. That text is a record, not a reply; a reply still goes through Anima.
+  The turn ends at its Stop, when Anima writes a prompt (the prompt joins it, so the output from
+  then on goes to the new item), or after two minutes of silence, which also covers an `agy` that
+  runs no hooks.
+- `agy` runs a prompt's Stop just before it answers, so the prompt's Stop is the first Stop of the
+  session's own conversation written after the prompt was sent. Reading the answer applies that
+  Stop and any earlier ones; later ones end later loops, however late the answer is read. Nothing
+  follows the Stop of a self-started turn, so Anima applies that one once it is two seconds old
+  and the output read before it has been handled; a Stop written after a prompt was sent waits
+  until that prompt's answer is read. Stops are applied one at a time: once one says the
+  background work is done, its reports are over, and the next turn that leaves work owns the next
+  ones.
+- The controller is not quiescent while output it has read is still being handled or a
+  self-started turn's text is still being written, and it reports the child as finished only
+  after that write, so a drain or `close` does not return before the report is stored.
 - `agy` runs an unknown `--agent` as its default agent without an error, which would drop the
   profile. Anima therefore checks that `agy --add-dir <directory> agents` lists `anima-runtime`
   before using it. The check runs while the provider launch permit is held, so it gets 15 seconds.
