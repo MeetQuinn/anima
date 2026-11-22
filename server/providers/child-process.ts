@@ -24,6 +24,8 @@ export interface RunningChildProcess {
   outputPending?(): boolean;
   /** Settles once the chunk callbacks for all output read so far have finished. */
   outputSettled?(): Promise<void>;
+  /** While a chunk callback runs, when that chunk was read from the child. */
+  outputReadAt?(): number | undefined;
   setVersion(version: string): void;
   snapshot(): ProviderChildHealthSnapshot;
   writeStdin(input: string): void;
@@ -81,8 +83,10 @@ export function startChildProcess(input: {
   let streamEffectError: unknown;
   let pendingStreamBytes = 0;
   let queuedStreamEffects = 0;
+  let handlingReadAt: number | undefined;
   function enqueueStreamEffect(chunk: string, callback: ((chunk: string) => Promise<void>) | undefined): void {
     if (!callback) return;
+    const readAt = Date.now();
     const bytes = Buffer.byteLength(chunk);
     pendingStreamBytes += bytes;
     queuedStreamEffects += 1;
@@ -93,11 +97,15 @@ export function startChildProcess(input: {
       child.stderr?.pause();
     }
     streamEffects = streamEffects
-      .then(() => callback(chunk))
+      .then(() => {
+        handlingReadAt = readAt;
+        return callback(chunk);
+      })
       .catch((error: unknown) => {
         streamEffectError = error;
       })
       .finally(() => {
+        handlingReadAt = undefined;
         queuedStreamEffects -= 1;
         pendingStreamBytes -= bytes;
         if (pendingStreamBytes <= STREAM_EFFECT_LOW_WATER_BYTES) {
@@ -152,6 +160,9 @@ export function startChildProcess(input: {
     },
     outputPending() {
       return queuedStreamEffects > 0;
+    },
+    outputReadAt() {
+      return handlingReadAt;
     },
     outputSettled() {
       return streamEffects;

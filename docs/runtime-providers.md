@@ -694,7 +694,9 @@ Current process model:
 - A subagent hands its report to the session before its own run ends, so the session can end the
   loop that reads the report with `fullyIdle: false` and then run no further loop: no Stop of the
   session says the work is done. Anima therefore counts the `invoke_subagent` calls since the
-  session was last idle and the subagent conversations whose Stop says they are idle. Once every
+  session was last idle, leaving out calls that failed (they started no subagent), and the
+  subagent conversations whose Stop says they are idle. A call belongs to the loop `agy` wrote it
+  in, so Anima dates it by when it read the call, not when it handled it. Once every
   subagent the session invoked has stopped, the last of them after the session's last Stop, no
   tool call is still open, and `agy` has then been silent for 10 seconds, the background work
   counts as done. A subagent Stop with `fullyIdle: false` takes that subagent off the count again.
@@ -707,8 +709,8 @@ Current process model:
   child down, after a `session/cancel` for a prompt. Stopping it once the session is running but
   before its prompt is written ends the wait for earlier output, the prompt is never sent, and the
   child keeps running: `agy` may be running a self-started turn for an earlier item, and a cancel
-  or a shutdown would stop that turn and lose its report. If the stopped run has not ended 2
-  seconds later, the child is shut down all the same.
+  or a shutdown would stop that turn and lose its report. A run that has not ended 2 seconds
+  later is held up in Anima's own writes; Anima ends it then, and the child keeps running.
 - The controller is not quiescent while output it has read is still being handled or a
   self-started turn's text is still being written, and it reports the child as finished only
   after that write, so a drain or `close` does not return before the report is stored.

@@ -111,7 +111,8 @@ const CONFIG_OPTIONS = [
  *   follow the self-started turn 50ms apart (with lateSubagentStop). earlierWork: before its
  *   calls, the first prompt shows earlier work that has just ended: a subagent started by a call
  *   Anima cannot tell apart and one started by invoke_subagent, their Stops, then the session's
- *   own Stop, still being written when the prompt went out.
+ *   own Stop, still being written when the prompt went out; then WAKE_TRIGGER_PATH.earlier is
+ *   written. invokeFails: the first prompt first makes an invoke_subagent call that fails.
  *   tailEnds: once 'tail-seen' is answered, wake 'joined' says REPORT-A. and stops.
  * - lateUsage: a usage update follows the answer of a plain prompt
  * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`. Stop runs
@@ -314,6 +315,11 @@ const FAKE_AGY = [
   "          runStopHook('agy-helper-0', true);",
   "          runStopHook('agy-subagent-0', true);",
   "          runStopHook(sessionId, true, 'an earlier loop');",
+  "          fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.earlier', '');",
+  '        }',
+  '        if (scenario.invokeFails) {',
+  "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-x', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'nobody' } });",
+  "          update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-x', status: 'failed', content: [{ type: 'content', content: { type: 'text', text: 'Unknown subagent' } }] });",
   '        }',
   "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-1', title: scenario.invokeTitle || 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'reader' } });",
   "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-1', status: 'completed' });",
@@ -1736,7 +1742,12 @@ test('antigravity-cli tells a Stop still being written when a prompt is sent fro
   }
 });
 
-for (const when of ['while it waits for output agy already sent', 'before that wait', 'before its turn starts']) {
+for (const when of [
+  'while it waits for output agy already sent',
+  'before that wait',
+  'before its turn starts',
+  'while Anima records its start for longer than the stop waits',
+]) {
   test(`antigravity-cli never sends a prompt stopped ${when}, and agy goes on with its own turn`, async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-stop-'));
     let runtime: AntigravityCliAgentRuntime | undefined;
@@ -1754,8 +1765,11 @@ for (const when of ['while it waits for output agy already sent', 'before that w
           { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
         );
         const active = runtime;
-        const waiting = when.startsWith('while');
+        const waiting = when.startsWith('while it waits');
         const beforeTurn = when === 'before its turn starts';
+        const slowStart = when.startsWith('while Anima records');
+        const startRelease = deferred();
+        const leftover = deferred();
         const firstInput = await runtimeInput(active, firstCtx, await loadState());
         const held = deferred();
         const release = deferred();
@@ -1796,8 +1810,14 @@ for (const when of ['while it waits for output agy already sent', 'before that w
                 return secondInput.effects.persistProviderSession(session);
               },
               async recordEvent(payload) {
+                if (slowStart && payload['eventType'] === 'antigravity.turn.started') {
+                  // Held in Anima's own write, past the 2s the stop waits for the turn to end.
+                  started.resolve();
+                  await startRelease.promise;
+                }
                 const recorded = await secondInput.effects.recordEvent(payload);
-                if (payload['eventType'] === 'antigravity.turn.started') {
+                if (payload['eventType'] === 'antigravity.turn.completed') leftover.resolve();
+                if (!slowStart && payload['eventType'] === 'antigravity.turn.started') {
                   // Stopped before the wait: nothing is pending, so only the check before the write stops it.
                   if (!waiting && !beforeTurn) stop.abort('operator_stop');
                   started.resolve();
@@ -1810,15 +1830,22 @@ for (const when of ['while it waits for output agy already sent', 'before that w
           // A run stopped before its turn can end before the test gets here; it is checked below.
           second.catch(() => undefined);
           await withTimeout(started.promise, 5_000);
-          if (waiting) {
+          if (waiting || slowStart) {
             await realDelay(100);
             stop.abort('operator_stop');
           }
           // The stop ends the run while agy's earlier output is still being handled.
-          await assert.rejects(withTimeout(second, 2_000), /cancelled/);
+          await assert.rejects(withTimeout(second, slowStart ? 4_000 : 2_000), /cancelled/);
           // agy is still running item 1's turn, so the stop leaves it running.
           assert.equal(active.health().child?.alive, true);
+          if (slowStart) {
+            await realDelay(500);
+            startRelease.resolve();
+            // What is left of the stopped turn writes its end and sends nothing.
+            await withTimeout(leftover.promise, 5_000);
+          }
         } finally {
+          startRelease.resolve();
           release.resolve();
         }
         if (!waiting) await writeFile(`${triggerPath}.tail`, '');
@@ -1970,53 +1997,96 @@ for (const variant of [
   });
 }
 
-test('antigravity-cli still ends a stopped run that is stuck before it sends its prompt', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-stop-stuck-'));
-  let runtime: AntigravityCliAgentRuntime | undefined;
-  try {
-    await withAnimaHome(stateDir, async () => {
-      const callsPath = join(stateDir, 'calls.jsonl');
-      await installFakeAgy(stateDir);
-      const firstCtx = await ingestAgyEvent(stateDir, 'Hello.', '1786000044.000001');
-      const secondCtx = await ingestAgyEvent(stateDir, 'Hello again.', '1786000044.000002');
-      runtime = new AntigravityCliAgentRuntime({ env: agyEnv(stateDir, {}), kind: 'antigravity-cli' }, 'agy');
-      const active = runtime;
-      assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'reply 1');
-      const stop = new AbortController();
-      const stuck = deferred();
-      const release = deferred();
-      const secondInput = await runtimeInput(active, secondCtx, await loadState());
-      const second = active.run({
-        ...secondInput,
-        effects: {
-          ...secondInput.effects,
-          async recordEvent(payload) {
-            if (payload['eventType'] === 'antigravity.turn.started') {
-              stuck.resolve();
-              await release.promise;
-            }
-            return secondInput.effects.recordEvent(payload);
+for (const lastWrite of ['succeeds', 'fails']) {
+  test(`antigravity-cli ends a stopped run held up before it sends its prompt, leaving agy and the next run alone when its last write ${lastWrite}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-stop-stuck-'));
+    let runtime: AntigravityCliAgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const callsPath = join(stateDir, 'calls.jsonl');
+        await installFakeAgy(stateDir);
+        const firstCtx = await ingestAgyEvent(stateDir, 'Hello.', '1786000044.000001');
+        const secondCtx = await ingestAgyEvent(stateDir, 'Hello again.', '1786000044.000002');
+        const thirdCtx = await ingestAgyEvent(stateDir, 'One more.', '1786000044.000003');
+        const followupCtx = await ingestAgyEvent(stateDir, 'And another.', '1786000044.000004');
+        runtime = new AntigravityCliAgentRuntime({ env: agyEnv(stateDir, {}), kind: 'antigravity-cli' }, 'agy');
+        const active = runtime;
+        assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'reply 1');
+        const stop = new AbortController();
+        const stuck = deferred();
+        const release = deferred();
+        const leftover = deferred();
+        const secondInput = await runtimeInput(active, secondCtx, await loadState());
+        const second = active.run({
+          ...secondInput,
+          effects: {
+            ...secondInput.effects,
+            async recordEvent(payload) {
+              if (payload['eventType'] === 'antigravity.turn.started') {
+                stuck.resolve();
+                await release.promise;
+              }
+              if (payload['eventType'] === 'antigravity.turn.completed') {
+                leftover.resolve();
+                // The run is over by now; its item may be gone too.
+                if (lastWrite === 'fails') throw new Error('item gone');
+              }
+              return secondInput.effects.recordEvent(payload);
+            },
           },
-        },
-        signal: stop.signal,
+          signal: stop.signal,
+        });
+        const thirdStarted = deferred();
+        const thirdRelease = deferred();
+        let third: ReturnType<AntigravityCliAgentRuntime['run']> | undefined;
+        try {
+          await withTimeout(stuck.promise, 5_000);
+          stop.abort('operator_stop');
+          // Nothing of the run is with agy, so after 2s the run ends without stopping agy.
+          await assert.rejects(withTimeout(second, 5_000), /cancelled/);
+          assert.equal(active.health().child?.alive, true);
+          const thirdInput = await runtimeInput(active, thirdCtx, await loadState());
+          third = active.run({
+            ...thirdInput,
+            effects: {
+              ...thirdInput.effects,
+              async recordEvent(payload) {
+                if (payload['eventType'] === 'antigravity.turn.started') {
+                  thirdStarted.resolve();
+                  await thirdRelease.promise;
+                }
+                return thirdInput.effects.recordEvent(payload);
+              },
+            },
+          });
+          await withTimeout(thirdStarted.promise, 5_000);
+          // The stopped run's write returns while the next run holds the turn.
+          release.resolve();
+          await withTimeout(leftover.promise, 5_000);
+          await realDelay(50);
+          // That run still holds it: a follow-up joins it.
+          assert.equal((await active.appendToActiveRun(
+            await runtimeFollowupInput(active, thirdCtx, followupCtx, await loadState()),
+          )).accepted, true);
+        } finally {
+          release.resolve();
+          thirdRelease.resolve();
+        }
+        assert.ok(third);
+        assert.equal((await withTimeout(third, 5_000)).text, 'reply 2reply 3');
+        assert.equal(active.health().child?.alive, true);
+        const prompts = promptTexts(await readJsonLines(callsPath));
+        assert.equal(prompts.length, 3, 'the stopped run never sent its prompt');
+        assert.ok(prompts[1]?.includes('One more.'));
+        assert.ok(prompts[2]?.includes('And another.'));
+        assert.equal(methodsOf(await readJsonLines(callsPath)).includes('session/cancel'), false);
       });
-      try {
-        await withTimeout(stuck.promise, 5_000);
-        stop.abort('operator_stop');
-        // The turn cannot end on its own, so after 2s agy is stopped, and that ends the run.
-        const ended = await withTimeout(second.then(() => 'resolved', () => 'rejected'), 5_000);
-        assert.equal(ended, 'rejected');
-        assert.notEqual(active.health().child?.alive, true);
-      } finally {
-        release.resolve();
-      }
-      assert.equal(methodsOf(await readJsonLines(callsPath)).filter((method) => method === 'session/prompt').length, 1);
-    });
-  } finally {
-    await runtime?.close();
-    await rm(stateDir, { force: true, recursive: true });
-  }
-});
+    } finally {
+      await runtime?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
 
 test('antigravity-cli stops agy when a run is stopped while agy starts its session', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-stop-session-'));
@@ -2060,6 +2130,22 @@ for (const variant of [
   },
   { done: true, earlierWork: true, name: 'once its last subagent has stopped, counting only calls after earlier work ended' },
   { done: false, earlierWork: true, invokeTwice: true, name: 'not counting a subagent of earlier work as one of its own' },
+  // Anima handles the earlier work only once that work's Stop is on disk.
+  {
+    done: true,
+    earlierWork: true,
+    holdEarlierWork: true,
+    name: 'once its last subagent has stopped, counting only calls after earlier work ended that Anima handled late',
+  },
+  {
+    done: false,
+    earlierWork: true,
+    holdEarlierWork: true,
+    invokeTwice: true,
+    name: 'not counting a subagent of earlier work as one of its own when Anima handled that work late',
+  },
+  { done: true, invokeFails: true, name: 'once its last subagent has stopped, not waiting on a call that failed to start one' },
+  { done: false, invokeFails: true, invokeTwice: true, name: 'not while another subagent it invoked is still running, beside a call that failed' },
 ]) {
   test(`antigravity-cli ends background work ${variant.name}`, async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-late-'));
@@ -2075,6 +2161,7 @@ for (const variant of [
               stateDir,
               {
                 earlierWork: variant.earlierWork === true,
+                invokeFails: variant.invokeFails === true,
                 invokeTitle: variant.invokeTitle,
                 invokeTwice: variant.invokeTwice === true,
                 lateSubagentStop: variant.lateSubagentStop ?? true,
@@ -2094,7 +2181,23 @@ for (const variant of [
           { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100, subagentsDoneMs: 800 } },
         );
         const active = runtime;
-        assert.equal((await active.run(await runtimeInput(active, ctx, await loadState()))).text, 'Started a subagent.');
+        const input = await runtimeInput(active, ctx, await loadState());
+        let held = false;
+        assert.equal((await active.run({
+          ...input,
+          effects: {
+            ...input.effects,
+            async recordToolStarted(payload) {
+              if (variant.holdEarlierWork && payload['providerToolId'] === 'agy-helper-0') {
+                await pollUntil(() => fileExists(`${triggerPath}.earlier`), 5_000);
+                await realDelay(20);
+                held = true;
+              }
+              return input.effects.recordToolStarted(payload);
+            },
+          },
+        })).text, 'Started a subagent.');
+        assert.equal(held, variant.holdEarlierWork === true);
         await writeFile(triggerPath, '');
         await pollUntil(() => fileExists(`${triggerPath}.stopped`), 5_000);
         await pollUntil(async () => allActivities(await loadState()).some((activity) =>

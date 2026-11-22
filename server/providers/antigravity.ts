@@ -501,15 +501,19 @@ interface PendingTool {
 }
 
 interface AntigravitySubagentRuns {
-  /** When a subagent Stop made `stopped` cover every call. */
+  /** When `stopped` came to cover every call. */
   doneAt?: number;
-  /** When Anima handled each `invoke_subagent` call. */
-  invokedAt: number[];
+  /**
+   * `invoke_subagent` calls that have not failed, by tool call id, each with when
+   * Anima read it from agy. agy writes a call before the Stop that ends its loop,
+   * so this time stays before that Stop however late Anima handles the call.
+   */
+  invoked: Map<string, number>;
   stopped: Set<string>;
 }
 
-function newSubagentRuns(invokedAt: number[] = []): AntigravitySubagentRuns {
-  return { invokedAt, stopped: new Set() };
+function newSubagentRuns(invoked: Map<string, number> = new Map()): AntigravitySubagentRuns {
+  return { invoked, stopped: new Set() };
 }
 
 /** A prompt Anima has written to agy and whose answer it has not read yet. */
@@ -745,8 +749,9 @@ class AntigravityAcpController {
   async startTurn(input: AgentRuntimeInput, prompt: string): Promise<string> {
     if (this.currentTurn) throw new Error('Antigravity ACP runtime already has an active turn');
     this.latestUsage = undefined;
+    let turn!: AntigravityTurn;
     const result = new Promise<string>((resolve, reject) => {
-      this.currentTurn = {
+      turn = {
         acceptingFollowups: true,
         followups: [],
         input,
@@ -755,8 +760,9 @@ class AntigravityAcpController {
         text: [],
       };
     });
+    this.currentTurn = turn;
     this.turnCompletion = result;
-    void this.runTurnQueue(prompt).catch((error) => this.abortCurrentTurn(error));
+    void this.runTurnQueue(turn, prompt).catch((error) => this.abortTurn(turn, error));
     return result.finally(() => {
       if (this.turnCompletion === result) this.turnCompletion = undefined;
     });
@@ -768,8 +774,9 @@ class AntigravityAcpController {
    * starts the session, or works on one of the turn's prompts. A run with no prompt
    * on the wire sends none from here on (each send checks the signal first), and agy
    * may meanwhile be running a turn it started on its own for an earlier item, so a
-   * cancel or a reset would stop that turn instead. A turn that does not end within
-   * 2s is left to the reset all the same.
+   * cancel or a reset would stop that turn instead. Such a turn that has not ended
+   * within 2s is held up in Anima's own writes; it ends here, and what is left of it
+   * finds the turn gone and does nothing more.
    */
   async cancelActiveTurn(): Promise<boolean> {
     const turn = this.currentTurn;
@@ -780,7 +787,9 @@ class AntigravityAcpController {
     if (onWire && this.sessionId) this.rpc.notify('session/cancel', { sessionId: this.sessionId });
     const completion = this.turnCompletion;
     const ended = !completion || await raceWithTimeout(completion.then(() => true, () => true), 2_000, false);
-    return onWire || !ended;
+    if (onWire) return true;
+    if (!ended) this.abortTurn(turn, new Error(`Antigravity turn cancelled: ${String(turn.input.signal?.reason ?? 'aborted')}`));
+    return false;
   }
 
   appendPrompt(prompt: string): boolean {
@@ -978,15 +987,14 @@ class AntigravityAcpController {
     if (options) this.configOptions = options;
   }
 
-  private async runTurnQueue(firstPrompt: string): Promise<void> {
-    const turn = this.currentTurn;
-    if (!turn) return;
+  /** A turn cancelActiveTurn ended while it was held up still runs this; it then leaves the controller alone. */
+  private async runTurnQueue(turn: AntigravityTurn, firstPrompt: string): Promise<void> {
     await drainAcpTurnQueue({
       firstPrompt,
       runOnePrompt: (prompt) => this.runOnePrompt(turn, prompt),
       turn,
     });
-    await this.finishCurrentTurn();
+    await this.finishTurn(turn);
   }
 
   private async runOnePrompt(turn: AntigravityTurn, prompt: string): Promise<void> {
@@ -997,16 +1005,10 @@ class AntigravityAcpController {
       transport: 'acp',
       userInputLength: prompt.length,
     });
-    const sourceId = `${this.sessionId}:${this.usageCaptureId}:prompt:${++this.usageSequence}`;
-    const model = this.option('model')?.currentValue;
-    // Assistant chunks stream into turn.text; if this prompt is cancelled for a
-    // mid-turn follow-up, discard only the chunks produced by this prompt.
-    const textCheckpoint = turn.text.length;
-    this.textAtLastStep = textCheckpoint;
-    let result: Record<string, unknown> | undefined;
     // What agy wrote before this prompt belongs to the turn it was part of, so it
     // is handled first. A Stop during that wait means the prompt is never sent;
-    // nothing between the check and the write yields.
+    // nothing between the check and the write yields. A stopped turn may already be
+    // gone (see cancelActiveTurn), so the check comes before any shared state.
     const signal = turn.input.signal;
     const handled = await this.outputHandled(signal).then(() => true, () => false);
     if (!handled || signal?.aborted) {
@@ -1018,6 +1020,13 @@ class AntigravityAcpController {
       });
       return;
     }
+    const sourceId = `${this.sessionId}:${this.usageCaptureId}:prompt:${++this.usageSequence}`;
+    const model = this.option('model')?.currentValue;
+    // Assistant chunks stream into turn.text; if this prompt is cancelled for a
+    // mid-turn follow-up, discard only the chunks produced by this prompt.
+    const textCheckpoint = turn.text.length;
+    this.textAtLastStep = textCheckpoint;
+    let result: Record<string, unknown> | undefined;
     try {
       result = await withAcpPromptInFlight(
         (value) => {
@@ -1253,9 +1262,10 @@ class AntigravityAcpController {
         this.subagents.doneAt = undefined;
       } else {
         this.observer = undefined;
-        // A Stop can be applied after later output was handled; calls made after it start the next
-        // work. A call in the same millisecond stays: counting a call too many only waits longer.
-        this.subagents = newSubagentRuns(this.subagents.invokedAt.filter((at) => at >= event.at));
+        // A Stop can be applied after later output was handled; calls agy wrote after it start
+        // the next work. A call read in the same millisecond stays: counting a call too many
+        // only waits longer.
+        this.subagents = newSubagentRuns(new Map([...this.subagents.invoked].filter(([, at]) => at >= event.at)));
       }
     }
     if (answered && this.backgroundPending) this.observer ??= answered;
@@ -1280,8 +1290,18 @@ class AntigravityAcpController {
       return;
     }
     runs.stopped.add(event.conversationId);
-    const invoked = runs.invokedAt.length;
-    if (invoked > 0 && runs.stopped.size >= invoked) runs.doneAt = event.at;
+    if (this.subagentsAllStopped()) runs.doneAt = event.at;
+  }
+
+  /** A failed `invoke_subagent` call started no subagent, so no Stop is owed for it. */
+  private noteFailedInvoke(id: string, at: number): void {
+    const runs = this.subagents;
+    if (runs.invoked.delete(id) && this.subagentsAllStopped()) runs.doneAt ??= at;
+  }
+
+  private subagentsAllStopped(): boolean {
+    const invoked = this.subagents.invoked.size;
+    return invoked > 0 && this.subagents.stopped.size >= invoked;
   }
 
   /**
@@ -1289,8 +1309,8 @@ class AntigravityAcpController {
    * session can end the turn that reads the report with `fullyIdle: false` while
    * the subagent is still finishing. When that was the last background work, agy
    * runs no further loop and no Stop says the work is done. So the work counts as
-   * done once as many subagent conversations as `invoke_subagent` calls have
-   * stopped, the last of them after the session's last Stop; no tool call is
+   * done once as many subagent conversations as `invoke_subagent` calls that did
+   * not fail have stopped, the last of them after the session's last Stop; no tool call is
    * still open (a command sent to the background); and agy has stayed silent for
    * `subagentsDoneMs`. A turn agy starts in that time, or a prompt, ends with a
    * Stop that decides instead.
@@ -1395,9 +1415,10 @@ class AntigravityAcpController {
     const terminal = status === 'completed' || status === 'failed';
     const pending = this.pendingTools.get(id);
     const rawInput = toolInput(data) ?? pending?.input;
+    const readAt = this.child.outputReadAt?.() ?? Date.now();
     if (!pending) {
       const name = antigravityToolName(data);
-      if (name === ANTIGRAVITY_INVOKE_SUBAGENT_TOOL) this.subagents.invokedAt.push(Date.now());
+      if (name === ANTIGRAVITY_INVOKE_SUBAGENT_TOOL) this.subagents.invoked.set(id, readAt);
       this.activeToolIds.add(id);
       this.pendingTools.set(id, { ...(rawInput ? { input: rawInput } : {}), name });
       const summary = summarizeAntigravityToolCall(name, rawInput ?? {}, data);
@@ -1416,6 +1437,7 @@ class AntigravityAcpController {
       pending.input = rawInput;
     }
     if (!terminal) return;
+    if (status === 'failed') this.noteFailedInvoke(id, readAt);
 
     const name = this.pendingTools.get(id)?.name ?? 'Tool';
     const output = antigravityToolOutput(data);
@@ -1442,8 +1464,11 @@ class AntigravityAcpController {
   }
 
   private abortCurrentTurn(error: unknown): void {
-    const turn = this.currentTurn;
-    if (!turn) return;
+    if (this.currentTurn) this.abortTurn(this.currentTurn, error);
+  }
+
+  private abortTurn(turn: AntigravityTurn, error: unknown): void {
+    if (this.currentTurn !== turn) return;
     this.clearCurrentTurn();
     turn.reject(error);
   }
@@ -1463,11 +1488,10 @@ class AntigravityAcpController {
 
   /**
    * The turn is detached before the final writes, so a failed write must settle
-   * it here: once `currentTurn` is cleared, abortCurrentTurn can no longer reach it.
+   * it here: once `currentTurn` is cleared, abortTurn can no longer reach it.
    */
-  private async finishCurrentTurn(): Promise<void> {
-    const turn = this.currentTurn;
-    if (!turn) return;
+  private async finishTurn(turn: AntigravityTurn): Promise<void> {
+    if (this.currentTurn !== turn) return;
     this.clearCurrentTurn();
     try {
       if (this.latestUsage) {
