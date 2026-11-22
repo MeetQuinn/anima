@@ -112,7 +112,8 @@ const CONFIG_OPTIONS = [
  *   calls, the first prompt shows earlier work that has just ended: a subagent started by a call
  *   Anima cannot tell apart and one started by invoke_subagent, their Stops, then the session's
  *   own Stop, still being written when the prompt went out; then WAKE_TRIGGER_PATH.earlier is
- *   written. invokeFails: the first prompt first makes an invoke_subagent call that fails.
+ *   written. invokeFails: the first prompt first makes an invoke_subagent call that fails;
+ *   'afterStop': the call is still open when the prompt ends and fails 350ms after the subagent Stops.
  *   tailEnds: once 'tail-seen' is answered, wake 'joined' says REPORT-A. and stops.
  * - lateUsage: a usage update follows the answer of a plain prompt
  * `agy --add-dir <dir> agents` lists the agents defined in `<dir>/.agents/agents`. Stop runs
@@ -206,8 +207,12 @@ const FAKE_AGY = [
   '  if (scenario.lateSubagentStop) {',
   "    const stops = scenario.subagentStops || [['agy-subagent-1', !scenario.subagentBusy]];",
   '    stops.forEach(([conversationId, idle], index) => setTimeout(() => runStopHook(conversationId, idle), 50 * (index + 1)));',
+  "    if (scenario.invokeFails === 'afterStop') setTimeout(failInvoke, 50 * stops.length + 350);",
   '  }',
   "  fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.stopped', '');",
+  '}',
+  'function failInvoke() {',
+  "  update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-x', status: 'failed', content: [{ type: 'content', content: { type: 'text', text: 'Unknown subagent' } }] });",
   '}',
   'function select(category, value) {',
   '  const option = configOptions.find((entry) => entry.category === category);',
@@ -319,7 +324,7 @@ const FAKE_AGY = [
   '        }',
   '        if (scenario.invokeFails) {',
   "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-x', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'nobody' } });",
-  "          update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-x', status: 'failed', content: [{ type: 'content', content: { type: 'text', text: 'Unknown subagent' } }] });",
+  "          if (scenario.invokeFails !== 'afterStop') failInvoke();",
   '        }',
   "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-1', title: scenario.invokeTitle || 'Run invoke_subagent', status: 'in_progress', rawInput: { Name: 'reader' } });",
   "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-1', status: 'completed' });",
@@ -2146,6 +2151,8 @@ for (const variant of [
   },
   { done: true, invokeFails: true, name: 'once its last subagent has stopped, not waiting on a call that failed to start one' },
   { done: false, invokeFails: true, invokeTwice: true, name: 'not while another subagent it invoked is still running, beside a call that failed' },
+  // The failure comes outside any loop, so its turn ends only after the quiet period.
+  { done: true, invokeFails: 'afterStop', name: 'once a call left open fails after the last subagent has stopped', quietMs: 150 },
 ]) {
   test(`antigravity-cli ends background work ${variant.name}`, async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-wake-late-'));
@@ -2161,7 +2168,7 @@ for (const variant of [
               stateDir,
               {
                 earlierWork: variant.earlierWork === true,
-                invokeFails: variant.invokeFails === true,
+                invokeFails: variant.invokeFails,
                 invokeTitle: variant.invokeTitle,
                 invokeTwice: variant.invokeTwice === true,
                 lateSubagentStop: variant.lateSubagentStop ?? true,
@@ -2178,7 +2185,7 @@ for (const variant of [
           },
           'agy',
           [],
-          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100, subagentsDoneMs: 800 } },
+          { wake: { pollMs: 20, quietMs: variant.quietMs ?? 60_000, settleMs: 100, subagentsDoneMs: 800 } },
         );
         const active = runtime;
         const input = await runtimeInput(active, ctx, await loadState());
@@ -2204,6 +2211,12 @@ for (const variant of [
           activity.type === 'agent.text' && activity.payload?.['text'] === 'SUMMARY SAVED'), 5_000);
         // The turn's Stop still counts the subagent as running; the subagent's own Stop lands just after.
         await realDelay(400);
+        if (variant.invokeFails === 'afterStop') {
+          // The failure, after that Stop was applied, comes in a turn of its own that ends after the quiet period.
+          await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+            activity.type === 'tool.call.failed' && activity.payload?.['providerToolId'] === 'agy-invoke-x'), 5_000);
+          await pollUntil(() => active.health().providerWork?.state === 'background', 5_000);
+        }
         assert.deepEqual(active.health().providerWork, { state: 'background' });
         assert.equal(active.health().child?.alive, true);
         if (variant.done) {
