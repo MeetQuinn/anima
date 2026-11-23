@@ -27,6 +27,7 @@ process.stdin.on('end', () => {
         conversationId: typeof fields['conversationId'] === 'string' ? fields['conversationId'] : undefined,
         fullyIdle: typeof fields['fullyIdle'] === 'boolean' ? fields['fullyIdle'] : undefined,
         hookEventName: typeof fields['hookEventName'] === 'string' ? fields['hookEventName'] : undefined,
+        initialNumSteps: typeof fields['initialNumSteps'] === 'number' ? fields['initialNumSteps'] : undefined,
         input: key && typeof fields['lastUserInput'] === 'string' ? antigravityInputTag(key, fields['lastUserInput']) : undefined,
         terminationReason:
           typeof fields['terminationReason'] === 'string' ? fields['terminationReason'].slice(0, 64) : undefined,

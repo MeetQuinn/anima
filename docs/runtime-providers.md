@@ -665,7 +665,8 @@ Current process model:
   `Stop` hook at the end of every execution loop: a prompt, a self-started turn, or a subagent's
   run; it runs the `PreInvocation` hook before every model call, in the session and in each
   subagent. The hook appends the conversation id, the hook's name, `fullyIdle` and the termination
-  reason (for a Stop), and a keyed digest of the payload's last user input to a per-launch file under
+  reason (for a Stop), the steps the conversation had before the call (for a model call), and a
+  keyed digest of the payload's last user input to a per-launch file under
   `events/`, named in the child's environment and removed when the child exits. The text is never
   written; the key is random per launch. The session's own Stops end its loops; a subagent's Stop
   ends that subagent's run. A Stop of the session with
@@ -684,7 +685,8 @@ Current process model:
   to the item whose turn left the background work, or else to the last item. Its thinking, tool
   calls, and context stats are recorded on that item as they arrive, its permission requests are
   approved as in a prompt, and its text is recorded there when the turn ends. That text is a record,
-  not a reply; a reply still goes through Anima. The turn ends at its Stop, when Anima writes a
+  not a reply; a reply still goes through Anima. A tool call's later updates and its result go to
+  the item the call started on, also when they come during a later prompt or turn. The turn ends at its Stop, when Anima writes a
   prompt (the prompt joins it, so the output from then on goes to the new item), or after two
   minutes of silence, which also covers an `agy` that runs no hooks.
 - `agy` runs a prompt's Stop just before it answers, so that Stop is on disk, after the send, when
@@ -715,10 +717,13 @@ Current process model:
   or that work Anima cannot see is (a command sent to the background). A subagent that started
   subagents of its own can end that way, just like the session: in real nested runs, `agy` ran a
   coordinator again when its leaf ended without messaging it, but never ran the session again after
-  its coordinator ended. The hook events do not say which conversation started which. A subagent's
-  first model call comes while the call that starts it runs, inside the loop of the conversation
-  that made it, so a subagent first seen while the session runs no loop of its own and exactly one
-  subagent runs was started by that one. Such a Stop of the session counts on every subagent; a
+  its coordinator ended. The hook events do not say which conversation started which. A new
+  subagent's first model call shows no earlier steps and comes while the call that starts it runs,
+  inside the loop of the conversation that made it, so a new subagent first seen while the session
+  runs no loop of its own and exactly one subagent runs was started by that one. What Anima knows of
+  a subagent lasts as long as the child: one a message wakes, in this background period or a later
+  one, is the same subagent, never one the subagent running then started. A subagent with earlier
+  steps that Anima has not seen (from before a restart) has no known parent. Such a Stop of the session counts on every subagent; a
   subagent's counts on the subagents known to be its own, and theirs. With none of those running
   or waiting, the work is out of Anima's sight (a subagent running beside it may be the session's),
   and it stays until that subagent runs again and stops. A subagent first seen while the session's
@@ -726,7 +731,7 @@ Current process model:
   started it keeps the work open until that one runs again and stops.
 - Hooks run one at a time and hold up `agy`'s loop, so the file has every event in the order `agy`
   got to it, whenever Anima reads `agy`'s output: a Stop that says the session is idle comes after
-  everything it covers, and clears the tracking. Once nothing is running (the last subagent having
+  everything it covers, and clears which conversations are running. Once nothing is running (the last subagent having
   stopped after the session's last model call and Stop), no tool call is still open, every event
   written has been applied (new ones wait out the two seconds above, and a model call among them
   means work goes on), and `agy` has then been silent for 10 seconds, the background work counts
