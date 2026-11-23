@@ -182,7 +182,13 @@ const CONFIG_OPTIONS = [
  *   turn agy starts on its own ('fromWake', then WAKE_TRIGGER_PATH.a-started is written), and
  *   fails ('A-SPECIFIC FAILURE.') in the second prompt, which says 'B reply.'. 'afterAnswer': the
  *   second prompt starts command b, and b fails ('B-SPECIFIC FAILURE.') 50ms after its answer.
- *   The reader stops once WAKE_TRIGGER_PATH.reader-stop exists.
+ *   The reader stops once WAKE_TRIGGER_PATH.reader-stop exists. With quotaAround, the second
+ *   prompt answers with agy's quota notice and a fails just after it ('notice'), or answers with
+ *   a line of its own, a fails, then the notice it quotes ('quoted').
+ * - terminalOnly: the first prompt starts a reader and ends with Stop(false). Once
+ *   WAKE_TRIGGER_PATH.go exists, a turn agy starts on its own reports a read only once it has
+ *   ended (a single tool_call with status completed), says 'All work finished.' and stops saying
+ *   work goes on, and the reader then stops idle.
  * - commandThen 'fail' | 'append': the first prompt starts a reader and a command that keeps
  *   running, and ends with Stop(false). 'fail': every later prompt fails with Invalid params,
  *   and the reader stops after the first of them. 'append': the second prompt calls the model and
@@ -850,14 +856,36 @@ const FAKE_AGY = [
   '      }',
   '      if (scenario.toolOwner && promptCount === 2) {',
   "        const failed = (id, text) => update({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'failed', content: [{ type: 'content', content: { type: 'text', text } }] });",
-  "        if (scenario.toolOwner === 'afterAnswer') update({ sessionUpdate: 'tool_call', toolCallId: 'agy-command-b', title: 'sleep 60', kind: 'execute', status: 'in_progress', rawInput: { CommandLine: 'sleep 60' } });",
-  "        else failed('agy-command-a', 'A-SPECIFIC FAILURE.');",
-  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'B reply.' } });",
+  "        const say = (text) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });",
+  "        const notice = '\\n⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h30m.\\n';",
+  "        if (scenario.quotaAround === 'notice') { say(notice); failed('agy-command-a', 'A-SPECIFIC FAILURE.'); }",
+  "        else if (scenario.quotaAround === 'quoted') { say('Here is the notice you asked me to quote:'); failed('agy-command-a', 'A-SPECIFIC FAILURE.'); say(notice); }",
+  "        else {",
+  "          if (scenario.toolOwner === 'afterAnswer') update({ sessionUpdate: 'tool_call', toolCallId: 'agy-command-b', title: 'sleep 60', kind: 'execute', status: 'in_progress', rawInput: { CommandLine: 'sleep 60' } });",
+  "          else failed('agy-command-a', 'A-SPECIFIC FAILURE.');",
+  "          say('B reply.');",
+  "        }",
   "        update({ sessionUpdate: 'usage_update', used: 4000, size: 1048576 });",
   '        runStopHook(sessionId, false);',
   "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
   "        if (scenario.toolOwner === 'afterAnswer') setTimeout(() => failed('agy-command-b', 'B-SPECIFIC FAILURE.'), 50);",
   "        whenTriggered('.reader-stop', () => runStopHook('agy-subagent-r', true));",
+  '        continue;',
+  '      }',
+  // A turn agy starts on its own reports a call only once the call has ended.
+  '      if (scenario.terminalOnly && promptCount === 1) {',
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-invoke-r', title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Prompt: 'Review the fixture.' } });",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-invoke-r', status: 'completed' });",
+  "        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started a reader.' } });",
+  '        runStopHook(sessionId, false);',
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
+  "        whenTriggered('.go', () => {",
+  '          modelCall(sessionId);',
+  "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-read-late', title: 'Read notes.md', kind: 'read', status: 'completed' });",
+  "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'All work finished.' } });",
+  '          runStopHook(sessionId, false);',
+  "          runStopHook('agy-subagent-r', true);",
+  '        });',
   '        continue;',
   '      }',
   '      if (scenario.peerWork && promptCount === 1) {',
@@ -2923,6 +2951,114 @@ for (const [mode, when, recordFails] of [
     }
   });
 }
+
+for (const [around, name] of [
+  ['notice', 'puts an item off until the quota resets when agy answers it with the quota notice and a call from an earlier item ends right after'],
+  ['quoted', 'keeps a reply that quotes the quota notice when a call from an earlier item ends inside it'],
+] as const) {
+  test(`antigravity-cli ${name}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-cross-quota-'));
+    let worker: AgentRuntimeWorker | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const triggerPath = join(stateDir, 'wake-trigger');
+        await ensureTestAgentConfig({ agentId: 'anima', stateDir });
+        await installFakeAgy(stateDir);
+        const runtime = new AntigravityCliAgentRuntime(
+          {
+            env: agyEnv(stateDir, { quotaAround: around, toolOwner: 'fromWake' }, { WAKE_TRIGGER_PATH: triggerPath }),
+            kind: 'antigravity-cli',
+          },
+          'agy',
+          [],
+          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100, subagentsDoneMs: 300 } },
+        );
+        const queue = new WakeQueueService('anima');
+        const started = new AgentRuntimeWorker(
+          { agentId: 'anima', agentRuntime: runtime, homePath: stateDir, queue, stateDir },
+          { error() {}, log() {} },
+        );
+        worker = started;
+        // Item 1 leaves a reader, and a turn agy starts on its own leaves command a running.
+        const firstCtx = await ingestAgyEvent(stateDir, 'Start a reader.', '1786000051.000001');
+        assert.equal(await started.drainOnce(), 1);
+        await pollUntil(() => fileExists(`${triggerPath}.a-started`), 5_000);
+        await pollUntil(async () => allActivities(await loadState()).some((activity) =>
+          activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-command-a'), 5_000);
+
+        const secondCtx = await ingestAgyEvent(stateDir, 'Answer something else.', '1786000051.000002');
+        const before = Date.now();
+        const handled = await started.drainOnce();
+        const activities = allActivities(await loadState());
+        assert.deepEqual(itemsWith(activities, 'tool.call.failed', 'providerToolId', 'agy-command-a'), [firstCtx.item.id]);
+        const replies = activities
+          .filter((activity) => activity.type === 'agent.text' && activity.payload?.['itemId'] === secondCtx.item.id)
+          .map((activity) => String(activity.payload?.['text']));
+        const queued = await queue.find(secondCtx.item.id);
+        if (around === 'notice') {
+          assert.equal(handled, 0);
+          assert.deepEqual(replies, []);
+          assert.equal(queued?.handling.status, 'queued');
+          const resumeAt = Date.parse(String(queued?.handling.notBefore));
+          assert.ok(Math.abs(resumeAt - (before + 90 * 60_000)) < 60_000, String(queued?.handling.notBefore));
+        } else {
+          assert.equal(handled, 1);
+          assert.equal(queued, undefined);
+          assert.equal(replies.length, 1);
+          assert.match(replies[0]!, /^Here is the notice you asked me to quote:\s+⚠ Individual quota reached\. .* Resets in 1h30m\.\s*$/);
+        }
+        await writeFile(`${triggerPath}.reader-stop`, '');
+        await withTimeout(runtime.waitForProviderQuiescent(), 5_000);
+      });
+    } finally {
+      await worker?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
+
+test('antigravity-cli closes a call whose first notice says it ended, when its item cannot record the start', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-terminal-only-'));
+  let runtime: AntigravityCliAgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const triggerPath = join(stateDir, 'wake-trigger');
+      await installFakeAgy(stateDir);
+      const ctx = await ingestAgyEvent(stateDir, 'Start a reader.', '1786000052.000001');
+      runtime = new AntigravityCliAgentRuntime(
+        { env: agyEnv(stateDir, { terminalOnly: true }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+        'agy',
+        [],
+        { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100, subagentsDoneMs: 300 } },
+      );
+      const active = runtime;
+      const input = await runtimeInput(active, ctx, await loadState());
+      let startsLost = 0;
+      const first: AgentRuntimeInput = {
+        ...input,
+        effects: {
+          ...input.effects,
+          async recordToolStarted(event) {
+            if (event.providerToolId !== 'agy-read-late') return input.effects.recordToolStarted(event);
+            startsLost += 1;
+            throw new Error('activity store unavailable');
+          },
+        },
+      };
+      assert.equal((await active.run(first)).text, 'Started a reader.');
+      await writeFile(`${triggerPath}.go`, '');
+      await pollUntil(async () =>
+        itemsWith(allActivities(await loadState()), 'agent.text', 'text', 'All work finished.').length > 0, 5_000);
+      // The reader stopped after the session's last Stop, and the read has ended: nothing is left.
+      await withTimeout(active.waitForProviderQuiescent(), 5_000);
+      assert.equal(startsLost, 1);
+      assert.equal(active.isProviderQuiescent(), true);
+    });
+  } finally {
+    await runtime?.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
 
 for (const lastWrite of ['succeeds', 'fails']) {
   test(`antigravity-cli ends a stopped run held up before it sends its prompt, leaving agy and the next run alone when its last write ${lastWrite}`, async () => {

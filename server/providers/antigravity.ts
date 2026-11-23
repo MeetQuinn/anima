@@ -1267,7 +1267,11 @@ class AntigravityAcpController {
       return;
     }
     if (type === 'tool_call' || type === 'tool_call_update') {
-      this.textAtLastStep = turn.text.length;
+      // Only a step of this prompt's own marks where its reply starts again: a call that an
+      // earlier prompt or a turn of agy's own started can end in the middle of this reply.
+      const id = toolCallId(data);
+      const pending = id ? this.pendingTools.get(id) : undefined;
+      if (!pending || pending.prompt === wire) this.textAtLastStep = turn.text.length;
       await this.handleToolCall(turn.input, data, wire);
       return;
     }
@@ -1592,30 +1596,30 @@ class AntigravityAcpController {
     const status = stringField(data, 'status');
     const terminal = status === 'completed' || status === 'failed';
     const rawInput = toolInput(data) ?? pending?.input;
-    if (!pending) {
-      const name = antigravityToolName(data);
-      this.activeToolIds.add(id);
-      this.pendingTools.set(id, { ...(rawInput ? { input: rawInput } : {}), name, owner: input, ...(prompt ? { prompt } : {}) });
-      const summary = summarizeAntigravityToolCall(name, rawInput ?? {}, data);
-      await input.effects.recordToolStarted({
-        eventType: 'antigravity.tool.call',
-        provider: ANTIGRAVITY_RUNTIME_KIND,
-        providerToolId: id,
-        providerToolName: name,
-        ...(summary.command ? { command: summary.command } : {}),
-        ...(summary.target ? { target: summary.target } : {}),
-        runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
-        tool: `antigravity.${name}`,
-        transport: 'acp',
-      });
-    } else if (rawInput) {
-      pending.input = rawInput;
-    }
-    if (!terminal) return;
-
-    const name = this.pendingTools.get(id)?.name ?? 'Tool';
-    const output = antigravityToolOutput(data);
     try {
+      if (!pending) {
+        const name = antigravityToolName(data);
+        this.activeToolIds.add(id);
+        this.pendingTools.set(id, { ...(rawInput ? { input: rawInput } : {}), name, owner: input, ...(prompt ? { prompt } : {}) });
+        const summary = summarizeAntigravityToolCall(name, rawInput ?? {}, data);
+        await input.effects.recordToolStarted({
+          eventType: 'antigravity.tool.call',
+          provider: ANTIGRAVITY_RUNTIME_KIND,
+          providerToolId: id,
+          providerToolName: name,
+          ...(summary.command ? { command: summary.command } : {}),
+          ...(summary.target ? { target: summary.target } : {}),
+          runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
+          tool: `antigravity.${name}`,
+          transport: 'acp',
+        });
+      } else if (rawInput) {
+        pending.input = rawInput;
+      }
+      if (!terminal) return;
+
+      const name = this.pendingTools.get(id)?.name ?? 'Tool';
+      const output = antigravityToolOutput(data);
       await input.effects.recordEvent({
         eventType: 'antigravity.tool_result',
         isError: status === 'failed',
@@ -1634,10 +1638,13 @@ class AntigravityAcpController {
         });
       }
     } finally {
-      // The call has ended even when its result could not be recorded.
-      this.pendingTools.delete(id);
-      this.activeToolIds.delete(id);
-      this.resolveQuiescentWaitersIfReady();
+      // A call that has ended is closed even when its start or result could not be recorded,
+      // also when its first notice already says it ended.
+      if (terminal) {
+        this.pendingTools.delete(id);
+        this.activeToolIds.delete(id);
+        this.resolveQuiescentWaitersIfReady();
+      }
     }
   }
 

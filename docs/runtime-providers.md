@@ -798,7 +798,8 @@ your limits. Resets in 3h20m5s.` Anima does not deliver that notice as the agent
   turn fails as quota exhausted, and the item waits until the reset time the notice gives, within
   the usual rate-limit bounds (`provider.rate_limit.defer`); usage the prompt reported is still
   recorded. Only that exact notice counts: a model reply that mentions a quota is delivered as
-  usual.
+  usual. The notice is what the prompt said after its own last tool step; a call that an earlier
+  prompt or turn started can end in the middle of the reply and is not a step of it.
 
 Sign-in is machine-level (the OS keychain and `~/.gemini`), so Anima pins `HOME` to the service
 environment. `agy` has no check-only update mode, so **Settings > Providers** shows the installed
