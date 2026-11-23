@@ -4,8 +4,17 @@ import type { RunningChildProcess } from './child-process.js';
 
 interface PendingRpc {
   method: string;
+  onResponse?(): void;
   reject(error: unknown): void;
   resolve(value: Record<string, unknown> | undefined): void;
+}
+
+export interface AcpRequestOptions {
+  /**
+   * Runs synchronously when the response is read, before any later line from the
+   * agent is handled; the returned promise settles only after that.
+   */
+  onResponse?(): void;
 }
 
 export interface AcpJsonRpcPeerOptions {
@@ -45,11 +54,15 @@ export class AcpJsonRpcPeer {
     }
   }
 
-  request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+  request(
+    method: string,
+    params: Record<string, unknown>,
+    options: AcpRequestOptions = {},
+  ): Promise<Record<string, unknown> | undefined> {
     const id = this.nextRequestId++;
     const key = String(id);
     return new Promise((resolve, reject) => {
-      this.pending.set(key, { method, reject, resolve });
+      this.pending.set(key, { method, ...(options.onResponse ? { onResponse: options.onResponse } : {}), reject, resolve });
       try {
         this.write({ id, jsonrpc: '2.0', method, params });
       } catch (error) {
@@ -114,6 +127,12 @@ export class AcpJsonRpcPeer {
     const pending = this.pending.get(key);
     if (!pending) return;
     this.pending.delete(key);
+    try {
+      pending.onResponse?.();
+    } catch (hookError) {
+      pending.reject(hookError);
+      return;
+    }
     const error = isRecord(message.error) ? message.error : undefined;
     if (error) {
       pending.reject(new AcpJsonRpcError(pending.method, error, this.options.label));

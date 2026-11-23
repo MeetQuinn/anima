@@ -199,6 +199,11 @@ const timeoutProfiles = {
   all: { perTestMs: 60_000, suiteBaseMs: 60_000 },
 };
 
+// Extra suite time for a file far above its tier's per-file allowance. The
+// Antigravity runtime tests drive scripted agy sessions on real timers to check
+// its background-work tracking; on CI that file alone takes about four minutes.
+const extraSuiteMsByFile = { 'agent-runtime-antigravity.test.js': 120_000 };
+
 // Each test file runs in its own process. Unit and api files use temp homes and
 // the per-run provider CLI lock directory below, so four can run at once. Runtime
 // files drive real child processes on tight timings and stay one at a time.
@@ -224,7 +229,8 @@ export function testTimeoutsFor(group, testFiles) {
     group === 'fast' || group === 'all'
       ? testFiles.reduce((total, file) => total + compositeTierFileBudgetMs(group, file), 0)
       : testFiles.length * profile.suitePerFileMs;
-  const derivedSuiteMs = profile.suiteBaseMs + suiteGrowthMs;
+  const extraSuiteMs = testFiles.reduce((total, file) => total + (extraSuiteMsByFile[file] ?? 0), 0);
+  const derivedSuiteMs = profile.suiteBaseMs + suiteGrowthMs + extraSuiteMs;
   return {
     perTestMs: profile.perTestMs,
     // Let Node's named per-test timeout fire and flush before the process-tree

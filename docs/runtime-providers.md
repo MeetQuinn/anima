@@ -56,7 +56,7 @@ point; live background work is exposed through health and keeps the controller n
 
 When a controller starts terminating its child, it sends `SIGTERM` and schedules `SIGKILL` after five seconds by default. A caller can supply a shorter or longer deadline; a concurrent close cannot postpone an already scheduled kill. The terminating child remains visible to health and later close calls until completion, and a new turn waits for that teardown before starting. This covers a Claude child that ignores stop or idle-timeout cancellation; it does not diagnose why the native process stopped making progress.
 
-Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, OpenCode ACP, Antigravity ACP, and pi RPC) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude and Codex become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks or terminals.
+Controller-style adapters (Codex app-server, Claude stream-json, Kimi ACP, Grok ACP, OpenCode ACP, Antigravity ACP, and pi RPC) may keep a provider child warm after a turn so the next item can reuse the session. Once no item is active, `providerChildIdleTimeoutMs` bounds that warm child before Anima terminates it. Claude, Codex, and Antigravity become fully idle only after their provider-native background work is empty, so a main-turn result cannot terminate live background tasks, terminals, or subagents.
 
 `health` is optional. It returns a snapshot of the adapter's child-process state (whether a child is expected, how the live one looks, and any provider-native background work) for the runtime health service. `providerWork` distinguishes a main turn that also has background work (`working` plus a count) from a completed main turn whose background work remains (`background` plus a count).
 
@@ -652,12 +652,107 @@ Current process model:
   process, Anima writes the profile as a custom agent, `.agents/agents/anima-runtime.md` under
   `~/.anima/run/agents/<id>/antigravity-cli-agent/`, with `excludeDefaultComponents: true` and a
   short tool list, and adds `--add-dir <that directory> --agent anima-runtime` to the launch. The
-  agent keeps `read_file`, `write_file`, `edit_file`, `run_command`, and `search_web` (`agy`
-  always adds `manage_task`). Questions and reminders go through Anima, so Antigravity's question
-  and schedule tools are left out. Antigravity subagents always run in the background and report
-  in a turn `agy` starts on its own after the prompt has ended, which Anima does not attach to the
-  item yet, so the subagent, swarm, and workflow tools are left out too. Without the default
-  prompt the model is not told its working directory, so the agent file states it.
+  agent keeps `read_file`, `write_file`, `edit_file`, `run_command`, `search_web`, the subagent
+  tools (`define_subagent`, `invoke_subagent`, `manage_subagents`, `send_message`), and
+  `manage_task`, which `agy` always adds and which manages commands sent to the background.
+  Questions and reminders go through Anima, so Antigravity's question and schedule tools are left
+  out, and so are swarm and workflow. Without the default prompt the model is not told its working
+  directory, so the agent file states it.
+- Antigravity subagents always run in the background, and `run_command` can send a command there.
+  Their results arrive in a turn `agy` starts on its own after the prompt has ended, with no
+  prompt and no end marker. To see where such a turn ends, the same directory holds
+  `.agents/hooks.json`, which registers a `Stop` hook and a `PreInvocation` hook. `agy` runs the
+  `Stop` hook at the end of every execution loop: a prompt, a self-started turn, or a subagent's
+  run; it runs the `PreInvocation` hook before every model call, in the session and in each
+  subagent. The hook appends the conversation id, the hook's name, `fullyIdle` and the termination
+  reason (for a Stop), the steps the conversation had before the call (for a model call), and a
+  keyed digest of the payload's last user input to a per-launch file under
+  `events/`, named in the child's environment and removed when the child exits. The text is never
+  written; the key is random per launch. The session's own Stops end its loops; a subagent's Stop
+  ends that subagent's run. A Stop of the session with
+  `fullyIdle: false` keeps the controller non-quiescent and reports `providerWork` (`working` or
+  `background`, without a count), so the idle reset and a restart drain wait for the background
+  work as they do for Claude.
+- Output belongs to a prompt from the moment Anima writes the prompt until it reads `agy`'s answer;
+  everything else belongs to a self-started turn. Before writing a prompt, Anima sends `agy` a
+  request for a method it does not know (`_anima/barrier`). `agy` answers it with an error, written
+  after everything it wrote before, so once Anima has read that answer and handled the output before
+  it, what `agy` said before the prompt stays with the turn it was part of, however late Anima reads
+  it. Output `agy` writes after that answer and before it reads the prompt goes to the new item: the
+  prompt joins that loop. If no answer comes within 10 seconds, the prompt goes out anyway, and
+  later prompts go out without the request until that request is answered; the answer to an earlier
+  one, such as a request sent for a run that was stopped, does not count. A self-started turn goes
+  to the item whose turn left the background work, or else to the last item. Its thinking, tool
+  calls, and context stats are recorded on that item as they arrive, its permission requests are
+  approved as in a prompt, and its text is recorded there when the turn ends. That text is a record,
+  not a reply; a reply still goes through Anima. A tool call's later updates and its result go to
+  the item the call started on, also when they come during a later prompt or turn. The turn ends at its Stop, when Anima writes a
+  prompt (the prompt joins it, so the output from then on goes to the new item), or after two
+  minutes of silence, which also covers an `agy` that runs no hooks.
+- `agy` runs a prompt's Stop just before it answers, so that Stop is on disk, after the send, when
+  Anima reads the answer. The last user input in a Stop is the prompt the loop ran for, or for a
+  self-started turn the prompt before it. A Stop that was still being written when the prompt went
+  out lands after the send too, but with the earlier input. So the prompt's Stop is the first Stop
+  of the session's own conversation after the send whose digest matches the prompt (the first one
+  after the send if none matches). Reading the answer applies that Stop and any earlier ones; later
+  ones end later loops, however late the answer is read. When the prompt before had the same text, a
+  Stop still being written for an earlier loop matches too, so Anima takes the last matching Stop
+  read with the answer instead. Then an answer read only after a self-started turn that followed it
+  has ended takes that turn's Stop: the state it reports is the later one, and that turn's output,
+  read after the answer, is recorded once `agy` has been silent for two minutes. Nothing follows the
+  Stop of a self-started turn, so Anima applies that one once it is two seconds old and the output
+  read before it has been handled; a Stop written after a prompt was sent waits until that prompt's
+  answer is read. Stops are applied one at a time: once one says the background work is done, its
+  reports are over, and the next turn that leaves work owns the next ones.
+- A subagent hands its report to the session before its own run ends, so the session can end the
+  loop that reads the report with `fullyIdle: false` and then run no further loop: no Stop of the
+  session says the work is done. Anima therefore tracks, from the hook file, which conversations
+  are running since the session was last idle. Each subagent has a conversation of its own, however
+  many one `invoke_subagent` call starts, and calls the model as soon as it starts; a subagent that
+  stopped and is woken by a message (`send_message`) calls the model again. So a model call marks
+  its conversation running until that conversation's next Stop. For the session's own
+  conversation, this covers a loop that starts before the last subagent stops (the report arrives
+  before the subagent's run ends) and whose first output takes longer than the silence below.
+- A Stop with `fullyIdle: false` says that subagents the conversation started are still running,
+  or that work Anima cannot see is (a command sent to the background). A subagent that started
+  subagents of its own can end that way, just like the session: in real nested runs, `agy` ran a
+  coordinator again when its leaf ended without messaging it, but never ran the session again after
+  its coordinator ended. The hook events do not say which conversation started which. A new
+  subagent's first model call shows no earlier steps and comes while the call that starts it runs,
+  inside the loop of the conversation that made it, so a new subagent first seen while the session
+  runs no loop of its own and exactly one subagent runs was started by that one. What Anima knows of
+  a subagent lasts as long as the child: one a message wakes, in this background period or a later
+  one, is the same subagent, never one the subagent running then started. A subagent with earlier
+  steps that Anima has not seen (from before a restart) has no known parent. Such a Stop of the session counts on every subagent; a
+  subagent's counts on the subagents known to be its own, and theirs. With none of those running
+  or waiting, the work is out of Anima's sight (a subagent running beside it may be the session's),
+  and it stays until that subagent runs again and stops. A subagent first seen while the session's
+  loop runs, or while several subagents run, could be anyone's, so the Stop of the subagent that
+  started it keeps the work open until that one runs again and stops.
+- Hooks run one at a time and hold up `agy`'s loop, so the file has every event in the order `agy`
+  got to it, whenever Anima reads `agy`'s output: a Stop that says the session is idle comes after
+  everything it covers, and clears which conversations are running. Once nothing is running (the last subagent having
+  stopped after the session's last model call and Stop), no tool call is still open, every event
+  written has been applied (new ones wait out the two seconds above, and a model call among them
+  means work goes on), and `agy` has then been silent for 10 seconds, the background work counts
+  as done. A prompt that fails or is cancelled takes only the tool calls it started with it; a
+  command an earlier prompt or a self-started turn sent to the background stays open until an
+  update says it ended. A model call whose hook could not write its event leaves that conversation
+  out (and a subagent started in that loop may be taken for another's), so the work can count as
+  done while it runs; a missing Stop only keeps the work open. A subagent whose Stop says work goes
+  on while one known to be its own runs is taken to wait for that one, so a command it also sent to
+  the background can still be running when the work counts as done.
+- Nothing on the wire separates two self-started turns, so when both end within those two
+  seconds, their text is recorded as one.
+- Stopping a run while `agy` starts the session for it, or works on one of its prompts, shuts the
+  child down, after a `session/cancel` for a prompt. Stopping it once the session is running but
+  before its prompt is written ends the wait for earlier output, the prompt is never sent, and the
+  child keeps running: `agy` may be running a self-started turn for an earlier item, and a cancel
+  or a shutdown would stop that turn and lose its report. A run that has not ended 2 seconds
+  later is held up in Anima's own writes; Anima ends it then, and the child keeps running.
+- The controller is not quiescent while output it has read is still being handled or a
+  self-started turn's text is still being written, and it reports the child as finished only
+  after that write, so a drain or `close` does not return before the report is stored.
 - `agy` runs an unknown `--agent` as its default agent without an error, which would drop the
   profile. Anima therefore checks that `agy --add-dir <directory> agents` lists `anima-runtime`
   before using it. The check runs while the provider launch permit is held, so it gets 15 seconds.
@@ -703,7 +798,8 @@ your limits. Resets in 3h20m5s.` Anima does not deliver that notice as the agent
   turn fails as quota exhausted, and the item waits until the reset time the notice gives, within
   the usual rate-limit bounds (`provider.rate_limit.defer`); usage the prompt reported is still
   recorded. Only that exact notice counts: a model reply that mentions a quota is delivered as
-  usual.
+  usual. The notice is what the prompt said after its own last tool step; a call that an earlier
+  prompt or turn started can end in the middle of the reply and is not a step of it.
 
 Sign-in is machine-level (the OS keychain and `~/.gemini`), so Anima pins `HOME` to the service
 environment. `agy` has no check-only update mode, so **Settings > Providers** shows the installed

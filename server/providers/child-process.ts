@@ -20,6 +20,10 @@ export interface RunningChildProcess {
   completion: Promise<{ stdout: string; stderr: string }>;
   endStdin(): void;
   kill(signal?: NodeJS.Signals): void;
+  /** Output has been read from the child but its chunk callbacks have not finished. */
+  outputPending?(): boolean;
+  /** Settles once the chunk callbacks for all output read so far have finished. */
+  outputSettled?(): Promise<void>;
   setVersion(version: string): void;
   snapshot(): ProviderChildHealthSnapshot;
   writeStdin(input: string): void;
@@ -76,10 +80,12 @@ export function startChildProcess(input: {
   let streamEffects = Promise.resolve();
   let streamEffectError: unknown;
   let pendingStreamBytes = 0;
+  let queuedStreamEffects = 0;
   function enqueueStreamEffect(chunk: string, callback: ((chunk: string) => Promise<void>) | undefined): void {
     if (!callback) return;
     const bytes = Buffer.byteLength(chunk);
     pendingStreamBytes += bytes;
+    queuedStreamEffects += 1;
     // Both pipes feed one ordered effects queue. Pausing only the busy pipe
     // would let the other one keep retaining output behind a slow consumer.
     if (pendingStreamBytes >= STREAM_EFFECT_HIGH_WATER_BYTES) {
@@ -92,6 +98,7 @@ export function startChildProcess(input: {
         streamEffectError = error;
       })
       .finally(() => {
+        queuedStreamEffects -= 1;
         pendingStreamBytes -= bytes;
         if (pendingStreamBytes <= STREAM_EFFECT_LOW_WATER_BYTES) {
           child.stdout?.resume();
@@ -142,6 +149,12 @@ export function startChildProcess(input: {
     },
     kill(signal: NodeJS.Signals = 'SIGTERM') {
       child.kill(signal);
+    },
+    outputPending() {
+      return queuedStreamEffects > 0;
+    },
+    outputSettled() {
+      return streamEffects;
     },
     setVersion(nextVersion: string) {
       version = nextVersion;
