@@ -182,6 +182,7 @@ const CONFIG_OPTIONS = [
  *   turn agy starts on its own ('fromWake', then WAKE_TRIGGER_PATH.a-started is written), and
  *   fails ('A-SPECIFIC FAILURE.') in the second prompt, which says 'B reply.'. 'afterAnswer': the
  *   second prompt starts command b, and b fails ('B-SPECIFIC FAILURE.') 50ms after its answer.
+ *   The reader stops once WAKE_TRIGGER_PATH.reader-stop exists.
  * - commandThen 'fail' | 'append': the first prompt starts a reader and a command that keeps
  *   running, and ends with Stop(false). 'fail': every later prompt fails with Invalid params,
  *   and the reader stops after the first of them. 'append': the second prompt calls the model and
@@ -856,6 +857,7 @@ const FAKE_AGY = [
   '        runStopHook(sessionId, false);',
   "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
   "        if (scenario.toolOwner === 'afterAnswer') setTimeout(() => failed('agy-command-b', 'B-SPECIFIC FAILURE.'), 50);",
+  "        whenTriggered('.reader-stop', () => runStopHook('agy-subagent-r', true));",
   '        continue;',
   '      }',
   '      if (scenario.peerWork && promptCount === 1) {',
@@ -2843,12 +2845,16 @@ for (const variant of [
   });
 }
 
-for (const [mode, when] of [
-  ['duringPrompt', 'an earlier prompt started fails during the next one'],
-  ['fromWake', 'a turn agy started on its own started fails during the next prompt'],
-  ['afterAnswer', 'a prompt started fails after its answer, while an earlier item has work left'],
+for (const [mode, when, recordFails] of [
+  ['duringPrompt', 'an earlier prompt started fails during the next one', false],
+  ['fromWake', 'a turn agy started on its own started fails during the next prompt', false],
+  ['afterAnswer', 'a prompt started fails after its answer, while an earlier item has work left', false],
+  ['duringPrompt', 'an earlier prompt started fails during the next one and that item cannot record it', true],
 ] as const) {
-  test(`antigravity-cli records a tool call's result on the item it started on, when a call ${when}`, async () => {
+  const name = recordFails
+    ? `ends a tool call whose result cannot be recorded on the item it started on, when a call ${when}`
+    : `records a tool call's result on the item it started on, when a call ${when}`;
+  test(`antigravity-cli ${name}`, async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-tool-owner-'));
     let runtime: AntigravityCliAgentRuntime | undefined;
     try {
@@ -2861,18 +2867,42 @@ for (const [mode, when] of [
           { env: agyEnv(stateDir, { toolOwner: mode }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
           'agy',
           [],
-          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100 } },
+          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100, subagentsDoneMs: 300 } },
         );
         const active = runtime;
         const call = mode === 'afterAnswer' ? 'agy-command-b' : 'agy-command-a';
         const owner = mode === 'afterAnswer' ? secondCtx.item.id : firstCtx.item.id;
-        assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'Started a reader.');
+        const firstInput = await runtimeInput(active, firstCtx, await loadState());
+        let failureLost = false;
+        const first = recordFails
+          ? {
+              ...firstInput,
+              effects: {
+                ...firstInput.effects,
+                async recordToolFailed() {
+                  failureLost = true;
+                  throw new Error('activity store unavailable');
+                },
+              },
+            }
+          : firstInput;
+        assert.equal((await active.run(first)).text, 'Started a reader.');
         if (mode === 'fromWake') {
           await pollUntil(() => fileExists(`${triggerPath}.a-started`), 5_000);
           await pollUntil(async () => allActivities(await loadState()).some((activity) =>
             activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === call), 5_000);
         }
         assert.equal((await active.run(await runtimeInput(active, secondCtx, await loadState()))).text, 'B reply.');
+        if (recordFails) {
+          // The call has still ended: once the reader stops, nothing is left open.
+          await pollUntil(() => failureLost, 5_000);
+          await writeFile(`${triggerPath}.reader-stop`, '');
+          await withTimeout(active.waitForProviderQuiescent(), 5_000);
+          const activities = allActivities(await loadState());
+          assert.deepEqual(itemsWith(activities, 'tool.call.failed', 'providerToolId', call), []);
+          assert.deepEqual(itemsWith(activities, 'agent.text', 'text', 'B reply.'), [secondCtx.item.id]);
+          return;
+        }
         await pollUntil(async () => allActivities(await loadState()).some((activity) =>
           activity.type === 'tool.call.failed' && activity.payload?.['providerToolId'] === call), 5_000);
         const activities = allActivities(await loadState());
