@@ -92,6 +92,24 @@ test('composite suite budgets charge each file at its owning tier rate', async (
   assert.equal(budgets.allPlusRuntime!.suiteMs - budgets.all!.suiteMs, 15_000);
 });
 
+test('a file far above its tier allowance adds its own extra suite time', async () => {
+  const result = await runWrapper(`
+    import { testTimeoutsFor } from ${JSON.stringify(runnerUrl())};
+    const files = Array(4).fill('runtime-worker-failures.test.js');
+    const budgets = {};
+    for (const group of ['runtime', 'all']) {
+      budgets[group] = testTimeoutsFor(group, files).suiteMs;
+      budgets[group + 'PlusAntigravity'] = testTimeoutsFor(group, [...files, 'agent-runtime-antigravity.test.js']).suiteMs;
+    }
+    console.log(JSON.stringify(budgets));
+  `);
+
+  assert.equal(result.code, 0);
+  const budgets = JSON.parse(result.stdout.trim()) as Record<string, number>;
+  assert.equal(budgets.runtimePlusAntigravity! - budgets.runtime!, 15_000 + 120_000);
+  assert.equal(budgets.allPlusAntigravity! - budgets.all!, 15_000 + 120_000);
+});
+
 test('the runner rejects a suite watchdog that can preempt the per-test timeout', async () => {
   const result = await runWrapper(`
     import { runTestFiles } from ${JSON.stringify(runnerUrl())};
