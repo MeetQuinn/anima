@@ -112,8 +112,10 @@ const CONFIG_OPTIONS = [
  *   second: the second prompt starts another subagent; once WAKE_TRIGGER_PATH.second exists,
  *   that one reports in a turn of its own. second 'slowLateRead': 400ms after the second prompt's
  *   Stop, the report's Stop is on disk and the answer and the report come in one write.
- *   WAKE_TRIGGER_PATH.stopped is written after the self-started turn's Stop. crossing: that Stop
- *   is still being written when the next prompt arrives, so it lands after that prompt's send.
+ *   WAKE_TRIGGER_PATH.stopped is written after the self-started turn's Stop, and
+ *   WAKE_TRIGGER_PATH.hooks-done once the hooks and calls that follow it (below) have run.
+ *   crossing: the self-started turn's Stop is still being written when the next prompt arrives,
+ *   so it lands after that prompt's send.
  *   A subagent's own conversation stops as its report starts (subagent 2 with REPORT-B.).
  *   lateSubagentStop: it stops 50ms after the self-started turn, whose Stop still counts it as
  *   running; invokeTwice: the first prompt invokes two subagents, and only one ever stops;
@@ -386,6 +388,10 @@ const FAKE_AGY = [
   "    if (scenario.invokeFails === 'afterStop') setTimeout(failInvoke, 50 * stops.length + 350);",
   "    if (scenario.lateStart) setTimeout(() => startSubagent('agy-subagent-late'), 50 * stops.length + 100);",
   '    if (scenario.sessionCall) setTimeout(() => modelCall(sessionId), 50 * stops.length + 100);',
+  // Timers run in order, so every hook and call above is on disk by then.
+  "    setTimeout(() => fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.hooks-done', ''), 50 * stops.length + 400);",
+  '  } else {',
+  "    fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.hooks-done', '');",
   '  }',
   "  fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.stopped', '');",
   '}',
@@ -3513,6 +3519,8 @@ for (const variant of [
           assert.equal(active.health().providerWork, undefined);
           await pollUntil(() => active.health().child === undefined, 5_000);
         } else {
+          // The silence window has passed since agy's last hook, however late that hook ran.
+          await pollUntil(() => fileExists(`${triggerPath}.hooks-done`), 5_000);
           await realDelay(1_200);
           assert.equal(active.isProviderQuiescent(), false);
           assert.deepEqual(active.health().providerWork, { state: 'background' });
