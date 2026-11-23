@@ -93,8 +93,12 @@ const CONFIG_OPTIONS = [
  * - agents: 'none' lists no agents (an agy that cannot find Anima's agent), 'fail' exits 1,
  *   'hang' ignores SIGTERM and never answers (its pid goes to AGENTS_PID_PATH)
  * - quotaNotice / quotaError: answer the prompt with agy's quota notice, as a reply or an error;
- *   quotaNotice 'afterTool' sends it as the step after some text and a tool call
+ *   quotaNotice 'afterTool' sends it as the step after some text and a tool call, 'afterOneNotice'
+ *   the same with the tool call reported once, already completed
  * - quotaLookalike: a normal reply whose last line looks like a quota notice
+ * - quotaAfterFollowup: the first prompt waits until it is cancelled, which ends it with
+ *   Stop(false); agy then starts a read on its own. The next prompt says a line of its own, the
+ *   read completes, and the prompt ends with the quota notice it quotes.
  * - wake: the first prompt starts a subagent and ends with background work pending; once
  *   WAKE_TRIGGER_PATH exists, agy starts a turn of its own (thinking, a permission request,
  *   a file write, a reply) for the report. Every prompt and that turn end with a Stop, which
@@ -484,6 +488,13 @@ const FAKE_AGY = [
   '      continue;',
   '    }',
   "    if (msg.method === 'session/cancel') {",
+  "      if (scenario.quotaAfterFollowup && pendingPromptId !== undefined) {",
+  '        runStopHook(sessionId, false);',
+  "        send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'cancelled' } });",
+  '        pendingPromptId = undefined;',
+  "        update({ sessionUpdate: 'tool_call', toolCallId: 'agy-gap', title: 'Read notes.md', kind: 'read', status: 'in_progress' });",
+  '        continue;',
+  '      }',
   "      if (scenario.commandThen === 'append' && pendingPromptId !== undefined) {",
   '        runStopHook(sessionId, false);',
   "        send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'cancelled' } });",
@@ -503,6 +514,10 @@ const FAKE_AGY = [
   "      if (scenario.quotaError) { send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h30m.' } }); continue; }",
   "      const usage = { inputTokens: 100, outputTokens: 20, totalTokens: 120 };",
   "      if (scenario.quotaNotice) {",
+  "        if (scenario.quotaNotice === 'afterOneNotice') {",
+  "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Checking the notes.' } });",
+  "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-tool-q', title: 'pwd', kind: 'execute', status: 'completed', rawInput: { command: 'pwd' }, content: [{ type: 'content', content: { type: 'text', text: '/tmp' } }] });",
+  "        }",
   "        if (scenario.quotaNotice === 'afterTool') {",
   "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Checking the notes.' } });",
   "          update({ sessionUpdate: 'tool_call', toolCallId: 'agy-tool-q', title: 'pwd', kind: 'execute', status: 'pending', rawInput: { command: 'pwd' } });",
@@ -537,6 +552,16 @@ const FAKE_AGY = [
   // Like agy, the prompt's loop calls the model first.
   '      modelCall(sessionId);',
   '      if (scenario.hang) { pendingPromptId = msg.id; continue; }',
+  '      if (scenario.quotaAfterFollowup) {',
+  "        const say = (text) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });",
+  "        if (promptCount === 1) { say('Working on the first.'); pendingPromptId = msg.id; continue; }",
+  "        say('Here is the notice you asked me to quote:');",
+  "        update({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-gap', status: 'completed' });",
+  "        say('\\n⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h30m.\\n');",
+  '        runStopHook(sessionId, true);',
+  "        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 } } });",
+  '        continue;',
+  '      }',
   '      if (scenario.doneFirst && promptCount === 1) {',
   "        fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.prompt1', lastUserInput);",
   "        update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Delegating.' } });",
@@ -1660,6 +1685,7 @@ for (const agents of ['none', 'fail'] as const) {
 for (const scenario of [
   { name: 'reply', quotaNotice: true, resetMs: (3 * 3600 + 20 * 60 + 5) * 1000, usage: true },
   { name: 'reply after a tool step', quotaNotice: 'afterTool', resetMs: (3 * 3600 + 20 * 60 + 5) * 1000, usage: true },
+  { name: 'reply after a tool step reported once', quotaNotice: 'afterOneNotice', resetMs: (3 * 3600 + 20 * 60 + 5) * 1000, usage: true },
   { name: 'error', quotaError: true, resetMs: 90 * 60 * 1000, usage: false },
 ]) {
   test(`antigravity-cli treats a quota notice ${scenario.name} as quota exhausted until it resets`, async () => {
@@ -1692,6 +1718,33 @@ for (const scenario of [
     }
   });
 }
+
+test('antigravity-cli keeps a follow-up reply that quotes the quota notice when a call agy started between the prompts ends inside it', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-quota-followup-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      await installFakeAgy(stateDir);
+      const firstCtx = await ingestAgyEvent(stateDir, 'Start on this.', '1786000053.000001');
+      const secondCtx = await ingestAgyEvent(stateDir, 'Quote the quota notice.', '1786000053.000002');
+      runtime = createAgentRuntime({ env: agyEnv(stateDir, { quotaAfterFollowup: true }), kind: 'antigravity-cli' });
+      const active = runtime;
+      const runPromise = active.run(await runtimeInput(active, firstCtx, await loadState()));
+      await waitFor(() => readFile(callsPath, 'utf8').then((text) => text.includes('"method":"session/prompt"')));
+      assert.equal(
+        (await active.appendToActiveRun(await runtimeFollowupInput(active, firstCtx, secondCtx, await loadState()))).accepted,
+        true,
+      );
+      // The read is not a step of the follow-up prompt, though it is on the same item.
+      const result = await withTimeout(runPromise, 5_000);
+      assert.match(result.text ?? '', /^Here is the notice you asked me to quote:\s+⚠ Individual quota reached\. .* Resets in 1h30m\.\s*$/);
+    });
+  } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
 
 test('antigravity-cli keeps a reply that only mentions a quota', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-quota-text-'));
