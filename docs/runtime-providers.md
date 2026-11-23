@@ -715,19 +715,28 @@ Current process model:
   or that work Anima cannot see is (a command sent to the background). A subagent that started
   subagents of its own can end that way, just like the session: in real nested runs, `agy` ran a
   coordinator again when its leaf ended without messaging it, but never ran the session again after
-  its coordinator ended. The hook events do not say which conversation started which, so such a
-  Stop, the session's or a subagent's, counts on the subagents running at that moment. With none
-  running, the work is out of Anima's sight, and it stays until that conversation runs again.
+  its coordinator ended. The hook events do not say which conversation started which. A subagent's
+  first model call comes while the call that starts it runs, inside the loop of the conversation
+  that made it, so a subagent first seen while the session runs no loop of its own and exactly one
+  subagent runs was started by that one. Such a Stop of the session counts on every subagent; a
+  subagent's counts on the subagents known to be its own, and theirs. With none of those running
+  or waiting, the work is out of Anima's sight (a subagent running beside it may be the session's),
+  and it stays until that subagent runs again and stops. A subagent first seen while the session's
+  loop runs, or while several subagents run, could be anyone's, so the Stop of the subagent that
+  started it keeps the work open until that one runs again and stops.
 - Hooks run one at a time and hold up `agy`'s loop, so the file has every event in the order `agy`
   got to it, whenever Anima reads `agy`'s output: a Stop that says the session is idle comes after
   everything it covers, and clears the tracking. Once nothing is running (the last subagent having
   stopped after the session's last model call and Stop), no tool call is still open, every event
   written has been applied (new ones wait out the two seconds above, and a model call among them
   means work goes on), and `agy` has then been silent for 10 seconds, the background work counts
-  as done. A model call whose hook could not write its event leaves that conversation out, so the
-  work can count as done while it runs; a missing Stop only keeps the work open. A subagent whose
-  Stop says work goes on because of a command in the background, while another subagent runs, is
-  taken for that one's parent, so the work can count as done once that one stops.
+  as done. A prompt that fails or is cancelled takes only the tool calls it started with it; a
+  command an earlier prompt or a self-started turn sent to the background stays open until an
+  update says it ended. A model call whose hook could not write its event leaves that conversation
+  out (and a subagent started in that loop may be taken for another's), so the work can count as
+  done while it runs; a missing Stop only keeps the work open. A subagent whose Stop says work goes
+  on while one known to be its own runs is taken to wait for that one, so a command it also sent to
+  the background can still be running when the work counts as done.
 - Nothing on the wire separates two self-started turns, so when both end within those two
   seconds, their text is recorded as one.
 - Stopping a run while `agy` starts the session for it, or works on one of its prompts, shuts the

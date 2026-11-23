@@ -499,6 +499,8 @@ interface AntigravityTurn {
 interface PendingTool {
   input?: Record<string, unknown>;
   name: string;
+  /** The prompt the call started in; a call of a turn agy started on its own has none. */
+  prompt?: AntigravityPromptOnWire;
 }
 
 interface AntigravitySubagentRuns {
@@ -506,14 +508,18 @@ interface AntigravitySubagentRuns {
   doneAt?: number;
   /** The session's own conversation called the model since its last Stop: a loop of its own is running. */
   ownLoop: boolean;
+  /** Subagent conversations known to have been started by another subagent, to that subagent (see noteModelCall). */
+  parents: Map<string, string>;
   /** Subagent conversations that called the model since their last Stop. */
   running: Set<string>;
-  /** Subagent conversations whose last Stop said work of their own goes on while no other subagent was running. */
+  /** Subagent conversations seen so far. */
+  seen: Set<string>;
+  /** Subagent conversations whose last Stop said work goes on that no subagent known to be theirs accounts for. */
   waiting: Set<string>;
 }
 
 function newSubagentRuns(): AntigravitySubagentRuns {
-  return { ownLoop: false, running: new Set(), waiting: new Set() };
+  return { ownLoop: false, parents: new Map(), running: new Set(), seen: new Set(), waiting: new Set() };
 }
 
 /**
@@ -1083,24 +1089,29 @@ class AntigravityAcpController {
     const textCheckpoint = turn.text.length;
     this.textAtLastStep = textCheckpoint;
     let result: Record<string, unknown> | undefined;
+    let wire: AntigravityPromptOnWire | undefined;
     try {
       result = await withAcpPromptInFlight(
         (value) => {
           this.promptInFlight = value;
         },
-        () => this.sendPrompt(turn, prompt),
+        () => {
+          const sent = this.sendPrompt(turn, prompt);
+          wire = sent.wire;
+          return sent.answer;
+        },
       );
     } catch (error) {
       discardAcpPromptPartialText(turn, textCheckpoint);
       this.activeToolIds.clear();
-      this.pendingTools.clear();
+      this.dropToolCalls(wire);
       await turn.input.effects.recordUsage(providerUsageFromStats(sourceId, this.latestUsage, { model }));
       throw error;
     }
     const stopReason = stringField(result, 'stopReason');
     if (rollbackCancelledAcpPromptText(turn, textCheckpoint, stopReason)) {
       this.activeToolIds.clear();
-      this.pendingTools.clear();
+      this.dropToolCalls(wire);
     }
     const usage = acpUsagePayload(result);
     if (usage) {
@@ -1135,7 +1146,10 @@ class AntigravityAcpController {
    * before this write goes to that turn's item, and everything after it to this
    * prompt until its answer is read.
    */
-  private sendPrompt(turn: AntigravityTurn, prompt: string): Promise<Record<string, unknown> | undefined> {
+  private sendPrompt(
+    turn: AntigravityTurn,
+    prompt: string,
+  ): { answer: Promise<Record<string, unknown> | undefined>; wire: AntigravityPromptOnWire } {
     this.recordWakeText(this.detachWake());
     const inputTag = this.hookKey ? antigravityInputTag(this.hookKey, prompt) : undefined;
     const wire: AntigravityPromptOnWire = {
@@ -1145,11 +1159,24 @@ class AntigravityAcpController {
     };
     this.lastPromptTag = inputTag;
     this.promptOnWire = wire;
-    return this.rpc.request(
+    const answer = this.rpc.request(
       'session/prompt',
       { prompt: [{ text: prompt, type: 'text' }], sessionId: this.sessionId },
       { onResponse: () => this.promptAnswered(wire) },
     );
+    return { answer, wire };
+  }
+
+  /**
+   * Forgets the tool calls a prompt started, once the prompt failed or was
+   * cancelled: their updates will not come. Calls of other prompts, or of turns
+   * agy started on its own, may still run in the background and stay.
+   */
+  private dropToolCalls(wire: AntigravityPromptOnWire | undefined): void {
+    if (!wire) return;
+    for (const [id, tool] of this.pendingTools) {
+      if (tool.prompt === wire) this.pendingTools.delete(id);
+    }
   }
 
   /**
@@ -1213,7 +1240,8 @@ class AntigravityAcpController {
       this.captureConfigOptions(data);
       return;
     }
-    const turn = this.promptOnWire?.turn;
+    const wire = this.promptOnWire;
+    const turn = wire?.turn;
     if (!turn) {
       await this.handleUpdateOutsideTurn(type, data);
       return;
@@ -1230,7 +1258,7 @@ class AntigravityAcpController {
     }
     if (type === 'tool_call' || type === 'tool_call_update') {
       this.textAtLastStep = turn.text.length;
-      await this.handleToolCall(turn.input, data);
+      await this.handleToolCall(turn.input, data, wire);
       return;
     }
     if (type === 'usage_update') {
@@ -1359,36 +1387,66 @@ class AntigravityAcpController {
    * stops (a subagent hands over its report before its run ends), and its first
    * output can take longer than the silence window, so no subagent's Stop counts
    * the work done while it runs.
+   *
+   * Hook events do not say which conversation started which. A subagent's first
+   * model call comes as the call that starts it runs, inside the loop of the
+   * conversation that made it. So a subagent first seen while the session runs
+   * no loop of its own and exactly one subagent runs was started by that one; one
+   * first seen while the session's loop runs, or while several subagents run,
+   * could be anyone's and has no known parent.
    */
   private noteModelCall(event: AntigravityHookEvent): void {
     const runs = this.subagents;
     runs.doneAt = undefined;
-    if (!event.conversationId) return;
-    if (event.conversationId === this.sessionId) {
+    const id = event.conversationId;
+    if (!id) return;
+    if (id === this.sessionId) {
       runs.ownLoop = true;
-    } else {
-      runs.running.add(event.conversationId);
+      return;
     }
+    if (!runs.seen.has(id)) {
+      runs.seen.add(id);
+      const [parent] = runs.running;
+      if (!runs.ownLoop && runs.running.size === 1 && parent !== undefined) runs.parents.set(id, parent);
+    }
+    runs.running.add(id);
   }
 
   /**
-   * A subagent's conversation stopped: its run is over. Its Stop says work of
-   * its own goes on while subagents it started are running, and those call the
-   * model and stop on their own. Like the session, it may then run no further
-   * loop: in real nested runs agy ran a coordinator again when its leaf ended
-   * without messaging it, but never ran the session again after its coordinator
-   * ended. Hook events do not say which conversation started which, so the work
-   * such a Stop refers to is the subagents running at that moment, as for the
-   * session's own Stop. With none running, the work is out of Anima's sight, and
-   * it waits until that subagent runs again and stops.
+   * A subagent's conversation stopped: its run is over. Its Stop says work goes
+   * on when subagents it started still run, or work of its own (a command it
+   * sent to the background) does. A subagent it is known to have started (see
+   * noteModelCall) calls the model and stops on its own, so the Stop needs
+   * nothing more while one of those, or one of theirs, is running or waiting.
+   * Otherwise the work is out of Anima's sight: a sibling running then may be
+   * the session's and tells nothing about it. The subagent then waits until it
+   * runs again and stops; in real nested runs agy ran a coordinator again once
+   * its leaf ended.
    */
   private noteSubagentStop(event: AntigravityHookEvent): void {
-    if (event.hookEventName !== 'Stop' || !event.conversationId) return;
+    const id = event.conversationId;
+    if (event.hookEventName !== 'Stop' || !id) return;
     const runs = this.subagents;
-    runs.running.delete(event.conversationId);
-    if (event.fullyIdle === false && runs.running.size === 0) runs.waiting.add(event.conversationId);
-    else runs.waiting.delete(event.conversationId);
+    runs.seen.add(id);
+    runs.running.delete(id);
+    if (event.fullyIdle === false && !this.startedLiveSubagent(id)) runs.waiting.add(id);
+    else runs.waiting.delete(id);
     runs.doneAt = runs.running.size === 0 && runs.waiting.size === 0 && !runs.ownLoop ? event.at : undefined;
+  }
+
+  /**
+   * A subagent `id` is known to have started, or one of theirs, is running or
+   * waiting. A parent is set only at a subagent's first model call, to one seen
+   * before it, so every chain ends.
+   */
+  private startedLiveSubagent(id: string): boolean {
+    const runs = this.subagents;
+    for (const live of [...runs.running, ...runs.waiting]) {
+      for (let parent = runs.parents.get(live); parent !== undefined; parent = runs.parents.get(parent)) {
+        if (parent === id) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -1398,13 +1456,13 @@ class AntigravityAcpController {
    * runs no further loop and no Stop says the work is done; a subagent that
    * started subagents of its own can end the same way. So the work counts as
    * done once every subagent that called the model has stopped, the last of them
-   * after the session's last model call and Stop, and none said work of its own
-   * goes on while no other was running (see noteSubagentStop); no loop of the
-   * session's own is running; no tool call is still open (a command sent to the
-   * background); every event agy wrote has been applied (the poll keeps new ones
-   * for the settle time, and a model call among them means work goes on); and
-   * agy has stayed silent for `subagentsDoneMs`. A turn agy starts in that time,
-   * or a prompt, ends with a Stop that decides instead.
+   * after the session's last model call and Stop, and none said work goes on
+   * that no subagent known to be its own accounts for (see noteSubagentStop); no
+   * loop of the session's own is running; no tool call is still open (a command
+   * sent to the background); every event agy wrote has been applied (the poll
+   * keeps new ones for the settle time, and a model call among them means work
+   * goes on); and agy has stayed silent for `subagentsDoneMs`. A turn agy starts
+   * in that time, or a prompt, ends with a Stop that decides instead.
    */
   private subagentsDone(now: number): boolean {
     const doneAt = this.subagents.doneAt;
@@ -1500,7 +1558,11 @@ class AntigravityAcpController {
   }
 
   /** Handles both `tool_call` and `tool_call_update`: start once, finish on a terminal status. */
-  private async handleToolCall(input: AgentRuntimeInput, data: Record<string, unknown>): Promise<void> {
+  private async handleToolCall(
+    input: AgentRuntimeInput,
+    data: Record<string, unknown>,
+    prompt?: AntigravityPromptOnWire,
+  ): Promise<void> {
     const id = toolCallId(data);
     if (!id) return;
     const status = stringField(data, 'status');
@@ -1510,7 +1572,7 @@ class AntigravityAcpController {
     if (!pending) {
       const name = antigravityToolName(data);
       this.activeToolIds.add(id);
-      this.pendingTools.set(id, { ...(rawInput ? { input: rawInput } : {}), name });
+      this.pendingTools.set(id, { ...(rawInput ? { input: rawInput } : {}), name, ...(prompt ? { prompt } : {}) });
       const summary = summarizeAntigravityToolCall(name, rawInput ?? {}, data);
       await input.effects.recordToolStarted({
         eventType: 'antigravity.tool.call',
