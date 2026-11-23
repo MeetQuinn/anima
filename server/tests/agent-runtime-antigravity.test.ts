@@ -192,7 +192,8 @@ const CONFIG_OPTIONS = [
  *   second prompt starts command b, and b fails ('B-SPECIFIC FAILURE.') 50ms after its answer.
  *   The reader stops once WAKE_TRIGGER_PATH.reader-stop exists. With quotaAround, the second
  *   prompt answers with agy's quota notice and a fails just after it ('notice'), or answers with
- *   a line of its own, a fails, then the notice it quotes ('quoted').
+ *   a line of its own, a fails, then the notice it quotes ('quoted'). sameWrite: a's failure and
+ *   'B reply.' come in one write, so Anima reads them together.
  * - terminalOnly: the first prompt starts a reader and ends with Stop(false). Once
  *   WAKE_TRIGGER_PATH.go exists, a turn agy starts on its own reports a read only once it has
  *   ended (a single tool_call with status completed), says 'All work finished.' and stops saying
@@ -895,9 +896,16 @@ const FAKE_AGY = [
   "        if (scenario.quotaAround === 'notice') { say(notice); failed('agy-command-a', 'A-SPECIFIC FAILURE.'); }",
   "        else if (scenario.quotaAround === 'quoted') { say('Here is the notice you asked me to quote:'); failed('agy-command-a', 'A-SPECIFIC FAILURE.'); say(notice); }",
   "        else {",
-  "          if (scenario.toolOwner === 'afterAnswer') update({ sessionUpdate: 'tool_call', toolCallId: 'agy-command-b', title: 'sleep 60', kind: 'execute', status: 'in_progress', rawInput: { CommandLine: 'sleep 60' } });",
-  "          else failed('agy-command-a', 'A-SPECIFIC FAILURE.');",
-  "          say('B reply.');",
+  "          if (scenario.sameWrite) {",
+  '            process.stdout.write([',
+  "              { sessionUpdate: 'tool_call_update', toolCallId: 'agy-command-a', status: 'failed', content: [{ type: 'content', content: { type: 'text', text: 'A-SPECIFIC FAILURE.' } }] },",
+  "              { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'B reply.' } },",
+  "            ].map((value) => JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } })).join('\\n') + '\\n');",
+  '          } else {',
+  "            if (scenario.toolOwner === 'afterAnswer') update({ sessionUpdate: 'tool_call', toolCallId: 'agy-command-b', title: 'sleep 60', kind: 'execute', status: 'in_progress', rawInput: { CommandLine: 'sleep 60' } });",
+  "            else failed('agy-command-a', 'A-SPECIFIC FAILURE.');",
+  "            say('B reply.');",
+  '          }',
   "        }",
   "        update({ sessionUpdate: 'usage_update', used: 4000, size: 1048576 });",
   '        runStopHook(sessionId, false);',
@@ -2954,7 +2962,11 @@ for (const [mode, when, recordFails] of [
         const firstCtx = await ingestAgyEvent(stateDir, 'Start a reader.', '1786000050.000001');
         const secondCtx = await ingestAgyEvent(stateDir, 'Answer something else.', '1786000050.000002');
         runtime = new AntigravityCliAgentRuntime(
-          { env: agyEnv(stateDir, { toolOwner: mode }, { WAKE_TRIGGER_PATH: triggerPath }), kind: 'antigravity-cli' },
+          {
+            // The failure that cannot be recorded comes in one write with B's reply, which must still reach B.
+            env: agyEnv(stateDir, { sameWrite: recordFails, toolOwner: mode }, { WAKE_TRIGGER_PATH: triggerPath }),
+            kind: 'antigravity-cli',
+          },
           'agy',
           [],
           { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100, subagentsDoneMs: 300 } },
