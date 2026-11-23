@@ -180,7 +180,9 @@ const CONFIG_OPTIONS = [
  * - nestedAgain: the first prompt starts coordinator c and ends with Stop(false); 50ms later c
  *   starts a leaf, both stop, and the session says 'COORDINATOR REPORT.' and stops idle. The
  *   second prompt wakes c and ends with Stop(false); 50ms later c wakes the leaf and stops saying
- *   work goes on. The leaf stops once WAKE_TRIGGER_PATH.leaf-go exists.
+ *   work goes on. The leaf stops once WAKE_TRIGGER_PATH.leaf-go exists. nestedAgain
+ *   'reportFirst': c hands its report over before it stops, so the session's turn ends saying
+ *   work goes on and no Stop of the session's own ends the first prompt's work.
  * - toolOwner 'duringPrompt' | 'afterAnswer' | 'fromWake': the first prompt starts a reader and
  *   ends with Stop(false). Command a is started by that prompt ('duringPrompt') or 50ms later by a
  *   turn agy starts on its own ('fromWake', then WAKE_TRIGGER_PATH.a-started is written), and
@@ -836,6 +838,7 @@ const FAKE_AGY = [
   "          startSubagent('agy-subagent-leaf');",
   "          runStopHook('agy-subagent-leaf', true);",
   "          modelCall('agy-subagent-c');",
+  "          if (scenario.nestedAgain === 'reportFirst') return reportThenStop('COORDINATOR REPORT.', 'agy-subagent-c');",
   "          runStopHook('agy-subagent-c', true);",
   '          modelCall(sessionId);',
   "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'COORDINATOR REPORT.' } });",
@@ -3370,6 +3373,22 @@ for (const variant of [
     name: 'not counting a subagent seen before as one its running subagent started, whatever steps its call shows',
     subagentStops: [['agy-subagent-3', true], ['agy-subagent-3', 'fresh'], ['agy-subagent-1', false], ['agy-subagent-3', true]],
   },
+  // A subagent is seen from its first model call: a later call that shows no steps either, before it
+  // ever stopped, is not that of a new subagent, here one the subagent itself would have started.
+  {
+    done: false,
+    invokeTwice: true,
+    name: 'not when a subagent whose later call shows no steps either, as its first did, says work of its own goes on',
+    subagentStops: [
+      ['agy-subagent-3', 'call'],
+      ['agy-subagent-1', true],
+      ['agy-subagent-2', true],
+      ['agy-subagent-3', 'fresh'],
+      ['agy-subagent-3', false],
+      ['agy-subagent-3', 'call'],
+      ['agy-subagent-3', false],
+    ],
+  },
   // A subagent with earlier steps, as one from before a reload, is not taken for one a running subagent started.
   {
     done: false,
@@ -4087,6 +4106,27 @@ for (const reload of ['whenIdle', 'provider-env'] as const) {
         assert.equal(texts[1], 'Asked the coordinator again.');
       },
       scenario: { nestedAgain: true },
+      wake: fast,
+      whileReloadWaits: waitsFor('leaf-go'),
+    });
+  });
+
+  // What is known of a subagent outlasts work that ended because its subagents stopped, too.
+  reloadTest(reload, 'whenIdle', `antigravity-cli lets a ${reload} reload go ahead once the subagent a coordinator started earlier has stopped, when the next prompt woke the coordinator and it woke that subagent, after the earlier work ended with no Stop of the session's own`, async () => {
+    let second: string | undefined;
+    await reloadsOnceWorkIsDone(reload, {
+      async afterReload() {
+        assert.equal(itemsWith(allActivities(await loadState()), 'agent.text', 'itemId', second ?? assert.fail('B was delivered')).length, 1);
+      },
+      async deliver({ deliver, runtime, texts }) {
+        const first = await deliver('Have a coordinator start.', '1786000049.000005');
+        assert.equal(texts[0], 'Started a coordinator.');
+        await withTimeout(runtime().waitForProviderQuiescent(), 5_000);
+        assert.deepEqual(await reportedOn('COORDINATOR REPORT.'), [first.item.id]);
+        second = (await deliver('Ask the coordinator again.', '1786000049.000006')).item.id;
+        assert.equal(texts[1], 'Asked the coordinator again.');
+      },
+      scenario: { nestedAgain: 'reportFirst' },
       wake: fast,
       whileReloadWaits: waitsFor('leaf-go'),
     });
