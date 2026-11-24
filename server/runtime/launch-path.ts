@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { access, realpath, stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,26 +13,32 @@ export function runtimeLaunchPath(env?: Record<string, string>): string {
 }
 
 /**
- * Real path of the executable that a child spawned as `command`, with this PATH and
- * this cwd, runs. Node's spawn looks the command up the way execvp does, in the
- * child after it changes to `cwd`: a command with a slash is used as given, and
- * otherwise each PATH entry in turn, an empty entry meaning the cwd. Candidates are
- * joined as strings, not normalized, so the file system resolves `..` after a
- * directory link the same way it does for the child. Undefined when nothing matches.
+ * A fingerprint of every file `command` could start as on this PATH: for each entry
+ * in order, the real path, inode, size and change time of `<entry>/<command>`, or a
+ * gap. Relinking or reinstalling any candidate changes it. It does not say which
+ * candidate a child runs (exec falls through a candidate whose interpreter is gone,
+ * and a shim dispatches on the name it was called by); it only tells whether the
+ * files a launch could reach are still the ones they were.
  */
-export async function launchExecutable(command: string, path: string, cwd: string): Promise<string | undefined> {
-  const fromCwd = (file: string) => (isAbsolute(file) ? file : `${cwd}/${file}`);
-  const candidates = command.includes('/')
-    ? [fromCwd(command)]
-    : path.split(delimiter).map((entry) => fromCwd(entry ? `${entry}/${command}` : command));
-  for (const candidate of candidates) {
-    try {
-      await access(candidate, constants.X_OK);
-      if (!(await stat(candidate)).isFile()) continue;
-      return await realpath(candidate);
-    } catch {
-      // try the next PATH entry
-    }
-  }
-  return undefined;
+export async function launchCandidatesFingerprint(command: string, path: string, cwd: string): Promise<string> {
+  const files = command.includes('/')
+    ? [command]
+    : path.split(delimiter).map((entry) => (entry ? `${entry}/${command}` : command));
+  const parts = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const real = await realpath(isAbsolute(file) ? file : `${cwd}/${file}`);
+        const info = await stat(real);
+        return [real, info.ino, info.size, info.ctimeMs].join(':');
+      } catch {
+        return '-';
+      }
+    }),
+  );
+  return parts.join('\n');
+}
+
+/** A PATH whose lookup does not depend on the cwd: no empty or relative entries. */
+export function cwdIndependentPath(path: string): boolean {
+  return path.split(delimiter).every((entry) => isAbsolute(entry));
 }

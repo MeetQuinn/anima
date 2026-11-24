@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { resolveAnimaHome } from '../anima-home.js';
 import { ignoreChildStdinErrors } from '../providers/child-process.js';
 import { antigravityCommandProblem } from '../providers/antigravity.js';
-import { launchExecutable } from '../runtime/launch-path.js';
+import { launchCandidatesFingerprint, runtimeLaunchPath } from '../runtime/launch-path.js';
 import { raceWithTimeout } from '../race-timeout.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from './env.js';
@@ -239,73 +239,96 @@ async function liveProviderModels(command: string, kind: ProviderKind): Promise<
   return grokProviderModels(command);
 }
 
+/** Live effort menus and what they were read from; see `liveReasoningMenus`. */
+export interface LiveReasoningMenus {
+  /** The catalog command, which the probe ran by name. */
+  command: string;
+  modelReasoningEfforts: Record<string, string[]>;
+  /** The PATH the probe ran with: the runtime PATH of an agent that sets none. */
+  path: string;
+  /** `launchCandidatesFingerprint` of the command on that PATH, the same before and after the probe. */
+  source: string;
+}
+
 /**
- * Live effort menus for a provider whose menus are live (Grok, Antigravity),
- * with the real path of the executable that reported them: the catalog command
- * as the probe launches it. Null when that executable cannot be found or the
- * catalog has no menus.
+ * Live effort menus for a provider whose menus are live (Grok, Antigravity). The
+ * probe runs the catalog command by name on the runtime PATH, the way an agent
+ * with no command, args or PATH of its own runs it, so shims and PATH fallbacks
+ * behave the same for both. Null when there are no menus, or when the files the
+ * command could start changed while the probe ran.
  */
-export async function liveReasoningMenus(
-  kind: string,
-): Promise<{ executable: string; modelReasoningEfforts: Record<string, string[]> } | null> {
+export async function liveReasoningMenus(kind: string): Promise<LiveReasoningMenus | null> {
   const entry = providerCatalogEntry(kind);
   if (!entry || !providerHasLiveReasoningEfforts(kind)) return null;
   const probed =
     entry.kind === 'antigravity-cli'
       ? await antigravityProbedModels(entry.command)
       : await grokProbedModels(entry.command);
-  if (!probed?.catalog.modelReasoningEfforts) return null;
-  return { executable: probed.executable, modelReasoningEfforts: probed.catalog.modelReasoningEfforts };
+  const menus = probed.catalog.modelReasoningEfforts;
+  if (!menus || probed.source === undefined) return null;
+  return { command: entry.command, modelReasoningEfforts: menus, path: probed.path, source: probed.source };
 }
 
-/**
- * Grok's probe runs uncached, in the service's cwd. It launches the executable it
- * resolved, so the menus belong to that file even if the command is relinked meanwhile.
- */
-async function grokProbedModels(
+interface ProbedModels {
+  catalog: ProviderModelCatalog;
+  path: string;
+  /** Set only when the command's files held still during the probe. */
+  source?: string;
+}
+
+/** Runs a catalog probe on the runtime PATH, noting whether the command's files changed meanwhile. */
+async function probeOnRuntimePath(
   command: string,
-): Promise<{ catalog: ProviderModelCatalog; executable: string } | undefined> {
-  const executable = await launchExecutable(command, process.env.PATH ?? '', process.cwd());
-  return executable ? { catalog: await grokProviderModels(executable), executable } : undefined;
+  cwd: string,
+  probe: (env: NodeJS.ProcessEnv) => Promise<ProviderModelCatalog>,
+): Promise<ProbedModels> {
+  const path = runtimeLaunchPath();
+  const before = await launchCandidatesFingerprint(command, path, cwd);
+  const catalog = await probe({ ...process.env, PATH: path });
+  const after = await launchCandidatesFingerprint(command, path, cwd);
+  return { catalog, path, ...(before === after ? { source: before } : {}) };
+}
+
+/** Grok's probe runs uncached, in the service's cwd. */
+function grokProbedModels(command: string): Promise<ProbedModels> {
+  return probeOnRuntimePath(command, process.cwd(), (env) => grokProviderModels(command, env));
 }
 
 const ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS = 15_000;
 const ANTIGRAVITY_MODEL_CATALOG_TTL_MS = 15 * 60_000;
-const antigravityCatalogCache = new Map<string, { at: number; value: Promise<ProviderModelCatalog> }>();
+const antigravityCatalogCache = new Map<
+  string,
+  { at: number; fingerprint: string; value: Promise<ProbedModels> }
+>();
 
 function antigravityProbeCwd(): string {
   return join(resolveAnimaHome(), 'cache', 'antigravity-model-probe');
 }
 
 async function antigravityProviderModels(command: string): Promise<ProviderModelCatalog> {
-  const probed = await antigravityProbedModels(command);
-  return probed ? probed.catalog : antigravityAcpModelCatalog(command);
+  return (await antigravityProbedModels(command)).catalog;
 }
 
 /**
  * Antigravity reports its models only on a session, and every session/new
- * leaves a conversation in Antigravity's history. Cache the catalog per
- * executable the command launches (failures are not cached), so a command that
- * now points at another executable is probed again, and probe from one fixed
- * directory. The probe launches that executable itself, so a relink during the
- * probe cannot hand it another program's menus. Undefined when the command
- * launches nothing.
+ * leaves a conversation in Antigravity's history. Cache the catalog per command
+ * for as long as the files it could start stay the same, so relinking or
+ * reinstalling `agy` probes again; probe from one fixed directory. Failures and
+ * probes that saw the files change are not kept.
  */
-async function antigravityProbedModels(
-  command: string,
-): Promise<{ catalog: ProviderModelCatalog; executable: string } | undefined> {
-  const executable = await launchExecutable(command, process.env.PATH ?? '', antigravityProbeCwd());
-  if (!executable) return undefined;
-  const cached = antigravityCatalogCache.get(executable);
-  if (cached && Date.now() - cached.at < ANTIGRAVITY_MODEL_CATALOG_TTL_MS) {
-    return { catalog: await cached.value, executable };
+async function antigravityProbedModels(command: string): Promise<ProbedModels> {
+  const fingerprint = await launchCandidatesFingerprint(command, runtimeLaunchPath(), antigravityProbeCwd());
+  const cached = antigravityCatalogCache.get(command);
+  if (cached && cached.fingerprint === fingerprint && Date.now() - cached.at < ANTIGRAVITY_MODEL_CATALOG_TTL_MS) {
+    return cached.value;
   }
-  const value = antigravityAcpModelCatalog(executable);
-  antigravityCatalogCache.set(executable, { at: Date.now(), value });
-  value.catch(() => {
-    if (antigravityCatalogCache.get(executable)?.value === value) antigravityCatalogCache.delete(executable);
-  });
-  return { catalog: await value, executable };
+  const value = probeOnRuntimePath(command, antigravityProbeCwd(), (env) => antigravityAcpModelCatalog(command, { env }));
+  antigravityCatalogCache.set(command, { at: Date.now(), fingerprint, value });
+  const forget = () => {
+    if (antigravityCatalogCache.get(command)?.value === value) antigravityCatalogCache.delete(command);
+  };
+  value.then((probed) => probed.source === undefined && forget(), forget);
+  return value;
 }
 
 function antigravityConfigSelect(configOptions: unknown, category: string): Record<string, unknown> | undefined {
@@ -396,16 +419,17 @@ async function withAntigravityModelThoughtLevels(
 /** Probe one `agy acp` session for its model options. Exported for tests; callers use the cached wrapper. */
 export async function antigravityAcpModelCatalog(
   command: string,
-  options: { killGraceMs?: number; timeoutMs?: number } = {},
+  options: { env?: NodeJS.ProcessEnv; killGraceMs?: number; timeoutMs?: number } = {},
 ): Promise<ProviderModelCatalog> {
+  const env = options.env ?? process.env;
   // Same refusal as the runtime: the app's editor launcher would open a window.
-  const problem = antigravityCommandProblem(command, process.env);
+  const problem = antigravityCommandProblem(command, env);
   if (problem) throw new Error(problem);
   const cwd = antigravityProbeCwd();
   await mkdir(cwd, { recursive: true });
   const timeoutMs = options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS;
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, ['acp'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(command, ['acp'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     // Model switches stop here, leaving time to close the session within the timeout.
     const switchDeadline = Date.now() + Math.floor((timeoutMs * 2) / 3);
     ignoreChildStdinErrors(child);
@@ -646,14 +670,15 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function grokProviderModels(command: string): Promise<ProviderModelCatalog> {
+async function grokProviderModels(command: string, env: NodeJS.ProcessEnv = process.env): Promise<ProviderModelCatalog> {
   try {
-    const fromAcp = await grokAcpModelCatalog(command);
+    const fromAcp = await grokAcpModelCatalog(command, env);
     if (fromAcp) return fromAcp;
   } catch {
     // Fall through to CLI text catalog.
   }
   const { stdout, stderr } = await execFileAsync(command, ['--no-auto-update', 'models'], {
+    env,
     maxBuffer: 1024 * 1024,
     timeout: 10_000,
   });
@@ -661,12 +686,12 @@ async function grokProviderModels(command: string): Promise<ProviderModelCatalog
 }
 
 /** Short-lived ACP initialize probe for per-model effort metadata. */
-async function grokAcpModelCatalog(command: string): Promise<ProviderModelCatalog | undefined> {
+async function grokAcpModelCatalog(command: string, env: NodeJS.ProcessEnv): Promise<ProviderModelCatalog | undefined> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       command,
       ['--no-auto-update', 'agent', '--no-leader', '--always-approve', 'stdio'],
-      { stdio: ['pipe', 'pipe', 'pipe'] },
+      { env, stdio: ['pipe', 'pipe', 'pipe'] },
     );
     ignoreChildStdinErrors(child);
     let buffer = '';

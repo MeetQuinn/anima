@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,7 @@ import {
   PI_NO_CREDENTIAL_MESSAGE,
   SystemService,
 } from '../services/system.service.js';
+import { withAnimaHome } from './anima-home.js';
 
 test('docsUrl uses public docs by default and accepts an explicit override', () => {
   const previous = process.env.ANIMA_DOCS_URL;
@@ -108,48 +109,95 @@ test('provider availability disables Grok auto-update during its presence probe'
   }
 });
 
-// The menus are attributed to the file the probe resolved, so the probe must launch
-// that file: looking `grok` up again could reach another program after a relink.
-test('Grok live effort menus come from the executable they are attributed to', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'anima-grok-menus-'));
+/**
+ * A fake provider binary that, like a version-manager shim, acts only when called by
+ * one of `names` (the basename of the path it was started as); otherwise it exits 1.
+ * As `grok` it answers ACP initialize with one model whose effort menu is `high`.
+ * As `agy`, `acp` serves a catalog session: gemini-4-neon (low/high) and
+ * gemini-4-carbon (high).
+ */
+function fakeShim(names: string[]): string {
+  const grokState = {
+    availableModels: [
+      { _meta: { reasoningEfforts: [{ value: 'high' }], supportsReasoningEffort: true }, modelId: 'grok-4.6' },
+    ],
+    currentModelId: 'grok-4.6',
+  };
+  const levels = { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] };
+  return [
+    `#!${process.execPath}`,
+    "const path = require('path');",
+    'const name = path.basename(process.argv[1]);',
+    `if (!${JSON.stringify(names)}.includes(name)) process.exit(1);`,
+    "if (process.argv[2] === '--version') { console.log(name + ' 0.0.0'); process.exit(0); }",
+    `const levels = ${JSON.stringify(levels)};`,
+    "const options = (current) => [",
+    "  { category: 'model', currentValue: current, id: 'model', options: Object.keys(levels).reverse().map((value) => ({ value })), type: 'select' },",
+    "  { category: 'thought_level', currentValue: 'high', id: 'thought_level', options: levels[current].map((value) => ({ value })), type: 'select' },",
+    '];',
+    "let current = 'gemini-4-neon';",
+    "let buffer = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffer += chunk;',
+    "  const lines = buffer.split('\\n');",
+    "  buffer = lines.pop() || '';",
+    '  for (const line of lines) {',
+    '    if (!line.trim()) continue;',
+    '    const msg = JSON.parse(line);',
+    "    const send = (result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');",
+    `    if (name === 'grok') { if (msg.method === 'initialize') send({ _meta: { modelState: ${JSON.stringify(grokState)} } }); continue; }`,
+    "    if (msg.method === 'initialize') send({ protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } });",
+    "    if (msg.method === 'session/new') send({ sessionId: 'probe', configOptions: options(current) });",
+    "    if (msg.method === 'session/close') send({});",
+    "    if (msg.method === 'session/set_config_option') { current = msg.params.value; send({ configOptions: options(current) }); }",
+    '  }',
+    '});',
+  ].join('\n');
+}
+
+// The probes run the catalog command by name on the runtime PATH, the way agents do,
+// so a shim that dispatches on its name works, and so does exec falling through a
+// PATH entry whose script cannot start.
+test('live catalog probes run the command by name, so shims and PATH fallbacks work', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-probe-by-name-'));
   const previousPath = process.env.PATH;
   try {
-    const bin = join(dir, 'bin');
-    const version = join(dir, 'versions', 'grok-v1');
-    const launches = join(dir, 'launches');
-    await mkdir(bin, { recursive: true });
-    await mkdir(join(dir, 'versions'), { recursive: true });
-    const modelState = {
-      availableModels: [
-        { _meta: { reasoningEfforts: [{ value: 'high' }], supportsReasoningEffort: true }, modelId: 'grok-4.6' },
-      ],
-      currentModelId: 'grok-4.6',
-    };
-    await writeFile(
-      version,
-      [
-        `#!${process.execPath}`,
-        "const fs = require('fs');",
-        `fs.appendFileSync(${JSON.stringify(launches)}, process.argv[1] + '\\n');`,
-        "process.stdin.setEncoding('utf8');",
-        "process.stdin.on('data', (chunk) => {",
-        "  for (const line of chunk.split('\\n')) {",
-        '    if (!line.trim()) continue;',
-        '    const msg = JSON.parse(line);',
-        `    if (msg.method === 'initialize') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { _meta: { modelState: ${JSON.stringify(modelState)} } } }) + '\\n');`,
-        '  }',
-        '});',
-      ].join('\n'),
-      'utf8',
-    );
-    await chmod(version, 0o755);
-    await symlink(version, join(bin, 'grok'));
-    process.env.PATH = bin;
+    const shims = join(dir, 'shims');
+    const broken = join(dir, 'broken');
+    const shim = join(dir, 'tool-manager');
+    await mkdir(shims, { recursive: true });
+    await mkdir(broken, { recursive: true });
+    await writeFile(shim, fakeShim(['agy', 'grok']), 'utf8');
+    await chmod(shim, 0o755);
+    await symlink(shim, join(shims, 'agy'));
+    await symlink(shim, join(shims, 'grok'));
+    // First on PATH, executable, but its interpreter is gone.
+    await writeFile(join(broken, 'agy'), '#!/nonexistent/interpreter\n', 'utf8');
+    await chmod(join(broken, 'agy'), 0o755);
+    process.env.PATH = `${broken}:${shims}`;
 
-    const menus = await liveReasoningMenus('grok-cli');
+    await withAnimaHome(join(dir, 'home'), async () => {
+      const grok = await liveReasoningMenus('grok-cli');
+      assert.deepEqual(grok && { command: grok.command, menus: grok.modelReasoningEfforts }, {
+        command: 'grok',
+        menus: { 'grok-4.6': ['high'] },
+      });
+      const agy = await liveReasoningMenus('antigravity-cli');
+      assert.deepEqual(agy?.modelReasoningEfforts, { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] });
 
-    assert.deepEqual(menus, { executable: await realpath(version), modelReasoningEfforts: { 'grok-4.6': ['high'] } });
-    assert.equal(await readFile(launches, 'utf8'), `${await realpath(version)}\n`);
+      const { providers } = await new SystemService({
+        commandPresent: async (command) => command === 'agy',
+      }).providerAvailability();
+      const availability = providers.find((provider) => provider.kind === 'antigravity-cli');
+      assert.deepEqual(
+        { models: availability?.models, menus: availability?.modelReasoningEfforts },
+        {
+          menus: { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] },
+          models: ['gemini-4-neon', 'gemini-4-carbon'],
+        },
+      );
+    });
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;

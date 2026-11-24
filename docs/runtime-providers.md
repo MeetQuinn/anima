@@ -530,16 +530,16 @@ Model and context authority:
   live ACP catalog: never inferred from the model name. Launch argv never carries `--effort`.
   Config writes: when the live ACP catalog is available for the selected model, that
   per-model menu is authoritative; otherwise the write vocabulary
-  (`low` / `medium` / `high` / `xhigh`) is used so offline saves still work. The catalog comes
-  from the default command on the service `PATH`, so the menu applies only to an agent that
-  launches that same executable: found as the runtime finds it (the agent's runtime command,
-  else the machine-wide Providers command, else the default, on the agent's launch `PATH`, from
-  the agent home, with an empty `PATH` entry meaning the agent home and `..` taken after links as
-  the file system does), with no runtime args and no provider env besides `PATH`. Any other launch gets the write vocabulary.
-  The probe launches the executable it resolved, so a relink while it runs cannot attribute another
-  program's menus to it.
-  The check runs on the config being saved, so a concurrent save that changes the launch is
-  respected. After
+  (`low` / `medium` / `high` / `xhigh`) is used so offline saves still work. The probe runs the
+  default command by name on the launch `PATH` an agent gets when it sets none, so shims and
+  `PATH` fallbacks behave as they do for a turn. The menu applies only to an agent whose launch
+  has the same inputs: the same command string (the agent's runtime command, else the
+  machine-wide Providers command, else the default), the same launch `PATH` with only absolute
+  entries, no runtime args, and no provider env besides `PATH`. Anima also records every
+  candidate file that `PATH` lookup could reach for that command, before and after the probe;
+  the menu counts only if nothing changed while it ran, and only if nothing has changed since
+  when the config is saved. Any other launch gets the write vocabulary. The check runs on the
+  config being saved, so a concurrent save that changes the launch is respected. After
   session init (new or loaded) and before the first prompt, the runtime sends at most one same-model
   `session/set_model` with `_meta.reasoningEffort`, and only when the exact live current model
   advertises that effort. Unknown current model, missing capability for that exact model, or an
@@ -786,15 +786,15 @@ Current process model:
 - The model menu is live. The dashboard availability probe starts `agy acp`, opens one session in
   a fixed directory under the Anima home, reads the `model` and `thought_level` options, and
   closes it. Every probe session is a conversation in Antigravity's history, so the catalog is
-  cached for 15 minutes per executable the command launches; a command that now launches another
-  executable is probed again. Thinking levels are model-scoped: `agy` reports them only
+  cached for 15 minutes per command; a change to any file the command could resolve to on that
+  `PATH` (a relink or reinstall) probes again. Thinking levels are model-scoped: `agy` reports them only
   for the session's current model. So the probe switches its own session to each other model
   with `session/set_config_option` and reads the levels that come back; the account's default
   model stays as it was. A model with no levels gets an empty menu. A model whose switch fails,
   or that the switches do not reach within two thirds of the probe timeout, falls back to the
   provider vocabulary at write time and is gated by the live session at run time. Once the session has
   reported its models, an `agy` that exits or a probe that times out keeps the models and menus
-  read so far. As for Grok, the menus gate effort saves only for agents that launch the probed executable.
+  read so far. As for Grok, the menus gate effort saves only for agents whose launch matches the probe's.
 - Each item uses `session/prompt`, with the shared ACP mid-turn follow-up policy and
   `session/cancel` on operator cancellation, as for OpenCode.
 - ACP thinking, assistant text, usage, tool calls (named from the ACP tool `kind`: `Shell`,

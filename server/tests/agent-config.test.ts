@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,7 @@ import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { defaultTeamService } from '../teams/team.service.js';
 import { KbRegistryStore, KbStore } from '../storage/schema/kb.store.js';
 import type { ServerConfig } from '../storage/schema/server.store.js';
+import { liveReasoningMenus } from '../services/system.service.js';
 import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
 
@@ -790,11 +791,12 @@ test('agent runtime command validation rejects relative paths and non-executable
   }
 });
 
-// Antigravity's live effort menus are read from the `agy` on the service PATH, so they
-// gate effort saves only for an agent that launches that same executable, with no
-// runtime args and no provider env but PATH. Any other launch keeps the write
+// Antigravity's live effort menus come from running `agy` by name on the runtime PATH,
+// so they gate effort saves only for an agent that runs it the same way: no command,
+// args or env of its own (a PATH only if it leaves the runtime PATH the same), and the
+// files `agy` could start unchanged since the probe. Any other launch keeps the write
 // vocabulary: its menus can differ, and its live session gates the level at run time.
-test('antigravity-cli live effort menus gate saves only for agents that launch the probed agy', async () => {
+test('antigravity-cli live effort menus gate saves only for agents that run agy as the probe did', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-agy-effort-command-'));
   const previousPath = process.env.PATH;
   try {
@@ -808,12 +810,17 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
     const custom = join(versions, 'agy-custom');
     const linked = join(pathBin, 'agy');
     const gate = join(configDir, 'probe-gate');
-    const launches = join(configDir, 'probe-launches');
-    await writeFile(v1, fakeCatalogAgy(['high'], gate, launches), 'utf8');
-    await writeFile(v2, fakeCatalogAgy(['high', 'xhigh'], undefined, launches), 'utf8');
+    // Like v1, but relinks `agy` to v2 as soon as it starts: an upgrade during the probe.
+    const upgrading = join(versions, 'agy-upgrading');
+    await writeFile(v1, fakeCatalogAgy(['high'], gate), 'utf8');
+    await writeFile(v2, fakeCatalogAgy(['high', 'xhigh']), 'utf8');
     await writeFile(custom, fakeCatalogAgy(['high', 'xhigh']), 'utf8');
-    for (const file of [v1, v2, custom]) await chmod(file, 0o755);
+    await writeFile(upgrading, fakeCatalogAgy(['high'], undefined, { from: linked, to: v2 }), 'utf8');
+    for (const file of [v1, v2, custom, upgrading]) await chmod(file, 0o755);
     await symlink(v1, linked);
+    await symlink(v1, join(pathBin, 'agy-alias'));
+    await mkdir(join(configDir, 'twin-bin'), { recursive: true });
+    await symlink(v1, join(configDir, 'twin-bin', 'agy'));
     const agent = (
       id: string,
       launch: { env?: Record<string, string>; reasoningEffort?: string; runtimeArgs?: string[]; runtimeCommand?: string } = {},
@@ -833,12 +840,20 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         agent('gap', { env: { PATH: `:${pathBin}` } }),
         // `active` links to linked-dir/inner, so `active/../bin` is linked-dir/bin, not bin.
         agent('link-parent', { env: { PATH: `active/../bin:${pathBin}` } }),
+        // The same file by another command or PATH: not how the probe ran it (a shim
+        // can dispatch on the name or path it was called by).
         agent('absolute', { runtimeCommand: linked }),
+        agent('alias', { runtimeCommand: 'agy-alias' }),
+        agent('twin', { env: { PATH: join(configDir, 'twin-bin') } }),
         agent('with-env', { env: { EXAMPLE_FLAG: '1' } }),
         agent('with-args', { runtimeArgs: ['--example'] }),
         agent('plain'),
+        agent('same-path', { env: { PATH: pathBin } }),
         agent('relinked'),
         agent('pinned', { runtimeCommand: v2 }),
+        agent('upgraded'),
+        agent('late'),
+        agent('home-tools'),
       ],
     });
     const ownAgy = async (file: string) => {
@@ -848,6 +863,7 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
     };
     await ownAgy(join(configDir, 'agents', 'relative', 'tools', 'agy'));
     await ownAgy(join(configDir, 'agents', 'gap', 'agy'));
+    await ownAgy(join(configDir, 'agents', 'home-tools', 'tools', 'agy'));
     await ownAgy(join(configDir, 'linked-dir', 'bin', 'agy'));
     await mkdir(join(configDir, 'linked-dir', 'inner'), { recursive: true });
     await symlink(join(configDir, 'linked-dir', 'inner'), join(configDir, 'agents', 'link-parent', 'active'));
@@ -881,8 +897,8 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         { reasoningEffort: 'xhigh', runtimeCommand: custom },
       );
 
-      // Agents that launch another agy keep xhigh, explicitly saved or not.
-      for (const id of ['custom', 'pathed', 'relative', 'gap', 'link-parent']) {
+      // Agents that launch agy another way keep xhigh, explicitly saved or not.
+      for (const id of ['custom', 'pathed', 'relative', 'gap', 'link-parent', 'absolute', 'alias', 'twin']) {
         await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
         assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
         await agentService(id).updateProvider({ reasoningEffort: 'xhigh' });
@@ -894,8 +910,8 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
       }
 
-      // Agents that launch the probed agy, by name or by its path, follow its live carbon menu.
-      for (const id of ['plain', 'absolute']) {
+      // Agents that run agy as the probe did follow its live carbon menu.
+      for (const id of ['plain', 'same-path']) {
         await assert.rejects(
           agentService(id).updateProvider({ reasoningEffort: 'xhigh' }),
           /unsupported reasoningEffort xhigh/,
@@ -905,9 +921,6 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
         assert.equal((await stored(id))?.reasoningEffort, undefined, id);
       }
-      // The probe launched the file it resolved, not `agy` looked up again.
-      const launched = async () => [...new Set((await readFile(launches, 'utf8')).trim().split('\n'))];
-      assert.deepEqual(await launched(), [await realpath(v1)]);
 
       // A machine-wide Providers command counts like the agent's own.
       await defaultServerSettingsService.setProviderRuntimeSettings('antigravity-cli', custom);
@@ -915,17 +928,56 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
       assert.equal((await stored('plain'))?.reasoningEffort, 'xhigh');
       await defaultServerSettingsService.setProviderRuntimeSettings('antigravity-cli', null);
 
-      // Relinking `agy` to v2 within the catalog's cache time: the menus are v1's, so
-      // they are not v2's. v2 is probed itself, and its carbon has xhigh.
+      // Relinking `agy` to v2 within the catalog's cache time: the menus are v1's, not
+      // v2's. v2 is probed itself, and its carbon has xhigh.
       await rm(linked);
       await symlink(v2, linked);
+      assert.deepEqual((await liveReasoningMenus('antigravity-cli'))?.modelReasoningEfforts['gemini-4-carbon'], ['high', 'xhigh']);
       for (const id of ['relinked', 'pinned']) {
         await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
         assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
         await agentService(id).updateProvider({ reasoningEffort: 'xhigh' });
         assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
       }
-      assert.deepEqual(await launched(), [await realpath(v1), await realpath(v2)]);
+
+      // `agy` changes while the probe runs: whichever program answered, the menus are
+      // not attributed, and that probe is not reused once `agy` points back at it.
+      for (let round = 0; round < 2; round += 1) {
+        await rm(linked);
+        await symlink(upgrading, linked);
+        await agentService('upgraded').updateProvider({ model: 'gemini-4-carbon' });
+        assert.equal((await stored('upgraded'))?.reasoningEffort, 'xhigh', `round ${round}`);
+      }
+
+      // `agy` changes after the probe, while the save waits for the config lock: the
+      // menus are checked against the files as they are when the save is written.
+      await rm(linked);
+      await symlink(v1, linked);
+      await assert.rejects(agentService('plain').updateProvider({ reasoningEffort: 'xhigh' }), /unsupported reasoningEffort/);
+      let release = () => {};
+      const held = new Promise<void>((resolveHeld) => {
+        release = resolveHeld;
+      });
+      const holder = agentService('late').updateConfig(async (latest) => {
+        await held;
+        return latest;
+      });
+      const late = agentService('late').updateProvider({ model: 'gemini-4-carbon' });
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+      await rm(linked);
+      await symlink(v2, linked);
+      release();
+      await holder;
+      await late;
+      assert.equal((await stored('late'))?.reasoningEffort, 'xhigh');
+
+      // A relative entry on the service PATH finds `agy` from each agent's own home, not
+      // from where the probe ran, so even agents with no PATH of their own keep xhigh.
+      await rm(linked);
+      await symlink(v1, linked);
+      process.env.PATH = `tools:${pathBin}`;
+      await agentService('home-tools').updateProvider({ model: 'gemini-4-carbon' });
+      assert.equal((await stored('home-tools'))?.reasoningEffort, 'xhigh');
     });
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
@@ -938,9 +990,9 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
  * A fake `agy`: `--version` succeeds, and `agy acp` opens a model catalog session on
  * gemini-4-neon whose switch to gemini-4-carbon reports `carbonLevels`. With `gate`, that
  * switch writes `<gate>.waiting` and is answered only once `gate` exists. With
- * `launches`, `agy acp` appends the path it was launched as.
+ * `relink`, `agy acp` first points the `from` link at `to`.
  */
-function fakeCatalogAgy(carbonLevels: string[], gate?: string, launches?: string): string {
+function fakeCatalogAgy(carbonLevels: string[], gate?: string, relink?: { from: string; to: string }): string {
   const models = ['gemini-4-neon', 'gemini-4-carbon'];
   const levels = { 'gemini-4-carbon': carbonLevels, 'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'] };
   return [
@@ -950,8 +1002,8 @@ function fakeCatalogAgy(carbonLevels: string[], gate?: string, launches?: string
     `const models = ${JSON.stringify(models)};`,
     `const levels = ${JSON.stringify(levels)};`,
     `const gate = ${JSON.stringify(gate ?? null)};`,
-    `const launches = ${JSON.stringify(launches ?? null)};`,
-    "if (launches) fs.appendFileSync(launches, process.argv[1] + '\\n');",
+    `const relink = ${JSON.stringify(relink ?? null)};`,
+    "if (relink) { fs.rmSync(relink.from); fs.symlinkSync(relink.to, relink.from); }",
     'const options = (current) => [',
     "  { category: 'model', currentValue: current, id: 'model', options: models.map((value) => ({ value })), type: 'select' },",
     "  { category: 'thought_level', currentValue: 'high', id: 'thought_level', options: levels[current].map((value) => ({ value })), type: 'select' },",
