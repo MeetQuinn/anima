@@ -36,25 +36,8 @@ import {
   type ArchivedProviderSession,
   type Session,
 } from '../storage/schema/session.store.js';
-import { defaultSystemService } from '../services/system.service.js';
-import {
-  providerHasLiveReasoningEfforts,
-  type ReasoningEffortAvailability,
-} from '../../shared/provider-catalog.js';
 
 export { AgentConfigError } from './agent-config-ops.js';
-
-/** Best-effort live ACP effort menus (Grok, Antigravity) for write-time validation. */
-async function loadLiveReasoningAvailability(kind: string): Promise<ReasoningEffortAvailability> {
-  try {
-    const { providers } = await defaultSystemService.providerAvailability();
-    const entry = providers.find((provider) => provider.kind === kind);
-    if (!entry?.modelReasoningEfforts) return null;
-    return { modelReasoningEfforts: entry.modelReasoningEfforts };
-  } catch {
-    return null;
-  }
-}
 
 export interface RotateSessionResult {
   agentId: string;
@@ -114,18 +97,16 @@ export class AgentService {
   async updateProvider(provider: AgentUpdateProviderRequest): Promise<AgentConfig> {
     const current = await this.getConfig();
     await validateAgentRuntimeCommand(provider.runtimeCommand);
-    const nextKind = provider.kind ?? current.provider.kind;
-    // Grok and Antigravity: when the live ACP catalog is reachable, write-time
-    // effort validation follows the per-model menu (same source as the Profile
-    // UI). Probe failure falls back to the write vocabulary so offline saves
-    // still work.
-    const availability = providerHasLiveReasoningEfforts(nextKind)
-      ? await loadLiveReasoningAvailability(nextKind)
-      : undefined;
+    // Effort is checked against the provider's write vocabulary only. The live
+    // Grok and Antigravity menus describe the program the catalog probe ran, and
+    // nothing here can tell that this agent runs the same one: a version manager
+    // can pick another version per directory or switch versions without changing
+    // a file. The Profile UI offers the live menu, and the agent's live session
+    // gates the level at run time.
     let previousProvider = current.provider;
     const next = await this.updateConfig((latest) => {
       previousProvider = latest.provider;
-      return agentConfigWithProviderUpdate(latest, provider, availability);
+      return agentConfigWithProviderUpdate(latest, provider);
     });
     const archiveNote = providerSessionArchiveNote(previousProvider, next.provider);
     if (archiveNote) {

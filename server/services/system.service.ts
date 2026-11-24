@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { resolveAnimaHome } from '../anima-home.js';
 import { ignoreChildStdinErrors } from '../providers/child-process.js';
 import { antigravityCommandProblem } from '../providers/antigravity.js';
+import { launchCandidatesFingerprint, runtimeLaunchPath } from '../runtime/launch-path.js';
 import { raceWithTimeout } from '../race-timeout.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from './env.js';
@@ -233,76 +234,151 @@ export function parseGrokAcpModelState(modelState: unknown): ProviderModelCatalo
 async function liveProviderModels(command: string, kind: ProviderKind): Promise<ProviderModelCatalog> {
   if (kind === 'pi') return piProviderModels(command);
   if (kind === 'antigravity-cli') return antigravityProviderModels(command);
-  return grokProviderModels(command);
+  return grokProviderModels(command, runtimeProbeEnv());
+}
+
+/**
+ * The env a catalog probe runs with: the runtime PATH of an agent that sets none, so
+ * the command is looked up, shims included, the way such an agent's turn looks it up.
+ */
+function runtimeProbeEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: runtimeLaunchPath() };
 }
 
 const ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS = 15_000;
 const ANTIGRAVITY_MODEL_CATALOG_TTL_MS = 15 * 60_000;
-const antigravityCatalogCache = new Map<string, { at: number; value: Promise<ProviderModelCatalog> }>();
+const antigravityCatalogCache = new Map<
+  string,
+  { at: number; fingerprint: string; value: Promise<ProviderModelCatalog> }
+>();
+
+function antigravityProbeCwd(): string {
+  return join(resolveAnimaHome(), 'cache', 'antigravity-model-probe');
+}
 
 /**
  * Antigravity reports its models only on a session, and every session/new
  * leaves a conversation in Antigravity's history. Cache the catalog per command
- * (failures are not cached) and probe from one fixed directory.
+ * for as long as the files it could start stay as they were when the probe
+ * began, so relinking or reinstalling `agy` probes again; probe from one fixed
+ * directory. Failures are not kept.
  */
-function antigravityProviderModels(command: string): Promise<ProviderModelCatalog> {
+async function antigravityProviderModels(command: string): Promise<ProviderModelCatalog> {
+  const env = runtimeProbeEnv();
+  const fingerprint = await launchCandidatesFingerprint(command, env.PATH ?? '', antigravityProbeCwd());
   const cached = antigravityCatalogCache.get(command);
-  if (cached && Date.now() - cached.at < ANTIGRAVITY_MODEL_CATALOG_TTL_MS) return cached.value;
-  const value = antigravityAcpModelCatalog(command);
-  antigravityCatalogCache.set(command, { at: Date.now(), value });
+  if (cached && cached.fingerprint === fingerprint && Date.now() - cached.at < ANTIGRAVITY_MODEL_CATALOG_TTL_MS) {
+    return cached.value;
+  }
+  const value = antigravityAcpModelCatalog(command, { env });
+  antigravityCatalogCache.set(command, { at: Date.now(), fingerprint, value });
   value.catch(() => {
     if (antigravityCatalogCache.get(command)?.value === value) antigravityCatalogCache.delete(command);
   });
   return value;
 }
 
+function antigravityConfigSelect(configOptions: unknown, category: string): Record<string, unknown> | undefined {
+  const options = Array.isArray(configOptions) ? configOptions.filter(isPlainRecord) : [];
+  return options.find((option) => option['category'] === category) ?? options.find((option) => option['id'] === category);
+}
+
+function antigravitySelectValues(option: Record<string, unknown> | undefined): string[] {
+  const out: string[] = [];
+  const push = (entry: unknown) => {
+    if (!isPlainRecord(entry) || typeof entry['value'] !== 'string') return;
+    const value = entry['value'].trim();
+    if (value && !out.includes(value)) out.push(value);
+  };
+  for (const entry of Array.isArray(option?.['options']) ? option['options'] : []) {
+    if (isPlainRecord(entry) && Array.isArray(entry['options'])) entry['options'].forEach(push);
+    else push(entry);
+  }
+  return out;
+}
+
+function antigravitySelectCurrent(option: Record<string, unknown> | undefined): string {
+  return typeof option?.['currentValue'] === 'string' ? option['currentValue'].trim() : '';
+}
+
 /**
  * Parse an Antigravity session's ACP `configOptions` into the model catalog.
- * Models come from the `model` select; thinking levels are model-scoped and only
- * known for the session's current model.
+ * Models come from the `model` select. Thinking levels are model-scoped: the
+ * `thought_level` select is the session's current model's, so it gives that
+ * model's menu only, empty when the model has none.
  */
 export function parseAntigravityConfigOptions(configOptions: unknown): ProviderModelCatalog {
-  const options = Array.isArray(configOptions) ? configOptions.filter(isPlainRecord) : [];
-  const select = (category: string) =>
-    options.find((option) => option['category'] === category) ?? options.find((option) => option['id'] === category);
-  const values = (option: Record<string, unknown> | undefined): string[] => {
-    const out: string[] = [];
-    const push = (entry: unknown) => {
-      if (!isPlainRecord(entry) || typeof entry['value'] !== 'string') return;
-      const value = entry['value'].trim();
-      if (value && !out.includes(value)) out.push(value);
-    };
-    for (const entry of Array.isArray(option?.['options']) ? option['options'] : []) {
-      if (isPlainRecord(entry) && Array.isArray(entry['options'])) entry['options'].forEach(push);
-      else push(entry);
-    }
-    return out;
-  };
-  const modelOption = select('model');
-  const models = values(modelOption);
+  const modelOption = antigravityConfigSelect(configOptions, 'model');
+  const models = antigravitySelectValues(modelOption);
   if (models.length === 0) throw new Error('Antigravity did not report any models for the signed-in account');
-  const current = typeof modelOption?.['currentValue'] === 'string' ? modelOption['currentValue'].trim() : '';
-  const defaultModel = current && models.includes(current) ? current : models[0]!;
-  const efforts = values(select('thought_level'));
+  const current = antigravitySelectCurrent(modelOption);
+  const known = current !== '' && models.includes(current);
   return {
-    defaultModel,
-    ...(efforts.length > 0 ? { modelReasoningEfforts: { [defaultModel]: efforts } } : {}),
+    defaultModel: known ? current : models[0]!,
+    ...(known
+      ? { modelReasoningEfforts: { [current]: antigravitySelectValues(antigravityConfigSelect(configOptions, 'thought_level')) } }
+      : {}),
     models,
   };
+}
+
+const ANTIGRAVITY_SWITCH_TIMED_OUT = Symbol('timed out');
+
+/**
+ * Adds each other model's thinking levels to `catalog`. `agy` reports levels
+ * only for the session's current model, so the probe switches its own session
+ * to each model and reads the levels that come back; the account's default
+ * model stays as it was. A model whose switch fails, or that the switches do
+ * not reach by `deadline`, keeps no menu: saves fall back to the write
+ * vocabulary, and the live session gates the level at run time. `onLevels`
+ * gets the catalog each time a model's menu is added.
+ */
+async function withAntigravityModelThoughtLevels(
+  catalog: ProviderModelCatalog,
+  session: Record<string, unknown>,
+  request: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  deadline: number,
+  onLevels: (catalog: ProviderModelCatalog) => void,
+): Promise<ProviderModelCatalog> {
+  const sessionId = session['sessionId'];
+  const configId = antigravityConfigSelect(session['configOptions'], 'model')?.['id'];
+  if (typeof sessionId !== 'string' || typeof configId !== 'string') return catalog;
+  let confirmed = catalog;
+  for (const model of catalog.models) {
+    if (confirmed.modelReasoningEfforts && Object.hasOwn(confirmed.modelReasoningEfforts, model)) continue;
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    const result = await raceWithTimeout(
+      request('session/set_config_option', { configId, sessionId, value: model }).catch(() => undefined),
+      left,
+      ANTIGRAVITY_SWITCH_TIMED_OUT,
+    );
+    if (result === ANTIGRAVITY_SWITCH_TIMED_OUT) break;
+    // The levels are the model's only when the session now has that model.
+    if (!result || antigravitySelectCurrent(antigravityConfigSelect(result['configOptions'], 'model')) !== model) continue;
+    const levels = antigravitySelectValues(antigravityConfigSelect(result['configOptions'], 'thought_level'));
+    confirmed = { ...confirmed, modelReasoningEfforts: { ...confirmed.modelReasoningEfforts, [model]: levels } };
+    onLevels(confirmed);
+  }
+  return confirmed;
 }
 
 /** Probe one `agy acp` session for its model options. Exported for tests; callers use the cached wrapper. */
 export async function antigravityAcpModelCatalog(
   command: string,
-  options: { killGraceMs?: number; timeoutMs?: number } = {},
+  options: { env?: NodeJS.ProcessEnv; killGraceMs?: number; timeoutMs?: number } = {},
 ): Promise<ProviderModelCatalog> {
+  const env = options.env ?? process.env;
   // Same refusal as the runtime: the app's editor launcher would open a window.
-  const problem = antigravityCommandProblem(command, process.env);
+  const problem = antigravityCommandProblem(command, env);
   if (problem) throw new Error(problem);
-  const cwd = join(resolveAnimaHome(), 'cache', 'antigravity-model-probe');
+  const cwd = antigravityProbeCwd();
   await mkdir(cwd, { recursive: true });
+  const timeoutMs = options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS;
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, ['acp'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(command, ['acp'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Model switches stop here, leaving time to close the session within the timeout.
+    const switchDeadline = Date.now() + Math.floor((timeoutMs * 2) / 3);
     ignoreChildStdinErrors(child);
     let exited = false;
     child.once('exit', () => {
@@ -312,6 +388,9 @@ export async function antigravityAcpModelCatalog(
     let nextId = 0;
     let buffer = '';
     let settled = false;
+    // The catalog once session/new has given one, with each model's menu as it is confirmed.
+    // The per-model switches only add to it, so a probe that ends during them returns it.
+    let confirmed: ProviderModelCatalog | undefined;
     const finish = (error?: Error, value?: ProviderModelCatalog) => {
       if (settled) return;
       settled = true;
@@ -325,17 +404,18 @@ export async function antigravityAcpModelCatalog(
         escalate.unref();
         child.once('exit', () => clearTimeout(escalate));
       }
-      if (error) reject(error);
-      else resolvePromise(value!);
+      if (error && !confirmed) reject(error);
+      else resolvePromise(confirmed ?? value!);
     };
-    const timer = setTimeout(
-      () => finish(new Error('Antigravity ACP model catalog probe timed out')),
-      options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS,
-    );
+    const timer = setTimeout(() => finish(new Error('Antigravity ACP model catalog probe timed out')), timeoutMs);
     const write = (message: Record<string, unknown>) =>
       child.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
     const request = (method: string, params: Record<string, unknown>) =>
       new Promise<Record<string, unknown>>((resolveRequest, rejectRequest) => {
+        if (exited) {
+          rejectRequest(new Error(`Antigravity ACP ${method} failed: the probe exited`));
+          return;
+        }
         const id = ++nextId;
         pending.set(id, (message) => {
           const error = isPlainRecord(message['error']) ? message['error'] : undefined;
@@ -384,6 +464,10 @@ export async function antigravityAcpModelCatalog(
     child.on('error', (error) => finish(error instanceof Error ? error : new Error(String(error))));
     child.on('exit', (code) => {
       if (!settled) finish(new Error(`Antigravity ACP model catalog probe exited (${code ?? 'null'})`));
+      // Fail what is still waiting so the probe's own steps end now.
+      const waiting = [...pending.values()];
+      pending.clear();
+      for (const handler of waiting) handler({ error: { message: 'the probe exited' } });
     });
 
     void (async () => {
@@ -393,7 +477,10 @@ export async function antigravityAcpModelCatalog(
         protocolVersion: 1,
       });
       const session = await request('session/new', { cwd, mcpServers: [] });
-      const catalog = parseAntigravityConfigOptions(session['configOptions']);
+      confirmed = parseAntigravityConfigOptions(session['configOptions']);
+      const catalog = await withAntigravityModelThoughtLevels(confirmed, session, request, switchDeadline, (next) => {
+        confirmed = next;
+      });
       const capabilities = isPlainRecord(init['agentCapabilities']) ? init['agentCapabilities'] : undefined;
       const sessionCapabilities = isPlainRecord(capabilities?.['sessionCapabilities'])
         ? capabilities['sessionCapabilities']
@@ -530,14 +617,15 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function grokProviderModels(command: string): Promise<ProviderModelCatalog> {
+async function grokProviderModels(command: string, env: NodeJS.ProcessEnv = process.env): Promise<ProviderModelCatalog> {
   try {
-    const fromAcp = await grokAcpModelCatalog(command);
+    const fromAcp = await grokAcpModelCatalog(command, env);
     if (fromAcp) return fromAcp;
   } catch {
     // Fall through to CLI text catalog.
   }
   const { stdout, stderr } = await execFileAsync(command, ['--no-auto-update', 'models'], {
+    env,
     maxBuffer: 1024 * 1024,
     timeout: 10_000,
   });
@@ -545,12 +633,12 @@ async function grokProviderModels(command: string): Promise<ProviderModelCatalog
 }
 
 /** Short-lived ACP initialize probe for per-model effort metadata. */
-async function grokAcpModelCatalog(command: string): Promise<ProviderModelCatalog | undefined> {
+async function grokAcpModelCatalog(command: string, env: NodeJS.ProcessEnv): Promise<ProviderModelCatalog | undefined> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       command,
       ['--no-auto-update', 'agent', '--no-leader', '--always-approve', 'stdio'],
-      { stdio: ['pipe', 'pipe', 'pipe'] },
+      { env, stdio: ['pipe', 'pipe', 'pipe'] },
     );
     ignoreChildStdinErrors(child);
     let buffer = '';

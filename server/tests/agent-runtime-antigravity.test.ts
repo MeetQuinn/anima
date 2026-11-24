@@ -27,7 +27,8 @@ import { providerFailureReasonFromError } from '../providers/provider-failure.js
 import { classifyProviderRetry, providerRateLimitResumeAt } from '../providers/provider-retry.js';
 import { isProviderRateLimitedError, runProviderWithCrashRetries } from '../runtime/provider-runner.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
-import { antigravityAcpModelCatalog, parseAntigravityConfigOptions } from '../services/system.service.js';
+import { antigravityAcpModelCatalog, defaultSystemService, parseAntigravityConfigOptions } from '../services/system.service.js';
+import { AgentService } from '../agents/agent.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import {
@@ -1357,7 +1358,156 @@ test('antigravity-cli model catalog comes from the session model select', () => 
     modelReasoningEfforts: { 'gemini-3.8-flash': ['low', 'medium', 'high'] },
     models: ['gemini-3.8-flash', 'claude-sonnet-4-6'],
   });
+  // A current model without levels has an empty menu; levels with no known current model belong to none.
+  assert.deepEqual(parseAntigravityConfigOptions(CONFIG_OPTIONS.filter((option) => option.category !== 'thought_level')), {
+    defaultModel: 'gemini-3.8-flash',
+    modelReasoningEfforts: { 'gemini-3.8-flash': [] },
+    models: ['gemini-3.8-flash', 'claude-sonnet-4-6'],
+  });
+  assert.deepEqual(
+    parseAntigravityConfigOptions(CONFIG_OPTIONS.map((option) => (option.category === 'model' ? { ...option, currentValue: 'gone' } : option))),
+    { defaultModel: 'gemini-3.8-flash', models: ['gemini-3.8-flash', 'claude-sonnet-4-6'] },
+  );
   assert.throws(() => parseAntigravityConfigOptions([]), /did not report any models/);
+});
+
+/**
+ * A fake `agy acp` for the catalog probe. Its session starts on gemini-4-neon. A switch to
+ * gemini-4-carbon or gemini-pro-orchestrator (which has no levels) reports that model's levels;
+ * one to gemini-broken fails; one to gemini-ignored leaves the model as it was. With
+ * `switchHangs`, no switch is answered; with `exitOnSwitchTo`, the process exits (code 7) on
+ * the switch to that model. Every request's method and value go to `logPath`.
+ */
+function catalogProbeAgy(
+  logPath: string,
+  { exitOnSwitchTo, switchHangs = false }: { exitOnSwitchTo?: string; switchHangs?: boolean } = {},
+): string {
+  const levels = (...values: string[]) => ({ category: 'thought_level', currentValue: 'high', id: 'thought_level', options: values.map((value) => ({ value })), type: 'select' });
+  const models = ['gemini-4-neon', 'gemini-4-carbon', 'gemini-pro-orchestrator', 'gemini-broken', 'gemini-ignored'];
+  const model = (currentValue: string) => ({ category: 'model', currentValue, id: 'model', options: models.map((value) => ({ value })), type: 'select' });
+  const sessions = {
+    'gemini-4-carbon': [model('gemini-4-carbon'), levels('low', 'medium', 'high')],
+    'gemini-4-neon': [model('gemini-4-neon'), levels('low', 'medium', 'high', 'xhigh')],
+    'gemini-pro-orchestrator': [model('gemini-pro-orchestrator')],
+  };
+  return [
+    '#!/usr/bin/env node',
+    "const fs = require('fs');",
+    `const sessions = ${JSON.stringify(sessions)};`,
+    `const switchHangs = ${JSON.stringify(switchHangs)};`,
+    `const exitOnSwitchTo = ${JSON.stringify(exitOnSwitchTo ?? null)};`,
+    "let current = 'gemini-4-neon';",
+    "let buffer = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffer += chunk;',
+    "  const lines = buffer.split('\\n');",
+    "  buffer = lines.pop() || '';",
+    '  for (const line of lines) {',
+    '    if (!line.trim()) continue;',
+    '    const msg = JSON.parse(line);',
+    `    fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify([msg.method, msg.params && msg.params.value]) + '\\n');`,
+    "    const send = (body) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, ...body }) + '\\n');",
+    "    if (msg.method === 'initialize') send({ result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } } });",
+    "    if (msg.method === 'session/new') send({ result: { sessionId: 'probe-session', configOptions: sessions[current] } });",
+    "    if (msg.method === 'session/close') send({ result: {} });",
+    "    if (msg.method === 'session/set_config_option' && msg.params.value === exitOnSwitchTo) process.exit(7);",
+    "    if (msg.method === 'session/set_config_option' && !switchHangs) {",
+    "      if (msg.params.value === 'gemini-broken') { send({ error: { code: -32603, message: 'model unavailable' } }); continue; }",
+    "      if (sessions[msg.params.value]) current = msg.params.value;",
+    '      send({ result: { configOptions: sessions[current] } });',
+    '    }',
+    '  }',
+    '});',
+  ].join('\n');
+}
+
+test('antigravity-cli catalog probe reads each model\'s thinking levels by switching its own session', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-levels-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const logPath = join(stateDir, 'requests.jsonl');
+      const agy = join(stateDir, 'agy');
+      await writeFile(agy, catalogProbeAgy(logPath), 'utf8');
+      await chmod(agy, 0o755);
+      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 15_000 });
+      assert.deepEqual(catalog, {
+        defaultModel: 'gemini-4-neon',
+        // A switch that failed or left the model as it was gives no menu; a model without levels has an empty one.
+        modelReasoningEfforts: {
+          'gemini-4-carbon': ['low', 'medium', 'high'],
+          'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'],
+          'gemini-pro-orchestrator': [],
+        },
+        models: ['gemini-4-neon', 'gemini-4-carbon', 'gemini-pro-orchestrator', 'gemini-broken', 'gemini-ignored'],
+      });
+      assert.deepEqual(await readJsonLines(logPath), [
+        ['initialize', null],
+        ['session/new', null],
+        ['session/set_config_option', 'gemini-4-carbon'],
+        ['session/set_config_option', 'gemini-pro-orchestrator'],
+        ['session/set_config_option', 'gemini-broken'],
+        ['session/set_config_option', 'gemini-ignored'],
+        ['session/close', null],
+      ]);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli catalog probe stops switching models in time to return what it has', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-switch-hangs-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const logPath = join(stateDir, 'requests.jsonl');
+      const agy = join(stateDir, 'agy');
+      await writeFile(agy, catalogProbeAgy(logPath, { switchHangs: true }), 'utf8');
+      await chmod(agy, 0o755);
+      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 3_000 });
+      assert.deepEqual(catalog.modelReasoningEfforts, { 'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'] });
+      const switches = (await readJsonLines(logPath) as unknown[]).filter((entry) => (entry as unknown[])[0] === 'session/set_config_option');
+      assert.deepEqual(switches, [['session/set_config_option', 'gemini-4-carbon']]);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli catalog probe keeps the models and menus it has when agy exits during a switch', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-switch-exits-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const logPath = join(stateDir, 'requests.jsonl');
+      const agy = join(stateDir, 'agy');
+      await writeFile(agy, catalogProbeAgy(logPath, { exitOnSwitchTo: 'gemini-broken' }), 'utf8');
+      await chmod(agy, 0o755);
+      const catalog = await withTimeout(antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 15_000 }), 10_000);
+      assert.deepEqual(catalog, {
+        defaultModel: 'gemini-4-neon',
+        modelReasoningEfforts: {
+          'gemini-4-carbon': ['low', 'medium', 'high'],
+          'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'],
+          'gemini-pro-orchestrator': [],
+        },
+        models: ['gemini-4-neon', 'gemini-4-carbon', 'gemini-pro-orchestrator', 'gemini-broken', 'gemini-ignored'],
+      });
+      assert.deepEqual(await readJsonLines(logPath), [
+        ['initialize', null],
+        ['session/new', null],
+        ['session/set_config_option', 'gemini-4-carbon'],
+        ['session/set_config_option', 'gemini-pro-orchestrator'],
+        ['session/set_config_option', 'gemini-broken'],
+      ]);
+      // Before session/new gives a catalog, an exit is still an error.
+      const early = join(stateDir, 'agy-early-exit');
+      await writeFile(early, ['#!/usr/bin/env node', 'process.exit(7);'].join('\n'), 'utf8');
+      await chmod(early, 0o755);
+      await assert.rejects(antigravityAcpModelCatalog(early, { killGraceMs: 100, timeoutMs: 15_000 }), /model catalog probe exited \(7\)/);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('antigravity-cli catalog probe survives a JSON null line and kills a child that ignores SIGTERM', async () => {
@@ -1385,6 +1535,8 @@ test('antigravity-cli catalog probe survives a JSON null line and kills a child 
         "    const reply = (result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');",
         "    if (msg.method === 'initialize') reply({ protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } });",
         "    if (msg.method === 'session/new') reply({ sessionId: 'probe-session', configOptions });",
+        // The session keeps its model, so the levels it reports stay the current model's.
+        "    if (msg.method === 'session/set_config_option') reply({ configOptions });",
         "    if (msg.method === 'session/close') reply({});",
         '  }',
         '});',
@@ -1394,6 +1546,7 @@ test('antigravity-cli catalog probe survives a JSON null line and kills a child 
 
       const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 15_000 });
       assert.equal(catalog.defaultModel, 'gemini-3.8-flash');
+      assert.deepEqual(catalog.modelReasoningEfforts, { 'gemini-3.8-flash': ['low', 'medium', 'high'] });
       const pid = Number(await readFile(pidPath, 'utf8'));
       await waitFor(() => {
         try {
@@ -1657,6 +1810,80 @@ test('antigravity-cli keeps the current model, skips an unavailable thinking lev
           && activity.payload?.['reasoningEffort'] === 'max'));
     });
   } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli saves a thinking level the probed menu lacks, and the next turn applies it', async () => {
+  // A version manager's shim runs another agy where a directory pins one (mise with a
+  // mise.toml in the agent home), with no file changing. The probe runs outside the pin,
+  // so its menu does not describe the agent's agy: saves keep the write vocabulary.
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-pinned-'));
+  const previousEnv = Object.fromEntries(['PATH', 'AGY_CONFIG_OPTIONS', 'AGY_SCENARIO', 'CALLS_PATH'].map((key) => [key, process.env[key]]));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      const shims = join(stateDir, 'shims');
+      await mkdir(shims);
+      const probed = join(stateDir, 'agy-global');
+      const pinned = join(stateDir, 'agy-pinned');
+      await writeFile(probed, catalogProbeAgy(join(stateDir, 'probe.log')).replace('#!/usr/bin/env node', `#!${process.execPath}`), 'utf8');
+      await writeFile(pinned, [`#!${process.execPath}`, ...FAKE_AGY].join('\n'), 'utf8');
+      await writeFile(join(shims, 'agy'), [
+        '#!/bin/sh',
+        'if [ "$1" = --version ]; then echo agy 1.5.3; exit 0; fi',
+        `if [ -f .agy-pin ]; then exec ${shellQuote(pinned)} "$@"; fi`,
+        `exec ${shellQuote(probed)} "$@"`,
+        '',
+      ].join('\n'), 'utf8');
+      for (const file of [probed, pinned, join(shims, 'agy')]) await chmod(file, 0o755);
+      await writeFile(join(stateDir, '.agy-pin'), '', 'utf8');
+      const pinnedOptions = [
+        { category: 'model', currentValue: 'gemini-4-carbon', id: 'model', options: [{ value: 'gemini-4-carbon' }], type: 'select' },
+        { category: 'thought_level', currentValue: 'high', id: 'thought_level', options: [{ value: 'high' }, { value: 'xhigh' }], type: 'select' },
+      ];
+      Object.assign(process.env, {
+        AGY_CONFIG_OPTIONS: JSON.stringify(pinnedOptions),
+        AGY_SCENARIO: JSON.stringify({ agents: 'none' }),
+        CALLS_PATH: callsPath,
+        PATH: `${shims}:/usr/bin:/bin`,
+      });
+
+      const availability = (await defaultSystemService.providerAvailability()).providers.find((entry) => entry.kind === 'antigravity-cli');
+      assert.deepEqual(availability?.modelReasoningEfforts?.['gemini-4-carbon'], ['low', 'medium', 'high']);
+
+      await ensureTestAgentConfig({ agentId: 'anima', stateDir });
+      const configPath = join(stateDir, 'agents', 'anima', 'config.json');
+      await writeFile(configPath, JSON.stringify({
+        enabled: true,
+        homePath: stateDir,
+        id: 'anima',
+        profile: { displayName: 'Anima', role: 'test' },
+        provider: { kind: 'antigravity-cli', model: 'gemini-4-carbon' },
+      }), 'utf8');
+      const saved = async () => (JSON.parse(await readFile(configPath, 'utf8')) as AgentConfig).provider;
+      const service = new AgentService('anima');
+      await service.updateProvider({ reasoningEffort: 'xhigh' });
+      assert.equal((await saved()).reasoningEffort, 'xhigh');
+      await service.updateProvider({ model: 'gemini-4-carbon' });
+      assert.equal((await saved()).reasoningEffort, 'xhigh');
+
+      const ctx = await ingestAgyEvent(stateDir, 'Think it through.', '1786000011.000001');
+      runtime = createAgentRuntime(await saved());
+      assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'reply 1');
+      const calls = await readJsonLines(callsPath);
+      assert.deepEqual(
+        calls.filter((call) => call.method === 'session/set_config_option').map((call) => call.params),
+        [{ configId: 'thought_level', sessionId: 'agy-session-new', value: 'xhigh' }],
+      );
+    });
+  } finally {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await runtime?.close?.();
     await rm(stateDir, { force: true, recursive: true });
   }

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import { resolveAnimaHome } from '../anima-home.js';
 import type { RuntimeItemContext } from './types.js';
+import { runtimeLaunchPath } from './launch-path.js';
 import { reminderServiceForAgent } from '../reminders/reminder.service.js';
 import {
   recordAgentText,
@@ -195,8 +195,7 @@ export class AgentRuntimeBridge {
 }
 
 export function runtimeEnv(context: RuntimeItemContext, env?: Record<string, string>): NodeJS.ProcessEnv {
-  const binDir = join(resolve(dirname(fileURLToPath(import.meta.url)), '../../..'), 'bin');
-  const path = [binDir, env?.['PATH'] ?? process.env.PATH ?? ''].filter(Boolean).join(':');
+  const path = runtimeLaunchPath(env);
   const { ANIMA_INBOX_ITEM_ID: _itemId, ...baseEnv } = {
     ...process.env,
     ...(env ?? {}),
