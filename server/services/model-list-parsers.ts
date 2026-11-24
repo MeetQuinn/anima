@@ -26,40 +26,48 @@ export function isModelListParserName(value: string | undefined): value is Model
 }
 
 /**
- * `opencode models --verbose` → catalog. For each model OpenCode prints `provider/id`,
- * then the model's record as `JSON.stringify(model, null, 2)` writes it: `{` and `}` on
- * lines of their own, everything between indented. A model is such a record, named by
- * its `providerID` and `id`. So an id can hold any character, a newline included, and
- * a line outside a record (a wrapper script's notice, say) is no model. A model's
- * `variants` are its effort menu (the values the runtime's `effort` option takes), and
- * a model without any has no effort control. Deprecated models stay out. Only
- * `providerID`, `id`, status and variant names are read: the record also carries
- * provider headers and options.
+ * `opencode models --verbose` → catalog. For each model OpenCode prints its name,
+ * `providerID/id`, then its record as `JSON.stringify(model, null, 2)` writes it: `{`
+ * and `}` on lines of their own, everything between indented. A model is a record
+ * whose `providerID` and `id` spell the name printed just before it. So an id can hold
+ * any character, newlines and a `{` line included, and other output (a wrapper
+ * script's notice or JSON log) is no model. A model's `variants` are its effort menu
+ * (the values the runtime's `effort` option takes), and a model without any has no
+ * effort control. Deprecated models stay out. Only `providerID`, `id`, status and
+ * variant names are read: the record also carries provider headers and options.
  */
 export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog {
-  const records: string[] = [];
-  let open: string[] | undefined;
-  for (const line of output.split(/\r?\n/)) {
-    if (open) {
-      open.push(line);
-      if (line === '}') {
-        records.push(open.join('\n'));
-        open = undefined;
-      }
-    } else if (line === '{') {
-      open = [line];
-    } else if (line.startsWith('{')) {
-      // A record on one line, such as `{}`.
-      records.push(line);
-    }
+  const lines = output.split('\n');
+  // Where each line starts in the output, and the next `{` and `}` lines at or after it.
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+  const nextOpen: number[] = [];
+  const nextClose: number[] = [];
+  for (let index = lines.length - 1, open = -1, close = -1; index >= 0; index -= 1) {
+    if (lines[index] === '{') open = index;
+    if (lines[index] === '}') close = index;
+    nextOpen[index] = open;
+    nextClose[index] = close;
   }
   const models: string[] = [];
   const seen = new Set<string>();
   const menus: [string, string[]][] = [];
-  for (const record of records) {
+  for (let index = 0; index < lines.length; index += 1) {
+    // A record starts at a `{` line and ends at the next `}` line; every line between
+    // is indented. A `{` line that is not such a start is part of a name, and the
+    // record may start at a later one.
+    if (lines[index] !== '{') continue;
+    const end = nextClose[index + 1] ?? -1;
+    if (end < 0) break;
+    const open = nextOpen[index + 1] ?? -1;
+    if (open >= 0 && open < end) continue;
     let info: unknown;
     try {
-      info = JSON.parse(record);
+      info = JSON.parse(lines.slice(index, end + 1).join('\n'));
     } catch {
       continue;
     }
@@ -68,6 +76,12 @@ export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog 
     const id = info['id'];
     if (typeof provider !== 'string' || typeof id !== 'string' || !provider.trim() || !id.trim()) continue;
     const model = `${provider}/${id}`;
+    const nameStart = starts[index]! - model.length - 1;
+    const named = nameStart >= 0
+      && output.slice(nameStart, starts[index]) === `${model}\n`
+      && (nameStart === 0 || output[nameStart - 1] === '\n');
+    if (!named) continue;
+    index = end;
     if (seen.has(model) || info['status'] === 'deprecated') continue;
     seen.add(model);
     models.push(model);

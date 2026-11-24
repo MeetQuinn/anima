@@ -638,12 +638,12 @@ Model menu:
 - The dashboard's OpenCode model and effort menus come from `opencode models --verbose --pure`, run
   for each availability check from `$ANIMA_HOME/cache/opencode-model-probe` with the runtime's
   launch environment, so it sees the providers an agent's turn sees and no project's
-  `opencode.json`. It starts no session. Each model record in the output is a model, named by its
-  `providerID` and `id` (any characters, a newline included); other lines, such as a wrapper
-  script's notice, are not models. A model's `variants` are its effort menu (a model without any has
-  none), and deprecated models are left out. The per-model JSON also carries provider headers and
-  options, so the command runs in the same separate probe process as Kimi's list, and only ids and
-  effort menus come back to the server.
+  `opencode.json`. It starts no session. A model is a record whose `providerID` and `id` spell the
+  name OpenCode printed just before it (any characters, newlines included); other output, such as a
+  wrapper script's notice or JSON log, is not a model. A model's `variants` are its effort menu (a
+  model without any has none), and deprecated models are left out. The per-model JSON also carries
+  provider headers and options, so the command runs in the same separate probe process as Kimi's
+  list, and only ids and effort menus come back to the server.
 - The list is every model OpenCode can run, OpenCode Zen's free models included, not only DeepSeek.
 - The catalog entry is `liveModels`, as for Codex. When the read fails, the built-in list is used:
   `deepseek/deepseek-v4-pro` and `deepseek/deepseek-flash` (DeepSeek V4.1 Flash; DeepSeek retired the

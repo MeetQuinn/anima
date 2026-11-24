@@ -619,12 +619,18 @@ test('parseOpenCodeModelsOutput reads ids and variant names, and nothing else', 
   assert.throws(() => parseOpenCodeModelsOutput(''), /OpenCode did not report any models/);
 });
 
-// A model is a record, named by its own `providerID` and `id`, with its own menu: an
-// id with any characters (a newline too) is listed whole, and a line outside a record,
-// such as a wrapper script's notice, is not a model, nor the default.
-test('parseOpenCodeModelsOutput lists each model record by its own id, and nothing else', () => {
+// A model is a record whose `providerID` and `id` spell the name printed just before
+// it, with its own menu: an id with any characters (newlines and a `{` line too) is
+// listed whole, and other output, such as a wrapper script's notice or JSON log, is
+// not a model, nor the default.
+test('parseOpenCodeModelsOutput lists each model record OpenCode named, and nothing else', () => {
+  const log = { event: 'catalog.refresh', id: 'refresh-42', level: 'info', providerID: 'review' };
   const output = [
     'Loading models from /workspace/catalog',
+    JSON.stringify(log),
+    JSON.stringify(log, null, 2),
+    'review/refresh-43',
+    JSON.stringify({ ...log, id: 'refresh-44' }, null, 2),
     openCodeVerbose([
       ['review/aa-normal', { variants: { high: {} } }],
       ['review/bb\\model', { variants: { low: {} } }],
@@ -632,6 +638,7 @@ test('parseOpenCodeModelsOutput lists each model record by its own id, and nothi
       ['review/dd {braced} spaced', { variants: { max: {} } }],
       ['review/ee\u0001control', { variants: {} }],
       ['review/multi\nline', { variants: { high: {} } }],
+      ['review/multi\n{\nbrace', { variants: { low: {} } }],
       ['review/gg-normal', { variants: { medium: {} } }],
     ]),
     'review/hh-no-record',
@@ -649,6 +656,7 @@ test('parseOpenCodeModelsOutput lists each model record by its own id, and nothi
       'review/dd {braced} spaced': ['max'],
       'review/ee\u0001control': [],
       'review/multi\nline': ['high'],
+      'review/multi\n{\nbrace': ['low'],
       'review/gg-normal': ['medium'],
     },
     models: [
@@ -658,6 +666,7 @@ test('parseOpenCodeModelsOutput lists each model record by its own id, and nothi
       'review/dd {braced} spaced',
       'review/ee\u0001control',
       'review/multi\nline',
+      'review/multi\n{\nbrace',
       'review/gg-normal',
     ],
   });
@@ -773,28 +782,38 @@ test('model-list replies carry each model once, and the server keeps ids and men
   assert.equal(modelListCatalog('a'), undefined);
 });
 
+// A `{` line that starts no record costs no parse, so a long run of them before the
+// list is read in one pass (one parse each would take minutes).
+test('parseOpenCodeModelsOutput reads a long run of `{` lines in one pass', () => {
+  const started = performance.now();
+  const output = `${'{\n'.repeat(200_000)}}\n${openCodeVerbose([['review/aa-normal', { variants: { high: {} } }]])}`;
+  assert.deepEqual(parseOpenCodeModelsOutput(output).models, ['review/aa-normal']);
+  assert.ok(performance.now() - started < 10_000);
+});
+
 // A list as long as the output cap allows still arrives whole: the reply limit
-// follows the output limit. Ids of bytes that are not UTF-8 are the costliest case
-// for the reply: each such byte is three (U+FFFD) there.
+// follows the output limit. Kimi Code aliases of bytes that are not UTF-8 are the
+// costliest case for the reply: each such byte is three (U+FFFD) there.
 test('model-list probe: a list that fills the output limit arrives whole', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-size-'));
   try {
     const maxBytes = 256 * 1024;
     const idBytes = maxBytes / 4 - 64;
     const ids: string[] = [];
-    const records: Buffer[] = [];
+    const parts: Buffer[] = [Buffer.from('{"models":{')];
     for (let i = 0; i < 4; i += 1) {
-      ids.push(`p/${i}${'\ufffd'.repeat(idBytes)}`);
-      records.push(Buffer.from(`{"providerID":"p","id":"${i}`), Buffer.alloc(idBytes, 0x80), Buffer.from('"}\n'));
+      ids.push(`${i}${'\ufffd'.repeat(idBytes)}`);
+      parts.push(Buffer.from(`${i ? ',' : ''}"${i}`), Buffer.alloc(idBytes, 0x80), Buffer.from('":{}'));
     }
-    const output = Buffer.concat(records);
+    parts.push(Buffer.from('}}'));
+    const output = Buffer.concat(parts);
     assert.ok(output.length <= maxBytes);
-    const outputFile = join(dir, 'models.txt');
+    const outputFile = join(dir, 'models.json');
     await writeFile(outputFile, output);
-    const opencode = join(dir, 'opencode');
-    await writeFile(opencode, `#!${process.execPath}\nprocess.stdout.write(require('fs').readFileSync(${JSON.stringify(outputFile)}));`, 'utf8');
-    await chmod(opencode, 0o755);
-    const catalog = await modelListProbe('opencode', opencode, [], { cwd: join(dir, 'probe'), env: process.env, maxBytes, timeoutMs: 30_000 });
+    const kimi = join(dir, 'kimi');
+    await writeFile(kimi, `#!${process.execPath}\nprocess.stdout.write(require('fs').readFileSync(${JSON.stringify(outputFile)}));`, 'utf8');
+    await chmod(kimi, 0o755);
+    const catalog = await modelListProbe('kimi', kimi, [], { cwd: join(dir, 'probe'), env: process.env, maxBytes, timeoutMs: 30_000 });
     assert.equal(catalog.models.length, ids.length);
     assert.equal(catalog.models.at(-1), ids.at(-1));
   } finally {
@@ -993,10 +1012,11 @@ test('provider availability reads the OpenCode and Kimi model lists from their C
     const log = join(dir, 'calls.jsonl');
     await mkdir(bin, { recursive: true });
     const record = `require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), autoupdate: process.env.OPENCODE_DISABLE_AUTOUPDATE ?? null, cwd: process.cwd(), name: require('path').basename(process.argv[1]) }) + '\\n');`;
-    const opencodeOutput = openCodeVerbose([
+    // A JSON log on stdout ahead of the list is not the default.
+    const opencodeOutput = `${JSON.stringify({ event: 'catalog.refresh', id: 'refresh-42', providerID: 'review' }, null, 2)}\n${openCodeVerbose([
       ['deepseek/deepseek-v4-pro', { variants: { high: {}, low: {}, max: {} } }],
       ['deepseek/deepseek-v5', { variants: { high: {} } }],
-    ]);
+    ])}`;
     await writeFile(join(bin, 'opencode'), [
       `#!${process.execPath}`,
       "if (process.argv[2] === '--version') { console.log('1.19.5'); process.exit(0); }",
