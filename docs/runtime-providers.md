@@ -640,8 +640,9 @@ Model menu:
   launch environment, so it sees the providers an agent's turn sees and no project's
   `opencode.json`. It starts no session. A model is a record whose `providerID` and `id` spell the
   name OpenCode printed just before it (any characters, newlines included); other output, such as a
-  wrapper script's notice or JSON log, is not a model. A model's `variants` are its effort menu (a
-  model without any has none), and deprecated models are left out. The per-model JSON also carries
+  wrapper script's notice or JSON log, is not a model. Lines may end in LF or CRLF (a wrapper that
+  runs OpenCode on a terminal prints CRLF). A model's `variants` are its effort menu (a model
+  without any has none), and deprecated models are left out. The per-model JSON also carries
   provider headers and options, so the command runs in the same separate probe process as Kimi's
   list, and only ids and effort menus come back to the server.
 - The list is every model OpenCode can run, OpenCode Zen's free models included, not only DeepSeek.

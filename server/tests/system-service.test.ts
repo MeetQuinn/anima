@@ -622,7 +622,8 @@ test('parseOpenCodeModelsOutput reads ids and variant names, and nothing else', 
 // A model is a record whose `providerID` and `id` spell the name printed just before
 // it, with its own menu: an id with any characters (newlines and a `{` line too) is
 // listed whole, and other output, such as a wrapper script's notice or JSON log, is
-// not a model, nor the default.
+// not a model, nor the default. The same holds for output in CRLF, as a terminal
+// prints it.
 test('parseOpenCodeModelsOutput lists each model record OpenCode named, and nothing else', () => {
   const log = { event: 'catalog.refresh', id: 'refresh-42', level: 'info', providerID: 'review' };
   const output = [
@@ -647,7 +648,7 @@ test('parseOpenCodeModelsOutput lists each model record OpenCode named, and noth
     JSON.stringify({ variants: { high: {} } }, null, 2),
     'Done: /workspace/catalog',
   ].join('\n');
-  assert.deepEqual(parseOpenCodeModelsOutput(output), {
+  const expected = {
     defaultModel: 'review/aa-normal',
     modelReasoningEfforts: {
       'review/aa-normal': ['high'],
@@ -669,7 +670,9 @@ test('parseOpenCodeModelsOutput lists each model record OpenCode named, and noth
       'review/multi\n{\nbrace',
       'review/gg-normal',
     ],
-  });
+  };
+  assert.deepEqual(parseOpenCodeModelsOutput(output), expected);
+  assert.deepEqual(parseOpenCodeModelsOutput(output.replaceAll('\n', '\r\n')), expected);
 });
 
 test('parseKimiProviderList reads model aliases and their efforts, never providers', () => {
