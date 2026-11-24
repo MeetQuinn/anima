@@ -614,6 +614,42 @@ test('parseOpenCodeModelsOutput reads ids and variant names, and nothing else', 
   assert.throws(() => parseOpenCodeModelsOutput(''), /OpenCode did not report any models/);
 });
 
+// An id is a line outside a model's JSON, whatever it holds, and its JSON is its own:
+// an odd id neither drops out nor takes its neighbour's menu.
+test('parseOpenCodeModelsOutput keeps every listed id, each with its own menu', () => {
+  const output = openCodeVerbose([
+    ['review/aa-normal', { variants: { high: {} } }],
+    ['review/bb\\model', { variants: { low: {} } }],
+    ['review/cc"quoted', {}],
+    ['review/dd {braced} spaced', { variants: { max: {} } }],
+    ['review/ee\u0001control', { variants: {} }],
+    ['review/ff-bare', '{}'],
+    ['review/gg-normal', { variants: { medium: {} } }],
+  ]) + 'review/hh-no-json\n';
+  assert.deepEqual(parseOpenCodeModelsOutput(output), {
+    defaultModel: 'review/aa-normal',
+    modelReasoningEfforts: {
+      'review/aa-normal': ['high'],
+      'review/bb\\model': ['low'],
+      'review/cc"quoted': [],
+      'review/dd {braced} spaced': ['max'],
+      'review/ee\u0001control': [],
+      'review/ff-bare': [],
+      'review/gg-normal': ['medium'],
+    },
+    models: [
+      'review/aa-normal',
+      'review/bb\\model',
+      'review/cc"quoted',
+      'review/dd {braced} spaced',
+      'review/ee\u0001control',
+      'review/ff-bare',
+      'review/gg-normal',
+      'review/hh-no-json',
+    ],
+  });
+});
+
 test('parseKimiProviderList reads model aliases and their efforts, never providers', () => {
   const output = JSON.stringify({
     models: {
@@ -685,7 +721,7 @@ test('model-list probe: only the catalog leaves the probe process', async () => 
     assert.equal(stdout.includes('example.invalid'), false);
     assert.equal(stdout.split('\n').filter(Boolean).length, 1);
     assert.deepEqual(JSON.parse(stdout), {
-      catalog: { defaultModel: 'constructor', models: [['constructor', ['low', 'high']], ['kimi-code/k3', ['high']]] },
+      catalog: { defaultModel: 0, models: [['constructor', ['low', 'high']], ['kimi-code/k3', ['high']]] },
     });
 
     const failing = join(dir, 'failing');
@@ -698,7 +734,8 @@ test('model-list probe: only the catalog leaves the probe process', async () => 
   }
 });
 
-// The probe names each model once; the server takes back only string ids and their menus.
+// The probe names each model once (the default by its place in the list); the server
+// takes back only string ids and their menus.
 test('model-list replies carry each model once, and the server keeps ids and menus only', () => {
   const catalog = {
     defaultModel: 'b',
@@ -706,31 +743,36 @@ test('model-list replies carry each model once, and the server keeps ids and men
     models: ['a', 'b', '__proto__'],
   };
   const reply = modelListReply(catalog);
-  assert.deepEqual(reply, { defaultModel: 'b', models: [['a', ['high']], ['b'], ['__proto__', []]] });
+  assert.deepEqual(reply, { defaultModel: 1, models: [['a', ['high']], ['b'], ['__proto__', []]] });
   assert.deepEqual(modelListCatalog(JSON.parse(JSON.stringify(reply))), catalog);
   assert.deepEqual(
     modelListCatalog({
       apiKey: 'sk-not-kept',
-      defaultModel: 'missing',
+      defaultModel: 'b',
       models: [['a', ['high', 3, '']], ['b', 'high', 'sk-not-kept'], ['a', ['low']], [7], 'c', [''], []],
     }),
     { defaultModel: 'a', modelReasoningEfforts: { a: ['high'] }, models: ['a', 'b'] },
   );
+  // The index counts the reply's entries, so a dropped entry moves no other model into its place.
+  assert.equal(modelListCatalog({ defaultModel: 1, models: [['a'], [7], ['c']] })?.defaultModel, 'a');
+  assert.equal(modelListCatalog({ defaultModel: 2, models: [['a'], [7], ['c']] })?.defaultModel, 'c');
   assert.equal(modelListCatalog({ models: [] }), undefined);
   assert.equal(modelListCatalog('a'), undefined);
 });
 
 // A list as long as the output cap allows still arrives whole: the reply limit
-// follows the output limit. Ids of a few characters with nothing else are the
-// costliest case for the reply.
+// follows the output limit. Ids of control characters with nothing else are the
+// costliest case for the reply: each such byte is six in JSON.
 test('model-list probe: a list that fills the output limit arrives whole', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-size-'));
   try {
     const maxBytes = 256 * 1024;
+    // Control characters JavaScript does not count as whitespace.
+    const controls = [...'\x01\x02\x03\x04\x05\x06\x07\x08\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f'];
     const ids: string[] = [];
     let size = 0;
     for (let i = 0; size + 12 < maxBytes; i += 1) {
-      const id = `p/${i.toString(36)}`;
+      const id = `/${[...i.toString(26)].map((digit) => controls[parseInt(digit, 26)]).join('')}`;
       ids.push(id);
       size += id.length + 1;
     }
@@ -821,11 +863,12 @@ test('model-list probe: giving up ends the wrapper and the CLI it started', asyn
 
 // A process that ends a probe and then shuts down, whether it lets its event loop
 // drain (the web service) or waits on processGroupsEnded and exits, does not leave
-// the probe's CLI running, even one that ignores SIGTERM.
+// the probe's CLI running, even one that ignores SIGTERM. Nor does one that stalls
+// past the grace period first: KILL still goes out.
 test('model-list probe: shutting down after a probe waits until its CLI is gone', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-shutdown-'));
   try {
-    for (const exit of ['drain', 'explicit']) {
+    for (const exit of ['drain', 'explicit', 'stalled']) {
       const cli = join(dir, `${exit}-cli`);
       await writeFile(cli, [
         `#!${process.execPath}`,
@@ -842,6 +885,8 @@ test('model-list probe: shutting down after a probe waits until its CLI is gone'
         `const { modelListProbe, processGroupsEnded } = await import(${JSON.stringify(SYSTEM_SERVICE_MODULE)});`,
         `await modelListProbe('kimi', ${JSON.stringify(wrapper)}, [], { cwd: ${JSON.stringify(join(dir, 'probe'))}, env: process.env, killGraceMs: 500, timeoutMs: 6000 }).catch(() => {});`,
         exit === 'explicit' ? 'await processGroupsEnded(); process.exit(0);' : '',
+        // Blocks this process for longer than the grace period and the 2s after it.
+        exit === 'stalled' ? 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);' : '',
       ].join('\n'), 'utf8');
       await promisify(execFile)(process.execPath, [host], { cwd: dir, timeout: 30_000 });
       const wrapperPid = await pidFrom(join(dir, `${exit}.pid`));
@@ -875,6 +920,52 @@ test('model-list probe: a probe the server never ends ends itself at its deadlin
     await exited;
     assert.equal(await processGone(cliPid), true, 'CLI');
   } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// If the server is gone when the probe has its answer (here, too much output), the
+// reply cannot be delivered; the probe ends its group then, not only at its deadline.
+test('model-list probe: a reply the server is gone for still ends the wrapper and the CLI', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-orphan-'));
+  let probePid = 0;
+  try {
+    const go = join(dir, 'go');
+    const cli = join(dir, 'cli');
+    await writeFile(cli, [
+      `#!${process.execPath}`,
+      "const fs = require('fs');",
+      `fs.writeFileSync(${JSON.stringify(join(dir, 'cli.pid'))}, String(process.pid));`,
+      "process.on('SIGTERM', () => {});",
+      `const wait = setInterval(() => { if (fs.existsSync(${JSON.stringify(go)})) { clearInterval(wait); process.stdout.write('x'.repeat(4096)); } }, 20);`,
+      'setInterval(() => {}, 1000);',
+    ].join('\n'), 'utf8');
+    const wrapper = join(dir, 'kimi');
+    await writeFile(wrapper, `#!/bin/sh\necho $$ > ${JSON.stringify(join(dir, 'wrapper.pid'))}\n${JSON.stringify(cli)} "$@"\n`, 'utf8');
+    await chmod(cli, 0o755);
+    await chmod(wrapper, 0o755);
+    const script = fileURLToPath(new URL('../services/model-list-probe.js', import.meta.url));
+    const { spawn } = await import('node:child_process');
+    const probe = spawn(process.execPath, [script, '1024', '60000', 'kimi', wrapper], { cwd: dir, detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    probePid = probe.pid ?? 0;
+    const wrapperPid = await pidFrom(join(dir, 'wrapper.pid'));
+    const cliPid = await pidFrom(join(dir, 'cli.pid'));
+    // The server goes away, then the CLI answers.
+    probe.stdout?.destroy();
+    await writeFile(go, '', 'utf8');
+    assert.equal(await processGone(cliPid), true, 'CLI');
+    assert.equal(await processGone(wrapperPid), true, 'wrapper');
+    assert.equal(await processGone(probePid), true, 'probe');
+  } finally {
+    // A failed run must not leave the group behind: its CLI ignores SIGTERM.
+    if (probePid > 0) {
+      try {
+        process.kill(-probePid, 0);
+        process.kill(-probePid, 'SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    }
     await rm(dir, { force: true, recursive: true });
   }
 });

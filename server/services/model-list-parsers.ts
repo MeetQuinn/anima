@@ -27,18 +27,36 @@ export function isModelListParserName(value: string | undefined): value is Model
 
 /**
  * `opencode models --verbose` → catalog. Each model is its `provider/id` on a line of its
- * own, then its JSON. A model's `variants` are its effort menu (the values the
- * runtime's `effort` option takes), and a model without any has no effort control; a
- * model whose JSON does not parse keeps its built-in menu. Deprecated models stay out.
+ * own, then its JSON as `JSON.stringify(model, null, 2)` writes it: `{` and `}` on lines
+ * of their own, everything between indented. So a line outside that JSON is an id,
+ * whatever characters the id has. A model's `variants` are its effort menu (the values
+ * the runtime's `effort` option takes), and a model without any has no effort control;
+ * a model whose JSON does not parse keeps its built-in menu. Deprecated models stay out.
  * Only ids, status and variant names are read: the JSON also carries provider headers
  * and options.
  */
 export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog {
-  const blocks: { body: string[]; model: string }[] = [];
+  type Block = { body: string[]; model: string };
+  const blocks: Block[] = [];
+  // The model the next JSON belongs to, and whether that JSON is still open.
+  let current: Block | undefined;
+  let inBody = false;
   for (const line of output.split(/\r?\n/)) {
-    // An id is printable: no control characters, quotes or backslashes.
-    if (/^[^\s{}"\\\x00-\x1f\x7f]+\/[^\s"\\\x00-\x1f\x7f]+$/.test(line)) blocks.push({ body: [], model: line });
-    else blocks.at(-1)?.body.push(line);
+    if (inBody) {
+      current?.body.push(line);
+      if (line === '}') {
+        inBody = false;
+        current = undefined;
+      }
+    } else if (line.startsWith('{')) {
+      current?.body.push(line);
+      // `{}`, or JSON on one line, is complete as it is.
+      if (line === '{') inBody = true;
+      else current = undefined;
+    } else if (line !== '') {
+      current = !/^\s/.test(line) && line.includes('/') ? { body: [], model: line } : undefined;
+      if (current) blocks.push(current);
+    }
   }
   const models: string[] = [];
   const seen = new Set<string>();
@@ -105,14 +123,15 @@ export function parseKimiProviderList(output: string): ProviderModelCatalog {
 type ModelListReplyEntry = [string] | [string, string[]];
 
 /**
- * A catalog in the form the probe process sends it: each model once, with its menu.
- * Each id costs a few bytes more than it did in the CLI's output, which bounds the
- * reply the server accepts (see modelListProbe).
+ * A catalog in the form the probe process sends it: each model once, with its menu,
+ * and the default as its index in that list. So each id is written once, in at most
+ * six times the bytes it took in the CLI's output (a control character becomes
+ * `\u00XX`), which bounds the reply the server accepts (see modelListProbe).
  */
-export function modelListReply(catalog: ProviderModelCatalog): { defaultModel: string; models: ModelListReplyEntry[] } {
+export function modelListReply(catalog: ProviderModelCatalog): { defaultModel: number; models: ModelListReplyEntry[] } {
   const menus = catalog.modelReasoningEfforts ?? {};
   return {
-    defaultModel: catalog.defaultModel,
+    defaultModel: Math.max(0, catalog.models.indexOf(catalog.defaultModel)),
     models: catalog.models.map((model): ModelListReplyEntry => (Object.hasOwn(menus, model) ? [model, menus[model]!] : [model])),
   };
 }
@@ -126,20 +145,19 @@ export function modelListCatalog(value: unknown): ProviderModelCatalog | undefin
   const models: string[] = [];
   const seen = new Set<string>();
   const menus: [string, string[]][] = [];
-  for (const entry of value['models']) {
+  let defaultModel: string | undefined;
+  for (const [index, entry] of value['models'].entries()) {
     if (!Array.isArray(entry) || typeof entry[0] !== 'string' || entry[0].trim() === '' || seen.has(entry[0])) continue;
     const model = entry[0];
     seen.add(model);
     models.push(model);
+    if (index === value['defaultModel']) defaultModel = model;
     if (Array.isArray(entry[1])) {
       menus.push([model, entry[1].filter((effort): effort is string => typeof effort === 'string' && effort.trim() !== '')]);
     }
   }
   if (models.length === 0) return undefined;
-  const defaultModel = typeof value['defaultModel'] === 'string' && seen.has(value['defaultModel'])
-    ? value['defaultModel']
-    : models[0]!;
-  return { defaultModel, modelReasoningEfforts: Object.fromEntries(menus), models };
+  return { defaultModel: defaultModel ?? models[0]!, modelReasoningEfforts: Object.fromEntries(menus), models };
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

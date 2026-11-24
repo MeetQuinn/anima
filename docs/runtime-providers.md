@@ -488,11 +488,13 @@ Model menu:
   `supportEfforts` is the effort menu (a model without it has none). The output's `providers` part
   holds credentials, so the output never reaches the server: a separate probe process
   (`model-list-probe.js`) runs the command, parses it, and sends back only the model ids and effort
-  menus, or an error that never includes the output. The probe and everything it started end
-  together when the reply is in, after 10 seconds, or after 8 MiB of output: TERM, then KILL 2
-  seconds later for whatever is left. The web service waits for that before it exits, and a probe
-  the server never ends (the server crashed) ends its own group shortly after its deadline. The
-  reply names each model once, so any list that fits in 8 MiB of output arrives whole.
+  menus, or an error that never includes the output (output past 8 MiB is an error). Once the probe
+  has written its reply, or finds it cannot (the server is gone), it ends itself and everything it
+  started. When no reply comes within 10 seconds, the server ends them: TERM, then KILL 2 seconds
+  later for whatever is left, even if the server was stalled past that point. The web service waits
+  for that before it exits, and a probe the server never ends (the server crashed) ends its own
+  group shortly after its deadline. The reply names each model once, so any list that fits in 8 MiB
+  of output arrives whole.
 - The catalog entry is `liveModels`, as for Codex: when the read fails, the built-in Kimi list and
   menus are used, and any model alias saves. A model the built-in list lacks takes `low`, `high` or
   `max`.
@@ -636,10 +638,11 @@ Model menu:
 - The dashboard's OpenCode model and effort menus come from `opencode models --verbose --pure`, run
   for each availability check from `$ANIMA_HOME/cache/opencode-model-probe` with the runtime's
   launch environment, so it sees the providers an agent's turn sees and no project's
-  `opencode.json`. It starts no session. Each listed `provider/id` is a model, its `variants` are
-  its effort menu (a model without any has none), and deprecated models are left out. The per-model
-  JSON also carries provider headers and options, so the command runs in the same separate probe
-  process as Kimi's list, and only ids and effort menus come back to the server.
+  `opencode.json`. It starts no session. Each listed `provider/id` is a model, whatever characters
+  it has, its `variants` are its effort menu (a model without any has none), and deprecated models
+  are left out. The per-model JSON also carries provider headers and options, so the command runs in
+  the same separate probe process as Kimi's list, and only ids and effort menus come back to the
+  server.
 - The list is every model OpenCode can run, OpenCode Zen's free models included, not only DeepSeek.
 - The catalog entry is `liveModels`, as for Codex. When the read fails, the built-in list is used:
   `deepseek/deepseek-v4-pro` and `deepseek/deepseek-flash` (DeepSeek V4.1 Flash; DeepSeek retired the

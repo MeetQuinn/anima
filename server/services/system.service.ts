@@ -669,8 +669,10 @@ const endingProcessGroups = new Set<Promise<void>>();
  * Ends the process group `pid` leads (a probe started `detached`, and all it started):
  * TERM now, KILL after `graceMs` for whatever is left. A wrapper script that exits on
  * TERM would otherwise leave the CLI it started running. Resolves once the group is
- * gone (or 2s after KILL). Until then its timers keep this process alive, and
- * `processGroupsEnded` waits for it, so shutting down never leaves the CLI behind.
+ * gone, or 2s after KILL went out. KILL goes out whenever the group outlives the grace
+ * period, even if this process was stalled past it. Until then its timers keep this
+ * process alive, and `processGroupsEnded` waits for it, so shutting down never leaves
+ * the CLI behind.
  */
 function endProcessGroup(pid: number | undefined, graceMs: number): Promise<void> {
   if (pid === undefined || pid <= 0) return Promise.resolve();
@@ -684,15 +686,21 @@ function endProcessGroup(pid: number | undefined, graceMs: number): Promise<void
   };
   if (!signal('SIGTERM')) return Promise.resolve();
   const startedAt = Date.now();
-  let killed = false;
+  let killedAt: number | undefined;
   const ended = new Promise<void>((resolveEnded) => {
     const check = () => {
-      const elapsed = Date.now() - startedAt;
-      if (!signal(0) || elapsed >= graceMs + 2_000) {
+      const now = Date.now();
+      if (!signal(0) || (killedAt !== undefined && now - killedAt >= 2_000)) {
         resolveEnded();
         return;
       }
-      if (!killed && elapsed >= graceMs) killed = signal('SIGKILL');
+      if (killedAt === undefined && now - startedAt >= graceMs) {
+        if (!signal('SIGKILL')) {
+          resolveEnded();
+          return;
+        }
+        killedAt = now;
+      }
       setTimeout(check, 50);
     };
     setTimeout(check, 50);
@@ -730,9 +738,9 @@ export async function modelListProbe(
   const maxBytes = options.maxBytes ?? MODEL_LIST_MAX_BYTES;
   const timeoutMs = options.timeoutMs ?? MODEL_LIST_PROBE_TIMEOUT_MS;
   const killGraceMs = options.killGraceMs ?? 2_000;
-  // A reply names each model once, in no more bytes than about twice what the CLI
-  // spent on it, so this holds any catalog an accepted output yields.
-  const replyMaxBytes = 3 * maxBytes + 64 * 1024;
+  // A reply writes each id once, in at most six times the bytes the CLI spent on it,
+  // and a menu in fewer, so this holds any catalog an accepted output yields.
+  const replyMaxBytes = 6 * maxBytes + 64 * 1024;
   await mkdir(options.cwd, { recursive: true });
   return new Promise((resolvePromise, reject) => {
     const child = spawn(
