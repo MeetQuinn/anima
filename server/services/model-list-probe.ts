@@ -1,10 +1,12 @@
 // The server runs this script to read a CLI's model list (see modelListProbe in
 // system.service.ts):
 //   node model-list-probe.js <maxBytes> <deadlineMs> <parser> <command> [args...]
-// The CLI's output can carry credentials (Kimi Code's lists provider API keys), so it
-// is read and parsed here, in a process of its own, and only the catalog goes back:
+// The CLI's output can carry credentials (Kimi Code's lists provider API keys) or
+// describe the account (Claude Code's), so it is read and parsed here, in a process
+// of its own, and only the catalog goes back:
 // one JSON line on stdout, `{"catalog": ...}` in the compact form `modelListReply`
 // writes, or `{"error": "..."}`. Errors name what failed, never what the CLI printed.
+// A parser with `input` gets it on the CLI's stdin, which then closes.
 // Nothing reads the CLI's stderr, so it is not piped (a full pipe would stall the
 // CLI). Once the line is written, or cannot be (the server is gone), this process
 // ends its group, the CLI and all it started included. The server ends the group
@@ -44,8 +46,14 @@ if (!isModelListParserName(parserName) || !command) {
 } else {
   const parser = MODEL_LIST_PARSERS[parserName];
   const maxBytes = Number(maxBytesArg) > 0 ? Number(maxBytesArg) : 8 * 1024 * 1024;
-  const cli = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+  const parserInput: string | undefined = 'input' in parser ? parser.input : undefined;
+  const cli = spawn(command, args, { stdio: [parserInput === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
   child = cli;
+  if (parserInput !== undefined) {
+    // A CLI that exits without reading its input must not fail the probe on EPIPE.
+    cli.stdin?.on('error', () => {});
+    cli.stdin?.end(parserInput);
+  }
   const chunks: Buffer[] = [];
   let bytes = 0;
   let done = false;
@@ -54,7 +62,7 @@ if (!isModelListParserName(parserName) || !command) {
     done = true;
     report(result);
   };
-  cli.stdout.on('data', (chunk: Buffer) => {
+  cli.stdout?.on('data', (chunk: Buffer) => {
     bytes += chunk.length;
     if (bytes > maxBytes) finish({ error: `${parser.label} wrote more output than expected` });
     else chunks.push(chunk);

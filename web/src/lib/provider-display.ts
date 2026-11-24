@@ -12,9 +12,20 @@ export function providerLabelList(catalog: ProviderCatalogEntry[]): string {
   return new Intl.ListFormat('en', { type: 'disjunction' }).format(catalog.map((entry) => entry.label));
 }
 
-export function providerValueLabel(value: string | undefined): string {
+/**
+ * Display text for a model id or effort. `provider` is the entry the value belongs
+ * to, as `providerCatalogForAvailability` returns it: its labels include the names
+ * the CLI reported, for ids the built-in catalog has no label for.
+ */
+export function providerValueLabel(
+  value: string | undefined,
+  provider?: Pick<ProviderCatalogEntry, 'modelLabels'>,
+): string {
   if (!value) return '';
-  const modelLabel = catalogModelLabel(value);
+  const liveLabels = provider?.modelLabels;
+  // Own keys only: an id like `constructor` must not find Object's members.
+  const liveLabel = liveLabels && Object.hasOwn(liveLabels, value) ? liveLabels[value] : undefined;
+  const modelLabel = catalogModelLabel(value) ?? liveLabel;
   if (modelLabel) return modelLabel;
   // Reasoning efforts share this helper.
   if (value === 'xhigh') return 'Extra High';

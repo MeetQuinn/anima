@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import {
   modelListCatalog,
   modelListReply,
+  parseClaudeInitializeOutput,
   parseKimiProviderList,
   parseOpenCodeModelsOutput,
 } from '../services/model-list-parsers.js';
@@ -603,7 +604,7 @@ test('parseOpenCodeModelsOutput reads ids and variant names, and nothing else', 
       status: 'active',
       variants: { high: { reasoningEffort: 'high' }, low: { reasoningEffort: 'low' }, max: { reasoningEffort: 'max' } },
     }],
-    ['opencode/big-pickle', { status: 'beta' }],
+    ['opencode/big-pickle', { name: 'Big  Pickle\n', status: 'beta' }],
     ['deepseek/deepseek-chat', { status: 'deprecated', variants: { high: {} } }],
     ['deepseek/deepseek-flash', '{ not json'],
     ['deepseek/deepseek-v4-pro', { variants: { minimal: {} } }],
@@ -611,6 +612,7 @@ test('parseOpenCodeModelsOutput reads ids and variant names, and nothing else', 
   const catalog = parseOpenCodeModelsOutput(output);
   assert.deepEqual(catalog, {
     defaultModel: 'deepseek/deepseek-v4-pro',
+    modelLabels: { 'opencode/big-pickle': 'Big Pickle' },
     modelReasoningEfforts: { 'deepseek/deepseek-v4-pro': ['high', 'low', 'max'], 'opencode/big-pickle': [] },
     // A record that does not parse names no model.
     models: ['deepseek/deepseek-v4-pro', 'opencode/big-pickle'],
@@ -678,7 +680,7 @@ test('parseOpenCodeModelsOutput lists each model record OpenCode named, and noth
 test('parseKimiProviderList reads model aliases and their efforts, never providers', () => {
   const output = JSON.stringify({
     models: {
-      'kimi-code/k3': { defaultEffort: 'high', model: 'k3', provider: 'managed:kimi-code', supportEfforts: ['low', 'high', 'max', 'high'] },
+      'kimi-code/k3': { defaultEffort: 'high', displayName: 'Kimi K3', model: 'k3', provider: 'managed:kimi-code', supportEfforts: ['low', 'high', 'max', 'high'] },
       'kimi-code/kimi-for-coding': { capabilities: ['thinking'], model: 'kimi-for-coding', provider: 'managed:kimi-code' },
     },
     providers: { 'managed:kimi-code': { apiKey: 'sk-kimi-not-read', baseUrl: 'https://example.invalid' } },
@@ -686,6 +688,7 @@ test('parseKimiProviderList reads model aliases and their efforts, never provide
   const catalog = parseKimiProviderList(output);
   assert.deepEqual(catalog, {
     defaultModel: 'kimi-code/k3',
+    modelLabels: { 'kimi-code/k3': 'Kimi K3' },
     modelReasoningEfforts: { 'kimi-code/k3': ['low', 'high', 'max'], 'kimi-code/kimi-for-coding': [] },
     models: ['kimi-code/k3', 'kimi-code/kimi-for-coding'],
   });
@@ -698,6 +701,45 @@ test('parseKimiProviderList reads model aliases and their efforts, never provide
   const members = parseKimiProviderList('{"models":{"constructor":{"supportEfforts":["low","high"]},"__proto__":{"supportEfforts":["max"]},"toString":{}}}');
   assert.deepEqual(members.models, ['constructor', '__proto__', 'toString']);
   assert.deepEqual(Object.entries(members.modelReasoningEfforts!), [['constructor', ['low', 'high']], ['__proto__', ['max']], ['toString', []]]);
+});
+
+// Claude Code's list is the `models` of its answer to the probe's `initialize`
+// request. `default` stands for the account's default model, so it is not listed.
+test('parseClaudeInitializeOutput reads the initialize answer\'s models, and nothing else', () => {
+  const lines = [
+    'not json',
+    JSON.stringify({ subtype: 'hook_started', type: 'system' }),
+    JSON.stringify({ response: { request_id: 'other', response: { models: [{ value: 'not-this' }] }, subtype: 'success' }, type: 'control_response' }),
+    JSON.stringify({
+      response: {
+        request_id: 'anima-model-list',
+        response: {
+          account: { email: 'marker@example.invalid', organization: 'Marker Org' },
+          models: [
+            { displayName: 'Default (recommended)', supportedEffortLevels: ['low'], supportsEffort: true, value: 'default' },
+            { displayName: 'Opus', resolvedModel: 'claude-opus-5-5', supportedEffortLevels: ['low', 'high', 'high', 3], supportsEffort: true, value: 'opus' },
+            { displayName: 'Fable', supportedEffortLevels: ['max'], supportsEffort: true, value: 'claude-fable-5-1[1m]' },
+            { displayName: 'haiku', supportedEffortLevels: ['low'], supportsEffort: false, value: 'haiku' },
+            { displayName: 'Opus', value: 'opus' },
+            { value: 7 },
+          ],
+        },
+        subtype: 'success',
+      },
+      type: 'control_response',
+    }),
+  ];
+  const catalog = parseClaudeInitializeOutput(lines.join('\n'));
+  assert.deepEqual(catalog, {
+    defaultModel: 'opus',
+    modelLabels: { 'claude-fable-5-1[1m]': 'Fable', opus: 'Opus' },
+    modelReasoningEfforts: { 'claude-fable-5-1[1m]': ['max'], haiku: [], opus: ['low', 'high'] },
+    models: ['opus', 'claude-fable-5-1[1m]', 'haiku'],
+  });
+  assert.equal(JSON.stringify(catalog).includes('marker'), false);
+  const error = JSON.stringify({ response: { error: 'marker', request_id: 'anima-model-list', subtype: 'error' }, type: 'control_response' });
+  assert.throws(() => parseClaudeInitializeOutput(error), (thrown: Error) => thrown.message === 'Claude Code did not report any models');
+  assert.throws(() => parseClaudeInitializeOutput('marker'), (thrown: Error) => thrown.message === 'Claude Code did not answer initialize');
 });
 
 /** Resolves once `pid` is gone, or false after about 3s. */
@@ -760,23 +802,30 @@ test('model-list probe: only the catalog leaves the probe process', async () => 
 });
 
 // The probe names each model once (the default by its place in the list); the server
-// takes back only string ids and their menus.
-test('model-list replies carry each model once, and the server keeps ids and menus only', () => {
+// takes back only string ids, their menus and short one-line labels.
+test('model-list replies carry each model once, and the server keeps ids, menus and labels only', () => {
   const catalog = {
     defaultModel: 'b',
+    modelLabels: Object.fromEntries([['b', 'Model B'], ['__proto__', 'Proto']]),
     modelReasoningEfforts: Object.fromEntries([['a', ['high']], ['__proto__', []]]),
     models: ['a', 'b', '__proto__'],
   };
   const reply = modelListReply(catalog);
-  assert.deepEqual(reply, { defaultModel: 1, models: [['a', ['high']], ['b'], ['__proto__', []]] });
+  assert.deepEqual(reply, { defaultModel: 1, models: [['a', ['high']], ['b', null, 'Model B'], ['__proto__', [], 'Proto']] });
   assert.deepEqual(modelListCatalog(JSON.parse(JSON.stringify(reply))), catalog);
   assert.deepEqual(
     modelListCatalog({
       apiKey: 'sk-not-kept',
       defaultModel: 'b',
-      models: [['a', ['high', 3, '']], ['b', 'high', 'sk-not-kept'], ['a', ['low']], [7], 'c', [''], []],
+      models: [
+        ['a', ['high', 3, ''], ' Model\n A ', 'sk-not-kept'],
+        ['b', 'high', 'x'.repeat(81)],
+        ['c', null, 'c'],
+        ['a', ['low'], 'Other'],
+        [7], 'd', [''], [],
+      ],
     }),
-    { defaultModel: 'a', modelReasoningEfforts: { a: ['high'] }, models: ['a', 'b'] },
+    { defaultModel: 'a', modelLabels: { a: 'Model A' }, modelReasoningEfforts: { a: ['high'] }, models: ['a', 'b', 'c'] },
   );
   // The index counts the reply's entries, so a dropped entry moves no other model into its place.
   assert.equal(modelListCatalog({ defaultModel: 1, models: [['a'], [7], ['c']] })?.defaultModel, 'a');
@@ -1005,9 +1054,10 @@ test('model-list probe: a reply the server is gone for still ends the wrapper an
   }
 });
 
-// The OpenCode and Kimi probes run the CLI's own list command by name on the runtime
-// PATH, from a fixed empty directory, with the runtime's flags and environment.
-test('provider availability reads the OpenCode and Kimi model lists from their CLIs', async () => {
+// The Claude Code, OpenCode and Kimi probes run the CLI's own list command by name on
+// the runtime PATH, from a fixed empty directory, with the runtime's flags and
+// environment. Claude Code gets one `initialize` request on stdin and nothing else.
+test('provider availability reads the Claude Code, OpenCode and Kimi model lists from their CLIs', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-opencode-kimi-models-'));
   const previousPath = process.env.PATH;
   try {
@@ -1017,9 +1067,34 @@ test('provider availability reads the OpenCode and Kimi model lists from their C
     const record = `require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), autoupdate: process.env.OPENCODE_DISABLE_AUTOUPDATE ?? null, cwd: process.cwd(), name: require('path').basename(process.argv[1]) }) + '\\n');`;
     // A JSON log on stdout ahead of the list is not the default.
     const opencodeOutput = `${JSON.stringify({ event: 'catalog.refresh', id: 'refresh-42', providerID: 'review' }, null, 2)}\n${openCodeVerbose([
-      ['deepseek/deepseek-v4-pro', { variants: { high: {}, low: {}, max: {} } }],
-      ['deepseek/deepseek-v5', { variants: { high: {} } }],
+      ['deepseek/deepseek-v4-pro', { name: 'DeepSeek V4 Pro', variants: { high: {}, low: {}, max: {} } }],
+      ['deepseek/deepseek-v5', { name: 'DeepSeek V5', variants: { high: {} } }],
     ])}`;
+    const stdinLog = join(dir, 'claude-stdin');
+    await writeFile(join(bin, 'claude'), [
+      `#!${process.execPath}`,
+      "if (process.argv[2] === '--version') { console.log('2.1.328 (Claude Code)'); process.exit(0); }",
+      record,
+      floodStderr(200_000),
+      "let input = '';",
+      "process.stdin.on('data', (chunk) => { input += chunk; });",
+      "process.stdin.on('end', () => {",
+      `  require('fs').writeFileSync(${JSON.stringify(stdinLog)}, input);`,
+      "  const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+      "  send({ type: 'system', subtype: 'hook_started' });",
+      "  send({ type: 'control_response', response: { request_id: 'other', subtype: 'success', response: { models: [{ value: 'not-this' }] } } });",
+      "  send({ type: 'control_response', response: { request_id: JSON.parse(input).request_id, subtype: 'success', response: {",
+      "    account: { email: 'marker@example.invalid' },",
+      "    models: [",
+      "      { value: 'default', displayName: 'Default (recommended)', supportsEffort: true, supportedEffortLevels: ['low', 'high'] },",
+      "      { value: 'opus', displayName: 'Opus', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'] },",
+      "      { value: 'claude-fable-5-1[1m]', displayName: 'Fable', supportsEffort: true, supportedEffortLevels: ['high', 'max'] },",
+      "      { value: 'haiku', displayName: 'Haiku 5.5', supportsEffort: false, supportedEffortLevels: ['low'] },",
+      "    ],",
+      "  } } });",
+      "});",
+    ].join('\n'), 'utf8');
+    await chmod(join(bin, 'claude'), 0o755);
     await writeFile(join(bin, 'opencode'), [
       `#!${process.execPath}`,
       "if (process.argv[2] === '--version') { console.log('1.19.5'); process.exit(0); }",
@@ -1032,7 +1107,7 @@ test('provider availability reads the OpenCode and Kimi model lists from their C
       "if (process.argv[2] === '--version') { console.log('2.3.3'); process.exit(0); }",
       record,
       `process.stdout.write(${JSON.stringify(JSON.stringify({
-        models: { 'kimi-code/k3': { supportEfforts: ['low', 'high', 'max'] }, 'kimi-code/k4': {} },
+        models: { 'kimi-code/k3': { displayName: 'K3', supportEfforts: ['low', 'high', 'max'] }, 'kimi-code/k4': {} },
         providers: { 'managed:kimi-code': { apiKey: 'sk-kimi-not-read' } },
       }))});`,
     ].join('\n'), 'utf8');
@@ -1042,13 +1117,29 @@ test('provider availability reads the OpenCode and Kimi model lists from their C
     const home = join(dir, 'home');
 
     const { providers } = await withAnimaHome(home, () => new SystemService({
-      commandPresent: async (command) => command === 'opencode' || command === 'kimi',
+      commandPresent: async (command) => ['claude', 'kimi', 'opencode'].includes(command),
       now: () => new Date('2026-11-25T00:00:00.000Z'),
     }).providerAvailability());
+    assert.deepEqual(providers.find((provider) => provider.kind === 'claude-code'), {
+      checkedAt: '2026-11-25T00:00:00.000Z',
+      defaultModel: 'opus',
+      kind: 'claude-code',
+      modelLabels: { 'claude-fable-5-1[1m]': 'Fable', haiku: 'Haiku 5.5', opus: 'Opus' },
+      modelReasoningEfforts: { 'claude-fable-5-1[1m]': ['high', 'max'], haiku: [], opus: ['low', 'medium', 'high', 'xhigh', 'max'] },
+      models: ['opus', 'claude-fable-5-1[1m]', 'haiku'],
+      present: true,
+    });
+    assert.equal(JSON.stringify(providers).includes('marker@example.invalid'), false);
+    assert.deepEqual(JSON.parse(await readFile(stdinLog, 'utf8')), {
+      request: { hooks: null, subtype: 'initialize' },
+      request_id: 'anima-model-list',
+      type: 'control_request',
+    });
     assert.deepEqual(providers.find((provider) => provider.kind === 'opencode-cli'), {
       checkedAt: '2026-11-25T00:00:00.000Z',
       defaultModel: 'deepseek/deepseek-v4-pro',
       kind: 'opencode-cli',
+      modelLabels: { 'deepseek/deepseek-v4-pro': 'DeepSeek V4 Pro', 'deepseek/deepseek-v5': 'DeepSeek V5' },
       modelReasoningEfforts: { 'deepseek/deepseek-v4-pro': ['high', 'low', 'max'], 'deepseek/deepseek-v5': ['high'] },
       models: ['deepseek/deepseek-v4-pro', 'deepseek/deepseek-v5'],
       present: true,
@@ -1057,6 +1148,7 @@ test('provider availability reads the OpenCode and Kimi model lists from their C
       checkedAt: '2026-11-25T00:00:00.000Z',
       defaultModel: 'kimi-code/k3',
       kind: 'kimi-cli',
+      modelLabels: { 'kimi-code/k3': 'K3' },
       modelReasoningEfforts: { 'kimi-code/k3': ['low', 'high', 'max'], 'kimi-code/k4': [] },
       models: ['kimi-code/k3', 'kimi-code/k4'],
       present: true,
@@ -1064,11 +1156,18 @@ test('provider availability reads the OpenCode and Kimi model lists from their C
 
     const calls = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
     assert.deepEqual(calls.sort((a, b) => String(a['name']).localeCompare(String(b['name']))), [
+      {
+        argv: ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--settings', '{"disableAllHooks":true}', '--strict-mcp-config'],
+        autoupdate: null,
+        cwd: await realpath(join(home, 'cache', 'claude-model-probe')),
+        name: 'claude',
+      },
       { argv: ['provider', 'list', '--json'], autoupdate: null, cwd: await realpath(join(home, 'cache', 'kimi-model-probe')), name: 'kimi' },
       { argv: ['models', '--verbose', '--pure'], autoupdate: '1', cwd: await realpath(join(home, 'cache', 'opencode-model-probe')), name: 'opencode' },
     ]);
     assert.deepEqual(await readdir(join(home, 'cache', 'opencode-model-probe')), []);
     assert.deepEqual(await readdir(join(home, 'cache', 'kimi-model-probe')), []);
+    assert.deepEqual(await readdir(join(home, 'cache', 'claude-model-probe')), []);
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;

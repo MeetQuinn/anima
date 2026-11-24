@@ -709,12 +709,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                     }}
                   >
                     <SelectTrigger className="!h-[44px] w-full font-sans text-[13px] md:!h-10">
-                      <SelectValue>{(v: string) => providerValueLabel(v)}</SelectValue>
+                      <SelectValue>{(v: string) => providerValueLabel(v, currentProvider)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {(currentProvider?.models ?? []).map((m) => (
                         <SelectItem key={m} value={m}>
-                          {providerValueLabel(m)}
+                          {providerValueLabel(m, currentProvider)}
                         </SelectItem>
                       ))}
                     </SelectContent>

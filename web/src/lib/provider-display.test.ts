@@ -69,6 +69,23 @@ describe('providerValueLabel', () => {
     expect(providerValueLabel('deepseek/deepseek-v4-flash-vision-exp')).toBe('DeepSeek V4.1 Flash');
   });
 
+  it("names an id the catalog does not label by the provider's live label", () => {
+    const entry = {
+      modelLabels: Object.fromEntries([
+        ['claude-fable-5-1[1m]', 'Fable'],
+        ['opus', 'Not this'],
+        ['__proto__', 'Proto'],
+      ]),
+    };
+    expect(providerValueLabel('claude-fable-5-1[1m]', entry)).toBe('Fable');
+    expect(providerValueLabel('__proto__', entry)).toBe('Proto');
+    // A built-in label wins, and only the map's own keys count.
+    expect(providerValueLabel('opus', entry)).toBe('Opus');
+    expect(providerValueLabel('constructor', entry)).toBe('Constructor');
+    expect(providerValueLabel('toString', entry)).toBe('toString');
+    expect(providerValueLabel('claude-fable-5-1[1m]')).toBe('claude-fable-5-1[1m]');
+  });
+
   it('shows an unknown model id as-is', () => {
     expect(providerValueLabel('grok-4.6')).toBe('grok-4.6');
     expect(providerValueLabel('anthropic/claude-x')).toBe('anthropic/claude-x');

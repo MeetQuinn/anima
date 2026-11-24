@@ -404,6 +404,50 @@ describe('Runtime modal — fast mode', () => {
   });
 });
 
+// Claude Code's live list can name models the built-in catalog does not know. The
+// row and the model menu show the CLI's name for those, a built-in name otherwise,
+// and a pick saves the id.
+describe('Runtime modal — live model names', () => {
+  const liveClaude: ProviderAvailability[] = [
+    {
+      checkedAt: '2026-11-25T00:00:00.000Z',
+      defaultModel: 'opus',
+      kind: 'claude-code',
+      modelLabels: { 'claude-fable-5-1[1m]': 'Fable 1M', opus: 'Opus (live)' },
+      modelReasoningEfforts: { 'claude-fable-5-1[1m]': ['high', 'max'], opus: ['low', 'medium', 'high', 'xhigh', 'max'] },
+      models: ['opus', 'claude-fable-5-1[1m]'],
+      present: true,
+    },
+  ];
+
+  it('names a saved live-only model on the row by its live name', () => {
+    render(
+      <RuntimeRow
+        provider={{ kind: 'claude-code', model: 'claude-fable-5-1[1m]', reasoningEffort: 'max' } as never}
+        providerOptions={providerCatalogForAvailability(providerOptions, liveClaude)}
+        providerAvailability={liveClaude}
+        isActive
+        onCommit={vi.fn(async () => {}) as never}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /·/ }).textContent).toContain('Fable 1M');
+  });
+
+  it('lists live names in the model menu, and picking one saves its id', async () => {
+    const onCommit = vi.fn(async () => {});
+    const dialog = openModal({ kind: 'claude-code', model: 'opus', reasoningEffort: 'high' }, onCommit, liveClaude);
+    expect(dialog.queryByRole('button', { name: 'Opus (live)' })).toBeNull();
+    fireEvent.click(dialog.getByRole('button', { name: 'Fable 1M' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith(
+      { kind: 'claude-code', model: 'claude-fable-5-1[1m]', reasoningEffort: 'high' },
+      { envOnly: false },
+    );
+  });
+});
+
 // Codex reads its model list live; each model's effort menu is what that read
 // reports and saves accept. A model switch whose menu is empty must clear the
 // saved level instead of letting the hidden one ride along.
