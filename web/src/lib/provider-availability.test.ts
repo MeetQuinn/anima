@@ -9,6 +9,7 @@ import {
   providerReady,
   providerUnavailableLabel,
 } from './provider-availability';
+import { providerValueLabel } from './provider-display';
 
 const codex = (status: Partial<ProviderAvailability> = {}): ProviderAvailability[] => [
   { kind: 'codex-cli', present: true, ...status },
@@ -56,6 +57,26 @@ describe('Codex live model list', () => {
     expect(effortOptionsForSelectedModel(codexEntry(availability), 'gpt-6-luna', availability)).toEqual(
       builtIn.modelReasoningEfforts?.['gpt-6-luna'],
     );
+  });
+});
+
+describe('live model labels', () => {
+  it("adds the CLI's names for ids the built-in catalog does not label, and keeps the built-in ones", () => {
+    const availability: ProviderAvailability[] = [
+      {
+        kind: 'claude-code',
+        modelLabels: { 'claude-fable-5-1[1m]': 'Fable', opus: 'Opus (live)' },
+        models: ['opus', 'claude-fable-5-1[1m]'],
+        present: true,
+      },
+    ];
+    const entry = providerCatalogForAvailability(providerCatalog(), availability).find(
+      (candidate) => candidate.kind === 'claude-code',
+    )!;
+    expect(entry.models).toEqual(['opus', 'claude-fable-5-1[1m]']);
+    expect(entry.modelLabels?.['claude-fable-5-1[1m]']).toBe('Fable');
+    expect(entry.modelLabels?.opus).toBe('Opus');
+    expect(providerValueLabel('claude-fable-5-1[1m]', entry)).toBe('Fable');
   });
 });
 

@@ -235,6 +235,7 @@ export function parseGrokAcpModelState(modelState: unknown): ProviderModelCatalo
 
 /** Live model catalog per provider kind; only `dynamicModels` and `liveModels` catalog entries reach here. */
 async function liveProviderModels(command: string, kind: ProviderKind): Promise<ProviderModelCatalog> {
+  if (kind === 'claude-code') return claudeModelCatalog(command);
   if (kind === 'codex-cli') return codexAppServerModelCatalog(command);
   if (kind === 'opencode-cli') return openCodeModelCatalog(command);
   if (kind === 'kimi-cli') return kimiModelCatalog(command);
@@ -797,6 +798,28 @@ async function openCodeModelCatalog(command: string): Promise<ProviderModelCatal
     cwd: join(resolveAnimaHome(), 'cache', 'opencode-model-probe'),
     env: openCodeLaunchEnvironment(runtimeProbeEnv()),
   });
+}
+
+/**
+ * Claude Code's live model list: the models in its answer to a stream-json
+ * `initialize` request. That request is all the probe sends, and stdin then closes, so
+ * no prompt runs and no session is kept. Hooks and MCP servers are off for the probe;
+ * it runs on the runtime PATH from a fixed empty directory.
+ */
+async function claudeModelCatalog(command: string): Promise<ProviderModelCatalog> {
+  return modelListProbe(
+    'claude',
+    command,
+    [
+      '-p',
+      '--input-format', 'stream-json',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--settings', JSON.stringify({ disableAllHooks: true }),
+      '--strict-mcp-config',
+    ],
+    { cwd: join(resolveAnimaHome(), 'cache', 'claude-model-probe'), env: runtimeProbeEnv() },
+  );
 }
 
 /**

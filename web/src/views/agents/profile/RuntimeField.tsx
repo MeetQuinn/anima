@@ -75,7 +75,7 @@ export function RuntimeRow({
             </span>
             <span className="font-sans mx-1.5 text-[12px] text-text-subtle">·</span>
             <span className="font-serif text-[13px] md:text-[15px] text-text">
-              {providerValueLabel(provider.model) || '—'}
+              {providerValueLabel(provider.model, currentEntry) || '—'}
             </span>
             {(showEffort || fastMode) && (
               // The per-model settings travel as one group. On phones it takes
@@ -490,13 +490,13 @@ function RuntimeModal({
                     {draftModelMissing ? (
                       <span className="text-text-subtle">Pick a model</span>
                     ) : (
-                      providerValueLabel(draftModel)
+                      providerValueLabel(draftModel, draftEntry)
                     )}
                   </SelectTrigger>
                   <SelectContent>
                     {draftModelOptions.map((opt) => (
                       <SelectItem key={opt} value={opt} className="font-sans text-[13px]">
-                        {providerValueLabel(opt)}
+                        {providerValueLabel(opt, draftEntry)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -539,7 +539,7 @@ function RuntimeModal({
               {draftModelMissing && !draftUnavailableHint && (
                 <div className="font-sans text-[11px] leading-snug text-health-warn">
                   {draftModel
-                    ? `${providerValueLabel(draftModel)} is no longer in the model list. Pick another model.`
+                    ? `${providerValueLabel(draftModel, draftEntry)} is no longer in the model list. Pick another model.`
                     : 'Pick a model.'}
                 </div>
               )}

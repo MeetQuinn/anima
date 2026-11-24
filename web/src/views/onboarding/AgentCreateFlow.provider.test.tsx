@@ -105,6 +105,39 @@ describe('create page: effort follows the menu of the model it sends', () => {
     expect(await submittedProvider()).toEqual({ kind: 'codex-cli', model: 'gpt-6.1-terra' });
   });
 
+  // Two OpenCode providers can give a model the same name, and a third model can be
+  // named what one of those shows with its id; every row still shows its own id.
+  for (const [model, shown, effort] of [
+    ['review-a/chat', 'review-a/chat', 'high'],
+    ['review-b/chat', 'Review Chat (review-b/chat)', 'low'],
+    ['review-a/extra-chat', 'Review Chat (review-a/chat) (review-a/extra-chat)', 'medium'],
+  ]) it(`tells ${model} apart from models named alike, in the menu and on the pick`, async () => {
+    renderFlow([
+      {
+        checkedAt: '2026-11-25T00:00:00.000Z',
+        defaultModel: 'review-a/chat',
+        kind: 'opencode-cli',
+        modelLabels: {
+          'review-a/chat': 'Review Chat',
+          'review-a/extra-chat': 'Review Chat (review-a/chat)',
+          'review-b/chat': 'Review Chat',
+        },
+        modelReasoningEfforts: { 'review-a/chat': ['high'], 'review-a/extra-chat': ['medium'], 'review-b/chat': ['low'] },
+        models: ['review-a/chat', 'review-b/chat', 'review-a/extra-chat'],
+        present: true,
+      },
+      { kind: 'claude-code', present: false },
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'OpenCode' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review Chat (review-b/chat)' })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Review Chat' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: shown })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: shown }));
+    // The selected value shows the pick the same way, and no other row does.
+    expect(screen.getAllByText(shown)).toHaveLength(2);
+    expect(await submittedProvider()).toEqual({ kind: 'opencode-cli', model, reasoningEffort: effort });
+  });
+
   it('a pick made before the live list arrives moves to the default when the list lacks it', async () => {
     let answer!: (value: ProviderAvailability[]) => void;
     api.fetchProviderAvailability.mockReturnValue(new Promise((resolve) => (answer = resolve)));

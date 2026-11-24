@@ -8,6 +8,8 @@ export function providerCatalogForAvailability(
 ): ProviderCatalogEntry[] {
   return providers.map((provider) => {
     const status = providerStatus(provider, availability ?? null);
+    // The CLI's own names fill in ids the built-in catalog has no label for.
+    const modelLabels = status?.modelLabels ? { ...status.modelLabels, ...provider.modelLabels } : provider.modelLabels;
     if (provider.liveModels) {
       // The live list when the server read one, else the built-in list.
       const models = status?.models;
@@ -15,12 +17,13 @@ export function providerCatalogForAvailability(
       const defaultModel = models.includes(provider.defaultModel)
         ? provider.defaultModel
         : status?.defaultModel && models.includes(status.defaultModel) ? status.defaultModel : models[0]!;
-      return { ...provider, defaultModel, models };
+      return { ...provider, defaultModel, ...(modelLabels ? { modelLabels } : {}), models };
     }
     if (!provider.dynamicModels) return provider;
     return {
       ...provider,
       defaultModel: status?.defaultModel ?? '',
+      ...(modelLabels ? { modelLabels } : {}),
       models: status?.models ?? [],
     };
   });

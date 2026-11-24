@@ -43,6 +43,8 @@ export const ProviderAvailability = z.object({
   defaultModel: z.string().optional(),
   kind: z.enum(['claude-code', 'codex-cli', 'kimi-cli', 'grok-cli', 'opencode-cli', 'pi', 'antigravity-cli']),
   modelCheckError: z.string().optional(),
+  /** The CLI's own display names; a built-in label wins over these. */
+  modelLabels: z.record(z.string(), z.string()).optional(),
   /**
    * Per-model reasoning effort menus. Missing or empty array means
    * the model does not support effort. When present, UI/config must not show a
@@ -110,16 +112,23 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'claude-sonnet-4-6': 'Claude Sonnet 4.6',
     },
     defaultModel: 'opus',
+    // The `initialize` model list is the live menu; full model ids it does not list
+    // still save (`--model` takes them).
+    acceptsUnlistedModels: true,
+    liveModels: true,
     modelReasoningEfforts: {
       opus: CLAUDE_REASONING_EFFORTS,
       sonnet: CLAUDE_REASONING_EFFORTS,
-      haiku: [],
+      // Haiku 5.5 takes effort. A CLI whose `haiku` is an older model says so in its
+      // live list, which then shows no effort menu.
+      haiku: CLAUDE_REASONING_EFFORTS,
       fable: CLAUDE_REASONING_EFFORTS,
       'claude-opus-4-8': CLAUDE_REASONING_EFFORTS,
       'claude-opus-4-6': CLAUDE_4_6_REASONING_EFFORTS,
       'claude-sonnet-4-6': CLAUDE_4_6_REASONING_EFFORTS,
     },
-    reasoningEfforts: [],
+    // An id the live list offers but the list above lacks (`claude-fable-5-1[1m]`).
+    reasoningEfforts: CLAUDE_REASONING_EFFORTS,
   },
   {
     kind: 'codex-cli',

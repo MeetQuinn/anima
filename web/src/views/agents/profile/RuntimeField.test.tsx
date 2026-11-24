@@ -404,6 +404,115 @@ describe('Runtime modal — fast mode', () => {
   });
 });
 
+// Claude Code's live list can name models the built-in catalog does not know. The
+// row and the model menu show the CLI's name for those, a built-in name otherwise,
+// and a pick saves the id.
+describe('Runtime modal — live model names', () => {
+  const liveClaude: ProviderAvailability[] = [
+    {
+      checkedAt: '2026-11-25T00:00:00.000Z',
+      defaultModel: 'opus',
+      kind: 'claude-code',
+      modelLabels: { 'claude-fable-5-1[1m]': 'Fable 1M', opus: 'Opus (live)' },
+      modelReasoningEfforts: { 'claude-fable-5-1[1m]': ['high', 'max'], opus: ['low', 'medium', 'high', 'xhigh', 'max'] },
+      models: ['opus', 'claude-fable-5-1[1m]'],
+      present: true,
+    },
+  ];
+
+  it('names a saved live-only model on the row by its live name', () => {
+    render(
+      <RuntimeRow
+        provider={{ kind: 'claude-code', model: 'claude-fable-5-1[1m]', reasoningEffort: 'max' } as never}
+        providerOptions={providerCatalogForAvailability(providerOptions, liveClaude)}
+        providerAvailability={liveClaude}
+        isActive
+        onCommit={vi.fn(async () => {}) as never}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /·/ }).textContent).toContain('Fable 1M');
+  });
+
+  it('lists live names in the model menu, and picking one saves its id', async () => {
+    const onCommit = vi.fn(async () => {});
+    const dialog = openModal({ kind: 'claude-code', model: 'opus', reasoningEffort: 'high' }, onCommit, liveClaude);
+    expect(dialog.queryByRole('button', { name: 'Opus (live)' })).toBeNull();
+    fireEvent.click(dialog.getByRole('button', { name: 'Fable 1M' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith(
+      { kind: 'claude-code', model: 'claude-fable-5-1[1m]', reasoningEffort: 'high' },
+      { envOnly: false },
+    );
+  });
+
+  // Kimi's CLI name for its alias wins over Claude's built-in name for the same id.
+  it("names a Kimi alias by Kimi's name, not Claude's", () => {
+    const liveKimi: ProviderAvailability[] = [
+      {
+        checkedAt: '2026-11-25T00:00:00.000Z',
+        defaultModel: 'opus',
+        kind: 'kimi-cli',
+        modelLabels: { opus: 'Local Builder' },
+        modelReasoningEfforts: { opus: [] },
+        models: ['opus'],
+        present: true,
+      },
+    ];
+    render(
+      <RuntimeRow
+        provider={{ kind: 'kimi-cli', model: 'opus' } as never}
+        providerOptions={providerCatalogForAvailability(providerOptions, liveKimi)}
+        providerAvailability={liveKimi}
+        isActive
+        onCommit={vi.fn(async () => {}) as never}
+      />,
+    );
+    const row = screen.getByRole('button', { name: /·/ }).textContent;
+    expect(row).toContain('Local Builder');
+    expect(row).not.toContain('Opus');
+  });
+
+  // Two OpenCode providers can give a model the same name, and a third model can be
+  // named what one of those shows with its id; every row still shows its own id.
+  const sharedNames: [string, string, string][] = [
+    ['review-a/chat', 'review-a/chat', 'high'],
+    ['review-b/chat', 'Review Chat (review-b/chat)', 'low'],
+    ['review-a/extra-chat', 'Review Chat (review-a/chat) (review-a/extra-chat)', 'medium'],
+  ];
+  for (const [model, shown, effort] of sharedNames) it(`tells ${model} apart from models named alike, in the menu and on the pick`, async () => {
+    const liveOpenCode: ProviderAvailability[] = [
+      {
+        checkedAt: '2026-11-25T00:00:00.000Z',
+        defaultModel: 'review-a/chat',
+        kind: 'opencode-cli',
+        modelLabels: {
+          'review-a/chat': 'Review Chat',
+          'review-a/extra-chat': 'Review Chat (review-a/chat)',
+          'review-b/chat': 'Review Chat',
+        },
+        modelReasoningEfforts: { 'review-a/chat': ['high'], 'review-a/extra-chat': ['medium'], 'review-b/chat': ['low'] },
+        models: ['review-a/chat', 'review-b/chat', 'review-a/extra-chat'],
+        present: true,
+      },
+    ];
+    const onCommit = vi.fn(async () => {});
+    // Start from a model other than the pick, so that picking it is a change.
+    const saved = model === 'review-b/chat' ? 'review-a/chat' : 'review-b/chat';
+    const dialog = openModal({ kind: 'opencode-cli', model: saved, reasoningEffort: 'high' }, onCommit, liveOpenCode);
+    expect(dialog.queryByRole('button', { name: 'Review Chat' })).toBeNull();
+    for (const [, text] of sharedNames) expect(dialog.getAllByRole('button', { name: text }).length).toBeGreaterThan(0);
+    fireEvent.click(dialog.getAllByRole('button', { name: shown }).at(-1)!);
+    // The trigger shows the pick the same way, and no other row does.
+    expect(dialog.getAllByRole('button', { name: shown })).toHaveLength(2);
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith({ kind: 'opencode-cli', model, reasoningEffort: effort }, { envOnly: false });
+  });
+});
+
 // Codex reads its model list live; each model's effort menu is what that read
 // reports and saves accept. A model switch whose menu is empty must clear the
 // saved level instead of letting the hidden one ride along.

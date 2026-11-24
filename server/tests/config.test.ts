@@ -447,7 +447,8 @@ test('claude-code catalog keeps family aliases and adds version-pinned models', 
     reasoningEffortsForModel('claude-code', 'opus'),
     ['low', 'medium', 'high', 'xhigh', 'max'],
   );
-  assert.deepEqual(reasoningEffortsForModel('claude-code', 'haiku'), []);
+  // `haiku` is Haiku 5.5, which takes effort; an older CLI's live list narrows this.
+  assert.deepEqual(reasoningEffortsForModel('claude-code', 'haiku'), ['low', 'medium', 'high', 'xhigh', 'max']);
   assert.deepEqual(
     reasoningEffortsForModel('claude-code', 'claude-opus-4-8'),
     ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -488,19 +489,18 @@ test('claude-code catalog keeps family aliases and adds version-pinned models', 
     }).provider.reasoningEffort,
     'max',
   );
-  assert.throws(
-    () =>
-      AgentCreateRequest.parse({
-        name: 'Haiku effort',
-        homePath: 'agents/haiku-effort',
-        role: 'general purpose',
-        provider: {
-          kind: 'claude-code',
-          model: 'haiku',
-          reasoningEffort: 'low',
-        },
-      }),
-    /unsupported reasoningEffort low/,
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'Haiku effort',
+      homePath: 'agents/haiku-effort',
+      role: 'general purpose',
+      provider: {
+        kind: 'claude-code',
+        model: 'haiku',
+        reasoningEffort: 'low',
+      },
+    }).provider.reasoningEffort,
+    'low',
   );
   for (const model of ['claude-opus-4-6', 'claude-sonnet-4-6']) {
     assert.throws(
@@ -544,11 +544,26 @@ test('codex-cli effort menu follows the live list, within what a save accepts', 
     assert.deepEqual(offered, menu, model);
     for (const effort of offered) assert.equal(isSupportedReasoningEffort('codex-cli', effort, model), true, `${model} ${effort}`);
   }
-  // Providers without a live list keep their catalog menu.
-  assert.deepEqual(
-    reasoningEffortsForModel('claude-code', 'opus', { modelReasoningEfforts: { opus: ['low'] } }),
-    reasoningEffortsForModel('claude-code', 'opus'),
-  );
+});
+
+// Claude Code's live list comes from its `initialize` answer. A listed model's live
+// menu is cut to what a save accepts; a model only the live list has (the 1M-context
+// Fable id) gets its live menu within Claude's effort vocabulary.
+test('claude-code effort menus follow the live list, within what a save accepts', () => {
+  const cases: Array<[string, string[], string[]]> = [
+    ['opus', ['low'], ['low']],
+    ['haiku', [], []],
+    ['claude-opus-4-6', ['low', 'medium', 'high', 'xhigh', 'max'], ['low', 'medium', 'high', 'max']],
+    ['claude-fable-5-1[1m]', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], ['low', 'medium', 'high', 'xhigh', 'max']],
+  ];
+  for (const [model, live, menu] of cases) {
+    const offered = reasoningEffortsForModel('claude-code', model, { modelReasoningEfforts: { [model]: live } });
+    assert.deepEqual(offered, menu, model);
+    assert.equal(isSupportedProviderModel('claude-code', model), true, model);
+    for (const effort of offered) assert.equal(isSupportedReasoningEffort('claude-code', effort, model), true, `${model} ${effort}`);
+  }
+  // Without a live list, the built-in menus apply.
+  assert.deepEqual(reasoningEffortsForModel('claude-code', 'opus'), ['low', 'medium', 'high', 'xhigh', 'max']);
 });
 
 // OpenCode (`opencode models --verbose`) and Kimi Code (`kimi provider list --json`)
@@ -712,10 +727,11 @@ test('codex-cli accepts a model id its catalog does not list yet', () => {
     }).provider.model,
     'gpt-7-astra',
   );
-  // Kimi Code and OpenCode read live lists too; Claude Code's catalog still rejects unlisted ids.
+  // Kimi Code, OpenCode and Claude Code read live lists too, and take unlisted ids the same way.
   assert.equal(isSupportedProviderModel('kimi-cli', 'kimi-code/k4'), true);
   assert.equal(isSupportedProviderModel('opencode-cli', 'deepseek/deepseek-chat'), true);
-  assert.equal(isSupportedProviderModel('claude-code', 'gpt-7-astra'), false);
+  assert.equal(isSupportedProviderModel('claude-code', 'claude-opus-5-5'), true);
+  assert.equal(isSupportedProviderModel('claude-code', '  '), false);
 });
 
 test('grok-cli effort write-validates the provider vocabulary; per-model support is a runtime gate', () => {
@@ -1165,9 +1181,10 @@ test('agent provider patch rejects invalid kind/model/effort combinations', asyn
       await assert.rejects(
         agentService('anima').updateProvider({
           kind: 'claude-code',
-          model: 'gpt-5.5',
+          model: 'opus',
+          reasoningEffort: 'ultra',
         }),
-        /unsupported model for claude-code: gpt-5.5/,
+        /unsupported reasoningEffort ultra/,
       );
       await assert.rejects(
         agentService('anima').updateProvider({

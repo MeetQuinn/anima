@@ -339,6 +339,30 @@ what Anima received; it does not prove the task is still running or authorize
 killing it. Only native lifecycle signals change quiescence. A new provider child
 starts with empty diagnostic state; elapsed time alone never clears it.
 
+Model menu:
+
+- The dashboard's Claude Code model and effort menus come from Claude Code's answer to a stream-json
+  `initialize` request: `claude -p --input-format stream-json --output-format stream-json
+  --verbose`, with hooks off (`--settings '{"disableAllHooks":true}'`) and no MCP servers
+  (`--strict-mcp-config`), run for each availability check from
+  `$ANIMA_HOME/cache/claude-model-probe` on the runtime `PATH`. The probe sends that one request and
+  closes stdin, so no prompt runs. Only `models` is read from the answer, which also names the
+  signed-in account: each `value` is a model id `--model` takes, its `displayName` the menu label,
+  and its `supportedEffortLevels` the effort menu when `supportsEffort` is true. The `default` entry
+  is left out. The command runs in the same separate probe process as the Kimi and OpenCode lists,
+  so only ids, labels and effort menus reach the server.
+- The catalog entry is `liveModels`, as for Codex, and accepts unlisted models: when the read fails,
+  the built-in list is used, and any full model id saves, such as `claude-fable-5-1[1m]`, which the
+  live list offers and the built-in list lacks. A model the built-in list lacks takes `low` through
+  `max`. `haiku` has an effort menu, since Haiku 5.5 takes effort; a CLI whose `haiku` is an older
+  model says so in its live list, which then shows none.
+- A provider's own built-in model label wins over its CLI's, and its CLI's over another provider's
+  built-in label, so Kimi's name for an alias `opus` is not Claude's Opus. A CLI label is one line
+  of at most 80 characters (whitespace runs become one space), and one that only repeats the id is
+  dropped. When two models in one menu show the same name (OpenCode models of two providers, say),
+  each shows its id after the name, and if that text is still another model's, the id alone; no two
+  models in a menu show the same text. Kimi and OpenCode labels follow the same rules.
+
 ### Claude subagent activity attribution
 
 Child transcripts supply tool ownership and model information when streamed
@@ -484,17 +508,17 @@ Model menu:
 
 - The dashboard's Kimi model and effort menus come from `kimi provider list --json`, run for each
   availability check from `$ANIMA_HOME/cache/kimi-model-probe` on the runtime `PATH`. It starts no
-  session. Only `models` is read: each key is a model alias `session/set_model` takes, and its
-  `supportEfforts` is the effort menu (a model without it has none). The output's `providers` part
-  holds credentials, so the output never reaches the server: a separate probe process
-  (`model-list-probe.js`) runs the command, parses it, and sends back only the model ids and effort
-  menus, or an error that never includes the output (output past 8 MiB is an error). Once the probe
-  has written its reply, or finds it cannot (the server is gone), it ends itself and everything it
-  started. When no reply comes within 10 seconds, the server ends them: TERM, then KILL 2 seconds
-  later for whatever is left, even if the server was stalled past that point. The web service waits
-  for that before it exits, and a probe the server never ends (the server crashed) ends its own
-  group shortly after its deadline. The reply names each model once, so any list that fits in 8 MiB
-  of output arrives whole.
+  session. Only `models` is read: each key is a model alias `session/set_model` takes, its
+  `displayName` the menu label, and its `supportEfforts` the effort menu (a model without it has
+  none). The output's `providers` part holds credentials, so the output never reaches the server: a
+  separate probe process (`model-list-probe.js`) runs the command, parses it, and sends back only
+  the model ids, labels and effort menus, or an error that never includes the output (output past 8
+  MiB is an error). Once the probe has written its reply, or finds it cannot (the server is gone),
+  it ends itself and everything it started. When no reply comes within 10 seconds, the server ends
+  them: TERM, then KILL 2 seconds later for whatever is left, even if the server was stalled past
+  that point. The web service waits for that before it exits, and a probe the server never ends (the
+  server crashed) ends its own group shortly after its deadline. The reply names each model once, so
+  any list that fits in 8 MiB of output arrives whole.
 - The catalog entry is `liveModels`, as for Codex: when the read fails, the built-in Kimi list and
   menus are used, and any model alias saves. A model the built-in list lacks takes `low`, `high` or
   `max`.
@@ -641,10 +665,10 @@ Model menu:
   `opencode.json`. It starts no session. A model is a record whose `providerID` and `id` spell the
   name OpenCode printed just before it (any characters, newlines included); other output, such as a
   wrapper script's notice or JSON log, is not a model. Lines may end in LF or CRLF (a wrapper that
-  runs OpenCode on a terminal prints CRLF). A model's `variants` are its effort menu (a model
-  without any has none), and deprecated models are left out. The per-model JSON also carries
-  provider headers and options, so the command runs in the same separate probe process as Kimi's
-  list, and only ids and effort menus come back to the server.
+  runs OpenCode on a terminal prints CRLF). A model's `name` is its menu label and its `variants`
+  its effort menu (a model without any has none), and deprecated models are left out. The per-model
+  JSON also carries provider headers and options, so the command runs in the same separate probe
+  process as Kimi's list, and only ids, labels and effort menus come back to the server.
 - The list is every model OpenCode can run, OpenCode Zen's free models included, not only DeepSeek.
 - The catalog entry is `liveModels`, as for Codex. When the read fails, the built-in list is used:
   `deepseek/deepseek-v4-pro` and `deepseek/deepseek-flash` (DeepSeek V4.1 Flash; DeepSeek retired the
