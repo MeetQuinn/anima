@@ -1,18 +1,32 @@
 // The server runs this script to read a CLI's model list (see modelListProbe in
-// system.service.ts): `node model-list-probe.js <maxBytes> <parser> <command> [args...]`.
+// system.service.ts):
+//   node model-list-probe.js <maxBytes> <deadlineMs> <parser> <command> [args...]
 // The CLI's output can carry credentials (Kimi Code's lists provider API keys), so it
 // is read and parsed here, in a process of its own, and only the catalog goes back:
-// one JSON line on stdout, `{"catalog": ...}` or `{"error": "..."}`. Errors name what
-// failed, never what the CLI printed. Nothing reads the CLI's stderr, so it is not
-// piped (a full pipe would stall the CLI). The server ends this process's group, CLI
-// included, once it has the line or gives up waiting.
+// one JSON line on stdout, `{"catalog": ...}` in the compact form `modelListReply`
+// writes, or `{"error": "..."}`. Errors name what failed, never what the CLI printed.
+// Nothing reads the CLI's stderr, so it is not piped (a full pipe would stall the
+// CLI). The server ends this process's group, CLI included, once it has the line or
+// gives up waiting; if the server is gone by then, the group ends itself at
+// `deadlineMs`.
 import { spawn } from 'node:child_process';
-import { isModelListParserName, MODEL_LIST_PARSERS } from './model-list-parsers.js';
+import { isModelListParserName, MODEL_LIST_PARSERS, modelListReply } from './model-list-parsers.js';
 
-const [maxBytesArg, parserName, command, ...args] = process.argv.slice(2);
+const [maxBytesArg, deadlineArg, parserName, command, ...args] = process.argv.slice(2);
 
 function report(result: { catalog: unknown } | { error: string }): void {
   process.stdout.write(`${JSON.stringify(result)}\n`, () => process.exit(0));
+}
+
+const deadlineMs = Number(deadlineArg);
+if (deadlineMs > 0) {
+  setTimeout(() => {
+    try {
+      process.kill(-process.pid, 'SIGKILL');
+    } catch {
+      process.exit(1);
+    }
+  }, deadlineMs).unref();
 }
 
 if (!isModelListParserName(parserName) || !command) {
@@ -43,7 +57,7 @@ if (!isModelListParserName(parserName) || !command) {
       return;
     }
     try {
-      finish({ catalog: parser.parse(Buffer.concat(chunks).toString('utf8')) });
+      finish({ catalog: modelListReply(parser.parse(Buffer.concat(chunks).toString('utf8'))) });
     } catch (error) {
       // Parser errors are fixed text; they never quote the output.
       finish({ error: error instanceof Error ? error.message : `${parser.label} could not be read` });

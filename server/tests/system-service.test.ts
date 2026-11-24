@@ -8,7 +8,12 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { modelListCatalog, parseKimiProviderList, parseOpenCodeModelsOutput } from '../services/model-list-parsers.js';
+import {
+  modelListCatalog,
+  modelListReply,
+  parseKimiProviderList,
+  parseOpenCodeModelsOutput,
+} from '../services/model-list-parsers.js';
 import {
   codexAppServerModelCatalog,
   docsUrl,
@@ -20,6 +25,8 @@ import {
   PI_NO_CREDENTIAL_MESSAGE,
   SystemService,
 } from '../services/system.service.js';
+
+const SYSTEM_SERVICE_MODULE = fileURLToPath(new URL('../services/system.service.js', import.meta.url));
 import { withAnimaHome } from './anima-home.js';
 
 test('docsUrl uses public docs by default and accepts an explicit override', () => {
@@ -673,41 +680,71 @@ test('model-list probe: only the catalog leaves the probe process', async () => 
     ].join('\n'), 'utf8');
     await chmod(kimi, 0o755);
     const script = fileURLToPath(new URL('../services/model-list-probe.js', import.meta.url));
-    const { stdout } = await promisify(execFile)(process.execPath, [script, '1048576', 'kimi', kimi, 'provider', 'list', '--json'], { cwd: dir });
+    const { stdout } = await promisify(execFile)(process.execPath, [script, '1048576', '0', 'kimi', kimi, 'provider', 'list', '--json'], { cwd: dir });
     assert.equal(stdout.includes('sk-marker'), false);
     assert.equal(stdout.includes('example.invalid'), false);
     assert.equal(stdout.split('\n').filter(Boolean).length, 1);
     assert.deepEqual(JSON.parse(stdout), {
-      catalog: {
-        defaultModel: 'constructor',
-        modelReasoningEfforts: { constructor: ['low', 'high'], 'kimi-code/k3': ['high'] },
-        models: ['constructor', 'kimi-code/k3'],
-      },
+      catalog: { defaultModel: 'constructor', models: [['constructor', ['low', 'high']], ['kimi-code/k3', ['high']]] },
     });
 
     const failing = join(dir, 'failing');
     await writeFile(failing, `#!${process.execPath}\nprocess.stdout.write('apiKey=sk-marker-fail'); process.exit(3);`, 'utf8');
     await chmod(failing, 0o755);
-    const failed = await promisify(execFile)(process.execPath, [script, '1048576', 'kimi', failing], { cwd: dir });
+    const failed = await promisify(execFile)(process.execPath, [script, '1048576', '0', 'kimi', failing], { cwd: dir });
     assert.deepEqual(JSON.parse(failed.stdout), { error: 'Kimi Code model list exited (3)' });
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
 });
 
-// The server takes back only string ids and menus for listed ids.
-test('modelListCatalog keeps ids and menus, and nothing else', () => {
+// The probe names each model once; the server takes back only string ids and their menus.
+test('model-list replies carry each model once, and the server keeps ids and menus only', () => {
+  const catalog = {
+    defaultModel: 'b',
+    modelReasoningEfforts: Object.fromEntries([['a', ['high']], ['__proto__', []]]),
+    models: ['a', 'b', '__proto__'],
+  };
+  const reply = modelListReply(catalog);
+  assert.deepEqual(reply, { defaultModel: 'b', models: [['a', ['high']], ['b'], ['__proto__', []]] });
+  assert.deepEqual(modelListCatalog(JSON.parse(JSON.stringify(reply))), catalog);
   assert.deepEqual(
     modelListCatalog({
       apiKey: 'sk-not-kept',
       defaultModel: 'missing',
-      modelReasoningEfforts: { a: ['high', 3, ''], b: 'high', ghost: ['low'] },
-      models: ['a', 'b', 'a', 7, ''],
+      models: [['a', ['high', 3, '']], ['b', 'high', 'sk-not-kept'], ['a', ['low']], [7], 'c', [''], []],
     }),
     { defaultModel: 'a', modelReasoningEfforts: { a: ['high'] }, models: ['a', 'b'] },
   );
   assert.equal(modelListCatalog({ models: [] }), undefined);
   assert.equal(modelListCatalog('a'), undefined);
+});
+
+// A list as long as the output cap allows still arrives whole: the reply limit
+// follows the output limit. Ids of a few characters with nothing else are the
+// costliest case for the reply.
+test('model-list probe: a list that fills the output limit arrives whole', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-size-'));
+  try {
+    const maxBytes = 256 * 1024;
+    const ids: string[] = [];
+    let size = 0;
+    for (let i = 0; size + 12 < maxBytes; i += 1) {
+      const id = `p/${i.toString(36)}`;
+      ids.push(id);
+      size += id.length + 1;
+    }
+    const outputFile = join(dir, 'models.txt');
+    await writeFile(outputFile, `${ids.join('\n')}\n`, 'utf8');
+    const opencode = join(dir, 'opencode');
+    await writeFile(opencode, `#!${process.execPath}\nprocess.stdout.write(require('fs').readFileSync(${JSON.stringify(outputFile)}));`, 'utf8');
+    await chmod(opencode, 0o755);
+    const catalog = await modelListProbe('opencode', opencode, [], { cwd: join(dir, 'probe'), env: process.env, maxBytes, timeoutMs: 30_000 });
+    assert.equal(catalog.models.length, ids.length);
+    assert.equal(catalog.models.at(-1), ids.at(-1));
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
 });
 
 test('model-list probe: stdout is read while stderr floods, and failures carry no output', async () => {
@@ -777,6 +814,66 @@ test('model-list probe: giving up ends the wrapper and the CLI it started', asyn
       assert.equal(await processGone(wrapperPid), true, `${name} wrapper`);
       assert.equal(await processGone(cliPid), true, `${name} CLI`);
     }
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// A process that ends a probe and then shuts down, whether it lets its event loop
+// drain (the web service) or waits on processGroupsEnded and exits, does not leave
+// the probe's CLI running, even one that ignores SIGTERM.
+test('model-list probe: shutting down after a probe waits until its CLI is gone', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-shutdown-'));
+  try {
+    for (const exit of ['drain', 'explicit']) {
+      const cli = join(dir, `${exit}-cli`);
+      await writeFile(cli, [
+        `#!${process.execPath}`,
+        `require('fs').writeFileSync(${JSON.stringify(join(dir, `${exit}-cli.pid`))}, String(process.pid));`,
+        "process.on('SIGTERM', () => {});",
+        'setInterval(() => {}, 1000);',
+      ].join('\n'), 'utf8');
+      const wrapper = join(dir, exit);
+      await writeFile(wrapper, `#!/bin/sh\necho $$ > ${JSON.stringify(join(dir, `${exit}.pid`))}\n${JSON.stringify(cli)} "$@"\n`, 'utf8');
+      await chmod(cli, 0o755);
+      await chmod(wrapper, 0o755);
+      const host = join(dir, `${exit}-host.mjs`);
+      await writeFile(host, [
+        `const { modelListProbe, processGroupsEnded } = await import(${JSON.stringify(SYSTEM_SERVICE_MODULE)});`,
+        `await modelListProbe('kimi', ${JSON.stringify(wrapper)}, [], { cwd: ${JSON.stringify(join(dir, 'probe'))}, env: process.env, killGraceMs: 500, timeoutMs: 6000 }).catch(() => {});`,
+        exit === 'explicit' ? 'await processGroupsEnded(); process.exit(0);' : '',
+      ].join('\n'), 'utf8');
+      await promisify(execFile)(process.execPath, [host], { cwd: dir, timeout: 30_000 });
+      const wrapperPid = await pidFrom(join(dir, `${exit}.pid`));
+      const cliPid = await pidFrom(join(dir, `${exit}-cli.pid`));
+      assert.equal(await processGone(wrapperPid), true, `${exit} wrapper`);
+      assert.equal(await processGone(cliPid), true, `${exit} CLI`);
+    }
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// If the server is gone before it ends a probe, the probe's group ends itself at its
+// deadline.
+test('model-list probe: a probe the server never ends ends itself at its deadline', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-deadline-'));
+  try {
+    const cli = join(dir, 'cli');
+    await writeFile(cli, [
+      `#!${process.execPath}`,
+      `require('fs').writeFileSync(${JSON.stringify(join(dir, 'cli.pid'))}, String(process.pid));`,
+      "process.on('SIGTERM', () => {});",
+      'setInterval(() => {}, 1000);',
+    ].join('\n'), 'utf8');
+    await chmod(cli, 0o755);
+    const script = fileURLToPath(new URL('../services/model-list-probe.js', import.meta.url));
+    const { spawn } = await import('node:child_process');
+    const probe = spawn(process.execPath, [script, '1048576', '4000', 'kimi', cli], { cwd: dir, detached: true, stdio: 'ignore' });
+    const exited = new Promise((resolve) => probe.once('exit', resolve));
+    const cliPid = await pidFrom(join(dir, 'cli.pid'));
+    await exited;
+    assert.equal(await processGone(cliPid), true, 'CLI');
   } finally {
     await rm(dir, { force: true, recursive: true });
   }

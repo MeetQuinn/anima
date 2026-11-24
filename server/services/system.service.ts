@@ -539,7 +539,7 @@ export async function codexAppServerModelCatalog(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      endProcessGroup(child.pid, options.killGraceMs ?? 2_000);
+      void endProcessGroup(child.pid, options.killGraceMs ?? 2_000);
       if (error) reject(error);
       else resolvePromise(value!);
     };
@@ -658,20 +658,23 @@ export function parseCodexModelList(pages: unknown[]): ProviderModelCatalog {
 
 const MODEL_LIST_PROBE_TIMEOUT_MS = 10_000;
 const MODEL_LIST_MAX_BYTES = 8 * 1024 * 1024;
-const MODEL_LIST_REPLY_MAX_BYTES = 1024 * 1024;
 
 function modelListProbeScript(): string {
   return fileURLToPath(new URL('./model-list-probe.js', import.meta.url));
 }
 
+const endingProcessGroups = new Set<Promise<void>>();
+
 /**
- * Signals every process in the group `pid` leads (a probe started `detached`, and all
- * it started): TERM now, KILL after `graceMs` for whatever is left. A wrapper script
- * that exits on TERM would otherwise leave the CLI it started running.
+ * Ends the process group `pid` leads (a probe started `detached`, and all it started):
+ * TERM now, KILL after `graceMs` for whatever is left. A wrapper script that exits on
+ * TERM would otherwise leave the CLI it started running. Resolves once the group is
+ * gone (or 2s after KILL). Until then its timers keep this process alive, and
+ * `processGroupsEnded` waits for it, so shutting down never leaves the CLI behind.
  */
-function endProcessGroup(pid: number | undefined, graceMs: number): void {
-  if (pid === undefined || pid <= 0) return;
-  const signal = (name: NodeJS.Signals) => {
+function endProcessGroup(pid: number | undefined, graceMs: number): Promise<void> {
+  if (pid === undefined || pid <= 0) return Promise.resolve();
+  const signal = (name: NodeJS.Signals | 0) => {
     try {
       process.kill(-pid, name);
       return true;
@@ -679,8 +682,29 @@ function endProcessGroup(pid: number | undefined, graceMs: number): void {
       return false;
     }
   };
-  if (!signal('SIGTERM')) return;
-  setTimeout(() => signal('SIGKILL'), graceMs).unref();
+  if (!signal('SIGTERM')) return Promise.resolve();
+  const startedAt = Date.now();
+  let killed = false;
+  const ended = new Promise<void>((resolveEnded) => {
+    const check = () => {
+      const elapsed = Date.now() - startedAt;
+      if (!signal(0) || elapsed >= graceMs + 2_000) {
+        resolveEnded();
+        return;
+      }
+      if (!killed && elapsed >= graceMs) killed = signal('SIGKILL');
+      setTimeout(check, 50);
+    };
+    setTimeout(check, 50);
+  });
+  endingProcessGroups.add(ended);
+  void ended.finally(() => endingProcessGroups.delete(ended));
+  return ended;
+}
+
+/** Resolves once every probe process group this process is ending has ended. */
+export async function processGroupsEnded(): Promise<void> {
+  while (endingProcessGroups.size > 0) await Promise.all([...endingProcessGroups]);
 }
 
 /**
@@ -703,28 +727,36 @@ export async function modelListProbe(
   },
 ): Promise<ProviderModelCatalog> {
   const { label } = MODEL_LIST_PARSERS[parser];
+  const maxBytes = options.maxBytes ?? MODEL_LIST_MAX_BYTES;
+  const timeoutMs = options.timeoutMs ?? MODEL_LIST_PROBE_TIMEOUT_MS;
+  const killGraceMs = options.killGraceMs ?? 2_000;
+  // A reply names each model once, in no more bytes than about twice what the CLI
+  // spent on it, so this holds any catalog an accepted output yields.
+  const replyMaxBytes = 3 * maxBytes + 64 * 1024;
   await mkdir(options.cwd, { recursive: true });
   return new Promise((resolvePromise, reject) => {
     const child = spawn(
       process.execPath,
-      [modelListProbeScript(), String(options.maxBytes ?? MODEL_LIST_MAX_BYTES), parser, command, ...args],
+      [modelListProbeScript(), String(maxBytes), String(timeoutMs + killGraceMs), parser, command, ...args],
       { cwd: options.cwd, detached: true, env: options.env, stdio: ['ignore', 'pipe', 'ignore'] },
     );
     let reply = '';
+    let replyBytes = 0;
     let settled = false;
     const finish = (error?: Error, catalog?: ProviderModelCatalog) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      endProcessGroup(child.pid, options.killGraceMs ?? 2_000);
+      void endProcessGroup(child.pid, killGraceMs);
       if (error) reject(error);
       else resolvePromise(catalog!);
     };
-    const timer = setTimeout(() => finish(new Error(`${label} timed out`)), options.timeoutMs ?? MODEL_LIST_PROBE_TIMEOUT_MS);
+    const timer = setTimeout(() => finish(new Error(`${label} timed out`)), timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
-      reply += chunk;
-      if (reply.length > MODEL_LIST_REPLY_MAX_BYTES) finish(new Error(`${label} wrote more output than expected`));
+      replyBytes += Buffer.byteLength(chunk);
+      if (replyBytes > replyMaxBytes) finish(new Error(`${label} wrote more output than expected`));
+      else reply += chunk;
     });
     child.on('error', () => finish(new Error(`${label} could not start the probe`)));
     child.on('close', () => {

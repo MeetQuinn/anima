@@ -36,13 +36,15 @@ export function isModelListParserName(value: string | undefined): value is Model
 export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog {
   const blocks: { body: string[]; model: string }[] = [];
   for (const line of output.split(/\r?\n/)) {
-    if (/^[^\s{}"]+\/\S+$/.test(line)) blocks.push({ body: [], model: line });
+    // An id is printable: no control characters, quotes or backslashes.
+    if (/^[^\s{}"\\\x00-\x1f\x7f]+\/[^\s"\\\x00-\x1f\x7f]+$/.test(line)) blocks.push({ body: [], model: line });
     else blocks.at(-1)?.body.push(line);
   }
   const models: string[] = [];
+  const seen = new Set<string>();
   const menus: [string, string[]][] = [];
   for (const { body, model } of blocks) {
-    if (models.includes(model)) continue;
+    if (seen.has(model)) continue;
     let info: unknown;
     try {
       info = JSON.parse(body.join('\n'));
@@ -50,6 +52,7 @@ export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog 
       info = undefined;
     }
     if (isPlainRecord(info) && info['status'] === 'deprecated') continue;
+    seen.add(model);
     models.push(model);
     if (!isPlainRecord(info)) continue;
     const variants = info['variants'];
@@ -75,10 +78,12 @@ export function parseKimiProviderList(output: string): ProviderModelCatalog {
   }
   const entries = isPlainRecord(parsed) && isPlainRecord(parsed['models']) ? parsed['models'] : {};
   const models: string[] = [];
+  const seen = new Set<string>();
   const menus: [string, string[]][] = [];
   for (const [alias, info] of Object.entries(entries)) {
     const model = alias.trim();
-    if (!model || models.includes(model)) continue;
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
     models.push(model);
     const efforts = isPlainRecord(info) && Array.isArray(info['supportEfforts']) ? info['supportEfforts'] : [];
     menus.push([
@@ -96,27 +101,45 @@ export function parseKimiProviderList(output: string): ProviderModelCatalog {
   return { defaultModel: models[0]!, modelReasoningEfforts: Object.fromEntries(menus), models };
 }
 
+/** One model in a probe's reply: its id, then its effort menu when it has an entry. */
+type ModelListReplyEntry = [string] | [string, string[]];
+
 /**
- * A catalog as the server takes it back from the probe process: string ids, and a
- * menu only for a listed id. Anything else in the value is dropped.
+ * A catalog in the form the probe process sends it: each model once, with its menu.
+ * Each id costs a few bytes more than it did in the CLI's output, which bounds the
+ * reply the server accepts (see modelListProbe).
+ */
+export function modelListReply(catalog: ProviderModelCatalog): { defaultModel: string; models: ModelListReplyEntry[] } {
+  const menus = catalog.modelReasoningEfforts ?? {};
+  return {
+    defaultModel: catalog.defaultModel,
+    models: catalog.models.map((model): ModelListReplyEntry => (Object.hasOwn(menus, model) ? [model, menus[model]!] : [model])),
+  };
+}
+
+/**
+ * A probe's reply as the server takes it: string ids, and their string effort
+ * menus. Anything else in the value is dropped.
  */
 export function modelListCatalog(value: unknown): ProviderModelCatalog | undefined {
   if (!isPlainRecord(value) || !Array.isArray(value['models'])) return undefined;
-  const models = [...new Set(value['models'].filter((model): model is string => typeof model === 'string' && model.trim() !== ''))];
+  const models: string[] = [];
+  const seen = new Set<string>();
+  const menus: [string, string[]][] = [];
+  for (const entry of value['models']) {
+    if (!Array.isArray(entry) || typeof entry[0] !== 'string' || entry[0].trim() === '' || seen.has(entry[0])) continue;
+    const model = entry[0];
+    seen.add(model);
+    models.push(model);
+    if (Array.isArray(entry[1])) {
+      menus.push([model, entry[1].filter((effort): effort is string => typeof effort === 'string' && effort.trim() !== '')]);
+    }
+  }
   if (models.length === 0) return undefined;
-  const menus = isPlainRecord(value['modelReasoningEfforts']) ? value['modelReasoningEfforts'] : {};
-  const modelReasoningEfforts = Object.fromEntries(
-    Object.entries(menus)
-      .filter(([model, efforts]) => models.includes(model) && Array.isArray(efforts))
-      .map(([model, efforts]) => [
-        model,
-        (efforts as unknown[]).filter((effort): effort is string => typeof effort === 'string' && effort.trim() !== ''),
-      ]),
-  );
-  const defaultModel = typeof value['defaultModel'] === 'string' && models.includes(value['defaultModel'])
+  const defaultModel = typeof value['defaultModel'] === 'string' && seen.has(value['defaultModel'])
     ? value['defaultModel']
     : models[0]!;
-  return { defaultModel, modelReasoningEfforts, models };
+  return { defaultModel, modelReasoningEfforts: Object.fromEntries(menus), models };
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
