@@ -1373,10 +1373,14 @@ test('antigravity-cli model catalog comes from the session model select', () => 
 /**
  * A fake `agy acp` for the catalog probe. Its session starts on gemini-4-neon. A switch to
  * gemini-4-carbon or gemini-pro-orchestrator (which has no levels) reports that model's levels;
- * one to gemini-broken fails; one to gemini-ignored leaves the model as it was; with
- * `switchHangs`, no switch is answered. Every request's method and value go to `logPath`.
+ * one to gemini-broken fails; one to gemini-ignored leaves the model as it was. With
+ * `switchHangs`, no switch is answered; with `exitOnSwitchTo`, the process exits (code 7) on
+ * the switch to that model. Every request's method and value go to `logPath`.
  */
-function catalogProbeAgy(logPath: string, switchHangs = false): string {
+function catalogProbeAgy(
+  logPath: string,
+  { exitOnSwitchTo, switchHangs = false }: { exitOnSwitchTo?: string; switchHangs?: boolean } = {},
+): string {
   const levels = (...values: string[]) => ({ category: 'thought_level', currentValue: 'high', id: 'thought_level', options: values.map((value) => ({ value })), type: 'select' });
   const models = ['gemini-4-neon', 'gemini-4-carbon', 'gemini-pro-orchestrator', 'gemini-broken', 'gemini-ignored'];
   const model = (currentValue: string) => ({ category: 'model', currentValue, id: 'model', options: models.map((value) => ({ value })), type: 'select' });
@@ -1390,6 +1394,7 @@ function catalogProbeAgy(logPath: string, switchHangs = false): string {
     "const fs = require('fs');",
     `const sessions = ${JSON.stringify(sessions)};`,
     `const switchHangs = ${JSON.stringify(switchHangs)};`,
+    `const exitOnSwitchTo = ${JSON.stringify(exitOnSwitchTo ?? null)};`,
     "let current = 'gemini-4-neon';",
     "let buffer = '';",
     "process.stdin.setEncoding('utf8');",
@@ -1405,6 +1410,7 @@ function catalogProbeAgy(logPath: string, switchHangs = false): string {
     "    if (msg.method === 'initialize') send({ result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } } });",
     "    if (msg.method === 'session/new') send({ result: { sessionId: 'probe-session', configOptions: sessions[current] } });",
     "    if (msg.method === 'session/close') send({ result: {} });",
+    "    if (msg.method === 'session/set_config_option' && msg.params.value === exitOnSwitchTo) process.exit(7);",
     "    if (msg.method === 'session/set_config_option' && !switchHangs) {",
     "      if (msg.params.value === 'gemini-broken') { send({ error: { code: -32603, message: 'model unavailable' } }); continue; }",
     "      if (sessions[msg.params.value]) current = msg.params.value;",
@@ -1455,12 +1461,48 @@ test('antigravity-cli catalog probe stops switching models in time to return wha
     await withAnimaHome(stateDir, async () => {
       const logPath = join(stateDir, 'requests.jsonl');
       const agy = join(stateDir, 'agy');
-      await writeFile(agy, catalogProbeAgy(logPath, true), 'utf8');
+      await writeFile(agy, catalogProbeAgy(logPath, { switchHangs: true }), 'utf8');
       await chmod(agy, 0o755);
       const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 3_000 });
       assert.deepEqual(catalog.modelReasoningEfforts, { 'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'] });
       const switches = (await readJsonLines(logPath) as unknown[]).filter((entry) => (entry as unknown[])[0] === 'session/set_config_option');
       assert.deepEqual(switches, [['session/set_config_option', 'gemini-4-carbon']]);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli catalog probe keeps the models and menus it has when agy exits during a switch', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-switch-exits-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const logPath = join(stateDir, 'requests.jsonl');
+      const agy = join(stateDir, 'agy');
+      await writeFile(agy, catalogProbeAgy(logPath, { exitOnSwitchTo: 'gemini-broken' }), 'utf8');
+      await chmod(agy, 0o755);
+      const catalog = await withTimeout(antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 15_000 }), 10_000);
+      assert.deepEqual(catalog, {
+        defaultModel: 'gemini-4-neon',
+        modelReasoningEfforts: {
+          'gemini-4-carbon': ['low', 'medium', 'high'],
+          'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'],
+          'gemini-pro-orchestrator': [],
+        },
+        models: ['gemini-4-neon', 'gemini-4-carbon', 'gemini-pro-orchestrator', 'gemini-broken', 'gemini-ignored'],
+      });
+      assert.deepEqual(await readJsonLines(logPath), [
+        ['initialize', null],
+        ['session/new', null],
+        ['session/set_config_option', 'gemini-4-carbon'],
+        ['session/set_config_option', 'gemini-pro-orchestrator'],
+        ['session/set_config_option', 'gemini-broken'],
+      ]);
+      // Before session/new gives a catalog, an exit is still an error.
+      const early = join(stateDir, 'agy-early-exit');
+      await writeFile(early, ['#!/usr/bin/env node', 'process.exit(7);'].join('\n'), 'utf8');
+      await chmod(early, 0o755);
+      await assert.rejects(antigravityAcpModelCatalog(early, { killGraceMs: 100, timeoutMs: 15_000 }), /model catalog probe exited \(7\)/);
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });

@@ -308,20 +308,22 @@ const ANTIGRAVITY_SWITCH_TIMED_OUT = Symbol('timed out');
  * to each model and reads the levels that come back; the account's default
  * model stays as it was. A model whose switch fails, or that the switches do
  * not reach by `deadline`, keeps no menu: saves fall back to the write
- * vocabulary, and the live session gates the level at run time.
+ * vocabulary, and the live session gates the level at run time. `onLevels`
+ * gets the catalog each time a model's menu is added.
  */
 async function withAntigravityModelThoughtLevels(
   catalog: ProviderModelCatalog,
   session: Record<string, unknown>,
   request: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>,
   deadline: number,
+  onLevels: (catalog: ProviderModelCatalog) => void,
 ): Promise<ProviderModelCatalog> {
   const sessionId = session['sessionId'];
   const configId = antigravityConfigSelect(session['configOptions'], 'model')?.['id'];
   if (typeof sessionId !== 'string' || typeof configId !== 'string') return catalog;
-  const efforts: Record<string, string[]> = { ...catalog.modelReasoningEfforts };
+  let confirmed = catalog;
   for (const model of catalog.models) {
-    if (Object.hasOwn(efforts, model)) continue;
+    if (confirmed.modelReasoningEfforts && Object.hasOwn(confirmed.modelReasoningEfforts, model)) continue;
     const left = deadline - Date.now();
     if (left <= 0) break;
     const result = await raceWithTimeout(
@@ -332,9 +334,11 @@ async function withAntigravityModelThoughtLevels(
     if (result === ANTIGRAVITY_SWITCH_TIMED_OUT) break;
     // The levels are the model's only when the session now has that model.
     if (!result || antigravitySelectCurrent(antigravityConfigSelect(result['configOptions'], 'model')) !== model) continue;
-    efforts[model] = antigravitySelectValues(antigravityConfigSelect(result['configOptions'], 'thought_level'));
+    const levels = antigravitySelectValues(antigravityConfigSelect(result['configOptions'], 'thought_level'));
+    confirmed = { ...confirmed, modelReasoningEfforts: { ...confirmed.modelReasoningEfforts, [model]: levels } };
+    onLevels(confirmed);
   }
-  return Object.keys(efforts).length > 0 ? { ...catalog, modelReasoningEfforts: efforts } : catalog;
+  return confirmed;
 }
 
 /** Probe one `agy acp` session for its model options. Exported for tests; callers use the cached wrapper. */
@@ -361,6 +365,9 @@ export async function antigravityAcpModelCatalog(
     let nextId = 0;
     let buffer = '';
     let settled = false;
+    // The catalog once session/new has given one, with each model's menu as it is confirmed.
+    // The per-model switches only add to it, so a probe that ends during them returns it.
+    let confirmed: ProviderModelCatalog | undefined;
     const finish = (error?: Error, value?: ProviderModelCatalog) => {
       if (settled) return;
       settled = true;
@@ -374,14 +381,18 @@ export async function antigravityAcpModelCatalog(
         escalate.unref();
         child.once('exit', () => clearTimeout(escalate));
       }
-      if (error) reject(error);
-      else resolvePromise(value!);
+      if (error && !confirmed) reject(error);
+      else resolvePromise(confirmed ?? value!);
     };
     const timer = setTimeout(() => finish(new Error('Antigravity ACP model catalog probe timed out')), timeoutMs);
     const write = (message: Record<string, unknown>) =>
       child.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
     const request = (method: string, params: Record<string, unknown>) =>
       new Promise<Record<string, unknown>>((resolveRequest, rejectRequest) => {
+        if (exited) {
+          rejectRequest(new Error(`Antigravity ACP ${method} failed: the probe exited`));
+          return;
+        }
         const id = ++nextId;
         pending.set(id, (message) => {
           const error = isPlainRecord(message['error']) ? message['error'] : undefined;
@@ -430,6 +441,10 @@ export async function antigravityAcpModelCatalog(
     child.on('error', (error) => finish(error instanceof Error ? error : new Error(String(error))));
     child.on('exit', (code) => {
       if (!settled) finish(new Error(`Antigravity ACP model catalog probe exited (${code ?? 'null'})`));
+      // Fail what is still waiting so the probe's own steps end now.
+      const waiting = [...pending.values()];
+      pending.clear();
+      for (const handler of waiting) handler({ error: { message: 'the probe exited' } });
     });
 
     void (async () => {
@@ -439,12 +454,10 @@ export async function antigravityAcpModelCatalog(
         protocolVersion: 1,
       });
       const session = await request('session/new', { cwd, mcpServers: [] });
-      const catalog = await withAntigravityModelThoughtLevels(
-        parseAntigravityConfigOptions(session['configOptions']),
-        session,
-        request,
-        switchDeadline,
-      );
+      confirmed = parseAntigravityConfigOptions(session['configOptions']);
+      const catalog = await withAntigravityModelThoughtLevels(confirmed, session, request, switchDeadline, (next) => {
+        confirmed = next;
+      });
       const capabilities = isPlainRecord(init['agentCapabilities']) ? init['agentCapabilities'] : undefined;
       const sessionCapabilities = isPlainRecord(capabilities?.['sessionCapabilities'])
         ? capabilities['sessionCapabilities']

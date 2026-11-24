@@ -37,16 +37,34 @@ import {
   type Session,
 } from '../storage/schema/session.store.js';
 import { defaultSystemService } from '../services/system.service.js';
+import { defaultServerSettingsService } from '../settings/settings.service.js';
 import {
+  providerCatalogEntry,
   providerHasLiveReasoningEfforts,
   type ReasoningEffortAvailability,
 } from '../../shared/provider-catalog.js';
+import { agentProviderRuntimeCommand } from '../../shared/provider-runtime-commands.js';
+import { ProviderUsageKind } from '../../shared/provider-usage.js';
 
 export { AgentConfigError } from './agent-config-ops.js';
 
-/** Best-effort live ACP effort menus (Grok, Antigravity) for write-time validation. */
-async function loadLiveReasoningAvailability(kind: string): Promise<ReasoningEffortAvailability> {
+/**
+ * Best-effort live ACP effort menus (Grok, Antigravity) for write-time validation.
+ * The menus come from the catalog's own command, so they apply only to an agent
+ * that runs that command. An agent that runs another one (its own runtimeCommand
+ * or the machine-wide Providers setting) gets the write vocabulary: that
+ * command's menus can differ, and its live session gates the level at run time.
+ */
+async function loadLiveReasoningAvailability(
+  kind: string,
+  runtimeCommand: string | undefined,
+): Promise<ReasoningEffortAvailability> {
   try {
+    const providerKind = ProviderUsageKind.safeParse(kind);
+    const probed = providerCatalogEntry(kind)?.command;
+    if (!providerKind.success || !probed) return null;
+    const commands = await defaultServerSettingsService.getProviderRuntimeCommands();
+    if (agentProviderRuntimeCommand({ kind: providerKind.data, runtimeCommand }, commands) !== probed) return null;
     const { providers } = await defaultSystemService.providerAvailability();
     const entry = providers.find((provider) => provider.kind === kind);
     if (!entry?.modelReasoningEfforts) return null;
@@ -115,12 +133,19 @@ export class AgentService {
     const current = await this.getConfig();
     await validateAgentRuntimeCommand(provider.runtimeCommand);
     const nextKind = provider.kind ?? current.provider.kind;
+    // The command the agent runs after this update: a kind change drops the old override.
+    const nextRuntimeCommand =
+      provider.runtimeCommand !== undefined
+        ? (provider.runtimeCommand ?? undefined)
+        : nextKind === current.provider.kind
+          ? current.provider.runtimeCommand
+          : undefined;
     // Grok and Antigravity: when the live ACP catalog is reachable, write-time
     // effort validation follows the per-model menu (same source as the Profile
     // UI). Probe failure falls back to the write vocabulary so offline saves
     // still work.
     const availability = providerHasLiveReasoningEfforts(nextKind)
-      ? await loadLiveReasoningAvailability(nextKind)
+      ? await loadLiveReasoningAvailability(nextKind, nextRuntimeCommand)
       : undefined;
     let previousProvider = current.provider;
     const next = await this.updateConfig((latest) => {
