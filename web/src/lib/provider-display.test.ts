@@ -112,6 +112,34 @@ describe('providerValueLabel', () => {
     expect(providerValueLabel('review-b/chat', later)).toBe('Review Chat');
   });
 
+  // The check is on the text a model ends up showing, not on its name: a model can be
+  // named what another model shows once its id is added, or after its id.
+  it('never shows two models of a menu alike', () => {
+    const opencode = {
+      modelLabels: {
+        'review-a/chat': 'Review Chat',
+        'review-a/extra-chat': 'Review Chat (review-a/chat)',
+        'review-b/chat': 'Review Chat',
+        'review-d/plain': 'review-a/chat',
+      },
+      models: ['review-a/chat', 'review-b/chat', 'review-a/extra-chat'],
+    };
+    expect(opencode.models.map((model) => providerValueLabel(model, opencode))).toEqual([
+      'review-a/chat',
+      'Review Chat (review-b/chat)',
+      'Review Chat (review-a/chat) (review-a/extra-chat)',
+    ]);
+    const more = { ...opencode, models: [...opencode.models, 'review-d/plain'] };
+    const shown = more.models.map((model) => providerValueLabel(model, more));
+    expect(shown).toEqual([
+      'review-a/chat',
+      'Review Chat (review-b/chat)',
+      'Review Chat (review-a/chat) (review-a/extra-chat)',
+      'review-a/chat (review-d/plain)',
+    ]);
+    expect(new Set(shown).size).toBe(shown.length);
+  });
+
   it('shows an unknown model id as-is', () => {
     expect(providerValueLabel('grok-4.6')).toBe('grok-4.6');
     expect(providerValueLabel('anthropic/claude-x')).toBe('anthropic/claude-x');

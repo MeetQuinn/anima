@@ -20,17 +20,15 @@ type LabelSource = Pick<ProviderCatalogEntry, 'modelLabels'> & { models?: readon
  * to, as `providerCatalogForAvailability` returns it: its labels are its built-in
  * ones, then the names its CLI reported. They come first, so another provider's
  * built-in name (Claude's `opus`) does not rename a Kimi alias the CLI calls
- * otherwise; an id neither names falls back to any built-in label. When another of
- * the provider's models shows the same text, the id follows it, so the two can be
- * told apart in a menu.
+ * otherwise; an id neither names falls back to any built-in label. Within the
+ * provider's menu every model shows different text: see `menuTexts`.
  */
 export function providerValueLabel(value: string | undefined, provider?: LabelSource): string {
   if (!value) return '';
-  const text = valueText(value, provider);
-  if (!provider?.models) return text;
-  const { listed, shown } = menuTexts(provider, provider.models);
-  const others = (shown.get(text) ?? 0) - (listed.has(value) ? 1 : 0);
-  return others > 0 ? `${text} (${value})` : text;
+  if (!provider?.models) return valueText(value, provider);
+  const texts = menuTexts(provider, provider.models);
+  // A saved model the menu no longer lists is told apart from the listed ones too.
+  return texts.get(value) ?? distinctTexts([...texts.keys(), value], provider).get(value)!;
 }
 
 function valueText(value: string, provider?: LabelSource): string {
@@ -45,20 +43,53 @@ function valueText(value: string, provider?: LabelSource): string {
   return value;
 }
 
-/** How many of a provider's models show each text, worked out once per entry. */
-const menuTextCache = new WeakMap<object, { listed: Set<string>; shown: Map<string, number> }>();
+const menuTextCache = new WeakMap<object, Map<string, string>>();
 
-function menuTexts(provider: LabelSource, models: readonly string[]) {
+/** Each listed model's text in the provider's menu, worked out once per entry. */
+function menuTexts(provider: LabelSource, models: readonly string[]): Map<string, string> {
   let texts = menuTextCache.get(provider);
   if (!texts) {
-    const listed = new Set(models);
-    const shown = new Map<string, number>();
-    for (const model of listed) {
-      const text = valueText(model, provider);
-      shown.set(text, (shown.get(text) ?? 0) + 1);
-    }
-    texts = { listed, shown };
+    texts = distinctTexts(models, provider);
     menuTextCache.set(provider, texts);
   }
   return texts;
+}
+
+/**
+ * Text for each model that no other model shows. A model shows its name. While
+ * another model shows the same text, both move a step on: first the id follows the
+ * name (`Review Chat (review-a/chat)`), then the id alone. No two models share an
+ * id, so each clash moves at least one model on, and the steps run out with every
+ * text different.
+ */
+function distinctTexts(models: Iterable<string>, provider: LabelSource): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const model of models) names.set(model, valueText(model, provider));
+  const steps = new Map<string, number>();
+  const textOf = (model: string): string => {
+    const step = steps.get(model) ?? 0;
+    const name = names.get(model)!;
+    return step === 0 ? name : step === 1 ? `${name} (${model})` : model;
+  };
+  for (let clashed = true; clashed; ) {
+    clashed = false;
+    const owners = new Map<string, string[]>();
+    for (const model of names.keys()) {
+      const text = textOf(model);
+      const group = owners.get(text);
+      if (group) group.push(model);
+      else owners.set(text, [model]);
+    }
+    for (const group of owners.values()) {
+      if (group.length < 2) continue;
+      for (const model of group) {
+        const step = steps.get(model) ?? 0;
+        if (step < 2) {
+          steps.set(model, step + 1);
+          clashed = true;
+        }
+      }
+    }
+  }
+  return new Map([...names.keys()].map((model) => [model, textOf(model)]));
 }

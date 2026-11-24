@@ -360,7 +360,8 @@ Model menu:
   built-in label, so Kimi's name for an alias `opus` is not Claude's Opus. A CLI label is one line
   of at most 80 characters (whitespace runs become one space), and one that only repeats the id is
   dropped. When two models in one menu show the same name (OpenCode models of two providers, say),
-  each shows its id after the name. Kimi and OpenCode labels follow the same rules.
+  each shows its id after the name, and if that text is still another model's, the id alone; no two
+  models in a menu show the same text. Kimi and OpenCode labels follow the same rules.
 
 ### Claude subagent activity attribution
 

@@ -474,33 +474,42 @@ describe('Runtime modal — live model names', () => {
     expect(row).not.toContain('Opus');
   });
 
-  // Two OpenCode providers can give a model the same name; the ids tell them apart.
-  it('shows the id beside a name two models share, in the menu and on the pick', async () => {
+  // Two OpenCode providers can give a model the same name, and a third model can be
+  // named what one of those shows with its id; every row still shows its own id.
+  const sharedNames: [string, string, string][] = [
+    ['review-a/chat', 'review-a/chat', 'high'],
+    ['review-b/chat', 'Review Chat (review-b/chat)', 'low'],
+    ['review-a/extra-chat', 'Review Chat (review-a/chat) (review-a/extra-chat)', 'medium'],
+  ];
+  for (const [model, shown, effort] of sharedNames) it(`tells ${model} apart from models named alike, in the menu and on the pick`, async () => {
     const liveOpenCode: ProviderAvailability[] = [
       {
         checkedAt: '2026-11-25T00:00:00.000Z',
         defaultModel: 'review-a/chat',
         kind: 'opencode-cli',
-        modelLabels: { 'review-a/chat': 'Review Chat', 'review-b/chat': 'Review Chat', 'review-c/solo': 'Solo' },
-        modelReasoningEfforts: { 'review-a/chat': ['high'], 'review-b/chat': ['low'], 'review-c/solo': [] },
-        models: ['review-a/chat', 'review-b/chat', 'review-c/solo'],
+        modelLabels: {
+          'review-a/chat': 'Review Chat',
+          'review-a/extra-chat': 'Review Chat (review-a/chat)',
+          'review-b/chat': 'Review Chat',
+        },
+        modelReasoningEfforts: { 'review-a/chat': ['high'], 'review-a/extra-chat': ['medium'], 'review-b/chat': ['low'] },
+        models: ['review-a/chat', 'review-b/chat', 'review-a/extra-chat'],
         present: true,
       },
     ];
     const onCommit = vi.fn(async () => {});
-    const dialog = openModal({ kind: 'opencode-cli', model: 'review-a/chat', reasoningEffort: 'high' }, onCommit, liveOpenCode);
+    // Start from a model other than the pick, so that picking it is a change.
+    const saved = model === 'review-b/chat' ? 'review-a/chat' : 'review-b/chat';
+    const dialog = openModal({ kind: 'opencode-cli', model: saved, reasoningEffort: 'high' }, onCommit, liveOpenCode);
     expect(dialog.queryByRole('button', { name: 'Review Chat' })).toBeNull();
-    expect(dialog.getByRole('button', { name: 'Solo' })).toBeTruthy();
-    fireEvent.click(dialog.getByRole('button', { name: 'Review Chat (review-b/chat)' }));
-    // The trigger shows the pick the same way.
-    expect(dialog.getAllByRole('button', { name: 'Review Chat (review-b/chat)' })).toHaveLength(2);
+    for (const [, text] of sharedNames) expect(dialog.getAllByRole('button', { name: text }).length).toBeGreaterThan(0);
+    fireEvent.click(dialog.getAllByRole('button', { name: shown }).at(-1)!);
+    // The trigger shows the pick the same way, and no other row does.
+    expect(dialog.getAllByRole('button', { name: shown })).toHaveLength(2);
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
-    expect(onCommit).toHaveBeenCalledWith(
-      { kind: 'opencode-cli', model: 'review-b/chat', reasoningEffort: 'low' },
-      { envOnly: false },
-    );
+    expect(onCommit).toHaveBeenCalledWith({ kind: 'opencode-cli', model, reasoningEffort: effort }, { envOnly: false });
   });
 });
 
