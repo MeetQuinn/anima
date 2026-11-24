@@ -22,6 +22,7 @@ import {
   PROVIDER_IDLE_TIMEOUT_MS_DEFAULT,
 } from '../../shared/agent-config.js';
 import {
+  catalogModelLabel,
   isSupportedProviderModel,
   isSupportedReasoningEffort,
   providerCatalogEntry,
@@ -285,7 +286,8 @@ test('config loader reads legacy runtime key as provider config', async () => {
 });
 
 test('kimi provider exposes and retains graded effort only for K3', async () => {
-  assert.deepEqual(providerCatalogEntry('kimi-cli')?.reasoningEfforts, []);
+  // The menu for a model id the built-in list lacks (the live list can offer one).
+  assert.deepEqual(providerCatalogEntry('kimi-cli')?.reasoningEfforts, ['low', 'high', 'max']);
   assert.deepEqual(
     reasoningEffortsForModel('kimi-cli', 'kimi-code/k3'),
     ['low', 'high', 'max'],
@@ -357,20 +359,22 @@ test('kimi-cli catalog exposes K3 and the current managed aliases without changi
   );
 });
 
-test('opencode-cli catalog exposes only the supported DeepSeek V4 models', () => {
+// The built-in OpenCode list is DeepSeek's; the live list can offer any model OpenCode
+// can run, so any model id saves.
+test('opencode-cli catalog lists DeepSeek V4 Pro and V4.1 Flash, and saves any OpenCode model', () => {
   const entry = providerCatalogEntry('opencode-cli');
   assert.deepEqual(entry?.models, [
     'deepseek/deepseek-v4-pro',
-    'deepseek/deepseek-v4-flash',
+    'deepseek/deepseek-flash',
   ]);
   assert.equal(entry?.defaultModel, 'deepseek/deepseek-v4-pro');
-  assert.deepEqual(entry?.reasoningEfforts, []);
+  assert.deepEqual(entry?.reasoningEfforts, ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
   assert.deepEqual(
     reasoningEffortsForModel('opencode-cli', 'deepseek/deepseek-v4-pro'),
     ['high', 'max'],
   );
   assert.deepEqual(
-    reasoningEffortsForModel('opencode-cli', 'deepseek/deepseek-v4-flash'),
+    reasoningEffortsForModel('opencode-cli', 'deepseek/deepseek-flash'),
     ['high', 'max'],
   );
 
@@ -386,18 +390,17 @@ test('opencode-cli catalog exposes only the supported DeepSeek V4 models', () =>
     }).provider.model,
     'deepseek/deepseek-v4-flash',
   );
-  assert.throws(
-    () =>
-      AgentCreateRequest.parse({
-        name: 'OpenCode old alias',
-        homePath: 'agents/opencode-old',
-        role: 'general purpose',
-        provider: {
-          kind: 'opencode-cli',
-          model: 'deepseek/deepseek-chat',
-        },
-      }),
-    /unsupported model for opencode-cli: deepseek\/deepseek-chat/,
+  assert.equal(
+    AgentCreateRequest.parse({
+      name: 'OpenCode Zen',
+      homePath: 'agents/opencode-zen',
+      role: 'general purpose',
+      provider: {
+        kind: 'opencode-cli',
+        model: 'opencode/big-pickle',
+      },
+    }).provider.model,
+    'opencode/big-pickle',
   );
   assert.throws(
     () =>
@@ -543,9 +546,51 @@ test('codex-cli effort menu follows the live list, within what a save accepts', 
   }
   // Providers without a live list keep their catalog menu.
   assert.deepEqual(
-    reasoningEffortsForModel('kimi-cli', 'kimi-code/k3', { modelReasoningEfforts: { 'kimi-code/k3': ['low'] } }),
-    ['low', 'high', 'max'],
+    reasoningEffortsForModel('claude-code', 'opus', { modelReasoningEfforts: { opus: ['low'] } }),
+    reasoningEffortsForModel('claude-code', 'opus'),
   );
+});
+
+// OpenCode (`opencode models --verbose`) and Kimi Code (`kimi provider list --json`)
+// read their lists live the same way: a listed model's live menu is cut to what a
+// save accepts, and a model only the live list has gets its live menu within the
+// provider's effort vocabulary.
+test('opencode-cli and kimi-cli effort menus follow the live list, within what a save accepts', () => {
+  const cases: Array<[string, string, string[], string[]]> = [
+    ['opencode-cli', 'deepseek/deepseek-v4-pro', ['low', 'high', 'max'], ['high', 'max']],
+    ['opencode-cli', 'opencode/big-pickle', [], []],
+    ['opencode-cli', 'opencode/nemotron-3.5-super-vl-free', ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ultra'], ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']],
+    ['kimi-cli', 'kimi-code/k3', ['low'], ['low']],
+    ['kimi-cli', 'kimi-code/kimi-for-coding', ['high'], []],
+    ['kimi-cli', 'kimi-code/k4', ['low', 'medium', 'high', 'max'], ['low', 'high', 'max']],
+  ];
+  for (const [kind, model, live, menu] of cases) {
+    const offered = reasoningEffortsForModel(kind, model, { modelReasoningEfforts: { [model]: live } });
+    assert.deepEqual(offered, menu, `${kind} ${model}`);
+    assert.equal(isSupportedProviderModel(kind, model), true, `${kind} ${model}`);
+    for (const effort of offered) assert.equal(isSupportedReasoningEffort(kind, effort, model), true, `${kind} ${model} ${effort}`);
+  }
+});
+
+// A live alias may name an Object member. It is an id like any other: the built-in
+// catalog has no menu or label for it, so it gets the provider's vocabulary, the
+// same as an ordinary unlisted alias.
+test('live aliases that name Object members save like any other unlisted alias', () => {
+  for (const model of ['review-builder', 'constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    const live = JSON.parse(`{${JSON.stringify(model)}: ["low", "high"]}`) as Record<string, string[]>;
+    assert.deepEqual(reasoningEffortsForModel('kimi-cli', model, { modelReasoningEfforts: live }), ['low', 'high'], model);
+    assert.deepEqual(reasoningEffortsForModel('kimi-cli', model), ['low', 'high', 'max'], model);
+    assert.equal(isSupportedReasoningEffort('kimi-cli', 'high', model), true, model);
+    assert.equal(catalogModelLabel(model), undefined, model);
+    const request = AgentCreateRequest.parse({
+      name: 'Kimi',
+      homePath: 'agents/kimi',
+      role: 'general purpose',
+      provider: { kind: 'kimi-cli', model, reasoningEffort: 'high' },
+    });
+    assert.equal(request.provider?.model, model);
+    assert.equal(request.provider && 'reasoningEffort' in request.provider ? request.provider.reasoningEffort : undefined, 'high');
+  }
 });
 
 test('codex-cli catalog includes GPT-6.2 Astra/Sol, GPT-6.1 Terra/Sol, GPT-6 Astra/Sol/Luna, and current GPT-5 models', () => {
@@ -667,9 +712,10 @@ test('codex-cli accepts a model id its catalog does not list yet', () => {
     }).provider.model,
     'gpt-7-astra',
   );
-  // Other static catalogs still reject unlisted ids.
+  // Kimi Code and OpenCode read live lists too; Claude Code's catalog still rejects unlisted ids.
+  assert.equal(isSupportedProviderModel('kimi-cli', 'kimi-code/k4'), true);
+  assert.equal(isSupportedProviderModel('opencode-cli', 'deepseek/deepseek-chat'), true);
   assert.equal(isSupportedProviderModel('claude-code', 'gpt-7-astra'), false);
-  assert.equal(isSupportedProviderModel('opencode-cli', 'deepseek/deepseek-chat'), false);
 });
 
 test('grok-cli effort write-validates the provider vocabulary; per-model support is a runtime gate', () => {

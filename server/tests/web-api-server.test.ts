@@ -147,6 +147,10 @@ test('agent and KB routes refuse ids that would leave their directory', async ()
 test('web API reports provider availability', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-web-api-provider-availability-test-'));
   await writeAgentConfigs(stateDir);
+  // No provider CLI on PATH: the availability check would otherwise run this machine's
+  // real CLIs for their model lists.
+  const previousPath = process.env.PATH;
+  process.env.PATH = '/usr/bin:/bin';
   await withAnimaHome(stateDir, async () => {
     const server = await createWebServer();
     try {
@@ -176,6 +180,9 @@ test('web API reports provider availability', async () => {
     } finally {
       server.close();
     }
+  }).finally(() => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
   });
   await rm(stateDir, { force: true, recursive: true });
 });

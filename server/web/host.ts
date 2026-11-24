@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 
 import { resolveAnimaHome } from '../anima-home.js';
 import { errorMessage } from '../ids.js';
+import { processGroupsEnded } from '../services/system.service.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { createWebServer } from './app.js';
 import type { WebListener } from '../storage/schema/web-network.store.js';
@@ -25,9 +26,11 @@ export async function startWebHost(opts: WebHostOptions = {}): Promise<void> {
   const servers = await startWebListeners(listeners, port);
   for (const listener of listeners) console.log(`Anima web listening on http://${listener.host}:${port}`);
   console.log(`Anima home: ${animaHome}`);
-  await awaitShutdown(
-    () => closeWebListeners(servers),
-  );
+  await awaitShutdown(async () => {
+    await closeWebListeners(servers);
+    // A model-list probe a request ended may still be ending its CLI.
+    await processGroupsEnded();
+  });
 }
 
 export async function startWebListeners(listeners: WebListener[], port: number): Promise<Server[]> {

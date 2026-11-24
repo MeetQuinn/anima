@@ -8,11 +8,18 @@ import { promisify } from 'node:util';
 import { resolveAnimaHome } from '../anima-home.js';
 import { ignoreChildStdinErrors } from '../providers/child-process.js';
 import { antigravityCommandProblem } from '../providers/antigravity.js';
+import { openCodeLaunchEnvironment } from '../providers/opencode.js';
 import { launchCandidatesFingerprint, runtimeLaunchPath } from '../runtime/launch-path.js';
 import { raceWithTimeout } from '../race-timeout.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from './env.js';
 import { readLastServicesRestart, servicesRestartLogPath, servicesRestartResultPath } from './restart-result.js';
+import {
+  MODEL_LIST_PARSERS,
+  modelListCatalog,
+  type ModelListParserName,
+  type ProviderModelCatalog,
+} from './model-list-parsers.js';
 import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-info.js';
 import {
   PROVIDER_CATALOG,
@@ -42,11 +49,7 @@ export interface SystemServiceOptions {
   startedAt?: string;
 }
 
-export interface ProviderModelCatalog {
-  defaultModel: string;
-  modelReasoningEfforts?: Record<string, string[]>;
-  models: string[];
-}
+export type { ProviderModelCatalog } from './model-list-parsers.js';
 
 export class SystemServiceError extends Error {}
 
@@ -233,6 +236,8 @@ export function parseGrokAcpModelState(modelState: unknown): ProviderModelCatalo
 /** Live model catalog per provider kind; only `dynamicModels` and `liveModels` catalog entries reach here. */
 async function liveProviderModels(command: string, kind: ProviderKind): Promise<ProviderModelCatalog> {
   if (kind === 'codex-cli') return codexAppServerModelCatalog(command);
+  if (kind === 'opencode-cli') return openCodeModelCatalog(command);
+  if (kind === 'kimi-cli') return kimiModelCatalog(command);
   if (kind === 'pi') return piProviderModels(command);
   if (kind === 'antigravity-cli') return antigravityProviderModels(command);
   return grokProviderModels(command, runtimeProbeEnv());
@@ -518,6 +523,8 @@ export async function codexAppServerModelCatalog(
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, ['app-server', '--listen', 'stdio://'], {
       cwd,
+      // A group of its own, so the probe ends whatever `codex` started.
+      detached: true,
       env: runtimeProbeEnv(),
       // Nothing reads stderr, so it is not piped: a full pipe would stall the CLI.
       stdio: ['pipe', 'pipe', 'ignore'],
@@ -532,14 +539,7 @@ export async function codexAppServerModelCatalog(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (!exited) {
-        child.kill('SIGTERM');
-        const escalate = setTimeout(() => {
-          if (!exited) child.kill('SIGKILL');
-        }, options.killGraceMs ?? 2_000);
-        escalate.unref();
-        child.once('exit', () => clearTimeout(escalate));
-      }
+      void endProcessGroup(child.pid, options.killGraceMs ?? 2_000);
       if (error) reject(error);
       else resolvePromise(value!);
     };
@@ -646,13 +646,169 @@ export function parseCodexModelList(pages: unknown[]): ProviderModelCatalog {
           const value = typeof item === 'string' ? item : isPlainRecord(item) ? item['reasoningEffort'] : undefined;
           if (typeof value === 'string' && value.trim() && !efforts.includes(value.trim())) efforts.push(value.trim());
         }
-        modelReasoningEfforts[model] = efforts;
+        // Defined, not assigned: an id like `__proto__` stays an own key.
+        Object.defineProperty(modelReasoningEfforts, model, { enumerable: true, value: efforts, writable: true, configurable: true });
       }
       if (entry['isDefault'] === true && !defaultModel) defaultModel = model;
     }
   }
   if (models.length === 0) throw new Error('Codex did not report any models');
   return { defaultModel: defaultModel || models[0]!, modelReasoningEfforts, models };
+}
+
+const MODEL_LIST_PROBE_TIMEOUT_MS = 10_000;
+const MODEL_LIST_MAX_BYTES = 8 * 1024 * 1024;
+
+function modelListProbeScript(): string {
+  return fileURLToPath(new URL('./model-list-probe.js', import.meta.url));
+}
+
+const endingProcessGroups = new Set<Promise<void>>();
+
+/**
+ * Ends the process group `pid` leads (a probe started `detached`, and all it started):
+ * TERM now, KILL after `graceMs` for whatever is left. A wrapper script that exits on
+ * TERM would otherwise leave the CLI it started running. Resolves once the group is
+ * gone, or 2s after KILL went out. KILL goes out whenever the group outlives the grace
+ * period, even if this process was stalled past it. Until then its timers keep this
+ * process alive, and `processGroupsEnded` waits for it, so shutting down never leaves
+ * the CLI behind.
+ */
+function endProcessGroup(pid: number | undefined, graceMs: number): Promise<void> {
+  if (pid === undefined || pid <= 0) return Promise.resolve();
+  const signal = (name: NodeJS.Signals | 0) => {
+    try {
+      process.kill(-pid, name);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!signal('SIGTERM')) return Promise.resolve();
+  const startedAt = Date.now();
+  let killedAt: number | undefined;
+  const ended = new Promise<void>((resolveEnded) => {
+    const check = () => {
+      const now = Date.now();
+      if (!signal(0) || (killedAt !== undefined && now - killedAt >= 2_000)) {
+        resolveEnded();
+        return;
+      }
+      if (killedAt === undefined && now - startedAt >= graceMs) {
+        if (!signal('SIGKILL')) {
+          resolveEnded();
+          return;
+        }
+        killedAt = now;
+      }
+      setTimeout(check, 50);
+    };
+    setTimeout(check, 50);
+  });
+  endingProcessGroups.add(ended);
+  void ended.finally(() => endingProcessGroups.delete(ended));
+  return ended;
+}
+
+/** Resolves once every probe process group this process is ending has ended. */
+export async function processGroupsEnded(): Promise<void> {
+  while (endingProcessGroups.size > 0) await Promise.all([...endingProcessGroups]);
+}
+
+/**
+ * Reads a CLI's model list through the probe script (model-list-probe.ts), which runs
+ * the CLI, parses its output with the named parser, and sends back only the catalog:
+ * the output itself never reaches this process. The probe leads a process group of
+ * its own, which ends when the reply is in, the probe fails, or time runs out.
+ * Exported for tests.
+ */
+export async function modelListProbe(
+  parser: ModelListParserName,
+  command: string,
+  args: string[],
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    killGraceMs?: number;
+    maxBytes?: number;
+    timeoutMs?: number;
+  },
+): Promise<ProviderModelCatalog> {
+  const { label } = MODEL_LIST_PARSERS[parser];
+  const maxBytes = options.maxBytes ?? MODEL_LIST_MAX_BYTES;
+  const timeoutMs = options.timeoutMs ?? MODEL_LIST_PROBE_TIMEOUT_MS;
+  const killGraceMs = options.killGraceMs ?? 2_000;
+  // A reply writes each id and effort name once, in at most three times the bytes the
+  // CLI spent on it (see modelListReply), so this holds any catalog an accepted output
+  // yields.
+  const replyMaxBytes = 3 * maxBytes + 64 * 1024;
+  await mkdir(options.cwd, { recursive: true });
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(
+      process.execPath,
+      [modelListProbeScript(), String(maxBytes), String(timeoutMs + killGraceMs), parser, command, ...args],
+      { cwd: options.cwd, detached: true, env: options.env, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    let reply = '';
+    let replyBytes = 0;
+    let settled = false;
+    const finish = (error?: Error, catalog?: ProviderModelCatalog) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      void endProcessGroup(child.pid, killGraceMs);
+      if (error) reject(error);
+      else resolvePromise(catalog!);
+    };
+    const timer = setTimeout(() => finish(new Error(`${label} timed out`)), timeoutMs);
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      replyBytes += Buffer.byteLength(chunk);
+      if (replyBytes > replyMaxBytes) finish(new Error(`${label} wrote more output than expected`));
+      else reply += chunk;
+    });
+    child.on('error', () => finish(new Error(`${label} could not start the probe`)));
+    child.on('close', () => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(reply);
+      } catch {
+        parsed = undefined;
+      }
+      if (isPlainRecord(parsed) && typeof parsed['error'] === 'string') {
+        finish(new Error(parsed['error'].slice(0, 200)));
+        return;
+      }
+      const catalog = isPlainRecord(parsed) ? modelListCatalog(parsed['catalog']) : undefined;
+      if (catalog) finish(undefined, catalog);
+      else finish(new Error(`${label} probe gave no answer`));
+    });
+  });
+}
+
+/**
+ * OpenCode's live model list: `opencode models --verbose`, which reads OpenCode's own
+ * config and model cache and starts no session. It runs with the runtime's `--pure`
+ * and launch environment, so it sees the providers an agent's turn sees, from a fixed
+ * empty directory, so no project's `opencode.json` applies.
+ */
+async function openCodeModelCatalog(command: string): Promise<ProviderModelCatalog> {
+  return modelListProbe('opencode', command, ['models', '--verbose', '--pure'], {
+    cwd: join(resolveAnimaHome(), 'cache', 'opencode-model-probe'),
+    env: openCodeLaunchEnvironment(runtimeProbeEnv()),
+  });
+}
+
+/**
+ * Kimi Code's live model list: `kimi provider list --json`, which prints the configured
+ * providers and model aliases and starts no session. It runs on the runtime PATH from
+ * a fixed empty directory.
+ */
+async function kimiModelCatalog(command: string): Promise<ProviderModelCatalog> {
+  return modelListProbe('kimi', command, ['provider', 'list', '--json'], {
+    cwd: join(resolveAnimaHome(), 'cache', 'kimi-model-probe'),
+    env: runtimeProbeEnv(),
+  });
 }
 
 const PI_MODEL_PROBE_ARGS = ['--mode', 'rpc', '--no-extensions', '--no-skills', '--no-context-files', '--no-session'];

@@ -19,7 +19,7 @@ Install and authenticate at least one before creating the first agent.
 | Codex       | [Install Codex CLI](https://developers.openai.com/codex/cli/) and sign in with your ChatGPT account or configured API access             | `codex --version`                 |
 | Kimi Code   | [Install Kimi Code CLI](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started) and use `/login` on first launch         | `kimi --version`                  |
 | Grok Build  | [Install Grok Build](https://docs.x.ai/build/overview) and sign in with `grok login` or configure its supported API-key authentication   | `grok --no-auto-update --version` |
-| OpenCode    | [Install OpenCode](https://opencode.ai/docs/) and add a DeepSeek API key with `opencode auth login --provider deepseek`                  | `opencode --version`              |
+| OpenCode    | [Install OpenCode](https://opencode.ai/docs/) and add a provider credential, for example `opencode auth login --provider deepseek`       | `opencode --version`              |
 | pi          | `npm install -g @earendil-works/pi-coding-agent`, then run `pi` and `/login` (or add the provider API key to `~/.pi/agent/auth.json`)    | `pi --version`                    |
 | Antigravity | [Install Antigravity CLI](https://antigravity.google/docs/install/) (it installs to `~/.local/bin/agy`), then run `agy` once and sign in | `agy --version`                   |
 
@@ -145,22 +145,30 @@ selected model exactly:
 | Grok Build  | Live model catalog                                             | Whatever the selected model advertises                                                                 |
 | Antigravity | Live from the signed-in account (for example Gemini 3.8 Flash) | Whatever the selected model advertises (`thought_level`, for example `low`, `medium`, `high`)          |
 
-The dashboard reads the Codex model menu live from the installed CLI (`codex app-server`,
-`model/list`), with each model's effort levels, so models a Codex update adds appear without an
-Anima update. The Codex rows above are the built-in list it falls back to when that read fails. The
-effort menu offers only the levels Anima accepts for the model. Switching to a model with no effort
-menu clears the saved level, so Codex uses its own default. If the live list drops a model you just
-picked in the Runtime dialog, Save stays off until you pick another; an agent's current model stays
-when the list lacks it.
+The dashboard reads the Codex, Kimi Code and OpenCode model menus live from the installed CLI, with
+each model's effort levels, so models a CLI update or a new provider credential adds appear without
+an Anima update:
+
+- Codex: `codex app-server`, `model/list`.
+- Kimi Code: `kimi provider list --json`, the model aliases in Kimi's config and each one's
+  `supportEfforts`.
+- OpenCode: `opencode models --verbose`, every model OpenCode can run (including OpenCode Zen's
+  free models) and each one's variants as its effort levels.
+
+The rows above for these three are the built-in lists the dashboard falls back to when that read
+fails. For a model the built-in list names, the effort menu offers only the levels Anima accepts for
+it. Switching to a model with no effort menu clears the saved level, so the CLI uses its own default.
+If the live list drops a model you just picked in the Runtime dialog, Save stays off until you pick
+another; an agent's current model stays when the list lacks it.
 
 Codex also accepts a model ID neither list has, because the Codex CLI resolves the ID when the turn
 starts. Set it with `POST /api/agents/<agentId>/provider` and a body such as
 `{"model": "gpt-7-astra"}`; the dashboard shows the raw ID and offers the full Codex effort list
 for it.
 
-OpenCode agents can use DeepSeek V4 Pro or DeepSeek V4.1 Flash. Their DeepSeek API key stays in
-OpenCode's machine-level credential store; Anima does not copy it into the agent's Launch
-environment.
+OpenCode agents can use any model OpenCode lists, for example DeepSeek V4 Pro or DeepSeek V4.1
+Flash. Provider API keys stay in OpenCode's machine-level credential store; Anima does not copy
+them into the agent's Launch environment.
 
 pi agents address models as `provider/id` (for example `google/gemini-2.5-pro` or
 `deepseek/deepseek-v4-pro`). The dashboard model menu is read live from pi

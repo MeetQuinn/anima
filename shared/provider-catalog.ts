@@ -67,6 +67,10 @@ const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra
  * can be saved; unadvertised efforts are still not applied at session/set_model.
  */
 const GROK_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+/** Effort values (`thinking`) a Kimi Code model may list; the live read gives each model's own. */
+const KIMI_REASONING_EFFORTS = ['low', 'high', 'max'];
+/** OpenCode variant names a model may list; the live read gives each model's own. */
+const OPENCODE_REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 /**
  * Antigravity thinking levels (`thought_level` values from `agy acp`). Write-time
  * vocabulary only, like Grok's: the live ACP option decides per model.
@@ -187,12 +191,16 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       'kimi-code/kimi-for-coding-highspeed': 'K2.7 Coding Highspeed',
     },
     defaultModel: 'kimi-code/kimi-for-coding',
+    acceptsUnlistedModels: true,
+    // `kimi provider list --json` is the live menu; the list above is the fallback.
+    liveModels: true,
     modelReasoningEfforts: {
       'kimi-code/k3': ['low', 'high', 'max'],
       'kimi-code/kimi-for-coding': [],
       'kimi-code/kimi-for-coding-highspeed': [],
     },
-    reasoningEfforts: [],
+    // Effort menu for a model id the catalog doesn't list (acceptsUnlistedModels).
+    reasoningEfforts: KIMI_REASONING_EFFORTS,
   },
   {
     kind: 'grok-cli',
@@ -212,21 +220,27 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: 'opencode-cli',
     label: 'OpenCode',
     command: 'opencode',
-    installHint: 'Install OpenCode so `opencode --version` works, then add a DeepSeek credential.',
+    installHint: 'Install OpenCode so `opencode --version` works, then add a provider credential with `opencode auth login`.',
+    // DeepSeek retired the V4 Flash id; OpenCode lists V4.1 Flash as `deepseek-flash`.
     models: [
       'deepseek/deepseek-v4-pro',
-      'deepseek/deepseek-v4-flash',
+      'deepseek/deepseek-flash',
     ],
+    // Live ids not listed here show their raw id.
     modelLabels: {
       'deepseek/deepseek-v4-pro': 'DeepSeek V4 Pro',
-      'deepseek/deepseek-v4-flash': 'DeepSeek V4.1 Flash',
+      'deepseek/deepseek-flash': 'DeepSeek V4.1 Flash',
     },
     defaultModel: 'deepseek/deepseek-v4-pro',
+    acceptsUnlistedModels: true,
+    // `opencode models --verbose` is the live menu; the list above is the fallback.
+    liveModels: true,
     modelReasoningEfforts: {
       'deepseek/deepseek-v4-pro': ['high', 'max'],
-      'deepseek/deepseek-v4-flash': ['high', 'max'],
+      'deepseek/deepseek-flash': ['high', 'max'],
     },
-    reasoningEfforts: [],
+    // Effort menu for a model id the catalog doesn't list (acceptsUnlistedModels).
+    reasoningEfforts: OPENCODE_REASONING_EFFORTS,
   },
   {
     kind: 'pi',
@@ -239,8 +253,10 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     // machine-level credentials can reach, so nothing is offered that cannot run.
     models: [],
     // Ids pi's live catalog is known to offer; anything else shows its raw id.
+    // The retired Flash ids keep a label for agents that saved them (OpenCode agents too).
     modelLabels: {
       'deepseek/deepseek-flash': 'DeepSeek V4.1 Flash',
+      'deepseek/deepseek-v4-flash': 'DeepSeek V4.1 Flash',
       'deepseek/deepseek-v4-flash-vision-exp': 'DeepSeek V4.1 Flash',
     },
     defaultModel: '',
@@ -297,7 +313,8 @@ export function providerCatalog(): ProviderCatalogEntry[] {
 /** Catalog display name for a model id, or undefined when no provider names it. */
 export function catalogModelLabel(model: string): string | undefined {
   for (const entry of PROVIDER_CATALOG) {
-    const label = entry.modelLabels?.[model];
+    // Own keys only: a model id like `constructor` is not a label.
+    const label = entry.modelLabels && Object.hasOwn(entry.modelLabels, model) ? entry.modelLabels[model] : undefined;
     if (label) return label;
   }
   return undefined;
@@ -384,14 +401,15 @@ export function reasoningEffortsForModel(
   availability?: { modelReasoningEfforts?: Record<string, string[]> } | null,
 ): string[] {
   if (providerHasLiveReasoningEfforts(kind)) {
-    if (model && availability?.modelReasoningEfforts && model in availability.modelReasoningEfforts) {
+    if (model && availability?.modelReasoningEfforts && Object.hasOwn(availability.modelReasoningEfforts, model)) {
       return [...(availability.modelReasoningEfforts[model] ?? [])];
     }
     return [];
   }
   const entry = providerCatalogEntry(kind);
   if (!entry) return [];
-  const accepted = model && entry.modelReasoningEfforts && model in entry.modelReasoningEfforts
+  // Own keys only: a live id like `constructor` must not find an inherited member.
+  const accepted = model && entry.modelReasoningEfforts && Object.hasOwn(entry.modelReasoningEfforts, model)
     ? [...(entry.modelReasoningEfforts[model] ?? [])]
     : [...entry.reasoningEfforts];
   const live = entry.liveModels && model ? availability?.modelReasoningEfforts : undefined;
