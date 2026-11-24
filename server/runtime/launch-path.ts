@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { access, realpath, stat } from 'node:fs/promises';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -15,13 +15,17 @@ export function runtimeLaunchPath(env?: Record<string, string>): string {
 
 /**
  * Real path of the executable that a child spawned as `command`, with this PATH and
- * this cwd, runs. The lookup happens in the child after it changes to `cwd`, so a
- * relative command or PATH entry resolves there. Undefined when nothing matches.
+ * this cwd, runs. Node's spawn looks the command up the way execvp does, in the
+ * child after it changes to `cwd`: a command with a slash is used as given, and
+ * otherwise each PATH entry in turn, an empty entry meaning the cwd. Candidates are
+ * joined as strings, not normalized, so the file system resolves `..` after a
+ * directory link the same way it does for the child. Undefined when nothing matches.
  */
 export async function launchExecutable(command: string, path: string, cwd: string): Promise<string | undefined> {
+  const fromCwd = (file: string) => (isAbsolute(file) ? file : `${cwd}/${file}`);
   const candidates = command.includes('/')
-    ? [resolve(cwd, command)]
-    : path.split(delimiter).filter(Boolean).map((entry) => resolve(cwd, entry, command));
+    ? [fromCwd(command)]
+    : path.split(delimiter).map((entry) => fromCwd(entry ? `${entry}/${command}` : command));
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);

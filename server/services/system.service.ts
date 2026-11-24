@@ -258,12 +258,15 @@ export async function liveReasoningMenus(
   return { executable: probed.executable, modelReasoningEfforts: probed.catalog.modelReasoningEfforts };
 }
 
-/** Grok's probe runs uncached, in the service's cwd. */
+/**
+ * Grok's probe runs uncached, in the service's cwd. It launches the executable it
+ * resolved, so the menus belong to that file even if the command is relinked meanwhile.
+ */
 async function grokProbedModels(
   command: string,
 ): Promise<{ catalog: ProviderModelCatalog; executable: string } | undefined> {
   const executable = await launchExecutable(command, process.env.PATH ?? '', process.cwd());
-  return executable ? { catalog: await grokProviderModels(command), executable } : undefined;
+  return executable ? { catalog: await grokProviderModels(executable), executable } : undefined;
 }
 
 const ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS = 15_000;
@@ -284,7 +287,9 @@ async function antigravityProviderModels(command: string): Promise<ProviderModel
  * leaves a conversation in Antigravity's history. Cache the catalog per
  * executable the command launches (failures are not cached), so a command that
  * now points at another executable is probed again, and probe from one fixed
- * directory. Undefined when the command launches nothing.
+ * directory. The probe launches that executable itself, so a relink during the
+ * probe cannot hand it another program's menus. Undefined when the command
+ * launches nothing.
  */
 async function antigravityProbedModels(
   command: string,
@@ -295,7 +300,7 @@ async function antigravityProbedModels(
   if (cached && Date.now() - cached.at < ANTIGRAVITY_MODEL_CATALOG_TTL_MS) {
     return { catalog: await cached.value, executable };
   }
-  const value = antigravityAcpModelCatalog(command);
+  const value = antigravityAcpModelCatalog(executable);
   antigravityCatalogCache.set(executable, { at: Date.now(), value });
   value.catch(() => {
     if (antigravityCatalogCache.get(executable)?.value === value) antigravityCatalogCache.delete(executable);

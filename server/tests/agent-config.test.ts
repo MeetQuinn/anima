@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -808,8 +808,9 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
     const custom = join(versions, 'agy-custom');
     const linked = join(pathBin, 'agy');
     const gate = join(configDir, 'probe-gate');
-    await writeFile(v1, fakeCatalogAgy(['high'], gate), 'utf8');
-    await writeFile(v2, fakeCatalogAgy(['high', 'xhigh']), 'utf8');
+    const launches = join(configDir, 'probe-launches');
+    await writeFile(v1, fakeCatalogAgy(['high'], gate, launches), 'utf8');
+    await writeFile(v2, fakeCatalogAgy(['high', 'xhigh'], undefined, launches), 'utf8');
     await writeFile(custom, fakeCatalogAgy(['high', 'xhigh']), 'utf8');
     for (const file of [v1, v2, custom]) await chmod(file, 0o755);
     await symlink(v1, linked);
@@ -828,6 +829,10 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         agent('pathed', { env: { PATH: join(configDir, 'agents', 'relative', 'tools') } }),
         // A relative PATH entry resolves from the agent home, where the child starts.
         agent('relative', { env: { PATH: `tools:${pathBin}` } }),
+        // An empty PATH entry is the agent home too.
+        agent('gap', { env: { PATH: `:${pathBin}` } }),
+        // `active` links to linked-dir/inner, so `active/../bin` is linked-dir/bin, not bin.
+        agent('link-parent', { env: { PATH: `active/../bin:${pathBin}` } }),
         agent('absolute', { runtimeCommand: linked }),
         agent('with-env', { env: { EXAMPLE_FLAG: '1' } }),
         agent('with-args', { runtimeArgs: ['--example'] }),
@@ -836,9 +841,19 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         agent('pinned', { runtimeCommand: v2 }),
       ],
     });
-    await mkdir(join(configDir, 'agents', 'relative', 'tools'), { recursive: true });
-    await writeFile(join(configDir, 'agents', 'relative', 'tools', 'agy'), fakeCatalogAgy(['high', 'xhigh']), 'utf8');
-    await chmod(join(configDir, 'agents', 'relative', 'tools', 'agy'), 0o755);
+    const ownAgy = async (file: string) => {
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, fakeCatalogAgy(['high', 'xhigh']), 'utf8');
+      await chmod(file, 0o755);
+    };
+    await ownAgy(join(configDir, 'agents', 'relative', 'tools', 'agy'));
+    await ownAgy(join(configDir, 'agents', 'gap', 'agy'));
+    await ownAgy(join(configDir, 'linked-dir', 'bin', 'agy'));
+    await mkdir(join(configDir, 'linked-dir', 'inner'), { recursive: true });
+    await symlink(join(configDir, 'linked-dir', 'inner'), join(configDir, 'agents', 'link-parent', 'active'));
+    // What `active/../bin/agy` would be if `..` were taken before following the link.
+    await mkdir(join(configDir, 'agents', 'link-parent', 'bin'), { recursive: true });
+    await symlink(v1, join(configDir, 'agents', 'link-parent', 'bin', 'agy'));
     const stored = async (id: string) =>
       (await readRawAgentFile(configDir, id)).provider as
         | { env?: Record<string, string>; reasoningEffort?: string; runtimeCommand?: string }
@@ -867,7 +882,7 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
       );
 
       // Agents that launch another agy keep xhigh, explicitly saved or not.
-      for (const id of ['custom', 'pathed', 'relative']) {
+      for (const id of ['custom', 'pathed', 'relative', 'gap', 'link-parent']) {
         await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
         assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
         await agentService(id).updateProvider({ reasoningEffort: 'xhigh' });
@@ -890,6 +905,9 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
         assert.equal((await stored(id))?.reasoningEffort, undefined, id);
       }
+      // The probe launched the file it resolved, not `agy` looked up again.
+      const launched = async () => [...new Set((await readFile(launches, 'utf8')).trim().split('\n'))];
+      assert.deepEqual(await launched(), [await realpath(v1)]);
 
       // A machine-wide Providers command counts like the agent's own.
       await defaultServerSettingsService.setProviderRuntimeSettings('antigravity-cli', custom);
@@ -907,6 +925,7 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         await agentService(id).updateProvider({ reasoningEffort: 'xhigh' });
         assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
       }
+      assert.deepEqual(await launched(), [await realpath(v1), await realpath(v2)]);
     });
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
@@ -918,9 +937,10 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
 /**
  * A fake `agy`: `--version` succeeds, and `agy acp` opens a model catalog session on
  * gemini-4-neon whose switch to gemini-4-carbon reports `carbonLevels`. With `gate`, that
- * switch writes `<gate>.waiting` and is answered only once `gate` exists.
+ * switch writes `<gate>.waiting` and is answered only once `gate` exists. With
+ * `launches`, `agy acp` appends the path it was launched as.
  */
-function fakeCatalogAgy(carbonLevels: string[], gate?: string): string {
+function fakeCatalogAgy(carbonLevels: string[], gate?: string, launches?: string): string {
   const models = ['gemini-4-neon', 'gemini-4-carbon'];
   const levels = { 'gemini-4-carbon': carbonLevels, 'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'] };
   return [
@@ -930,6 +950,8 @@ function fakeCatalogAgy(carbonLevels: string[], gate?: string): string {
     `const models = ${JSON.stringify(models)};`,
     `const levels = ${JSON.stringify(levels)};`,
     `const gate = ${JSON.stringify(gate ?? null)};`,
+    `const launches = ${JSON.stringify(launches ?? null)};`,
+    "if (launches) fs.appendFileSync(launches, process.argv[1] + '\\n');",
     'const options = (current) => [',
     "  { category: 'model', currentValue: current, id: 'model', options: models.map((value) => ({ value })), type: 'select' },",
     "  { category: 'thought_level', currentValue: 'high', id: 'thought_level', options: levels[current].map((value) => ({ value })), type: 'select' },",

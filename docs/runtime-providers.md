@@ -534,7 +534,10 @@ Model and context authority:
   from the default command on the service `PATH`, so the menu applies only to an agent that
   launches that same executable: found as the runtime finds it (the agent's runtime command,
   else the machine-wide Providers command, else the default, on the agent's launch `PATH`, from
-  the agent home), with no runtime args and no provider env besides `PATH`. Any other launch gets the write vocabulary.
+  the agent home, with an empty `PATH` entry meaning the agent home and `..` taken after links as
+  the file system does), with no runtime args and no provider env besides `PATH`. Any other launch gets the write vocabulary.
+  The probe launches the executable it resolved, so a relink while it runs cannot attribute another
+  program's menus to it.
   The check runs on the config being saved, so a concurrent save that changes the launch is
   respected. After
   session init (new or loaded) and before the first prompt, the runtime sends at most one same-model

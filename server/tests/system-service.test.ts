@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   docsUrl,
+  liveReasoningMenus,
   parseGrokAcpModelState,
   parseGrokModelsOutput,
   parsePiModelCatalog,
@@ -104,6 +105,55 @@ test('provider availability disables Grok auto-update during its presence probe'
     if (previousArgvPath === undefined) delete process.env.GROK_ARGV_PATH;
     else process.env.GROK_ARGV_PATH = previousArgvPath;
     await rm(binDir, { force: true, recursive: true });
+  }
+});
+
+// The menus are attributed to the file the probe resolved, so the probe must launch
+// that file: looking `grok` up again could reach another program after a relink.
+test('Grok live effort menus come from the executable they are attributed to', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-grok-menus-'));
+  const previousPath = process.env.PATH;
+  try {
+    const bin = join(dir, 'bin');
+    const version = join(dir, 'versions', 'grok-v1');
+    const launches = join(dir, 'launches');
+    await mkdir(bin, { recursive: true });
+    await mkdir(join(dir, 'versions'), { recursive: true });
+    const modelState = {
+      availableModels: [
+        { _meta: { reasoningEfforts: [{ value: 'high' }], supportsReasoningEffort: true }, modelId: 'grok-4.6' },
+      ],
+      currentModelId: 'grok-4.6',
+    };
+    await writeFile(
+      version,
+      [
+        `#!${process.execPath}`,
+        "const fs = require('fs');",
+        `fs.appendFileSync(${JSON.stringify(launches)}, process.argv[1] + '\\n');`,
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  for (const line of chunk.split('\\n')) {",
+        '    if (!line.trim()) continue;',
+        '    const msg = JSON.parse(line);',
+        `    if (msg.method === 'initialize') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { _meta: { modelState: ${JSON.stringify(modelState)} } } }) + '\\n');`,
+        '  }',
+        '});',
+      ].join('\n'),
+      'utf8',
+    );
+    await chmod(version, 0o755);
+    await symlink(version, join(bin, 'grok'));
+    process.env.PATH = bin;
+
+    const menus = await liveReasoningMenus('grok-cli');
+
+    assert.deepEqual(menus, { executable: await realpath(version), modelReasoningEfforts: { 'grok-4.6': ['high'] } });
+    assert.equal(await readFile(launches, 'utf8'), `${await realpath(version)}\n`);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(dir, { force: true, recursive: true });
   }
 });
 
