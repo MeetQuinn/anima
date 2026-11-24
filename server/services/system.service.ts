@@ -16,8 +16,6 @@ import { readLastServicesRestart, servicesRestartLogPath, servicesRestartResultP
 import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-info.js';
 import {
   PROVIDER_CATALOG,
-  providerCatalogEntry,
-  providerHasLiveReasoningEfforts,
   type ProviderAvailability,
   type ProviderKind,
 } from '../../shared/provider-catalog.js';
@@ -236,98 +234,47 @@ export function parseGrokAcpModelState(modelState: unknown): ProviderModelCatalo
 async function liveProviderModels(command: string, kind: ProviderKind): Promise<ProviderModelCatalog> {
   if (kind === 'pi') return piProviderModels(command);
   if (kind === 'antigravity-cli') return antigravityProviderModels(command);
-  return grokProviderModels(command);
-}
-
-/** Live effort menus and what they were read from; see `liveReasoningMenus`. */
-export interface LiveReasoningMenus {
-  /** The catalog command, which the probe ran by name. */
-  command: string;
-  modelReasoningEfforts: Record<string, string[]>;
-  /** The PATH the probe ran with: the runtime PATH of an agent that sets none. */
-  path: string;
-  /** `launchCandidatesFingerprint` of the command on that PATH, the same before and after the probe. */
-  source: string;
+  return grokProviderModels(command, runtimeProbeEnv());
 }
 
 /**
- * Live effort menus for a provider whose menus are live (Grok, Antigravity). The
- * probe runs the catalog command by name on the runtime PATH, the way an agent
- * with no command, args or PATH of its own runs it, so shims and PATH fallbacks
- * behave the same for both. Null when there are no menus, or when the files the
- * command could start changed while the probe ran.
+ * The env a catalog probe runs with: the runtime PATH of an agent that sets none, so
+ * the command is looked up, shims included, the way such an agent's turn looks it up.
  */
-export async function liveReasoningMenus(kind: string): Promise<LiveReasoningMenus | null> {
-  const entry = providerCatalogEntry(kind);
-  if (!entry || !providerHasLiveReasoningEfforts(kind)) return null;
-  const probed =
-    entry.kind === 'antigravity-cli'
-      ? await antigravityProbedModels(entry.command)
-      : await grokProbedModels(entry.command);
-  const menus = probed.catalog.modelReasoningEfforts;
-  if (!menus || probed.source === undefined) return null;
-  return { command: entry.command, modelReasoningEfforts: menus, path: probed.path, source: probed.source };
-}
-
-interface ProbedModels {
-  catalog: ProviderModelCatalog;
-  path: string;
-  /** Set only when the command's files held still during the probe. */
-  source?: string;
-}
-
-/** Runs a catalog probe on the runtime PATH, noting whether the command's files changed meanwhile. */
-async function probeOnRuntimePath(
-  command: string,
-  cwd: string,
-  probe: (env: NodeJS.ProcessEnv) => Promise<ProviderModelCatalog>,
-): Promise<ProbedModels> {
-  const path = runtimeLaunchPath();
-  const before = await launchCandidatesFingerprint(command, path, cwd);
-  const catalog = await probe({ ...process.env, PATH: path });
-  const after = await launchCandidatesFingerprint(command, path, cwd);
-  return { catalog, path, ...(before === after ? { source: before } : {}) };
-}
-
-/** Grok's probe runs uncached, in the service's cwd. */
-function grokProbedModels(command: string): Promise<ProbedModels> {
-  return probeOnRuntimePath(command, process.cwd(), (env) => grokProviderModels(command, env));
+function runtimeProbeEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: runtimeLaunchPath() };
 }
 
 const ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS = 15_000;
 const ANTIGRAVITY_MODEL_CATALOG_TTL_MS = 15 * 60_000;
 const antigravityCatalogCache = new Map<
   string,
-  { at: number; fingerprint: string; value: Promise<ProbedModels> }
+  { at: number; fingerprint: string; value: Promise<ProviderModelCatalog> }
 >();
 
 function antigravityProbeCwd(): string {
   return join(resolveAnimaHome(), 'cache', 'antigravity-model-probe');
 }
 
-async function antigravityProviderModels(command: string): Promise<ProviderModelCatalog> {
-  return (await antigravityProbedModels(command)).catalog;
-}
-
 /**
  * Antigravity reports its models only on a session, and every session/new
  * leaves a conversation in Antigravity's history. Cache the catalog per command
- * for as long as the files it could start stay the same, so relinking or
- * reinstalling `agy` probes again; probe from one fixed directory. Failures and
- * probes that saw the files change are not kept.
+ * for as long as the files it could start stay as they were when the probe
+ * began, so relinking or reinstalling `agy` probes again; probe from one fixed
+ * directory. Failures are not kept.
  */
-async function antigravityProbedModels(command: string): Promise<ProbedModels> {
-  const fingerprint = await launchCandidatesFingerprint(command, runtimeLaunchPath(), antigravityProbeCwd());
+async function antigravityProviderModels(command: string): Promise<ProviderModelCatalog> {
+  const env = runtimeProbeEnv();
+  const fingerprint = await launchCandidatesFingerprint(command, env.PATH ?? '', antigravityProbeCwd());
   const cached = antigravityCatalogCache.get(command);
   if (cached && cached.fingerprint === fingerprint && Date.now() - cached.at < ANTIGRAVITY_MODEL_CATALOG_TTL_MS) {
     return cached.value;
   }
-  const value = probeOnRuntimePath(command, antigravityProbeCwd(), (env) => antigravityAcpModelCatalog(command, { env }));
+  const value = antigravityAcpModelCatalog(command, { env });
   antigravityCatalogCache.set(command, { at: Date.now(), fingerprint, value });
-  const forget = () => {
+  value.catch(() => {
     if (antigravityCatalogCache.get(command)?.value === value) antigravityCatalogCache.delete(command);
-  };
-  value.then((probed) => probed.source === undefined && forget(), forget);
+  });
   return value;
 }
 

@@ -6,7 +6,6 @@ import { join } from 'node:path';
 
 import {
   docsUrl,
-  liveReasoningMenus,
   parseGrokAcpModelState,
   parseGrokModelsOutput,
   parsePiModelCatalog,
@@ -114,16 +113,16 @@ test('provider availability disables Grok auto-update during its presence probe'
  * one of `names` (the basename of the path it was started as); otherwise it exits 1.
  * As `grok` it answers ACP initialize with one model whose effort menu is `high`.
  * As `agy`, `acp` serves a catalog session: gemini-4-neon (low/high) and
- * gemini-4-carbon (high).
+ * gemini-4-carbon (`carbon`, default high).
  */
-function fakeShim(names: string[]): string {
+function fakeShim(names: string[], carbon = ['high']): string {
   const grokState = {
     availableModels: [
       { _meta: { reasoningEfforts: [{ value: 'high' }], supportsReasoningEffort: true }, modelId: 'grok-4.6' },
     ],
     currentModelId: 'grok-4.6',
   };
-  const levels = { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] };
+  const levels = { 'gemini-4-carbon': carbon, 'gemini-4-neon': ['low', 'high'] };
   return [
     `#!${process.execPath}`,
     "const path = require('path');",
@@ -158,8 +157,9 @@ function fakeShim(names: string[]): string {
 
 // The probes run the catalog command by name on the runtime PATH, the way agents do,
 // so a shim that dispatches on its name works, and so does exec falling through a
-// PATH entry whose script cannot start.
-test('live catalog probes run the command by name, so shims and PATH fallbacks work', async () => {
+// PATH entry whose script cannot start. The agy catalog is cached until a file the
+// command could start changes.
+test('live catalog probes run the command by name, and agy probes again after a relink', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-probe-by-name-'));
   const previousPath = process.env.PATH;
   try {
@@ -178,25 +178,25 @@ test('live catalog probes run the command by name, so shims and PATH fallbacks w
     process.env.PATH = `${broken}:${shims}`;
 
     await withAnimaHome(join(dir, 'home'), async () => {
-      const grok = await liveReasoningMenus('grok-cli');
-      assert.deepEqual(grok && { command: grok.command, menus: grok.modelReasoningEfforts }, {
-        command: 'grok',
-        menus: { 'grok-4.6': ['high'] },
+      const available = async (kind: string) => {
+        const { providers } = await new SystemService({
+          commandPresent: async (command) => command === 'agy' || command === 'grok',
+        }).providerAvailability();
+        const entry = providers.find((provider) => provider.kind === kind);
+        return { menus: entry?.modelReasoningEfforts, models: entry?.models };
+      };
+      assert.deepEqual(await available('grok-cli'), { menus: { 'grok-4.6': ['high'] }, models: ['grok-4.6'] });
+      assert.deepEqual(await available('antigravity-cli'), {
+        menus: { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] },
+        models: ['gemini-4-neon', 'gemini-4-carbon'],
       });
-      const agy = await liveReasoningMenus('antigravity-cli');
-      assert.deepEqual(agy?.modelReasoningEfforts, { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] });
 
-      const { providers } = await new SystemService({
-        commandPresent: async (command) => command === 'agy',
-      }).providerAvailability();
-      const availability = providers.find((provider) => provider.kind === 'antigravity-cli');
-      assert.deepEqual(
-        { models: availability?.models, menus: availability?.modelReasoningEfforts },
-        {
-          menus: { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] },
-          models: ['gemini-4-neon', 'gemini-4-carbon'],
-        },
-      );
+      const upgraded = join(dir, 'tool-manager-2');
+      await writeFile(upgraded, fakeShim(['agy'], ['high', 'xhigh']), 'utf8');
+      await chmod(upgraded, 0o755);
+      await rm(join(shims, 'agy'));
+      await symlink(upgraded, join(shims, 'agy'));
+      assert.deepEqual((await available('antigravity-cli')).menus?.['gemini-4-carbon'], ['high', 'xhigh']);
     });
   } finally {
     if (previousPath === undefined) delete process.env.PATH;

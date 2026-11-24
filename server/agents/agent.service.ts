@@ -36,46 +36,8 @@ import {
   type ArchivedProviderSession,
   type Session,
 } from '../storage/schema/session.store.js';
-import { liveReasoningMenus, type LiveReasoningMenus } from '../services/system.service.js';
-import { cwdIndependentPath, launchCandidatesFingerprint, runtimeLaunchPath } from '../runtime/launch-path.js';
-import { defaultServerSettingsService } from '../settings/settings.service.js';
-import { providerHasLiveReasoningEfforts } from '../../shared/provider-catalog.js';
-import { agentProviderRuntimeArgs, agentProviderRuntimeCommand } from '../../shared/provider-runtime-commands.js';
-import { ProviderUsageKind } from '../../shared/provider-usage.js';
 
 export { AgentConfigError } from './agent-config-ops.js';
-
-/**
- * Whether an agent with this provider config runs what the live menus were read
- * from: the catalog command by name (no agent or machine-wide command in its
- * place), no runtime args, no provider env but a PATH that leaves the runtime PATH
- * as the probe had it, a PATH that finds the command the same way from any cwd
- * (the agent starts in its home, the probe elsewhere), and the files the command
- * could start unchanged since the probe. Any other launch may run another program,
- * so its saves use the write vocabulary, and its live session gates the level at
- * run time.
- */
-async function runsProbedCommand(agent: AgentConfig, menus: LiveReasoningMenus): Promise<boolean> {
-  try {
-    const { provider } = agent;
-    const kind = ProviderUsageKind.safeParse(provider.kind);
-    if (!kind.success) return false;
-    const env = provider.env ?? {};
-    if (Object.keys(env).some((key) => key !== 'PATH')) return false;
-    const [commands, args] = await Promise.all([
-      defaultServerSettingsService.getProviderRuntimeCommands(),
-      defaultServerSettingsService.getProviderRuntimeArgs(),
-    ]);
-    const overrides = { kind: kind.data, runtimeArgs: provider.runtimeArgs, runtimeCommand: provider.runtimeCommand };
-    if (agentProviderRuntimeArgs(overrides, args).length > 0) return false;
-    const command = agentProviderRuntimeCommand(overrides, commands);
-    const path = runtimeLaunchPath(env);
-    if (command !== menus.command || path !== menus.path || !cwdIndependentPath(path)) return false;
-    return (await launchCandidatesFingerprint(command, path, '/')) === menus.source;
-  } catch {
-    return false;
-  }
-}
 
 export interface RotateSessionResult {
   agentId: string;
@@ -135,21 +97,16 @@ export class AgentService {
   async updateProvider(provider: AgentUpdateProviderRequest): Promise<AgentConfig> {
     const current = await this.getConfig();
     await validateAgentRuntimeCommand(provider.runtimeCommand);
-    const nextKind = provider.kind ?? current.provider.kind;
-    // Grok and Antigravity: when the live ACP catalog is reachable, write-time
-    // effort validation follows the per-model menu (same source as the Profile
-    // UI) for an agent that launches what the catalog probed. Probe failure,
-    // or any other launch, falls back to the write vocabulary so offline saves
-    // still work.
-    const menus = providerHasLiveReasoningEfforts(nextKind) ? await liveReasoningMenus(nextKind).catch(() => null) : null;
+    // Effort is checked against the provider's write vocabulary only. The live
+    // Grok and Antigravity menus describe the program the catalog probe ran, and
+    // nothing here can tell that this agent runs the same one: a version manager
+    // can pick another version per directory or switch versions without changing
+    // a file. The Profile UI offers the live menu, and the agent's live session
+    // gates the level at run time.
     let previousProvider = current.provider;
-    const next = await this.updateConfig(async (latest) => {
+    const next = await this.updateConfig((latest) => {
       previousProvider = latest.provider;
-      const updated = agentConfigWithProviderUpdate(latest, provider);
-      // Checked on the config being saved, and on the files as they are now: another
-      // update or a reinstall may have changed the launch since the probe.
-      if (!menus || !(await runsProbedCommand(updated, menus))) return updated;
-      return agentConfigWithProviderUpdate(latest, provider, { modelReasoningEfforts: menus.modelReasoningEfforts });
+      return agentConfigWithProviderUpdate(latest, provider);
     });
     const archiveNote = providerSessionArchiveNote(previousProvider, next.provider);
     if (archiveNote) {
@@ -203,12 +160,12 @@ export class AgentService {
   // `change` runs inside the lock: do network calls before, not inside it.
   // Returning `current` unchanged skips normalize and validate. The file can
   // still be rewritten if its JSON isn't already in normalized form.
-  async updateConfig(change: (current: AgentConfig) => AgentConfig | Promise<AgentConfig>): Promise<AgentConfig> {
+  async updateConfig(change: (current: AgentConfig) => AgentConfig): Promise<AgentConfig> {
     const path = this.store.path();
     if (!this.store.exists()) throw new AgentConfigError(404, `Agent not found in config: ${this.agentId}`);
     return this.store.update(async (current) => {
       assertAgentConfigId(this.agentId, current, path);
-      const changed = await change(current);
+      const changed = change(current);
       if (changed === current) return current;
       const next = normalizeAgentConfig(this.agentId, changed);
       await validateAgentConfig(next);

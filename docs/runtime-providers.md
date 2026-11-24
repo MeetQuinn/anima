@@ -528,18 +528,12 @@ Model and context authority:
 - Optional `reasoningEffort` is **model-scoped** in Grok Build (ACP
   `supportsReasoningEffort` / `reasoningEfforts` per catalog entry), and is knowable only from the
   live ACP catalog: never inferred from the model name. Launch argv never carries `--effort`.
-  Config writes: when the live ACP catalog is available for the selected model, that
-  per-model menu is authoritative; otherwise the write vocabulary
-  (`low` / `medium` / `high` / `xhigh`) is used so offline saves still work. The probe runs the
-  default command by name on the launch `PATH` an agent gets when it sets none, so shims and
-  `PATH` fallbacks behave as they do for a turn. The menu applies only to an agent whose launch
-  has the same inputs: the same command string (the agent's runtime command, else the
-  machine-wide Providers command, else the default), the same launch `PATH` with only absolute
-  entries, no runtime args, and no provider env besides `PATH`. Anima also records every
-  candidate file that `PATH` lookup could reach for that command, before and after the probe;
-  the menu counts only if nothing changed while it ran, and only if nothing has changed since
-  when the config is saved. Any other launch gets the write vocabulary. The check runs on the
-  config being saved, so a concurrent save that changes the launch is respected. After
+  The Profile UI offers the live per-model menu. Config writes accept the write vocabulary
+  (`low` / `medium` / `high` / `xhigh`), not the live menu: the catalog describes the program
+  the probe ran, and a version manager can run another version for an agent (per directory, or
+  after a switch that changes no file), so a save cannot tell which menu the agent's Grok
+  offers. The probe runs the default command by name on the launch `PATH` an agent gets when it
+  sets none, so shims and `PATH` fallbacks behave as they do for a turn. After
   session init (new or loaded) and before the first prompt, the runtime sends at most one same-model
   `session/set_model` with `_meta.reasoningEffort`, and only when the exact live current model
   advertises that effort. Unknown current model, missing capability for that exact model, or an
@@ -791,10 +785,10 @@ Current process model:
   for the session's current model. So the probe switches its own session to each other model
   with `session/set_config_option` and reads the levels that come back; the account's default
   model stays as it was. A model with no levels gets an empty menu. A model whose switch fails,
-  or that the switches do not reach within two thirds of the probe timeout, falls back to the
-  provider vocabulary at write time and is gated by the live session at run time. Once the session has
-  reported its models, an `agy` that exits or a probe that times out keeps the models and menus
-  read so far. As for Grok, the menus gate effort saves only for agents whose launch matches the probe's.
+  or that the switches do not reach within two thirds of the probe timeout, gets no live menu.
+  Once the session has reported its models, an `agy` that exits or a probe that times out keeps
+  the models and menus read so far. As for Grok, the menus are for the Profile UI: saves accept
+  the provider vocabulary, and the live session gates the level at run time.
 - Each item uses `session/prompt`, with the shared ACP mid-turn follow-up policy and
   `session/cancel` on operator cancellation, as for OpenCode.
 - ACP thinking, assistant text, usage, tool calls (named from the ACP tool `kind`: `Shell`,

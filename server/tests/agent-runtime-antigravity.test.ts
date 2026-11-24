@@ -27,7 +27,8 @@ import { providerFailureReasonFromError } from '../providers/provider-failure.js
 import { classifyProviderRetry, providerRateLimitResumeAt } from '../providers/provider-retry.js';
 import { isProviderRateLimitedError, runProviderWithCrashRetries } from '../runtime/provider-runner.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
-import { antigravityAcpModelCatalog, parseAntigravityConfigOptions } from '../services/system.service.js';
+import { antigravityAcpModelCatalog, defaultSystemService, parseAntigravityConfigOptions } from '../services/system.service.js';
+import { AgentService } from '../agents/agent.service.js';
 import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import {
@@ -1809,6 +1810,80 @@ test('antigravity-cli keeps the current model, skips an unavailable thinking lev
           && activity.payload?.['reasoningEffort'] === 'max'));
     });
   } finally {
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli saves a thinking level the probed menu lacks, and the next turn applies it', async () => {
+  // A version manager's shim runs another agy where a directory pins one (mise with a
+  // mise.toml in the agent home), with no file changing. The probe runs outside the pin,
+  // so its menu does not describe the agent's agy: saves keep the write vocabulary.
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-pinned-'));
+  const previousEnv = Object.fromEntries(['PATH', 'AGY_CONFIG_OPTIONS', 'AGY_SCENARIO', 'CALLS_PATH'].map((key) => [key, process.env[key]]));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'calls.jsonl');
+      const shims = join(stateDir, 'shims');
+      await mkdir(shims);
+      const probed = join(stateDir, 'agy-global');
+      const pinned = join(stateDir, 'agy-pinned');
+      await writeFile(probed, catalogProbeAgy(join(stateDir, 'probe.log')).replace('#!/usr/bin/env node', `#!${process.execPath}`), 'utf8');
+      await writeFile(pinned, [`#!${process.execPath}`, ...FAKE_AGY].join('\n'), 'utf8');
+      await writeFile(join(shims, 'agy'), [
+        '#!/bin/sh',
+        'if [ "$1" = --version ]; then echo agy 1.5.3; exit 0; fi',
+        `if [ -f .agy-pin ]; then exec ${shellQuote(pinned)} "$@"; fi`,
+        `exec ${shellQuote(probed)} "$@"`,
+        '',
+      ].join('\n'), 'utf8');
+      for (const file of [probed, pinned, join(shims, 'agy')]) await chmod(file, 0o755);
+      await writeFile(join(stateDir, '.agy-pin'), '', 'utf8');
+      const pinnedOptions = [
+        { category: 'model', currentValue: 'gemini-4-carbon', id: 'model', options: [{ value: 'gemini-4-carbon' }], type: 'select' },
+        { category: 'thought_level', currentValue: 'high', id: 'thought_level', options: [{ value: 'high' }, { value: 'xhigh' }], type: 'select' },
+      ];
+      Object.assign(process.env, {
+        AGY_CONFIG_OPTIONS: JSON.stringify(pinnedOptions),
+        AGY_SCENARIO: JSON.stringify({ agents: 'none' }),
+        CALLS_PATH: callsPath,
+        PATH: `${shims}:/usr/bin:/bin`,
+      });
+
+      const availability = (await defaultSystemService.providerAvailability()).providers.find((entry) => entry.kind === 'antigravity-cli');
+      assert.deepEqual(availability?.modelReasoningEfforts?.['gemini-4-carbon'], ['low', 'medium', 'high']);
+
+      await ensureTestAgentConfig({ agentId: 'anima', stateDir });
+      const configPath = join(stateDir, 'agents', 'anima', 'config.json');
+      await writeFile(configPath, JSON.stringify({
+        enabled: true,
+        homePath: stateDir,
+        id: 'anima',
+        profile: { displayName: 'Anima', role: 'test' },
+        provider: { kind: 'antigravity-cli', model: 'gemini-4-carbon' },
+      }), 'utf8');
+      const saved = async () => (JSON.parse(await readFile(configPath, 'utf8')) as AgentConfig).provider;
+      const service = new AgentService('anima');
+      await service.updateProvider({ reasoningEffort: 'xhigh' });
+      assert.equal((await saved()).reasoningEffort, 'xhigh');
+      await service.updateProvider({ model: 'gemini-4-carbon' });
+      assert.equal((await saved()).reasoningEffort, 'xhigh');
+
+      const ctx = await ingestAgyEvent(stateDir, 'Think it through.', '1786000011.000001');
+      runtime = createAgentRuntime(await saved());
+      assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'reply 1');
+      const calls = await readJsonLines(callsPath);
+      assert.deepEqual(
+        calls.filter((call) => call.method === 'session/set_config_option').map((call) => call.params),
+        [{ configId: 'thought_level', sessionId: 'agy-session-new', value: 'xhigh' }],
+      );
+    });
+  } finally {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await runtime?.close?.();
     await rm(stateDir, { force: true, recursive: true });
   }

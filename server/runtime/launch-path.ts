@@ -17,8 +17,8 @@ export function runtimeLaunchPath(env?: Record<string, string>): string {
  * in order, the real path, inode, size and change time of `<entry>/<command>`, or a
  * gap. Relinking or reinstalling any candidate changes it. It does not say which
  * candidate a child runs (exec falls through a candidate whose interpreter is gone,
- * and a shim dispatches on the name it was called by); it only tells whether the
- * files a launch could reach are still the ones they were.
+ * and a shim can pick a version per directory); it only tells whether the files a
+ * launch could reach are still the ones they were.
  */
 export async function launchCandidatesFingerprint(command: string, path: string, cwd: string): Promise<string> {
   const files = command.includes('/')
@@ -36,9 +36,4 @@ export async function launchCandidatesFingerprint(command: string, path: string,
     }),
   );
   return parts.join('\n');
-}
-
-/** A PATH whose lookup does not depend on the cwd: no empty or relative entries. */
-export function cwdIndependentPath(path: string): boolean {
-  return path.split(delimiter).every((entry) => isAbsolute(entry));
 }
