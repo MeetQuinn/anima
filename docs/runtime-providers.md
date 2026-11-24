@@ -533,8 +533,8 @@ Model and context authority:
   (`low` / `medium` / `high` / `xhigh`) is used so offline saves still work. The catalog comes
   from the default command on the service `PATH`, so the menu applies only to an agent that
   launches that same executable: found as the runtime finds it (the agent's runtime command,
-  else the machine-wide Providers command, else the default, on the agent's launch `PATH`), with
-  no runtime args and no provider env besides `PATH`. Any other launch gets the write vocabulary.
+  else the machine-wide Providers command, else the default, on the agent's launch `PATH`, from
+  the agent home), with no runtime args and no provider env besides `PATH`. Any other launch gets the write vocabulary.
   The check runs on the config being saved, so a concurrent save that changes the launch is
   respected. After
   session init (new or loaded) and before the first prompt, the runtime sends at most one same-model
@@ -783,7 +783,8 @@ Current process model:
 - The model menu is live. The dashboard availability probe starts `agy acp`, opens one session in
   a fixed directory under the Anima home, reads the `model` and `thought_level` options, and
   closes it. Every probe session is a conversation in Antigravity's history, so the catalog is
-  cached for 15 minutes per command. Thinking levels are model-scoped: `agy` reports them only
+  cached for 15 minutes per executable the command launches; a command that now launches another
+  executable is probed again. Thinking levels are model-scoped: `agy` reports them only
   for the session's current model. So the probe switches its own session to each other model
   with `session/set_config_option` and reads the levels that come back; the account's default
   model stays as it was. A model with no levels gets an empty menu. A model whose switch fails,

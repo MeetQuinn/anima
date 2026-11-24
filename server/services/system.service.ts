@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { resolveAnimaHome } from '../anima-home.js';
 import { ignoreChildStdinErrors } from '../providers/child-process.js';
 import { antigravityCommandProblem } from '../providers/antigravity.js';
+import { launchExecutable } from '../runtime/launch-path.js';
 import { raceWithTimeout } from '../race-timeout.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from './env.js';
@@ -15,6 +16,8 @@ import { readLastServicesRestart, servicesRestartLogPath, servicesRestartResultP
 import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-info.js';
 import {
   PROVIDER_CATALOG,
+  providerCatalogEntry,
+  providerHasLiveReasoningEfforts,
   type ProviderAvailability,
   type ProviderKind,
 } from '../../shared/provider-catalog.js';
@@ -236,24 +239,68 @@ async function liveProviderModels(command: string, kind: ProviderKind): Promise<
   return grokProviderModels(command);
 }
 
+/**
+ * Live effort menus for a provider whose menus are live (Grok, Antigravity),
+ * with the real path of the executable that reported them: the catalog command
+ * as the probe launches it. Null when that executable cannot be found or the
+ * catalog has no menus.
+ */
+export async function liveReasoningMenus(
+  kind: string,
+): Promise<{ executable: string; modelReasoningEfforts: Record<string, string[]> } | null> {
+  const entry = providerCatalogEntry(kind);
+  if (!entry || !providerHasLiveReasoningEfforts(kind)) return null;
+  const probed =
+    entry.kind === 'antigravity-cli'
+      ? await antigravityProbedModels(entry.command)
+      : await grokProbedModels(entry.command);
+  if (!probed?.catalog.modelReasoningEfforts) return null;
+  return { executable: probed.executable, modelReasoningEfforts: probed.catalog.modelReasoningEfforts };
+}
+
+/** Grok's probe runs uncached, in the service's cwd. */
+async function grokProbedModels(
+  command: string,
+): Promise<{ catalog: ProviderModelCatalog; executable: string } | undefined> {
+  const executable = await launchExecutable(command, process.env.PATH ?? '', process.cwd());
+  return executable ? { catalog: await grokProviderModels(command), executable } : undefined;
+}
+
 const ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS = 15_000;
 const ANTIGRAVITY_MODEL_CATALOG_TTL_MS = 15 * 60_000;
 const antigravityCatalogCache = new Map<string, { at: number; value: Promise<ProviderModelCatalog> }>();
 
+function antigravityProbeCwd(): string {
+  return join(resolveAnimaHome(), 'cache', 'antigravity-model-probe');
+}
+
+async function antigravityProviderModels(command: string): Promise<ProviderModelCatalog> {
+  const probed = await antigravityProbedModels(command);
+  return probed ? probed.catalog : antigravityAcpModelCatalog(command);
+}
+
 /**
  * Antigravity reports its models only on a session, and every session/new
- * leaves a conversation in Antigravity's history. Cache the catalog per command
- * (failures are not cached) and probe from one fixed directory.
+ * leaves a conversation in Antigravity's history. Cache the catalog per
+ * executable the command launches (failures are not cached), so a command that
+ * now points at another executable is probed again, and probe from one fixed
+ * directory. Undefined when the command launches nothing.
  */
-function antigravityProviderModels(command: string): Promise<ProviderModelCatalog> {
-  const cached = antigravityCatalogCache.get(command);
-  if (cached && Date.now() - cached.at < ANTIGRAVITY_MODEL_CATALOG_TTL_MS) return cached.value;
+async function antigravityProbedModels(
+  command: string,
+): Promise<{ catalog: ProviderModelCatalog; executable: string } | undefined> {
+  const executable = await launchExecutable(command, process.env.PATH ?? '', antigravityProbeCwd());
+  if (!executable) return undefined;
+  const cached = antigravityCatalogCache.get(executable);
+  if (cached && Date.now() - cached.at < ANTIGRAVITY_MODEL_CATALOG_TTL_MS) {
+    return { catalog: await cached.value, executable };
+  }
   const value = antigravityAcpModelCatalog(command);
-  antigravityCatalogCache.set(command, { at: Date.now(), value });
+  antigravityCatalogCache.set(executable, { at: Date.now(), value });
   value.catch(() => {
-    if (antigravityCatalogCache.get(command)?.value === value) antigravityCatalogCache.delete(command);
+    if (antigravityCatalogCache.get(executable)?.value === value) antigravityCatalogCache.delete(executable);
   });
-  return value;
+  return { catalog: await value, executable };
 }
 
 function antigravityConfigSelect(configOptions: unknown, category: string): Record<string, unknown> | undefined {
@@ -349,7 +396,7 @@ export async function antigravityAcpModelCatalog(
   // Same refusal as the runtime: the app's editor launcher would open a window.
   const problem = antigravityCommandProblem(command, process.env);
   if (problem) throw new Error(problem);
-  const cwd = join(resolveAnimaHome(), 'cache', 'antigravity-model-probe');
+  const cwd = antigravityProbeCwd();
   await mkdir(cwd, { recursive: true });
   const timeoutMs = options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS;
   return new Promise((resolvePromise, reject) => {

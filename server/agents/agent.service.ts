@@ -16,6 +16,7 @@ import {
   ensureCreateAgentHome,
   ensureExistingAgentHome,
   normalizeAgentConfig,
+  resolveAgentHomePath,
   validateAgentConfig,
 } from './agent-config-ops.js';
 import { scanAgentSkills } from './agent-skills.js';
@@ -36,50 +37,26 @@ import {
   type ArchivedProviderSession,
   type Session,
 } from '../storage/schema/session.store.js';
-import { defaultSystemService } from '../services/system.service.js';
-import { runtimeLaunchPath } from '../runtime/launch-path.js';
+import { liveReasoningMenus } from '../services/system.service.js';
+import { launchExecutable, runtimeLaunchPath } from '../runtime/launch-path.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
-import { providerCatalogEntry, providerHasLiveReasoningEfforts } from '../../shared/provider-catalog.js';
+import { providerHasLiveReasoningEfforts } from '../../shared/provider-catalog.js';
 import { agentProviderRuntimeArgs, agentProviderRuntimeCommand } from '../../shared/provider-runtime-commands.js';
 import { ProviderUsageKind } from '../../shared/provider-usage.js';
 
 export { AgentConfigError } from './agent-config-ops.js';
 
-interface LiveReasoningMenus {
-  /** Real path of the executable the live catalog probe ran. */
-  executable: string;
-  modelReasoningEfforts: Record<string, string[]>;
-}
-
 /**
- * Best-effort live ACP effort menus (Grok, Antigravity) for write-time
- * validation, with the executable they were read from: the probe runs the
- * catalog command on the service PATH.
- */
-async function loadLiveReasoningMenus(kind: string): Promise<LiveReasoningMenus | null> {
-  try {
-    const command = providerCatalogEntry(kind)?.command;
-    const probed = command ? await resolveProviderExecutable(command, process.env) : undefined;
-    if (!probed) return null;
-    const { providers } = await defaultSystemService.providerAvailability();
-    const entry = providers.find((provider) => provider.kind === kind);
-    if (!entry?.modelReasoningEfforts) return null;
-    return { executable: probed.realPath, modelReasoningEfforts: entry.modelReasoningEfforts };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Whether an agent with this provider config launches what the live catalog
- * probed: the same executable file, found as the runtime finds it (the agent's
- * runtime command, else the machine-wide Providers command, else the catalog
- * command, on the runtime PATH), with no runtime args and no provider env but
- * PATH. Any other launch can report other menus, so its saves use the write
+ * Whether an agent with this provider config launches the executable the live
+ * menus came from: the runtime's own lookup (the agent's runtime command, else
+ * the machine-wide Providers command, else the catalog command, on the runtime
+ * PATH, from the agent home), with no runtime args and no provider env but PATH.
+ * Any other launch can report other menus, so its saves use the write
  * vocabulary, and its live session gates the level at run time.
  */
-async function launchesProbedExecutable(provider: AgentConfig['provider'], probed: string): Promise<boolean> {
+async function launchesProbedExecutable(agent: AgentConfig, probed: string): Promise<boolean> {
   try {
+    const { provider } = agent;
     const kind = ProviderUsageKind.safeParse(provider.kind);
     if (!kind.success) return false;
     const env = provider.env ?? {};
@@ -90,10 +67,12 @@ async function launchesProbedExecutable(provider: AgentConfig['provider'], probe
     ]);
     const overrides = { kind: kind.data, runtimeArgs: provider.runtimeArgs, runtimeCommand: provider.runtimeCommand };
     if (agentProviderRuntimeArgs(overrides, args).length > 0) return false;
-    const launched = await resolveProviderExecutable(agentProviderRuntimeCommand(overrides, commands), {
-      PATH: runtimeLaunchPath(env),
-    });
-    return launched?.realPath === probed;
+    const launched = await launchExecutable(
+      agentProviderRuntimeCommand(overrides, commands),
+      runtimeLaunchPath(env),
+      resolveAgentHomePath(agent),
+    );
+    return launched === probed;
   } catch {
     return false;
   }
@@ -163,13 +142,13 @@ export class AgentService {
     // UI) for an agent that launches what the catalog probed. Probe failure,
     // or any other launch, falls back to the write vocabulary so offline saves
     // still work.
-    const menus = providerHasLiveReasoningEfforts(nextKind) ? await loadLiveReasoningMenus(nextKind) : null;
+    const menus = providerHasLiveReasoningEfforts(nextKind) ? await liveReasoningMenus(nextKind).catch(() => null) : null;
     let previousProvider = current.provider;
     const next = await this.updateConfig(async (latest) => {
       previousProvider = latest.provider;
       const updated = agentConfigWithProviderUpdate(latest, provider);
       // Checked on the config being saved: another update may have changed the launch during the probe.
-      if (!menus || !(await launchesProbedExecutable(updated.provider, menus.executable))) return updated;
+      if (!menus || !(await launchesProbedExecutable(updated, menus.executable))) return updated;
       return agentConfigWithProviderUpdate(latest, provider, { modelReasoningEfforts: menus.modelReasoningEfforts });
     });
     const archiveNote = providerSessionArchiveNote(previousProvider, next.provider);

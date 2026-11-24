@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -799,16 +799,20 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
   const previousPath = process.env.PATH;
   try {
     const pathBin = join(configDir, 'path-bin');
-    const customBin = join(configDir, 'custom-bin');
+    const versions = join(configDir, 'versions');
     await mkdir(pathBin, { recursive: true });
-    await mkdir(customBin, { recursive: true });
-    const probed = join(pathBin, 'agy');
-    const custom = join(customBin, 'agy');
+    await mkdir(versions, { recursive: true });
+    // The `agy` on PATH is a link to one installed version; carbon has xhigh only in v2.
+    const v1 = join(versions, 'agy-v1');
+    const v2 = join(versions, 'agy-v2');
+    const custom = join(versions, 'agy-custom');
+    const linked = join(pathBin, 'agy');
     const gate = join(configDir, 'probe-gate');
-    await writeFile(probed, fakeCatalogAgy(['high'], gate), 'utf8');
+    await writeFile(v1, fakeCatalogAgy(['high'], gate), 'utf8');
+    await writeFile(v2, fakeCatalogAgy(['high', 'xhigh']), 'utf8');
     await writeFile(custom, fakeCatalogAgy(['high', 'xhigh']), 'utf8');
-    await chmod(probed, 0o755);
-    await chmod(custom, 0o755);
+    for (const file of [v1, v2, custom]) await chmod(file, 0o755);
+    await symlink(v1, linked);
     const agent = (
       id: string,
       launch: { env?: Record<string, string>; reasoningEffort?: string; runtimeArgs?: string[]; runtimeCommand?: string } = {},
@@ -821,13 +825,20 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
       agents: [
         agent('raced', { reasoningEffort: 'high' }),
         agent('custom', { runtimeCommand: custom }),
-        agent('pathed', { env: { PATH: customBin } }),
-        agent('absolute', { runtimeCommand: probed }),
+        agent('pathed', { env: { PATH: join(configDir, 'agents', 'relative', 'tools') } }),
+        // A relative PATH entry resolves from the agent home, where the child starts.
+        agent('relative', { env: { PATH: `tools:${pathBin}` } }),
+        agent('absolute', { runtimeCommand: linked }),
         agent('with-env', { env: { EXAMPLE_FLAG: '1' } }),
         agent('with-args', { runtimeArgs: ['--example'] }),
         agent('plain'),
+        agent('relinked'),
+        agent('pinned', { runtimeCommand: v2 }),
       ],
     });
+    await mkdir(join(configDir, 'agents', 'relative', 'tools'), { recursive: true });
+    await writeFile(join(configDir, 'agents', 'relative', 'tools', 'agy'), fakeCatalogAgy(['high', 'xhigh']), 'utf8');
+    await chmod(join(configDir, 'agents', 'relative', 'tools', 'agy'), 0o755);
     const stored = async (id: string) =>
       (await readRawAgentFile(configDir, id)).provider as
         | { env?: Record<string, string>; reasoningEffort?: string; runtimeCommand?: string }
@@ -836,9 +847,9 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
     process.env.PATH = pathBin;
 
     await withAnimaHome(configDir, async () => {
-      // An env-only save waits on the probe while another save gives the agent its own
-      // agy and xhigh. The menu is checked on the config being saved, so xhigh stays.
-      const envOnly = agentService('raced').updateProvider({ env: { EXAMPLE_FLAG: '1' } });
+      // A save that waits on the probe while another save gives the agent its own agy
+      // and xhigh. The menu is checked on the config being saved, so xhigh stays.
+      const resave = agentService('raced').updateProvider({ model: 'gemini-4-carbon' });
       for (let waited = 0; !existsSync(`${gate}.waiting`); waited += 20) {
         assert.ok(waited < 30_000, 'the probe reached the gemini-4-carbon switch');
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
@@ -848,15 +859,15 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
         provider: { ...latest.provider, reasoningEffort: 'xhigh', runtimeCommand: custom } as AgentConfig['provider'],
       }));
       await writeFile(gate, '', 'utf8');
-      await envOnly;
+      await resave;
       const raced = await stored('raced');
       assert.deepEqual(
-        { env: raced?.env, reasoningEffort: raced?.reasoningEffort, runtimeCommand: raced?.runtimeCommand },
-        { env: { EXAMPLE_FLAG: '1' }, reasoningEffort: 'xhigh', runtimeCommand: custom },
+        { reasoningEffort: raced?.reasoningEffort, runtimeCommand: raced?.runtimeCommand },
+        { reasoningEffort: 'xhigh', runtimeCommand: custom },
       );
 
       // Agents that launch another agy keep xhigh, explicitly saved or not.
-      for (const id of ['custom', 'pathed']) {
+      for (const id of ['custom', 'pathed', 'relative']) {
         await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
         assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
         await agentService(id).updateProvider({ reasoningEffort: 'xhigh' });
@@ -884,6 +895,18 @@ test('antigravity-cli live effort menus gate saves only for agents that launch t
       await defaultServerSettingsService.setProviderRuntimeSettings('antigravity-cli', custom);
       await agentService('plain').updateProvider({ reasoningEffort: 'xhigh' });
       assert.equal((await stored('plain'))?.reasoningEffort, 'xhigh');
+      await defaultServerSettingsService.setProviderRuntimeSettings('antigravity-cli', null);
+
+      // Relinking `agy` to v2 within the catalog's cache time: the menus are v1's, so
+      // they are not v2's. v2 is probed itself, and its carbon has xhigh.
+      await rm(linked);
+      await symlink(v2, linked);
+      for (const id of ['relinked', 'pinned']) {
+        await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
+        assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
+        await agentService(id).updateProvider({ reasoningEffort: 'xhigh' });
+        assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
+      }
     });
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
