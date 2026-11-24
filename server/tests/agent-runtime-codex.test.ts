@@ -1310,22 +1310,32 @@ test('codex-cli app-server transport fails when process exits before turn comple
   }
 });
 
-test('codex-cli: a model switch that clears the effort leaves it out of the next thread/start; other saves keep it', async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), 'anima-codex-effort-clear-'));
-  let runtime: AgentRuntime | undefined;
+// What the dashboard's Runtime modal sends reaches disk and the next turn's thread
+// params as is: thread/start for the first turn, thread/resume (same params) after.
+// The fake app-server refuses a level outside each model's live menu, as Codex
+// does: Astra offers High only, Terra offers none.
+test('codex-cli: the Runtime modal payloads reach disk and the next thread params; other saves keep the level', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-codex-effort-save-'));
   try {
     await withAnimaHome(stateDir, async () => {
       const callsPath = join(stateDir, 'thread-start.jsonl');
       const fakeCodex = join(stateDir, 'codex');
+      const liveMenus = { 'gpt-6.1-terra': [], 'gpt-6.2-astra': ['high'], 'gpt-6.2-sol': ['high', 'xhigh'] };
       await writeFile(fakeCodex, [
         `#!${process.execPath}`,
         "const { appendFileSync } = require('node:fs');",
+        `const menus = ${JSON.stringify(liveMenus)};`,
         "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
         "require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {",
         '  const msg = JSON.parse(line);',
         "  if (msg.method === 'initialize') send({ id: msg.id, result: { userAgent: 'fake-codex/0.170.0' } });",
-        "  if (msg.method === 'thread/start') {",
-        "    appendFileSync(process.env.CALLS_PATH, JSON.stringify(msg.params) + '\\n');",
+        "  if (msg.method === 'thread/start' || msg.method === 'thread/resume') {",
+        "    appendFileSync(process.env.CALLS_PATH, JSON.stringify({ method: msg.method, ...msg.params }) + '\\n');",
+        '    const effort = msg.params.config.model_reasoning_effort;',
+        '    if (effort !== undefined && !(menus[msg.params.model] || []).includes(effort)) {',
+        "      send({ id: msg.id, error: { code: -32600, message: 'unsupported reasoning effort ' + effort } });",
+        '      return;',
+        '    }',
         "    send({ id: msg.id, result: { thread: { id: 'effort-thread' } } });",
         '  }',
         "  if (msg.method !== 'turn/start') return;",
@@ -1344,37 +1354,64 @@ test('codex-cli: a model switch that clears the effort leaves it out of the next
         homePath: stateDir,
         id: 'anima',
         profile: { displayName: 'Anima', role: 'test' },
-        provider: { kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'xhigh' },
+        provider: { kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: 'xhigh' },
       }), 'utf8');
       const saved = async () => (JSON.parse(await readFile(configPath, 'utf8')) as AgentConfig).provider;
       const service = new AgentService('anima');
-
-      // Saves that leave the effort out keep it: a model re-save, an unrelated setting.
-      await service.updateProvider({ model: 'gpt-6.2-astra' });
-      await service.updateProvider({ fastMode: true });
-      assert.equal((await saved()).reasoningEffort, 'xhigh');
-
-      // The dashboard sends null when the new model offers no effort menu.
-      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.1-terra', reasoningEffort: null });
-      const provider = await saved();
-      assert.equal('reasoningEffort' in provider, false);
-      assert.equal(provider.model, 'gpt-6.1-terra');
-
-      runtime = createAgentRuntime(
-        { ...provider, env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, CODEX_HOME: join(stateDir, 'codex-home') }) },
-        { command: fakeCodex },
-      );
       const ctx = await ingestEvent(makeSlackEvent({
         channelId: 'D-effort', teamId: 'T-effort', text: 'which effort?', userId: 'U-effort',
       }), { agentId: 'anima', stateDir });
-      assert.equal((await runtime.run(await runtimeInput(runtime, ctx))).text, 'done');
-      const starts = (await readFile(callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
-      assert.equal(starts.length, 1);
-      assert.equal(starts[0]!['model'], 'gpt-6.1-terra');
-      assert.equal('model_reasoning_effort' in (starts[0]!['config'] as Record<string, unknown>), false);
+      // One turn on the saved config; returns the thread call it made and the reply.
+      const startOnce = async () => {
+        const runtime = createAgentRuntime(
+          { ...(await saved()), env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, CODEX_HOME: join(stateDir, 'codex-home') }) },
+          { command: fakeCodex },
+        );
+        await writeFile(callsPath, '', 'utf8');
+        try {
+          const text = await runtime.run(await runtimeInput(runtime, ctx)).then(
+            (result) => result.text ?? '',
+            (error: Error) => `failed: ${error.message}`,
+          );
+          const calls = (await readFile(callsPath, 'utf8')).trim().split('\n')
+            .map((line) => JSON.parse(line) as { config: Record<string, unknown>; method: string; model: string });
+          assert.equal(calls.length, 1);
+          return { config: calls[0]!.config, method: calls[0]!.method, model: calls[0]!.model, text };
+        } finally {
+          await runtime.close?.();
+        }
+      };
+
+      // Saves that leave the effort out keep it: a model re-save, an unrelated setting.
+      await service.updateProvider({ model: 'gpt-6.2-sol' });
+      await service.updateProvider({ fastMode: true });
+      assert.equal((await saved()).reasoningEffort, 'xhigh');
+      assert.deepEqual(
+        await startOnce(),
+        { config: { model_reasoning_effort: 'xhigh', model_reasoning_summary: 'auto' }, method: 'thread/start', model: 'gpt-6.2-sol', text: 'done' },
+      );
+
+      // Astra's live menu is High only: the modal sends high (the stale xhigh is what Codex refuses).
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'high' });
+      assert.equal((await saved()).reasoningEffort, 'high');
+      assert.deepEqual(
+        await startOnce(),
+        { config: { model_reasoning_effort: 'high', model_reasoning_summary: 'auto' }, method: 'thread/resume', model: 'gpt-6.2-astra', text: 'done' },
+      );
+
+      // Terra has no menu: the modal sends null, the level is cleared, and thread/start omits it.
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.1-terra', reasoningEffort: null });
+      assert.equal('reasoningEffort' in (await saved()), false);
+      assert.deepEqual(
+        await startOnce(),
+        { config: { model_reasoning_summary: 'auto' }, method: 'thread/resume', model: 'gpt-6.1-terra', text: 'done' },
+      );
+
+      // Control: the fake refuses a level outside the model's live menu.
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'xhigh' });
+      assert.match((await startOnce()).text, /^failed: [\s\S]*unsupported reasoning effort xhigh/);
     });
   } finally {
-    await runtime?.close?.();
     await rm(stateDir, { recursive: true, force: true });
   }
 });

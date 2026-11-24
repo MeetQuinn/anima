@@ -21,6 +21,7 @@ import {
 } from './AgentFields';
 import {
   effortOptionsForSelectedModel,
+  preferredEffort,
   providerModelAuthorityLabel,
   providerReady,
   providerUnavailableHint,
@@ -181,6 +182,8 @@ function RuntimeModal({
   const [draftKind, setDraftKind] = useState(provider.kind as string);
   const [draftModel, setDraftModel] = useState(provider.model);
   const [draftEffort, setDraftEffort] = useState(currentEffort);
+  // Set when the operator picks a level from the menu; a model or kind change clears it.
+  const [effortPicked, setEffortPicked] = useState(false);
   const [draftCommand, setDraftCommand] = useState(provider.runtimeCommand ?? '');
   const [draftArgs, setDraftArgs] = useState((provider.runtimeArgs ?? []).join('\n'));
   const [draftFastMode, setDraftFastMode] = useState(currentFastMode);
@@ -194,10 +197,8 @@ function RuntimeModal({
   const [envRows, setEnvRows] = useState<EnvDraftRow[]>(() => draftRowsFor(provider.env));
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState<{
-    update: AgentUpdateProviderRequest;
-    sessionBoundaryChanged: boolean;
-  } | null>(null);
+  // The update itself is rebuilt on confirm: a live menu can arrive while it is open.
+  const [confirming, setConfirming] = useState<{ sessionBoundaryChanged: boolean } | null>(null);
 
   // Focus lifecycle: mounted IS open (rendered as `{open && …}`). No
   // `initialFocusRef` — the first control is an edit, not a safe answer, so
@@ -239,9 +240,17 @@ function RuntimeModal({
   const draftInstalled =
     !providerAvailability || !draftEntry || providerReady(draftEntry, providerAvailability);
 
-  const nextEffort = hasDraftEffort ? draftEffort : undefined;
-  const providerChanged =
-    kindChanged || draftModel !== provider.model || (nextEffort ?? '') !== currentEffort;
+  const modelChanged = kindChanged || draftModel !== provider.model;
+  // The live menu can arrive after a pick, so a new model's level, or one picked by
+  // hand, follows the model's latest menu, both shown and sent. An untouched level on
+  // the saved model stays as saved.
+  const selectedEffort = !hasDraftEffort
+    ? ''
+    : modelChanged || effortPicked
+      ? preferredEffort(draftEffortOptions, draftEffort)
+      : currentEffort;
+  const nextEffort = selectedEffort || undefined;
+  const providerChanged = modelChanged || selectedEffort !== currentEffort;
   const saveBlocked = providerChanged && !draftInstalled;
 
   function providerSelectable(option: ProviderCatalogEntry): boolean {
@@ -257,6 +266,7 @@ function RuntimeModal({
     setDraftKind(nextEntry.kind);
     setDraftModel(nextEntry.defaultModel);
     setDraftEffort(defaultEffortForModel(nextEntry, nextEntry.defaultModel, providerAvailability));
+    setEffortPicked(false);
     // A launch override written for the old provider's CLI does not transfer
     // (server drops it on kind change); the drafts mirror that. Fast mode is
     // provider-specific and is also dropped rather than transferred.
@@ -270,6 +280,7 @@ function RuntimeModal({
     if (!next || !draftEntry) return;
     setDraftModel(next);
     setDraftEffort(defaultEffortForModel(draftEntry, next, providerAvailability));
+    setEffortPicked(false);
     setError(undefined);
   }
 
@@ -297,7 +308,7 @@ function RuntimeModal({
       if (nextEffort) update.reasoningEffort = nextEffort;
       // The new model has no effort menu: clear the saved level rather than let a
       // hidden one ride along. Saves that keep the model leave it alone.
-      else if (kindChanged || draftModel !== provider.model) update.reasoningEffort = null;
+      else if (modelChanged) update.reasoningEffort = null;
     }
 
     const commandDraft = draftCommand.trim();
@@ -364,10 +375,22 @@ function RuntimeModal({
       return;
     }
     if (launchAffecting) {
-      setConfirming({ update, sessionBoundaryChanged: kindChanged });
+      setConfirming({ sessionBoundaryChanged: kindChanged });
     } else {
       void commit(update, true);
     }
+  }
+
+  // Sends what the drafts build now, under the menus as they are now.
+  function handleConfirm() {
+    if (busy) return;
+    const result = saveBlocked ? undefined : buildUpdate();
+    if (!result || 'error' in result) {
+      setConfirming(null);
+      if (result) setError(result.error);
+      return;
+    }
+    void commit(result.update, !result.launchAffecting);
   }
 
   // The modal speaks the same ledger language as the Setup section behind it:
@@ -458,9 +481,11 @@ function RuntimeModal({
                 </Select>
                 {hasDraftEffort && (
                   <Select
-                    value={draftEffort}
+                    value={selectedEffort}
                     onValueChange={(v) => {
-                      if (v) setDraftEffort(v);
+                      if (!v) return;
+                      setDraftEffort(v);
+                      setEffortPicked(true);
                     }}
                   >
                     <SelectTrigger
@@ -468,8 +493,8 @@ function RuntimeModal({
                       aria-label="Reasoning effort"
                       disabled={busy}
                     >
-                      {draftEffort ? (
-                        providerValueLabel(draftEffort)
+                      {selectedEffort ? (
+                        providerValueLabel(selectedEffort)
                       ) : (
                         <span className="text-text-subtle">Effort</span>
                       )}
@@ -721,7 +746,7 @@ function RuntimeModal({
             isActive={isActive}
             sessionBoundaryChanged={confirming.sessionBoundaryChanged}
             saving={busy}
-            onConfirm={() => void commit(confirming.update, false)}
+            onConfirm={handleConfirm}
             onCancel={() => setConfirming(null)}
           />
         )}

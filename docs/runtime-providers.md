@@ -256,8 +256,11 @@ Model menu:
   full Codex list for a model the catalog does not name). Saves are validated against the
   built-in catalog as before, so the menu never offers a level a save would reject.
 - When the dashboard switches an agent to a model with no effort menu, it sends
-  `reasoningEffort: null`, which clears the saved level, and the next thread starts without
-  `model_reasoning_effort`. A save that keeps the model leaves the saved level alone.
+  `reasoningEffort: null`, which clears the saved level, and the next thread starts (or resumes)
+  without `model_reasoning_effort`. A save that keeps the model leaves the saved level alone.
+- The live read can answer after the operator picks a model. A level for a newly picked model,
+  or one picked by hand, follows the model's latest menu in what the dashboard shows and sends;
+  the Runtime modal builds the update again when the restart confirm is accepted.
 
 Active-run follow-up:
 
