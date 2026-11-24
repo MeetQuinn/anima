@@ -14,6 +14,12 @@ import { raceWithTimeout } from '../race-timeout.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
 import { cleanServiceEnv } from './env.js';
 import { readLastServicesRestart, servicesRestartLogPath, servicesRestartResultPath } from './restart-result.js';
+import {
+  MODEL_LIST_PARSERS,
+  modelListCatalog,
+  type ModelListParserName,
+  type ProviderModelCatalog,
+} from './model-list-parsers.js';
 import type { ServerInfo, ServicesRestartResponse } from '../../shared/server-info.js';
 import {
   PROVIDER_CATALOG,
@@ -43,11 +49,7 @@ export interface SystemServiceOptions {
   startedAt?: string;
 }
 
-export interface ProviderModelCatalog {
-  defaultModel: string;
-  modelReasoningEfforts?: Record<string, string[]>;
-  models: string[];
-}
+export type { ProviderModelCatalog } from './model-list-parsers.js';
 
 export class SystemServiceError extends Error {}
 
@@ -521,6 +523,8 @@ export async function codexAppServerModelCatalog(
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, ['app-server', '--listen', 'stdio://'], {
       cwd,
+      // A group of its own, so the probe ends whatever `codex` started.
+      detached: true,
       env: runtimeProbeEnv(),
       // Nothing reads stderr, so it is not piped: a full pipe would stall the CLI.
       stdio: ['pipe', 'pipe', 'ignore'],
@@ -535,14 +539,7 @@ export async function codexAppServerModelCatalog(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (!exited) {
-        child.kill('SIGTERM');
-        const escalate = setTimeout(() => {
-          if (!exited) child.kill('SIGKILL');
-        }, options.killGraceMs ?? 2_000);
-        escalate.unref();
-        child.once('exit', () => clearTimeout(escalate));
-      }
+      endProcessGroup(child.pid, options.killGraceMs ?? 2_000);
       if (error) reject(error);
       else resolvePromise(value!);
     };
@@ -649,7 +646,8 @@ export function parseCodexModelList(pages: unknown[]): ProviderModelCatalog {
           const value = typeof item === 'string' ? item : isPlainRecord(item) ? item['reasoningEffort'] : undefined;
           if (typeof value === 'string' && value.trim() && !efforts.includes(value.trim())) efforts.push(value.trim());
         }
-        modelReasoningEfforts[model] = efforts;
+        // Defined, not assigned: an id like `__proto__` stays an own key.
+        Object.defineProperty(modelReasoningEfforts, model, { enumerable: true, value: efforts, writable: true, configurable: true });
       }
       if (entry['isDefault'] === true && !defaultModel) defaultModel = model;
     }
@@ -658,16 +656,42 @@ export function parseCodexModelList(pages: unknown[]): ProviderModelCatalog {
   return { defaultModel: defaultModel || models[0]!, modelReasoningEfforts, models };
 }
 
-const CATALOG_COMMAND_TIMEOUT_MS = 10_000;
-const CATALOG_COMMAND_MAX_BYTES = 8 * 1024 * 1024;
+const MODEL_LIST_PROBE_TIMEOUT_MS = 10_000;
+const MODEL_LIST_MAX_BYTES = 8 * 1024 * 1024;
+const MODEL_LIST_REPLY_MAX_BYTES = 1024 * 1024;
+
+function modelListProbeScript(): string {
+  return fileURLToPath(new URL('./model-list-probe.js', import.meta.url));
+}
 
 /**
- * Runs a one-shot catalog command and returns its stdout. Nothing reads stderr, so it is
- * not piped (a full pipe would stall the CLI). Errors never carry the output: Kimi's
- * includes provider credentials. Exported for tests.
+ * Signals every process in the group `pid` leads (a probe started `detached`, and all
+ * it started): TERM now, KILL after `graceMs` for whatever is left. A wrapper script
+ * that exits on TERM would otherwise leave the CLI it started running.
  */
-export async function catalogCommandOutput(
-  label: string,
+function endProcessGroup(pid: number | undefined, graceMs: number): void {
+  if (pid === undefined || pid <= 0) return;
+  const signal = (name: NodeJS.Signals) => {
+    try {
+      process.kill(-pid, name);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!signal('SIGTERM')) return;
+  setTimeout(() => signal('SIGKILL'), graceMs).unref();
+}
+
+/**
+ * Reads a CLI's model list through the probe script (model-list-probe.ts), which runs
+ * the CLI, parses its output with the named parser, and sends back only the catalog:
+ * the output itself never reaches this process. The probe leads a process group of
+ * its own, which ends when the reply is in, the probe fails, or time runs out.
+ * Exported for tests.
+ */
+export async function modelListProbe(
+  parser: ModelListParserName,
   command: string,
   args: string[],
   options: {
@@ -677,46 +701,46 @@ export async function catalogCommandOutput(
     maxBytes?: number;
     timeoutMs?: number;
   },
-): Promise<string> {
+): Promise<ProviderModelCatalog> {
+  const { label } = MODEL_LIST_PARSERS[parser];
   await mkdir(options.cwd, { recursive: true });
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'ignore'] });
-    const chunks: Buffer[] = [];
-    let bytes = 0;
-    let closed = false;
+    const child = spawn(
+      process.execPath,
+      [modelListProbeScript(), String(options.maxBytes ?? MODEL_LIST_MAX_BYTES), parser, command, ...args],
+      { cwd: options.cwd, detached: true, env: options.env, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    let reply = '';
     let settled = false;
-    const finish = (error?: Error) => {
+    const finish = (error?: Error, catalog?: ProviderModelCatalog) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (error && !closed) {
-        child.kill('SIGTERM');
-        const escalate = setTimeout(() => {
-          if (!closed) child.kill('SIGKILL');
-        }, options.killGraceMs ?? 2_000);
-        escalate.unref();
-        child.once('close', () => clearTimeout(escalate));
-      }
+      endProcessGroup(child.pid, options.killGraceMs ?? 2_000);
       if (error) reject(error);
-      else resolvePromise(Buffer.concat(chunks).toString('utf8'));
+      else resolvePromise(catalog!);
     };
-    const timer = setTimeout(
-      () => finish(new Error(`${label} timed out`)),
-      options.timeoutMs ?? CATALOG_COMMAND_TIMEOUT_MS,
-    );
-    child.stdout?.on('data', (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes > (options.maxBytes ?? CATALOG_COMMAND_MAX_BYTES)) {
-        finish(new Error(`${label} wrote more output than expected`));
+    const timer = setTimeout(() => finish(new Error(`${label} timed out`)), options.timeoutMs ?? MODEL_LIST_PROBE_TIMEOUT_MS);
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      reply += chunk;
+      if (reply.length > MODEL_LIST_REPLY_MAX_BYTES) finish(new Error(`${label} wrote more output than expected`));
+    });
+    child.on('error', () => finish(new Error(`${label} could not start the probe`)));
+    child.on('close', () => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(reply);
+      } catch {
+        parsed = undefined;
+      }
+      if (isPlainRecord(parsed) && typeof parsed['error'] === 'string') {
+        finish(new Error(parsed['error'].slice(0, 200)));
         return;
       }
-      chunks.push(chunk);
-    });
-    child.on('error', (error: NodeJS.ErrnoException) => finish(new Error(`${label} could not start (${error.code ?? 'error'})`)));
-    child.on('close', (code, signal) => {
-      closed = true;
-      if (code === 0) finish();
-      else finish(new Error(`${label} exited (${code ?? signal ?? 'signal'})`));
+      const catalog = isPlainRecord(parsed) ? modelListCatalog(parsed['catalog']) : undefined;
+      if (catalog) finish(undefined, catalog);
+      else finish(new Error(`${label} probe gave no answer`));
     });
   });
 }
@@ -728,47 +752,10 @@ export async function catalogCommandOutput(
  * empty directory, so no project's `opencode.json` applies.
  */
 async function openCodeModelCatalog(command: string): Promise<ProviderModelCatalog> {
-  const output = await catalogCommandOutput('OpenCode model list', command, ['models', '--verbose', '--pure'], {
+  return modelListProbe('opencode', command, ['models', '--verbose', '--pure'], {
     cwd: join(resolveAnimaHome(), 'cache', 'opencode-model-probe'),
     env: openCodeLaunchEnvironment(runtimeProbeEnv()),
   });
-  return parseOpenCodeModelsOutput(output);
-}
-
-/**
- * `opencode models --verbose` → catalog. Each model is its `provider/id` on a line of its
- * own, then its JSON. A model's `variants` are its effort menu (the values the
- * runtime's `effort` option takes), and a model without any has no effort control; a
- * model whose JSON does not parse keeps its built-in menu. Deprecated models stay out.
- * Only ids, status and variant names are read: the JSON also carries provider headers
- * and options.
- */
-export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog {
-  const blocks: { body: string[]; model: string }[] = [];
-  for (const line of output.split(/\r?\n/)) {
-    if (/^[^\s{}"]+\/\S+$/.test(line)) blocks.push({ body: [], model: line });
-    else blocks.at(-1)?.body.push(line);
-  }
-  const models: string[] = [];
-  const modelReasoningEfforts: Record<string, string[]> = {};
-  for (const { body, model } of blocks) {
-    if (models.includes(model)) continue;
-    let info: unknown;
-    try {
-      info = JSON.parse(body.join('\n'));
-    } catch {
-      info = undefined;
-    }
-    if (isPlainRecord(info) && info['status'] === 'deprecated') continue;
-    models.push(model);
-    if (!isPlainRecord(info)) continue;
-    const variants = info['variants'];
-    modelReasoningEfforts[model] = isPlainRecord(variants)
-      ? Object.keys(variants).filter((name) => name.trim() !== '')
-      : [];
-  }
-  if (models.length === 0) throw new Error('OpenCode did not report any models');
-  return { defaultModel: models[0]!, modelReasoningEfforts, models };
 }
 
 /**
@@ -777,44 +764,10 @@ export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog 
  * a fixed empty directory.
  */
 async function kimiModelCatalog(command: string): Promise<ProviderModelCatalog> {
-  const output = await catalogCommandOutput('Kimi Code model list', command, ['provider', 'list', '--json'], {
+  return modelListProbe('kimi', command, ['provider', 'list', '--json'], {
     cwd: join(resolveAnimaHome(), 'cache', 'kimi-model-probe'),
     env: runtimeProbeEnv(),
   });
-  return parseKimiProviderList(output);
-}
-
-/**
- * `kimi provider list --json` → catalog. Only `models` is read: `providers` holds
- * credentials. Each key is an alias `session/set_model` takes; `supportEfforts` is the
- * effort menu (the values of the runtime's `thinking` option), and a model without it
- * has no effort control.
- */
-export function parseKimiProviderList(output: string): ProviderModelCatalog {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(output);
-  } catch {
-    throw new Error('Kimi Code provider list was not JSON');
-  }
-  const entries = isPlainRecord(parsed) && isPlainRecord(parsed['models']) ? parsed['models'] : {};
-  const models: string[] = [];
-  const modelReasoningEfforts: Record<string, string[]> = {};
-  for (const [alias, info] of Object.entries(entries)) {
-    const model = alias.trim();
-    if (!model || models.includes(model)) continue;
-    models.push(model);
-    const efforts = isPlainRecord(info) && Array.isArray(info['supportEfforts']) ? info['supportEfforts'] : [];
-    modelReasoningEfforts[model] = [
-      ...new Set(
-        efforts
-          .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
-          .map((value) => value.trim()),
-      ),
-    ];
-  }
-  if (models.length === 0) throw new Error('Kimi Code did not report any models');
-  return { defaultModel: models[0]!, modelReasoningEfforts, models };
 }
 
 const PI_MODEL_PROBE_ARGS = ['--mode', 'rpc', '--no-extensions', '--no-skills', '--no-context-files', '--no-session'];

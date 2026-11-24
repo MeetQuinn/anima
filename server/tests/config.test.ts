@@ -22,6 +22,7 @@ import {
   PROVIDER_IDLE_TIMEOUT_MS_DEFAULT,
 } from '../../shared/agent-config.js';
 import {
+  catalogModelLabel,
   isSupportedProviderModel,
   isSupportedReasoningEffort,
   providerCatalogEntry,
@@ -568,6 +569,27 @@ test('opencode-cli and kimi-cli effort menus follow the live list, within what a
     assert.deepEqual(offered, menu, `${kind} ${model}`);
     assert.equal(isSupportedProviderModel(kind, model), true, `${kind} ${model}`);
     for (const effort of offered) assert.equal(isSupportedReasoningEffort(kind, effort, model), true, `${kind} ${model} ${effort}`);
+  }
+});
+
+// A live alias may name an Object member. It is an id like any other: the built-in
+// catalog has no menu or label for it, so it gets the provider's vocabulary, the
+// same as an ordinary unlisted alias.
+test('live aliases that name Object members save like any other unlisted alias', () => {
+  for (const model of ['review-builder', 'constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    const live = JSON.parse(`{${JSON.stringify(model)}: ["low", "high"]}`) as Record<string, string[]>;
+    assert.deepEqual(reasoningEffortsForModel('kimi-cli', model, { modelReasoningEfforts: live }), ['low', 'high'], model);
+    assert.deepEqual(reasoningEffortsForModel('kimi-cli', model), ['low', 'high', 'max'], model);
+    assert.equal(isSupportedReasoningEffort('kimi-cli', 'high', model), true, model);
+    assert.equal(catalogModelLabel(model), undefined, model);
+    const request = AgentCreateRequest.parse({
+      name: 'Kimi',
+      homePath: 'agents/kimi',
+      role: 'general purpose',
+      provider: { kind: 'kimi-cli', model, reasoningEffort: 'high' },
+    });
+    assert.equal(request.provider?.model, model);
+    assert.equal(request.provider && 'reasoningEffort' in request.provider ? request.provider.reasoningEffort : undefined, 'high');
   }
 });
 

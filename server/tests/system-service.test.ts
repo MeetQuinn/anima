@@ -4,15 +4,18 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeF
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+import { modelListCatalog, parseKimiProviderList, parseOpenCodeModelsOutput } from '../services/model-list-parsers.js';
 import {
-  catalogCommandOutput,
   codexAppServerModelCatalog,
   docsUrl,
+  modelListProbe,
   parseCodexModelList,
   parseGrokAcpModelState,
   parseGrokModelsOutput,
-  parseKimiProviderList,
-  parseOpenCodeModelsOutput,
   parsePiModelCatalog,
   PI_NO_CREDENTIAL_MESSAGE,
   SystemService,
@@ -552,6 +555,34 @@ function openCodeVerbose(models: Array<[string, Record<string, unknown> | string
     .join('\n') + '\n';
 }
 
+// `codex` is often a wrapper that starts the native binary; ending the probe ends both.
+// The fake refuses `initialize` once it is up, so the probe ends after it started.
+test('Codex model catalog probe ends a wrapper and the app-server it started', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-codex-tree-'));
+  try {
+    const server = join(dir, 'codex-native');
+    await writeFile(server, [
+      `#!${process.execPath}`,
+      `require('fs').writeFileSync(${JSON.stringify(join(dir, 'native.pid'))}, String(process.pid));`,
+      "process.on('SIGTERM', () => {});",
+      "process.stdin.on('data', () => process.stdout.write(JSON.stringify({ error: { message: 'refused' }, id: 1 }) + '\\n'));",
+      'setInterval(() => {}, 1000);',
+    ].join('\n'), 'utf8');
+    const codex = join(dir, 'codex');
+    await writeFile(codex, `#!/bin/sh\necho $$ > ${JSON.stringify(join(dir, 'wrapper.pid'))}\n${JSON.stringify(server)} "$@"\n`, 'utf8');
+    await chmod(server, 0o755);
+    await chmod(codex, 0o755);
+    await assert.rejects(
+      withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex, { killGraceMs: 200, timeoutMs: 30_000 })),
+      /Codex request failed: refused/,
+    );
+    assert.equal(await processGone(await pidFrom(join(dir, 'wrapper.pid'))), true, 'wrapper');
+    assert.equal(await processGone(await pidFrom(join(dir, 'native.pid'))), true, 'app-server');
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
 test('parseOpenCodeModelsOutput reads ids and variant names, and nothing else', () => {
   const output = openCodeVerbose([
     ['deepseek/deepseek-v4-pro', {
@@ -595,10 +626,92 @@ test('parseKimiProviderList reads model aliases and their efforts, never provide
   assert.throws(() => parseKimiProviderList('apiKey = "sk-kimi-not-read"'), (error: Error) =>
     error.message === 'Kimi Code provider list was not JSON');
   assert.throws(() => parseKimiProviderList(JSON.stringify({ models: {}, providers: {} })), /Kimi Code did not report any models/);
+  // Aliases that name Object members are ordinary own keys.
+  const members = parseKimiProviderList('{"models":{"constructor":{"supportEfforts":["low","high"]},"__proto__":{"supportEfforts":["max"]},"toString":{}}}');
+  assert.deepEqual(members.models, ['constructor', '__proto__', 'toString']);
+  assert.deepEqual(Object.entries(members.modelReasoningEfforts!), [['constructor', ['low', 'high']], ['__proto__', ['max']], ['toString', []]]);
 });
 
-test('catalog commands: stdout is read while stderr floods, and failures carry no output', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'anima-catalog-command-'));
+/** Resolves once `pid` is gone, or false after about 3s. */
+async function processGone(pid: number): Promise<boolean> {
+  assert.ok(pid > 0);
+  for (let i = 0; i < 60; i += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+/** Resolves with the pid a script wrote to `file`, waiting up to about 5s for it. */
+async function pidFrom(file: string): Promise<number> {
+  for (let i = 0; i < 100; i += 1) {
+    const text = await readFile(file, 'utf8').catch(() => '');
+    if (Number(text) > 0) return Number(text);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`no pid in ${file}`);
+}
+
+// Everything the server reads from a model-list probe is the probe script's stdout:
+// one line holding the catalog or an error. A CLI's credentials and other output
+// never get there.
+test('model-list probe: only the catalog leaves the probe process', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-boundary-'));
+  try {
+    const kimi = join(dir, 'kimi');
+    await writeFile(kimi, [
+      `#!${process.execPath}`,
+      `process.stdout.write(${JSON.stringify(JSON.stringify({
+        default_model: 'kimi-code/k3',
+        models: { constructor: { supportEfforts: ['low', 'high'] }, 'kimi-code/k3': { apiKey: 'sk-marker-model', supportEfforts: ['high'] } },
+        providers: { review: { apiKey: 'sk-marker-provider', baseUrl: 'https://example.invalid' } },
+      }))});`,
+    ].join('\n'), 'utf8');
+    await chmod(kimi, 0o755);
+    const script = fileURLToPath(new URL('../services/model-list-probe.js', import.meta.url));
+    const { stdout } = await promisify(execFile)(process.execPath, [script, '1048576', 'kimi', kimi, 'provider', 'list', '--json'], { cwd: dir });
+    assert.equal(stdout.includes('sk-marker'), false);
+    assert.equal(stdout.includes('example.invalid'), false);
+    assert.equal(stdout.split('\n').filter(Boolean).length, 1);
+    assert.deepEqual(JSON.parse(stdout), {
+      catalog: {
+        defaultModel: 'constructor',
+        modelReasoningEfforts: { constructor: ['low', 'high'], 'kimi-code/k3': ['high'] },
+        models: ['constructor', 'kimi-code/k3'],
+      },
+    });
+
+    const failing = join(dir, 'failing');
+    await writeFile(failing, `#!${process.execPath}\nprocess.stdout.write('apiKey=sk-marker-fail'); process.exit(3);`, 'utf8');
+    await chmod(failing, 0o755);
+    const failed = await promisify(execFile)(process.execPath, [script, '1048576', 'kimi', failing], { cwd: dir });
+    assert.deepEqual(JSON.parse(failed.stdout), { error: 'Kimi Code model list exited (3)' });
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// The server takes back only string ids and menus for listed ids.
+test('modelListCatalog keeps ids and menus, and nothing else', () => {
+  assert.deepEqual(
+    modelListCatalog({
+      apiKey: 'sk-not-kept',
+      defaultModel: 'missing',
+      modelReasoningEfforts: { a: ['high', 3, ''], b: 'high', ghost: ['low'] },
+      models: ['a', 'b', 'a', 7, ''],
+    }),
+    { defaultModel: 'a', modelReasoningEfforts: { a: ['high'] }, models: ['a', 'b'] },
+  );
+  assert.equal(modelListCatalog({ models: [] }), undefined);
+  assert.equal(modelListCatalog('a'), undefined);
+});
+
+test('model-list probe: stdout is read while stderr floods, and failures carry no output', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-probe-'));
   try {
     const script = async (name: string, body: string) => {
       const file = join(dir, name);
@@ -607,35 +720,63 @@ test('catalog commands: stdout is read while stderr floods, and failures carry n
       return file;
     };
     const run = (command: string, options: { maxBytes?: number; timeoutMs?: number } = {}) =>
-      catalogCommandOutput('Test list', command, ['list'], { cwd: join(dir, 'probe'), env: process.env, killGraceMs: 200, ...options });
+      modelListProbe('kimi', command, ['list'], { cwd: join(dir, 'probe'), env: process.env, killGraceMs: 200, ...options });
 
-    const chatty = await script('chatty', `${floodStderr(1_000_000)}\nprocess.stdout.write(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));`);
-    assert.deepEqual(JSON.parse(await run(chatty, { timeoutMs: 5_000 })), { argv: ['list'], cwd: await realpath(join(dir, 'probe')) });
+    // The CLI runs with the given arguments in the probe directory; the alias carries both.
+    const chatty = await script('chatty', `${floodStderr(1_000_000)}\nprocess.stdout.write(JSON.stringify({ models: { [JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() })]: {} }, providers: { x: { apiKey: 'sk-secret' } } }));`);
+    const catalog = await run(chatty, { timeoutMs: 10_000 });
+    assert.deepEqual(JSON.parse(catalog.models[0]!), { argv: ['list'], cwd: await realpath(join(dir, 'probe')) });
 
     const failing = await script('failing', "process.stdout.write('apiKey=sk-secret'); process.exit(3);");
-    await assert.rejects(run(failing), (error: Error) => error.message === 'Test list exited (3)');
+    await assert.rejects(run(failing, { timeoutMs: 10_000 }), (error: Error) => error.message === 'Kimi Code model list exited (3)');
 
-    const pidFile = join(dir, 'hang.pid');
-    const hanging = await script('hanging', `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.stdout.write('apiKey=sk-secret'); setInterval(() => {}, 1000);`);
-    // Long enough for a loaded machine to start node and write the pid file first.
-    await assert.rejects(run(hanging, { timeoutMs: 3_000 }), (error: Error) => error.message === 'Test list timed out');
-    const pid = Number(await readFile(pidFile, 'utf8'));
-    assert.ok(pid > 0);
-    let alive = true;
-    for (let i = 0; i < 50 && alive; i += 1) {
-      try {
-        process.kill(pid, 0);
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch {
-        alive = false;
-      }
+    const notJson = await script('not-json', "process.stdout.write('apiKey=sk-secret');");
+    await assert.rejects(run(notJson, { timeoutMs: 10_000 }), (error: Error) => error.message === 'Kimi Code provider list was not JSON');
+
+    await assert.rejects(run(join(dir, 'missing'), { timeoutMs: 10_000 }), (error: Error) => error.message === 'Kimi Code model list could not start (ENOENT)');
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// A CLI is often a wrapper script that starts the real one. When the probe gives up
+// (time, or too much output) the wrapper and the CLI it started both end, even a CLI
+// that ignores SIGTERM.
+test('model-list probe: giving up ends the wrapper and the CLI it started', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-tree-'));
+  try {
+    const wrapped = async (name: string, cliBody: string) => {
+      const cli = join(dir, `${name}-cli`);
+      await writeFile(cli, [
+        `#!${process.execPath}`,
+        `require('fs').writeFileSync(${JSON.stringify(join(dir, `${name}-cli.pid`))}, String(process.pid));`,
+        "process.on('SIGTERM', () => {});",
+        cliBody,
+        'setInterval(() => {}, 1000);',
+      ].join('\n'), 'utf8');
+      const wrapper = join(dir, name);
+      // Not `exec`: the wrapper waits on the CLI, as many launch scripts do.
+      await writeFile(wrapper, `#!/bin/sh\necho $$ > ${JSON.stringify(join(dir, `${name}.pid`))}\n${JSON.stringify(cli)} "$@"\n`, 'utf8');
+      await chmod(cli, 0o755);
+      await chmod(wrapper, 0o755);
+      return wrapper;
+    };
+    const cases: Array<[string, string, { maxBytes?: number; timeoutMs: number }, string]> = [
+      // Long enough for a loaded machine to start the probe, the wrapper and the CLI.
+      ['hanging', "process.stdout.write('apiKey=sk-secret');", { timeoutMs: 6_000 }, 'Kimi Code model list timed out'],
+      ['flooding', "process.stdout.write('x'.repeat(4096));", { maxBytes: 1024, timeoutMs: 10_000 }, 'Kimi Code model list wrote more output than expected'],
+    ];
+    for (const [name, body, options, message] of cases) {
+      const wrapper = await wrapped(name, body);
+      await assert.rejects(
+        modelListProbe('kimi', wrapper, ['list'], { cwd: join(dir, 'probe'), env: process.env, killGraceMs: 200, ...options }),
+        (error: Error) => error.message === message,
+      );
+      const wrapperPid = await pidFrom(join(dir, `${name}.pid`));
+      const cliPid = await pidFrom(join(dir, `${name}-cli.pid`));
+      assert.equal(await processGone(wrapperPid), true, `${name} wrapper`);
+      assert.equal(await processGone(cliPid), true, `${name} CLI`);
     }
-    assert.equal(alive, false);
-
-    const flooding = await script('flooding', "process.stdout.write('x'.repeat(4096));");
-    await assert.rejects(run(flooding, { maxBytes: 1024 }), (error: Error) => error.message === 'Test list wrote more output than expected');
-
-    await assert.rejects(run(join(dir, 'missing')), (error: Error) => error.message === 'Test list could not start (ENOENT)');
   } finally {
     await rm(dir, { force: true, recursive: true });
   }

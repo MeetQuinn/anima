@@ -249,7 +249,9 @@ Model menu:
   `nextCursor` to the last page), then exit. It runs from `$ANIMA_HOME/cache/codex-model-probe` and
   starts no thread. Hidden models are left out, and each model's `supportedReasoningEfforts` is its
   effort menu. A list still paging after 100 pages counts as a failed read. The probe does not read
-  stderr, so it is not piped; the agy and Grok probes do the same.
+  stderr, so it is not piped; the agy and Grok probes do the same. The app-server runs in a process
+  group of its own, and the whole group ends with the probe, so a `codex` wrapper script cannot
+  leave the native binary running.
 - The catalog entry's `liveModels` flag marks this. Unlike `dynamicModels`, the provider never
   waits on the live read: when it fails, the built-in Codex list and menus are used.
 - The menu keeps Anima's default model when the live list has it, else Codex's `isDefault`.
@@ -484,7 +486,10 @@ Model menu:
   availability check from `$ANIMA_HOME/cache/kimi-model-probe` on the runtime `PATH`. It starts no
   session. Only `models` is read: each key is a model alias `session/set_model` takes, and its
   `supportEfforts` is the effort menu (a model without it has none). The output's `providers` part
-  holds credentials; Anima does not read it, and a failed read's error never includes the output.
+  holds credentials, so the output never reaches the server: a separate probe process
+  (`model-list-probe.js`) runs the command, parses it, and sends back only the model ids and effort
+  menus, or an error that never includes the output. The probe and everything it started end
+  together when the reply is in, after 10 seconds, or after 8 MiB of output.
 - The catalog entry is `liveModels`, as for Codex: when the read fails, the built-in Kimi list and
   menus are used, and any model alias saves. A model the built-in list lacks takes `low`, `high` or
   `max`.
@@ -629,8 +634,9 @@ Model menu:
   for each availability check from `$ANIMA_HOME/cache/opencode-model-probe` with the runtime's
   launch environment, so it sees the providers an agent's turn sees and no project's
   `opencode.json`. It starts no session. Each listed `provider/id` is a model, its `variants` are
-  its effort menu (a model without any has none), and deprecated models are left out. Only ids,
-  status and variant names are read; the per-model JSON also carries provider headers and options.
+  its effort menu (a model without any has none), and deprecated models are left out. The per-model
+  JSON also carries provider headers and options, so the command runs in the same separate probe
+  process as Kimi's list, and only ids and effort menus come back to the server.
 - The list is every model OpenCode can run, OpenCode Zen's free models included, not only DeepSeek.
 - The catalog entry is `liveModels`, as for Codex. When the read fails, the built-in list is used:
   `deepseek/deepseek-v4-pro` and `deepseek/deepseek-flash` (DeepSeek V4.1 Flash; DeepSeek retired the

@@ -313,7 +313,8 @@ export function providerCatalog(): ProviderCatalogEntry[] {
 /** Catalog display name for a model id, or undefined when no provider names it. */
 export function catalogModelLabel(model: string): string | undefined {
   for (const entry of PROVIDER_CATALOG) {
-    const label = entry.modelLabels?.[model];
+    // Own keys only: a model id like `constructor` is not a label.
+    const label = entry.modelLabels && Object.hasOwn(entry.modelLabels, model) ? entry.modelLabels[model] : undefined;
     if (label) return label;
   }
   return undefined;
@@ -400,14 +401,15 @@ export function reasoningEffortsForModel(
   availability?: { modelReasoningEfforts?: Record<string, string[]> } | null,
 ): string[] {
   if (providerHasLiveReasoningEfforts(kind)) {
-    if (model && availability?.modelReasoningEfforts && model in availability.modelReasoningEfforts) {
+    if (model && availability?.modelReasoningEfforts && Object.hasOwn(availability.modelReasoningEfforts, model)) {
       return [...(availability.modelReasoningEfforts[model] ?? [])];
     }
     return [];
   }
   const entry = providerCatalogEntry(kind);
   if (!entry) return [];
-  const accepted = model && entry.modelReasoningEfforts && model in entry.modelReasoningEfforts
+  // Own keys only: a live id like `constructor` must not find an inherited member.
+  const accepted = model && entry.modelReasoningEfforts && Object.hasOwn(entry.modelReasoningEfforts, model)
     ? [...(entry.modelReasoningEfforts[model] ?? [])]
     : [...entry.reasoningEfforts];
   const live = entry.liveModels && model ? availability?.modelReasoningEfforts : undefined;
