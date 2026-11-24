@@ -517,11 +517,43 @@ test('claude-code catalog keeps family aliases and adds version-pinned models', 
   }
 });
 
-test('codex-cli catalog includes GPT-6.2 Astra/Sol, GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, and current GPT-5 models', () => {
+// Codex's model list is live (`model/list`), but saves are still checked against the
+// built-in catalog, so the live effort menu is cut to what a save accepts.
+test('codex-cli effort menu follows the live list, within what a save accepts', () => {
+  const live = {
+    modelReasoningEfforts: {
+      'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+      'gpt-6.2-sol': ['low', 'high'],
+      'gpt-6-sol': [],
+      'gpt-7-astra': ['minimal', 'low', 'medium'],
+    },
+  };
+  const menus: Record<string, string[]> = {
+    'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
+    'gpt-6.2-sol': ['low', 'high'],
+    'gpt-6-sol': [],
+    'gpt-7-astra': ['low', 'medium'],
+    // Not in the live read: the built-in menu.
+    'gpt-5.5': ['low', 'medium', 'high', 'xhigh'],
+  };
+  for (const [model, menu] of Object.entries(menus)) {
+    const offered = reasoningEffortsForModel('codex-cli', model, live);
+    assert.deepEqual(offered, menu, model);
+    for (const effort of offered) assert.equal(isSupportedReasoningEffort('codex-cli', effort, model), true, `${model} ${effort}`);
+  }
+  // Providers without a live list keep their catalog menu.
+  assert.deepEqual(
+    reasoningEffortsForModel('kimi-cli', 'kimi-code/k3', { modelReasoningEfforts: { 'kimi-code/k3': ['low'] } }),
+    ['low', 'high', 'max'],
+  );
+});
+
+test('codex-cli catalog includes GPT-6.2 Astra/Sol, GPT-6.1 Terra/Sol, GPT-6 Astra/Sol/Luna, and current GPT-5 models', () => {
   const entry = providerCatalogEntry('codex-cli');
   assert.deepEqual(entry?.models, [
     'gpt-6.2-astra',
     'gpt-6.2-sol',
+    'gpt-6.1-terra',
     'gpt-6.1-sol',
     'gpt-6-astra',
     'gpt-6-sol',
@@ -538,6 +570,10 @@ test('codex-cli catalog includes GPT-6.2 Astra/Sol, GPT-6.1 Sol, GPT-6 Astra/Sol
   );
   assert.deepEqual(
     reasoningEffortsForModel('codex-cli', 'gpt-6.2-sol'),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  );
+  assert.deepEqual(
+    reasoningEffortsForModel('codex-cli', 'gpt-6.1-terra'),
     ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   );
   assert.deepEqual(

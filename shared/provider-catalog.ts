@@ -9,10 +9,21 @@ export interface ProviderCatalogEntry {
    */
   acceptsUnlistedModels?: boolean;
   defaultModel: string;
+  /**
+   * The menu exists only live: the provider stays unavailable until the server
+   * reads the account's models from the CLI.
+   */
   dynamicModels?: boolean;
   installHint: string;
   kind: 'claude-code' | 'codex-cli' | 'kimi-cli' | 'grok-cli' | 'opencode-cli' | 'pi' | 'antigravity-cli';
   label: string;
+  /**
+   * The server reads the CLI's live model list and per-model effort menus. When
+   * the read works the menu follows it; when it fails the static `models` and
+   * `modelReasoningEfforts` below are the menu. Unlike `dynamicModels`, the
+   * provider never waits on the live read.
+   */
+  liveModels?: boolean;
   marketingModelAliases?: string[];
   /**
    * Display name for each model id. Every id in `models` needs one (a test fails
@@ -114,6 +125,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     models: [
       'gpt-6.2-astra',
       'gpt-6.2-sol',
+      'gpt-6.1-terra',
       'gpt-6.1-sol',
       'gpt-6-astra',
       'gpt-6-sol',
@@ -126,6 +138,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     modelLabels: {
       'gpt-6.2-astra': 'GPT-6.2 Astra',
       'gpt-6.2-sol': 'GPT-6.2 Sol',
+      'gpt-6.1-terra': 'GPT-6.1 Terra',
       'gpt-6.1-sol': 'GPT-6.1 Sol',
       'gpt-6-astra': 'GPT-6 Astra',
       'gpt-6-sol': 'GPT-6 Sol',
@@ -137,9 +150,12 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     },
     defaultModel: 'gpt-6.2-astra',
     acceptsUnlistedModels: true,
+    // `codex app-server` `model/list` is the live menu; the list above is the fallback.
+    liveModels: true,
     modelReasoningEfforts: {
       'gpt-6.2-astra': CODEX_REASONING_EFFORTS,
       'gpt-6.2-sol': CODEX_REASONING_EFFORTS,
+      'gpt-6.1-terra': CODEX_REASONING_EFFORTS,
       'gpt-6.1-sol': CODEX_REASONING_EFFORTS,
       'gpt-6-astra': CODEX_REASONING_EFFORTS,
       'gpt-6-sol': CODEX_REASONING_EFFORTS,
@@ -358,7 +374,9 @@ export function isSupportedReasoningEffort(
  * Effort menu to show for the selected model. Static providers use their catalog's
  * exact model menu. Grok and Antigravity are live-only: the ACP catalog
  * (`modelReasoningEfforts`) is the single authority, so absent that data the menu
- * is empty rather than guessed.
+ * is empty rather than guessed. A `liveModels` provider shows the live menu for a
+ * model the live read covers, kept to the efforts the static catalog accepts for
+ * that model, so the menu never offers an effort a save would reject.
  */
 export function reasoningEffortsForModel(
   kind: string,
@@ -373,8 +391,12 @@ export function reasoningEffortsForModel(
   }
   const entry = providerCatalogEntry(kind);
   if (!entry) return [];
-  if (model && entry.modelReasoningEfforts && model in entry.modelReasoningEfforts) {
-    return [...(entry.modelReasoningEfforts[model] ?? [])];
+  const accepted = model && entry.modelReasoningEfforts && model in entry.modelReasoningEfforts
+    ? [...(entry.modelReasoningEfforts[model] ?? [])]
+    : [...entry.reasoningEfforts];
+  const live = entry.liveModels && model ? availability?.modelReasoningEfforts : undefined;
+  if (live && model && Object.hasOwn(live, model)) {
+    return (live[model] ?? []).filter((effort) => accepted.includes(effort));
   }
-  return [...entry.reasoningEfforts];
+  return accepted;
 }

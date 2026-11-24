@@ -241,6 +241,19 @@ terminals keep the controller non-quiescent so idle cleanup and configuration re
 them down. Older Codex versions that do not implement the method continue without background-
 terminal reporting instead of failing the turn.
 
+Model menu:
+
+- The dashboard's Codex model and effort menus come from a short-lived `codex app-server`
+  that the server starts for each availability check: `initialize`, then `model/list` (following
+  `nextCursor`), then exit. It runs from `$ANIMA_HOME/cache/codex-model-probe` and starts no thread.
+  Hidden models are left out, and each model's `supportedReasoningEfforts` is its effort menu.
+- The catalog entry's `liveModels` flag marks this. Unlike `dynamicModels`, the provider never
+  waits on the live read: when it fails, the built-in Codex list and menus are used.
+- The menu keeps Anima's default model when the live list has it, else Codex's `isDefault`.
+- The effort menu shows the live levels the built-in catalog also accepts for that model (the
+  full Codex list for a model the catalog does not name). Saves are validated against the
+  built-in catalog as before, so the menu never offers a level a save would reject.
+
 Active-run follow-up:
 
 - Once `turn/start` returns a turn id, the adapter exposes that id as ready.

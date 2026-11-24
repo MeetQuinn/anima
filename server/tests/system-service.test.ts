@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  codexAppServerModelCatalog,
   docsUrl,
+  parseCodexModelList,
   parseGrokAcpModelState,
   parseGrokModelsOutput,
   parsePiModelCatalog,
@@ -311,10 +313,11 @@ test('parsePiModelCatalog collapses retired DeepSeek Flash aliases and keeps oth
 test('provider availability asks the live catalog per provider kind', async () => {
   const seen: Array<[string, string]> = [];
   const service = new SystemService({
-    commandPresent: async (command) => command === 'pi' || command === 'grok',
+    commandPresent: async (command) => command === 'pi' || command === 'grok' || command === 'codex',
     now: () => new Date('2026-08-25T03:00:00.000Z'),
     providerModels: async (command, kind) => {
       seen.push([command, kind]);
+      if (kind === 'codex-cli') throw new Error('model/list unsupported');
       if (kind === 'pi') return { defaultModel: 'deepseek/deepseek-v4-pro', models: ['deepseek/deepseek-v4-pro'] };
       return { defaultModel: 'grok-4.5', models: ['grok-4.5'] };
     },
@@ -327,8 +330,120 @@ test('provider availability asks the live catalog per provider kind', async () =
     models: ['deepseek/deepseek-v4-pro'],
     present: true,
   });
+  // Codex is still available when its live list fails; the web falls back to the built-in one.
+  assert.deepEqual(result.providers.find((provider) => provider.kind === 'codex-cli'), {
+    checkedAt: '2026-08-25T03:00:00.000Z',
+    kind: 'codex-cli',
+    modelCheckError: 'model/list unsupported',
+    present: true,
+  });
   assert.deepEqual(seen.sort(), [
+    ['codex', 'codex-cli'],
     ['grok', 'grok-cli'],
     ['pi', 'pi'],
   ]);
+});
+
+test('parseCodexModelList reads model/list pages into models, menus and the default', () => {
+  const effort = (reasoningEffort: string) => ({ description: '', reasoningEffort });
+  assert.deepEqual(
+    parseCodexModelList([
+      {
+        data: [
+          { id: 'gpt-6.2-astra', model: 'gpt-6.2-astra', supportedReasoningEfforts: ['low', 'high'].map(effort) },
+          { hidden: true, id: 'gpt-internal', model: 'gpt-internal', supportedReasoningEfforts: [effort('low')] },
+          { id: 'gpt-6-luna', isDefault: true, model: 'gpt-6-luna', supportedReasoningEfforts: [] },
+        ],
+        nextCursor: 'page-2',
+      },
+      // A model without the field keeps the built-in menu; repeats are dropped.
+      { data: [{ id: 'gpt-7-astra', model: 'gpt-7-astra' }, { id: 'gpt-6-luna', model: 'gpt-6-luna' }], nextCursor: null },
+    ]),
+    {
+      defaultModel: 'gpt-6-luna',
+      modelReasoningEfforts: { 'gpt-6.2-astra': ['low', 'high'], 'gpt-6-luna': [] },
+      models: ['gpt-6.2-astra', 'gpt-6-luna', 'gpt-7-astra'],
+    },
+  );
+  assert.equal(parseCodexModelList([{ data: [{ id: 'gpt-6-sol', model: 'gpt-6-sol' }] }]).defaultModel, 'gpt-6-sol');
+  assert.throws(() => parseCodexModelList([{ data: [{ hidden: true, id: 'x', model: 'x' }] }]), /did not report any models/);
+});
+
+/** A fake `codex app-server` that logs each message it gets and serves two model/list pages. */
+function fakeCodexAppServer(log: string, options: { exitBeforeList?: boolean } = {}): string {
+  return [
+    `#!${process.execPath}`,
+    "const fs = require('fs');",
+    `const log = ${JSON.stringify(log)};`,
+    `const exitBeforeList = ${JSON.stringify(Boolean(options.exitBeforeList))};`,
+    "fs.appendFileSync(log, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + '\\n');",
+    "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+    "const page = (data, nextCursor) => ({ data, nextCursor });",
+    "let buffer = '';",
+    'let listId;',
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffer += chunk;',
+    "  const lines = buffer.split('\\n');",
+    "  buffer = lines.pop() || '';",
+    '  for (const line of lines) {',
+    '    if (!line.trim()) continue;',
+    '    const msg = JSON.parse(line);',
+    "    fs.appendFileSync(log, line + '\\n');",
+    "    if (msg.method === 'initialize') send({ id: msg.id, result: { userAgent: 'fake/0.0.0' } });",
+    "    if (msg.method === 'model/list' && exitBeforeList) process.exit(3);",
+    "    if (msg.method === 'model/list' && !msg.params.cursor) {",
+    '      // Ask the client something first; the probe must refuse it.',
+    '      listId = msg.id;',
+    "      send({ id: 'server-1', method: 'item/tool/requestUserInput', params: {} });",
+    '    }',
+    "    if (msg.id === 'server-1') send({ id: listId, result: page([{ id: 'gpt-6.2-sol', isDefault: true, model: 'gpt-6.2-sol', supportedReasoningEfforts: [{ reasoningEffort: 'low' }] }], 'next') });",
+    "    if (msg.method === 'model/list' && msg.params.cursor === 'next') send({ id: msg.id, result: page([{ id: 'gpt-6.1-terra', model: 'gpt-6.1-terra', supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }], null) });",
+    '  }',
+    '});',
+  ].join('\n');
+}
+
+test('Codex model catalog probe lists every model/list page and starts no thread', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-codex-models-'));
+  try {
+    const codex = join(dir, 'codex');
+    const log = join(dir, 'log');
+    await writeFile(codex, fakeCodexAppServer(log), 'utf8');
+    await chmod(codex, 0o755);
+    const home = join(dir, 'home');
+
+    const catalog = await withAnimaHome(home, () => codexAppServerModelCatalog(codex));
+
+    assert.deepEqual(catalog, {
+      defaultModel: 'gpt-6.2-sol',
+      modelReasoningEfforts: { 'gpt-6.1-terra': ['high'], 'gpt-6.2-sol': ['low'] },
+      models: ['gpt-6.2-sol', 'gpt-6.1-terra'],
+    });
+    const [launch, ...messages] = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(launch.argv, ['app-server', '--listen', 'stdio://']);
+    assert.equal(launch.cwd, await realpath(join(home, 'cache', 'codex-model-probe')));
+    assert.deepEqual(await readdir(join(home, 'cache', 'codex-model-probe')), []);
+    assert.deepEqual(
+      messages.map((message) => [message.method ?? 'reply', message.params?.cursor ?? message.error?.code ?? null]),
+      [['initialize', null], ['initialized', null], ['model/list', null], ['reply', -32601], ['model/list', 'next']],
+    );
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('Codex model catalog probe fails when app-server exits before answering', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-codex-models-'));
+  try {
+    const codex = join(dir, 'codex');
+    await writeFile(codex, fakeCodexAppServer(join(dir, 'log'), { exitBeforeList: true }), 'utf8');
+    await chmod(codex, 0o755);
+    await assert.rejects(
+      withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex)),
+      /Codex model catalog probe exited \(3\)|Codex model\/list failed: app-server exited/,
+    );
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
 });

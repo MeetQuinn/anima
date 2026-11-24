@@ -1464,7 +1464,9 @@ test('antigravity-cli catalog probe stops switching models in time to return wha
       const agy = join(stateDir, 'agy');
       await writeFile(agy, catalogProbeAgy(logPath, { switchHangs: true }), 'utf8');
       await chmod(agy, 0o755);
-      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 3_000 });
+      // Switches stop at two thirds of the timeout: 4s leaves room for the fake to start
+      // and answer session/new under a loaded parallel run, so the first switch is sent.
+      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 6_000 });
       assert.deepEqual(catalog.modelReasoningEfforts, { 'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'] });
       const switches = (await readJsonLines(logPath) as unknown[]).filter((entry) => (entry as unknown[])[0] === 'session/set_config_option');
       assert.deepEqual(switches, [['session/set_config_option', 'gemini-4-carbon']]);
