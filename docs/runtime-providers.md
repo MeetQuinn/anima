@@ -777,9 +777,12 @@ Current process model:
 - The model menu is live. The dashboard availability probe starts `agy acp`, opens one session in
   a fixed directory under the Anima home, reads the `model` and `thought_level` options, and
   closes it. Every probe session is a conversation in Antigravity's history, so the catalog is
-  cached for 15 minutes per command. Thinking levels are model-scoped, so the probe knows them
-  only for the account's current model; other models fall back to the provider vocabulary at
-  write time and are gated by the live session at run time.
+  cached for 15 minutes per command. Thinking levels are model-scoped: `agy` reports them only
+  for the session's current model. So the probe switches its own session to each other model
+  with `session/set_config_option` and reads the levels that come back; the account's default
+  model stays as it was. A model with no levels gets an empty menu. A model whose switch fails,
+  or that the switches do not reach within two thirds of the probe timeout, falls back to the
+  provider vocabulary at write time and is gated by the live session at run time.
 - Each item uses `session/prompt`, with the shared ACP mid-turn follow-up policy and
   `session/cancel` on operator cancellation, as for OpenCode.
 - ACP thinking, assistant text, usage, tool calls (named from the ACP tool `kind`: `Shell`,

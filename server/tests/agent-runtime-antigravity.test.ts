@@ -1357,7 +1357,114 @@ test('antigravity-cli model catalog comes from the session model select', () => 
     modelReasoningEfforts: { 'gemini-3.8-flash': ['low', 'medium', 'high'] },
     models: ['gemini-3.8-flash', 'claude-sonnet-4-6'],
   });
+  // A current model without levels has an empty menu; levels with no known current model belong to none.
+  assert.deepEqual(parseAntigravityConfigOptions(CONFIG_OPTIONS.filter((option) => option.category !== 'thought_level')), {
+    defaultModel: 'gemini-3.8-flash',
+    modelReasoningEfforts: { 'gemini-3.8-flash': [] },
+    models: ['gemini-3.8-flash', 'claude-sonnet-4-6'],
+  });
+  assert.deepEqual(
+    parseAntigravityConfigOptions(CONFIG_OPTIONS.map((option) => (option.category === 'model' ? { ...option, currentValue: 'gone' } : option))),
+    { defaultModel: 'gemini-3.8-flash', models: ['gemini-3.8-flash', 'claude-sonnet-4-6'] },
+  );
   assert.throws(() => parseAntigravityConfigOptions([]), /did not report any models/);
+});
+
+/**
+ * A fake `agy acp` for the catalog probe. Its session starts on gemini-4-neon. A switch to
+ * gemini-4-carbon or gemini-pro-orchestrator (which has no levels) reports that model's levels;
+ * one to gemini-broken fails; one to gemini-ignored leaves the model as it was; with
+ * `switchHangs`, no switch is answered. Every request's method and value go to `logPath`.
+ */
+function catalogProbeAgy(logPath: string, switchHangs = false): string {
+  const levels = (...values: string[]) => ({ category: 'thought_level', currentValue: 'high', id: 'thought_level', options: values.map((value) => ({ value })), type: 'select' });
+  const models = ['gemini-4-neon', 'gemini-4-carbon', 'gemini-pro-orchestrator', 'gemini-broken', 'gemini-ignored'];
+  const model = (currentValue: string) => ({ category: 'model', currentValue, id: 'model', options: models.map((value) => ({ value })), type: 'select' });
+  const sessions = {
+    'gemini-4-carbon': [model('gemini-4-carbon'), levels('low', 'medium', 'high')],
+    'gemini-4-neon': [model('gemini-4-neon'), levels('low', 'medium', 'high', 'xhigh')],
+    'gemini-pro-orchestrator': [model('gemini-pro-orchestrator')],
+  };
+  return [
+    '#!/usr/bin/env node',
+    "const fs = require('fs');",
+    `const sessions = ${JSON.stringify(sessions)};`,
+    `const switchHangs = ${JSON.stringify(switchHangs)};`,
+    "let current = 'gemini-4-neon';",
+    "let buffer = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffer += chunk;',
+    "  const lines = buffer.split('\\n');",
+    "  buffer = lines.pop() || '';",
+    '  for (const line of lines) {',
+    '    if (!line.trim()) continue;',
+    '    const msg = JSON.parse(line);',
+    `    fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify([msg.method, msg.params && msg.params.value]) + '\\n');`,
+    "    const send = (body) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, ...body }) + '\\n');",
+    "    if (msg.method === 'initialize') send({ result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } } });",
+    "    if (msg.method === 'session/new') send({ result: { sessionId: 'probe-session', configOptions: sessions[current] } });",
+    "    if (msg.method === 'session/close') send({ result: {} });",
+    "    if (msg.method === 'session/set_config_option' && !switchHangs) {",
+    "      if (msg.params.value === 'gemini-broken') { send({ error: { code: -32603, message: 'model unavailable' } }); continue; }",
+    "      if (sessions[msg.params.value]) current = msg.params.value;",
+    '      send({ result: { configOptions: sessions[current] } });',
+    '    }',
+    '  }',
+    '});',
+  ].join('\n');
+}
+
+test('antigravity-cli catalog probe reads each model\'s thinking levels by switching its own session', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-levels-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const logPath = join(stateDir, 'requests.jsonl');
+      const agy = join(stateDir, 'agy');
+      await writeFile(agy, catalogProbeAgy(logPath), 'utf8');
+      await chmod(agy, 0o755);
+      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 15_000 });
+      assert.deepEqual(catalog, {
+        defaultModel: 'gemini-4-neon',
+        // A switch that failed or left the model as it was gives no menu; a model without levels has an empty one.
+        modelReasoningEfforts: {
+          'gemini-4-carbon': ['low', 'medium', 'high'],
+          'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'],
+          'gemini-pro-orchestrator': [],
+        },
+        models: ['gemini-4-neon', 'gemini-4-carbon', 'gemini-pro-orchestrator', 'gemini-broken', 'gemini-ignored'],
+      });
+      assert.deepEqual(await readJsonLines(logPath), [
+        ['initialize', null],
+        ['session/new', null],
+        ['session/set_config_option', 'gemini-4-carbon'],
+        ['session/set_config_option', 'gemini-pro-orchestrator'],
+        ['session/set_config_option', 'gemini-broken'],
+        ['session/set_config_option', 'gemini-ignored'],
+        ['session/close', null],
+      ]);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli catalog probe stops switching models in time to return what it has', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-probe-switch-hangs-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const logPath = join(stateDir, 'requests.jsonl');
+      const agy = join(stateDir, 'agy');
+      await writeFile(agy, catalogProbeAgy(logPath, true), 'utf8');
+      await chmod(agy, 0o755);
+      const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 3_000 });
+      assert.deepEqual(catalog.modelReasoningEfforts, { 'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'] });
+      const switches = (await readJsonLines(logPath) as unknown[]).filter((entry) => (entry as unknown[])[0] === 'session/set_config_option');
+      assert.deepEqual(switches, [['session/set_config_option', 'gemini-4-carbon']]);
+    });
+  } finally {
+    await rm(stateDir, { force: true, recursive: true });
+  }
 });
 
 test('antigravity-cli catalog probe survives a JSON null line and kills a child that ignores SIGTERM', async () => {
@@ -1385,6 +1492,8 @@ test('antigravity-cli catalog probe survives a JSON null line and kills a child 
         "    const reply = (result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');",
         "    if (msg.method === 'initialize') reply({ protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } });",
         "    if (msg.method === 'session/new') reply({ sessionId: 'probe-session', configOptions });",
+        // The session keeps its model, so the levels it reports stay the current model's.
+        "    if (msg.method === 'session/set_config_option') reply({ configOptions });",
         "    if (msg.method === 'session/close') reply({});",
         '  }',
         '});',
@@ -1394,6 +1503,7 @@ test('antigravity-cli catalog probe survives a JSON null line and kills a child 
 
       const catalog = await antigravityAcpModelCatalog(agy, { killGraceMs: 100, timeoutMs: 15_000 });
       assert.equal(catalog.defaultModel, 'gemini-3.8-flash');
+      assert.deepEqual(catalog.modelReasoningEfforts, { 'gemini-3.8-flash': ['low', 'medium', 'high'] });
       const pid = Number(await readFile(pidPath, 'utf8'));
       await waitFor(() => {
         try {

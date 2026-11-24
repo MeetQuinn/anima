@@ -256,39 +256,85 @@ function antigravityProviderModels(command: string): Promise<ProviderModelCatalo
   return value;
 }
 
+function antigravityConfigSelect(configOptions: unknown, category: string): Record<string, unknown> | undefined {
+  const options = Array.isArray(configOptions) ? configOptions.filter(isPlainRecord) : [];
+  return options.find((option) => option['category'] === category) ?? options.find((option) => option['id'] === category);
+}
+
+function antigravitySelectValues(option: Record<string, unknown> | undefined): string[] {
+  const out: string[] = [];
+  const push = (entry: unknown) => {
+    if (!isPlainRecord(entry) || typeof entry['value'] !== 'string') return;
+    const value = entry['value'].trim();
+    if (value && !out.includes(value)) out.push(value);
+  };
+  for (const entry of Array.isArray(option?.['options']) ? option['options'] : []) {
+    if (isPlainRecord(entry) && Array.isArray(entry['options'])) entry['options'].forEach(push);
+    else push(entry);
+  }
+  return out;
+}
+
+function antigravitySelectCurrent(option: Record<string, unknown> | undefined): string {
+  return typeof option?.['currentValue'] === 'string' ? option['currentValue'].trim() : '';
+}
+
 /**
  * Parse an Antigravity session's ACP `configOptions` into the model catalog.
- * Models come from the `model` select; thinking levels are model-scoped and only
- * known for the session's current model.
+ * Models come from the `model` select. Thinking levels are model-scoped: the
+ * `thought_level` select is the session's current model's, so it gives that
+ * model's menu only, empty when the model has none.
  */
 export function parseAntigravityConfigOptions(configOptions: unknown): ProviderModelCatalog {
-  const options = Array.isArray(configOptions) ? configOptions.filter(isPlainRecord) : [];
-  const select = (category: string) =>
-    options.find((option) => option['category'] === category) ?? options.find((option) => option['id'] === category);
-  const values = (option: Record<string, unknown> | undefined): string[] => {
-    const out: string[] = [];
-    const push = (entry: unknown) => {
-      if (!isPlainRecord(entry) || typeof entry['value'] !== 'string') return;
-      const value = entry['value'].trim();
-      if (value && !out.includes(value)) out.push(value);
-    };
-    for (const entry of Array.isArray(option?.['options']) ? option['options'] : []) {
-      if (isPlainRecord(entry) && Array.isArray(entry['options'])) entry['options'].forEach(push);
-      else push(entry);
-    }
-    return out;
-  };
-  const modelOption = select('model');
-  const models = values(modelOption);
+  const modelOption = antigravityConfigSelect(configOptions, 'model');
+  const models = antigravitySelectValues(modelOption);
   if (models.length === 0) throw new Error('Antigravity did not report any models for the signed-in account');
-  const current = typeof modelOption?.['currentValue'] === 'string' ? modelOption['currentValue'].trim() : '';
-  const defaultModel = current && models.includes(current) ? current : models[0]!;
-  const efforts = values(select('thought_level'));
+  const current = antigravitySelectCurrent(modelOption);
+  const known = current !== '' && models.includes(current);
   return {
-    defaultModel,
-    ...(efforts.length > 0 ? { modelReasoningEfforts: { [defaultModel]: efforts } } : {}),
+    defaultModel: known ? current : models[0]!,
+    ...(known
+      ? { modelReasoningEfforts: { [current]: antigravitySelectValues(antigravityConfigSelect(configOptions, 'thought_level')) } }
+      : {}),
     models,
   };
+}
+
+const ANTIGRAVITY_SWITCH_TIMED_OUT = Symbol('timed out');
+
+/**
+ * Adds each other model's thinking levels to `catalog`. `agy` reports levels
+ * only for the session's current model, so the probe switches its own session
+ * to each model and reads the levels that come back; the account's default
+ * model stays as it was. A model whose switch fails, or that the switches do
+ * not reach by `deadline`, keeps no menu: saves fall back to the write
+ * vocabulary, and the live session gates the level at run time.
+ */
+async function withAntigravityModelThoughtLevels(
+  catalog: ProviderModelCatalog,
+  session: Record<string, unknown>,
+  request: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  deadline: number,
+): Promise<ProviderModelCatalog> {
+  const sessionId = session['sessionId'];
+  const configId = antigravityConfigSelect(session['configOptions'], 'model')?.['id'];
+  if (typeof sessionId !== 'string' || typeof configId !== 'string') return catalog;
+  const efforts: Record<string, string[]> = { ...catalog.modelReasoningEfforts };
+  for (const model of catalog.models) {
+    if (Object.hasOwn(efforts, model)) continue;
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    const result = await raceWithTimeout(
+      request('session/set_config_option', { configId, sessionId, value: model }).catch(() => undefined),
+      left,
+      ANTIGRAVITY_SWITCH_TIMED_OUT,
+    );
+    if (result === ANTIGRAVITY_SWITCH_TIMED_OUT) break;
+    // The levels are the model's only when the session now has that model.
+    if (!result || antigravitySelectCurrent(antigravityConfigSelect(result['configOptions'], 'model')) !== model) continue;
+    efforts[model] = antigravitySelectValues(antigravityConfigSelect(result['configOptions'], 'thought_level'));
+  }
+  return Object.keys(efforts).length > 0 ? { ...catalog, modelReasoningEfforts: efforts } : catalog;
 }
 
 /** Probe one `agy acp` session for its model options. Exported for tests; callers use the cached wrapper. */
@@ -301,8 +347,11 @@ export async function antigravityAcpModelCatalog(
   if (problem) throw new Error(problem);
   const cwd = join(resolveAnimaHome(), 'cache', 'antigravity-model-probe');
   await mkdir(cwd, { recursive: true });
+  const timeoutMs = options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS;
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, ['acp'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Model switches stop here, leaving time to close the session within the timeout.
+    const switchDeadline = Date.now() + Math.floor((timeoutMs * 2) / 3);
     ignoreChildStdinErrors(child);
     let exited = false;
     child.once('exit', () => {
@@ -328,10 +377,7 @@ export async function antigravityAcpModelCatalog(
       if (error) reject(error);
       else resolvePromise(value!);
     };
-    const timer = setTimeout(
-      () => finish(new Error('Antigravity ACP model catalog probe timed out')),
-      options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS,
-    );
+    const timer = setTimeout(() => finish(new Error('Antigravity ACP model catalog probe timed out')), timeoutMs);
     const write = (message: Record<string, unknown>) =>
       child.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
     const request = (method: string, params: Record<string, unknown>) =>
@@ -393,7 +439,12 @@ export async function antigravityAcpModelCatalog(
         protocolVersion: 1,
       });
       const session = await request('session/new', { cwd, mcpServers: [] });
-      const catalog = parseAntigravityConfigOptions(session['configOptions']);
+      const catalog = await withAntigravityModelThoughtLevels(
+        parseAntigravityConfigOptions(session['configOptions']),
+        session,
+        request,
+        switchDeadline,
+      );
       const capabilities = isPlainRecord(init['agentCapabilities']) ? init['agentCapabilities'] : undefined;
       const sessionCapabilities = isPlainRecord(capabilities?.['sessionCapabilities'])
         ? capabilities['sessionCapabilities']
