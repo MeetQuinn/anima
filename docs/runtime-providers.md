@@ -356,9 +356,11 @@ Model menu:
   live list offers and the built-in list lacks. A model the built-in list lacks takes `low` through
   `max`. `haiku` has an effort menu, since Haiku 5.5 takes effort; a CLI whose `haiku` is an older
   model says so in its live list, which then shows none.
-- A built-in model label wins over the CLI's. A CLI label is one line of at most 80 characters
-  (whitespace runs become one space), and one that only repeats the id is dropped. Kimi and OpenCode
-  labels follow the same rules.
+- A provider's own built-in model label wins over its CLI's, and its CLI's over another provider's
+  built-in label, so Kimi's name for an alias `opus` is not Claude's Opus. A CLI label is one line
+  of at most 80 characters (whitespace runs become one space), and one that only repeats the id is
+  dropped. When two models in one menu show the same name (OpenCode models of two providers, say),
+  each shows its id after the name. Kimi and OpenCode labels follow the same rules.
 
 ### Claude subagent activity attribution
 

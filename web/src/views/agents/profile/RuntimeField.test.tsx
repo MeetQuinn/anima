@@ -446,6 +446,62 @@ describe('Runtime modal — live model names', () => {
       { envOnly: false },
     );
   });
+
+  // Kimi's CLI name for its alias wins over Claude's built-in name for the same id.
+  it("names a Kimi alias by Kimi's name, not Claude's", () => {
+    const liveKimi: ProviderAvailability[] = [
+      {
+        checkedAt: '2026-11-25T00:00:00.000Z',
+        defaultModel: 'opus',
+        kind: 'kimi-cli',
+        modelLabels: { opus: 'Local Builder' },
+        modelReasoningEfforts: { opus: [] },
+        models: ['opus'],
+        present: true,
+      },
+    ];
+    render(
+      <RuntimeRow
+        provider={{ kind: 'kimi-cli', model: 'opus' } as never}
+        providerOptions={providerCatalogForAvailability(providerOptions, liveKimi)}
+        providerAvailability={liveKimi}
+        isActive
+        onCommit={vi.fn(async () => {}) as never}
+      />,
+    );
+    const row = screen.getByRole('button', { name: /·/ }).textContent;
+    expect(row).toContain('Local Builder');
+    expect(row).not.toContain('Opus');
+  });
+
+  // Two OpenCode providers can give a model the same name; the ids tell them apart.
+  it('shows the id beside a name two models share, in the menu and on the pick', async () => {
+    const liveOpenCode: ProviderAvailability[] = [
+      {
+        checkedAt: '2026-11-25T00:00:00.000Z',
+        defaultModel: 'review-a/chat',
+        kind: 'opencode-cli',
+        modelLabels: { 'review-a/chat': 'Review Chat', 'review-b/chat': 'Review Chat', 'review-c/solo': 'Solo' },
+        modelReasoningEfforts: { 'review-a/chat': ['high'], 'review-b/chat': ['low'], 'review-c/solo': [] },
+        models: ['review-a/chat', 'review-b/chat', 'review-c/solo'],
+        present: true,
+      },
+    ];
+    const onCommit = vi.fn(async () => {});
+    const dialog = openModal({ kind: 'opencode-cli', model: 'review-a/chat', reasoningEffort: 'high' }, onCommit, liveOpenCode);
+    expect(dialog.queryByRole('button', { name: 'Review Chat' })).toBeNull();
+    expect(dialog.getByRole('button', { name: 'Solo' })).toBeTruthy();
+    fireEvent.click(dialog.getByRole('button', { name: 'Review Chat (review-b/chat)' }));
+    // The trigger shows the pick the same way.
+    expect(dialog.getAllByRole('button', { name: 'Review Chat (review-b/chat)' })).toHaveLength(2);
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith(
+      { kind: 'opencode-cli', model: 'review-b/chat', reasoningEffort: 'low' },
+      { envOnly: false },
+    );
+  });
 });
 
 // Codex reads its model list live; each model's effort menu is what that read

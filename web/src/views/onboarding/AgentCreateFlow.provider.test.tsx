@@ -105,6 +105,29 @@ describe('create page: effort follows the menu of the model it sends', () => {
     expect(await submittedProvider()).toEqual({ kind: 'codex-cli', model: 'gpt-6.1-terra' });
   });
 
+  // Two OpenCode providers can give a model the same name; the ids tell them apart.
+  it('shows the id beside a name two models share, in the menu and on the pick', async () => {
+    renderFlow([
+      {
+        checkedAt: '2026-11-25T00:00:00.000Z',
+        defaultModel: 'review-a/chat',
+        kind: 'opencode-cli',
+        modelLabels: { 'review-a/chat': 'Review Chat', 'review-b/chat': 'Review Chat', 'review-c/solo': 'Solo' },
+        modelReasoningEfforts: { 'review-a/chat': ['high'], 'review-b/chat': ['low'], 'review-c/solo': [] },
+        models: ['review-a/chat', 'review-b/chat', 'review-c/solo'],
+        present: true,
+      },
+      { kind: 'claude-code', present: false },
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'OpenCode' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review Chat (review-b/chat)' })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Review Chat' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Review Chat (review-b/chat)' }));
+    // The selected value shows the pick the same way.
+    expect(screen.getAllByText('Review Chat (review-b/chat)')).toHaveLength(2);
+    expect(await submittedProvider()).toEqual({ kind: 'opencode-cli', model: 'review-b/chat', reasoningEffort: 'low' });
+  });
+
   it('a pick made before the live list arrives moves to the default when the list lacks it', async () => {
     let answer!: (value: ProviderAvailability[]) => void;
     api.fetchProviderAvailability.mockReturnValue(new Promise((resolve) => (answer = resolve)));
