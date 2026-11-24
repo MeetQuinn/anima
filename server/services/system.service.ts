@@ -738,9 +738,10 @@ export async function modelListProbe(
   const maxBytes = options.maxBytes ?? MODEL_LIST_MAX_BYTES;
   const timeoutMs = options.timeoutMs ?? MODEL_LIST_PROBE_TIMEOUT_MS;
   const killGraceMs = options.killGraceMs ?? 2_000;
-  // A reply writes each id once, in at most six times the bytes the CLI spent on it,
-  // and a menu in fewer, so this holds any catalog an accepted output yields.
-  const replyMaxBytes = 6 * maxBytes + 64 * 1024;
+  // A reply writes each id and effort name once, in at most three times the bytes the
+  // CLI spent on it (see modelListReply), so this holds any catalog an accepted output
+  // yields.
+  const replyMaxBytes = 3 * maxBytes + 64 * 1024;
   await mkdir(options.cwd, { recursive: true });
   return new Promise((resolvePromise, reject) => {
     const child = spawn(

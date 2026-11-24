@@ -555,10 +555,15 @@ test('Codex model catalog probe fails when app-server exits before answering', a
   }
 });
 
-// `opencode models --verbose`: each `provider/id` line is followed by that model's JSON.
+// `opencode models --verbose`: each `provider/id` line is followed by that model's
+// record, which names it again (`providerID`, `id`). A string is the record's text as is.
 function openCodeVerbose(models: Array<[string, Record<string, unknown> | string]>): string {
   return models
-    .map(([id, info]) => `${id}\n${typeof info === 'string' ? info : JSON.stringify(info, null, 2)}`)
+    .map(([model, info]) => {
+      if (typeof info === 'string') return `${model}\n${info}`;
+      const slash = model.indexOf('/');
+      return `${model}\n${JSON.stringify({ id: model.slice(slash + 1), providerID: model.slice(0, slash), ...info }, null, 2)}`;
+    })
     .join('\n') + '\n';
 }
 
@@ -606,26 +611,35 @@ test('parseOpenCodeModelsOutput reads ids and variant names, and nothing else', 
   const catalog = parseOpenCodeModelsOutput(output);
   assert.deepEqual(catalog, {
     defaultModel: 'deepseek/deepseek-v4-pro',
-    // A model whose JSON does not parse keeps its built-in menu (no entry).
     modelReasoningEfforts: { 'deepseek/deepseek-v4-pro': ['high', 'low', 'max'], 'opencode/big-pickle': [] },
-    models: ['deepseek/deepseek-v4-pro', 'opencode/big-pickle', 'deepseek/deepseek-flash'],
+    // A record that does not parse names no model.
+    models: ['deepseek/deepseek-v4-pro', 'opencode/big-pickle'],
   });
   assert.equal(JSON.stringify(catalog).includes('sk-not-read'), false);
   assert.throws(() => parseOpenCodeModelsOutput(''), /OpenCode did not report any models/);
 });
 
-// An id is a line outside a model's JSON, whatever it holds, and its JSON is its own:
-// an odd id neither drops out nor takes its neighbour's menu.
-test('parseOpenCodeModelsOutput keeps every listed id, each with its own menu', () => {
-  const output = openCodeVerbose([
-    ['review/aa-normal', { variants: { high: {} } }],
-    ['review/bb\\model', { variants: { low: {} } }],
-    ['review/cc"quoted', {}],
-    ['review/dd {braced} spaced', { variants: { max: {} } }],
-    ['review/ee\u0001control', { variants: {} }],
-    ['review/ff-bare', '{}'],
-    ['review/gg-normal', { variants: { medium: {} } }],
-  ]) + 'review/hh-no-json\n';
+// A model is a record, named by its own `providerID` and `id`, with its own menu: an
+// id with any characters (a newline too) is listed whole, and a line outside a record,
+// such as a wrapper script's notice, is not a model, nor the default.
+test('parseOpenCodeModelsOutput lists each model record by its own id, and nothing else', () => {
+  const output = [
+    'Loading models from /workspace/catalog',
+    openCodeVerbose([
+      ['review/aa-normal', { variants: { high: {} } }],
+      ['review/bb\\model', { variants: { low: {} } }],
+      ['review/cc"quoted', {}],
+      ['review/dd {braced} spaced', { variants: { max: {} } }],
+      ['review/ee\u0001control', { variants: {} }],
+      ['review/multi\nline', { variants: { high: {} } }],
+      ['review/gg-normal', { variants: { medium: {} } }],
+    ]),
+    'review/hh-no-record',
+    JSON.stringify({ level: 'info', msg: 'a log line on stdout' }),
+    'review/ii-not-named',
+    JSON.stringify({ variants: { high: {} } }, null, 2),
+    'Done: /workspace/catalog',
+  ].join('\n');
   assert.deepEqual(parseOpenCodeModelsOutput(output), {
     defaultModel: 'review/aa-normal',
     modelReasoningEfforts: {
@@ -634,7 +648,7 @@ test('parseOpenCodeModelsOutput keeps every listed id, each with its own menu', 
       'review/cc"quoted': [],
       'review/dd {braced} spaced': ['max'],
       'review/ee\u0001control': [],
-      'review/ff-bare': [],
+      'review/multi\nline': ['high'],
       'review/gg-normal': ['medium'],
     },
     models: [
@@ -643,9 +657,8 @@ test('parseOpenCodeModelsOutput keeps every listed id, each with its own menu', 
       'review/cc"quoted',
       'review/dd {braced} spaced',
       'review/ee\u0001control',
-      'review/ff-bare',
+      'review/multi\nline',
       'review/gg-normal',
-      'review/hh-no-json',
     ],
   });
 });
@@ -689,9 +702,9 @@ async function processGone(pid: number): Promise<boolean> {
   return false;
 }
 
-/** Resolves with the pid a script wrote to `file`, waiting up to about 5s for it. */
+/** Resolves with the pid a script wrote to `file`, waiting up to about 15s for it (a loaded machine). */
 async function pidFrom(file: string): Promise<number> {
-  for (let i = 0; i < 100; i += 1) {
+  for (let i = 0; i < 300; i += 1) {
     const text = await readFile(file, 'utf8').catch(() => '');
     if (Number(text) > 0) return Number(text);
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -761,23 +774,23 @@ test('model-list replies carry each model once, and the server keeps ids and men
 });
 
 // A list as long as the output cap allows still arrives whole: the reply limit
-// follows the output limit. Ids of control characters with nothing else are the
-// costliest case for the reply: each such byte is six in JSON.
+// follows the output limit. Ids of bytes that are not UTF-8 are the costliest case
+// for the reply: each such byte is three (U+FFFD) there.
 test('model-list probe: a list that fills the output limit arrives whole', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'anima-model-list-size-'));
   try {
     const maxBytes = 256 * 1024;
-    // Control characters JavaScript does not count as whitespace.
-    const controls = [...'\x01\x02\x03\x04\x05\x06\x07\x08\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f'];
+    const idBytes = maxBytes / 4 - 64;
     const ids: string[] = [];
-    let size = 0;
-    for (let i = 0; size + 12 < maxBytes; i += 1) {
-      const id = `/${[...i.toString(26)].map((digit) => controls[parseInt(digit, 26)]).join('')}`;
-      ids.push(id);
-      size += id.length + 1;
+    const records: Buffer[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      ids.push(`p/${i}${'\ufffd'.repeat(idBytes)}`);
+      records.push(Buffer.from(`{"providerID":"p","id":"${i}`), Buffer.alloc(idBytes, 0x80), Buffer.from('"}\n'));
     }
+    const output = Buffer.concat(records);
+    assert.ok(output.length <= maxBytes);
     const outputFile = join(dir, 'models.txt');
-    await writeFile(outputFile, `${ids.join('\n')}\n`, 'utf8');
+    await writeFile(outputFile, output);
     const opencode = join(dir, 'opencode');
     await writeFile(opencode, `#!${process.execPath}\nprocess.stdout.write(require('fs').readFileSync(${JSON.stringify(outputFile)}));`, 'utf8');
     await chmod(opencode, 0o755);

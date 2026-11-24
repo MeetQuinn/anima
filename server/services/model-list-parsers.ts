@@ -26,53 +26,51 @@ export function isModelListParserName(value: string | undefined): value is Model
 }
 
 /**
- * `opencode models --verbose` → catalog. Each model is its `provider/id` on a line of its
- * own, then its JSON as `JSON.stringify(model, null, 2)` writes it: `{` and `}` on lines
- * of their own, everything between indented. So a line outside that JSON is an id,
- * whatever characters the id has. A model's `variants` are its effort menu (the values
- * the runtime's `effort` option takes), and a model without any has no effort control;
- * a model whose JSON does not parse keeps its built-in menu. Deprecated models stay out.
- * Only ids, status and variant names are read: the JSON also carries provider headers
- * and options.
+ * `opencode models --verbose` → catalog. For each model OpenCode prints `provider/id`,
+ * then the model's record as `JSON.stringify(model, null, 2)` writes it: `{` and `}` on
+ * lines of their own, everything between indented. A model is such a record, named by
+ * its `providerID` and `id`. So an id can hold any character, a newline included, and
+ * a line outside a record (a wrapper script's notice, say) is no model. A model's
+ * `variants` are its effort menu (the values the runtime's `effort` option takes), and
+ * a model without any has no effort control. Deprecated models stay out. Only
+ * `providerID`, `id`, status and variant names are read: the record also carries
+ * provider headers and options.
  */
 export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog {
-  type Block = { body: string[]; model: string };
-  const blocks: Block[] = [];
-  // The model the next JSON belongs to, and whether that JSON is still open.
-  let current: Block | undefined;
-  let inBody = false;
+  const records: string[] = [];
+  let open: string[] | undefined;
   for (const line of output.split(/\r?\n/)) {
-    if (inBody) {
-      current?.body.push(line);
+    if (open) {
+      open.push(line);
       if (line === '}') {
-        inBody = false;
-        current = undefined;
+        records.push(open.join('\n'));
+        open = undefined;
       }
+    } else if (line === '{') {
+      open = [line];
     } else if (line.startsWith('{')) {
-      current?.body.push(line);
-      // `{}`, or JSON on one line, is complete as it is.
-      if (line === '{') inBody = true;
-      else current = undefined;
-    } else if (line !== '') {
-      current = !/^\s/.test(line) && line.includes('/') ? { body: [], model: line } : undefined;
-      if (current) blocks.push(current);
+      // A record on one line, such as `{}`.
+      records.push(line);
     }
   }
   const models: string[] = [];
   const seen = new Set<string>();
   const menus: [string, string[]][] = [];
-  for (const { body, model } of blocks) {
-    if (seen.has(model)) continue;
+  for (const record of records) {
     let info: unknown;
     try {
-      info = JSON.parse(body.join('\n'));
+      info = JSON.parse(record);
     } catch {
-      info = undefined;
+      continue;
     }
-    if (isPlainRecord(info) && info['status'] === 'deprecated') continue;
+    if (!isPlainRecord(info)) continue;
+    const provider = info['providerID'];
+    const id = info['id'];
+    if (typeof provider !== 'string' || typeof id !== 'string' || !provider.trim() || !id.trim()) continue;
+    const model = `${provider}/${id}`;
+    if (seen.has(model) || info['status'] === 'deprecated') continue;
     seen.add(model);
     models.push(model);
-    if (!isPlainRecord(info)) continue;
     const variants = info['variants'];
     menus.push([model, isPlainRecord(variants) ? Object.keys(variants).filter((name) => name.trim() !== '') : []]);
   }
@@ -124,9 +122,10 @@ type ModelListReplyEntry = [string] | [string, string[]];
 
 /**
  * A catalog in the form the probe process sends it: each model once, with its menu,
- * and the default as its index in that list. So each id is written once, in at most
- * six times the bytes it took in the CLI's output (a control character becomes
- * `\u00XX`), which bounds the reply the server accepts (see modelListProbe).
+ * and the default as its index in that list. So each id is written once, and as every
+ * id and effort name was a JSON string in the CLI's output, in no more bytes than it
+ * took there, but for bytes that are not UTF-8: each becomes U+FFFD, three bytes. That
+ * bounds the reply the server accepts (see modelListProbe).
  */
 export function modelListReply(catalog: ProviderModelCatalog): { defaultModel: number; models: ModelListReplyEntry[] } {
   const menus = catalog.modelReasoningEfforts ?? {};
