@@ -96,15 +96,19 @@ function mergeProviderSelection(
   if (!update.kind || update.kind === current.kind) {
     const currentEffort = 'reasoningEffort' in current ? current.reasoningEffort : undefined;
     const model = update.model ?? current.model;
-    // Explicit effort wins; otherwise keep current only when the provider write
-    // vocabulary still accepts it for this model.
+    // Explicit effort wins (null clears it); otherwise keep current only when the
+    // provider write vocabulary still accepts it for this model.
     let reasoningEffort =
-      update.reasoningEffort !== undefined ? update.reasoningEffort : currentEffort;
+      update.reasoningEffort === null
+        ? undefined
+        : update.reasoningEffort !== undefined
+          ? update.reasoningEffort
+          : currentEffort;
     if (
       reasoningEffort &&
       !isSupportedReasoningEffort(current.kind, reasoningEffort, model)
     ) {
-      if (update.reasoningEffort !== undefined) {
+      if (update.reasoningEffort) {
         throw new AgentConfigError(400, `unsupported reasoningEffort ${reasoningEffort}`);
       }
       reasoningEffort = undefined;
@@ -120,8 +124,8 @@ function mergeProviderSelection(
     const { env: _env, ...rest } = current;
     const next: Record<string, unknown> = { ...rest };
     if (update.model !== undefined) next.model = update.model;
-    if (update.reasoningEffort !== undefined) next.reasoningEffort = update.reasoningEffort;
-    else if (currentEffort && !reasoningEffort) delete next.reasoningEffort;
+    if (reasoningEffort) next.reasoningEffort = reasoningEffort;
+    else delete next.reasoningEffort;
     if (update.transport !== undefined) next.transport = update.transport;
     if (update.fastMode !== undefined) next.fastMode = update.fastMode;
     applyRuntimeOverrides(next, update);
@@ -138,7 +142,10 @@ function mergeProviderSelection(
     throw new AgentConfigError(400, `unsupported fastMode for ${entry.kind}`);
   }
   const model = update.model ?? entry.defaultModel;
-  const reasoningEffort = update.reasoningEffort ?? defaultReasoningEffort(entry.kind, model);
+  const reasoningEffort =
+    update.reasoningEffort === null
+      ? undefined
+      : (update.reasoningEffort ?? defaultReasoningEffort(entry.kind, model));
   validateProviderShape(entry.kind, model, reasoningEffort);
 
   const next: Record<string, unknown> = { kind: entry.kind, model };

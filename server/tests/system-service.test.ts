@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  codexAppServerModelCatalog,
   docsUrl,
+  parseCodexModelList,
   parseGrokAcpModelState,
   parseGrokModelsOutput,
   parsePiModelCatalog,
@@ -115,7 +117,14 @@ test('provider availability disables Grok auto-update during its presence probe'
  * As `agy`, `acp` serves a catalog session: gemini-4-neon (low/high) and
  * gemini-4-carbon (`carbon`, default high).
  */
-function fakeShim(names: string[], carbon = ['high']): string {
+/** Shell step a fake runs first to write `bytes` to stderr; an unread stderr pipe fills at about 64KB. */
+function floodStderr(bytes: number): string {
+  return bytes > 0
+    ? `require('child_process').execFileSync('/bin/sh', ['-c', 'exec /usr/bin/head -c ${bytes} /dev/zero >&2'], { stdio: ['ignore', 'ignore', 'inherit'] });`
+    : '';
+}
+
+function fakeShim(names: string[], carbon = ['high'], stderrBytes = 0): string {
   const grokState = {
     availableModels: [
       { _meta: { reasoningEfforts: [{ value: 'high' }], supportsReasoningEffort: true }, modelId: 'grok-4.6' },
@@ -129,6 +138,7 @@ function fakeShim(names: string[], carbon = ['high']): string {
     'const name = path.basename(process.argv[1]);',
     `if (!${JSON.stringify(names)}.includes(name)) process.exit(1);`,
     "if (process.argv[2] === '--version') { console.log(name + ' 0.0.0'); process.exit(0); }",
+    floodStderr(stderrBytes),
     `const levels = ${JSON.stringify(levels)};`,
     "const options = (current) => [",
     "  { category: 'model', currentValue: current, id: 'model', options: Object.keys(levels).reverse().map((value) => ({ value })), type: 'select' },",
@@ -311,10 +321,11 @@ test('parsePiModelCatalog collapses retired DeepSeek Flash aliases and keeps oth
 test('provider availability asks the live catalog per provider kind', async () => {
   const seen: Array<[string, string]> = [];
   const service = new SystemService({
-    commandPresent: async (command) => command === 'pi' || command === 'grok',
+    commandPresent: async (command) => command === 'pi' || command === 'grok' || command === 'codex',
     now: () => new Date('2026-08-25T03:00:00.000Z'),
     providerModels: async (command, kind) => {
       seen.push([command, kind]);
+      if (kind === 'codex-cli') throw new Error('model/list unsupported');
       if (kind === 'pi') return { defaultModel: 'deepseek/deepseek-v4-pro', models: ['deepseek/deepseek-v4-pro'] };
       return { defaultModel: 'grok-4.5', models: ['grok-4.5'] };
     },
@@ -327,8 +338,206 @@ test('provider availability asks the live catalog per provider kind', async () =
     models: ['deepseek/deepseek-v4-pro'],
     present: true,
   });
+  // Codex is still available when its live list fails; the web falls back to the built-in one.
+  assert.deepEqual(result.providers.find((provider) => provider.kind === 'codex-cli'), {
+    checkedAt: '2026-08-25T03:00:00.000Z',
+    kind: 'codex-cli',
+    modelCheckError: 'model/list unsupported',
+    present: true,
+  });
   assert.deepEqual(seen.sort(), [
+    ['codex', 'codex-cli'],
     ['grok', 'grok-cli'],
     ['pi', 'pi'],
   ]);
+});
+
+test('parseCodexModelList reads model/list pages into models, menus and the default', () => {
+  const effort = (reasoningEffort: string) => ({ description: '', reasoningEffort });
+  assert.deepEqual(
+    parseCodexModelList([
+      {
+        data: [
+          { id: 'gpt-6.2-astra', model: 'gpt-6.2-astra', supportedReasoningEfforts: ['low', 'high'].map(effort) },
+          { hidden: true, id: 'gpt-internal', model: 'gpt-internal', supportedReasoningEfforts: [effort('low')] },
+          { id: 'gpt-6-luna', isDefault: true, model: 'gpt-6-luna', supportedReasoningEfforts: [] },
+        ],
+        nextCursor: 'page-2',
+      },
+      // A model without the field keeps the built-in menu; repeats are dropped.
+      { data: [{ id: 'gpt-7-astra', model: 'gpt-7-astra' }, { id: 'gpt-6-luna', model: 'gpt-6-luna' }], nextCursor: null },
+    ]),
+    {
+      defaultModel: 'gpt-6-luna',
+      modelReasoningEfforts: { 'gpt-6.2-astra': ['low', 'high'], 'gpt-6-luna': [] },
+      models: ['gpt-6.2-astra', 'gpt-6-luna', 'gpt-7-astra'],
+    },
+  );
+  assert.equal(parseCodexModelList([{ data: [{ id: 'gpt-6-sol', model: 'gpt-6-sol' }] }]).defaultModel, 'gpt-6-sol');
+  assert.throws(() => parseCodexModelList([{ data: [{ hidden: true, id: 'x', model: 'x' }] }]), /did not report any models/);
+});
+
+/** A fake `codex app-server` that logs each message it gets and serves two model/list pages. */
+function fakeCodexAppServer(log: string, options: { exitBeforeList?: boolean; stderrBytes?: number } = {}): string {
+  return [
+    `#!${process.execPath}`,
+    floodStderr(options.stderrBytes ?? 0),
+    "const fs = require('fs');",
+    `const log = ${JSON.stringify(log)};`,
+    `const exitBeforeList = ${JSON.stringify(Boolean(options.exitBeforeList))};`,
+    "fs.appendFileSync(log, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + '\\n');",
+    "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+    "const page = (data, nextCursor) => ({ data, nextCursor });",
+    "let buffer = '';",
+    'let listId;',
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffer += chunk;',
+    "  const lines = buffer.split('\\n');",
+    "  buffer = lines.pop() || '';",
+    '  for (const line of lines) {',
+    '    if (!line.trim()) continue;',
+    '    const msg = JSON.parse(line);',
+    "    fs.appendFileSync(log, line + '\\n');",
+    "    if (msg.method === 'initialize') send({ id: msg.id, result: { userAgent: 'fake/0.0.0' } });",
+    "    if (msg.method === 'model/list' && exitBeforeList) process.exit(3);",
+    "    if (msg.method === 'model/list' && !msg.params.cursor) {",
+    '      // Ask the client something first; the probe must refuse it.',
+    '      listId = msg.id;',
+    "      send({ id: 'server-1', method: 'item/tool/requestUserInput', params: {} });",
+    '    }',
+    "    if (msg.id === 'server-1') send({ id: listId, result: page([{ id: 'gpt-6.2-sol', isDefault: true, model: 'gpt-6.2-sol', supportedReasoningEfforts: [{ reasoningEffort: 'low' }] }], 'next') });",
+    "    if (msg.method === 'model/list' && msg.params.cursor === 'next') send({ id: msg.id, result: page([{ id: 'gpt-6.1-terra', model: 'gpt-6.1-terra', supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }], null) });",
+    '  }',
+    '});',
+  ].join('\n');
+}
+
+test('Codex model catalog probe lists every model/list page and starts no thread', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-codex-models-'));
+  try {
+    const codex = join(dir, 'codex');
+    const log = join(dir, 'log');
+    await writeFile(codex, fakeCodexAppServer(log), 'utf8');
+    await chmod(codex, 0o755);
+    const home = join(dir, 'home');
+
+    const catalog = await withAnimaHome(home, () => codexAppServerModelCatalog(codex));
+
+    assert.deepEqual(catalog, {
+      defaultModel: 'gpt-6.2-sol',
+      modelReasoningEfforts: { 'gpt-6.1-terra': ['high'], 'gpt-6.2-sol': ['low'] },
+      models: ['gpt-6.2-sol', 'gpt-6.1-terra'],
+    });
+    const [launch, ...messages] = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(launch.argv, ['app-server', '--listen', 'stdio://']);
+    assert.equal(launch.cwd, await realpath(join(home, 'cache', 'codex-model-probe')));
+    assert.deepEqual(await readdir(join(home, 'cache', 'codex-model-probe')), []);
+    assert.deepEqual(
+      messages.map((message) => [message.method ?? 'reply', message.params?.cursor ?? message.error?.code ?? null]),
+      [['initialize', null], ['initialized', null], ['model/list', null], ['reply', -32601], ['model/list', 'next']],
+    );
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+/** A fake `codex app-server` serving `pages` one-model pages (endless: always one more); the default is on the last. */
+function fakeCodexPager(log: string, pages: number | 'endless'): string {
+  return [
+    `#!${process.execPath}`,
+    "const fs = require('fs');",
+    `const pages = ${JSON.stringify(pages)};`,
+    "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+    "let buffer = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffer += chunk;',
+    "  const lines = buffer.split('\\n');",
+    "  buffer = lines.pop() || '';",
+    '  for (const line of lines) {',
+    '    if (!line.trim()) continue;',
+    '    const msg = JSON.parse(line);',
+    "    if (msg.method === 'initialize') send({ id: msg.id, result: { userAgent: 'fake/0.0.0' } });",
+    "    if (msg.method !== 'model/list') continue;",
+    "    fs.appendFileSync(" + JSON.stringify(log) + ", (msg.params.cursor || '-') + '\\n');",
+    "    const index = msg.params.cursor ? Number(msg.params.cursor.slice(1)) : 0;",
+    "    const last = pages !== 'endless' && index === pages - 1;",
+    "    const model = { id: 'm' + index, isDefault: last, model: 'm' + index, supportedReasoningEfforts: [{ reasoningEffort: 'high' }] };",
+    "    send({ id: msg.id, result: { data: [model], nextCursor: last ? null : 'p' + (index + 1) } });",
+    '  }',
+    '});',
+  ].join('\n');
+}
+
+test('Codex model catalog probe reads every page, and a list still paging at the cap is a failed read', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-codex-pages-'));
+  try {
+    const codex = join(dir, 'codex');
+    const log = join(dir, 'log');
+    await writeFile(codex, fakeCodexPager(log, 21), 'utf8');
+    await chmod(codex, 0o755);
+    const catalog = await withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex));
+    assert.equal(catalog.models.length, 21);
+    assert.equal(catalog.defaultModel, 'm20');
+
+    await writeFile(log, '', 'utf8');
+    await writeFile(codex, fakeCodexPager(log, 'endless'), 'utf8');
+    await assert.rejects(
+      withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex)),
+      /Codex model\/list still had more pages after 100/,
+    );
+    assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, 100);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// Nothing reads a probe's stderr, so a chatty CLI must not stall on a full pipe.
+test('live catalog probes return their catalog while the CLI floods stderr', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-probe-stderr-'));
+  const previousPath = process.env.PATH;
+  try {
+    const codex = join(dir, 'codex');
+    await writeFile(codex, fakeCodexAppServer(join(dir, 'log'), { stderrBytes: 1_000_000 }), 'utf8');
+    await chmod(codex, 0o755);
+    const codexCatalog = await withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex, { timeoutMs: 5_000 }));
+    assert.deepEqual(codexCatalog.models, ['gpt-6.2-sol', 'gpt-6.1-terra']);
+
+    const shims = join(dir, 'shims');
+    const shim = join(dir, 'tool-manager');
+    await mkdir(shims, { recursive: true });
+    await writeFile(shim, fakeShim(['agy', 'grok'], ['high'], 1_000_000), 'utf8');
+    await chmod(shim, 0o755);
+    await symlink(shim, join(shims, 'agy'));
+    await symlink(shim, join(shims, 'grok'));
+    process.env.PATH = `${shims}:/usr/bin:/bin`;
+    await withAnimaHome(join(dir, 'home'), async () => {
+      const { providers } = await new SystemService({
+        commandPresent: async (command) => command === 'agy' || command === 'grok',
+      }).providerAvailability();
+      const menus = (kind: string) => providers.find((provider) => provider.kind === kind)?.modelReasoningEfforts;
+      assert.deepEqual(menus('grok-cli'), { 'grok-4.6': ['high'] });
+      assert.deepEqual(menus('antigravity-cli'), { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] });
+    });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test('Codex model catalog probe fails when app-server exits before answering', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-codex-models-'));
+  try {
+    const codex = join(dir, 'codex');
+    await writeFile(codex, fakeCodexAppServer(join(dir, 'log'), { exitBeforeList: true }), 'utf8');
+    await chmod(codex, 0o755);
+    await assert.rejects(
+      withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex)),
+      /Codex model catalog probe exited \(3\)|Codex model\/list failed: app-server exited/,
+    );
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
 });

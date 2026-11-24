@@ -1,14 +1,23 @@
 import type { ProviderCatalogEntry } from '@shared/provider-catalog';
 import type { ProviderAvailability } from '@shared/provider-catalog';
-import { reasoningEffortsForModel } from '@shared/provider-catalog';
+import { DEFAULT_REASONING_EFFORT, reasoningEffortsForModel } from '@shared/provider-catalog';
 
 export function providerCatalogForAvailability(
   providers: ProviderCatalogEntry[],
   availability: ProviderAvailability[] | null | undefined,
 ): ProviderCatalogEntry[] {
   return providers.map((provider) => {
-    if (!provider.dynamicModels) return provider;
     const status = providerStatus(provider, availability ?? null);
+    if (provider.liveModels) {
+      // The live list when the server read one, else the built-in list.
+      const models = status?.models;
+      if (!models?.length) return provider;
+      const defaultModel = models.includes(provider.defaultModel)
+        ? provider.defaultModel
+        : status?.defaultModel && models.includes(status.defaultModel) ? status.defaultModel : models[0]!;
+      return { ...provider, defaultModel, models };
+    }
+    if (!provider.dynamicModels) return provider;
     return {
       ...provider,
       defaultModel: status?.defaultModel ?? '',
@@ -17,7 +26,7 @@ export function providerCatalogForAvailability(
   });
 }
 
-/** Effort menu for the selected model (Grok is model-scoped). */
+/** Effort menu for the selected model: live where the server read one, else the catalog's. */
 export function effortOptionsForSelectedModel(
   provider: ProviderCatalogEntry | undefined,
   model: string | undefined,
@@ -26,6 +35,17 @@ export function effortOptionsForSelectedModel(
   if (!provider) return [];
   const status = providerStatus(provider, availability ?? null);
   return reasoningEffortsForModel(provider.kind, model, status);
+}
+
+/**
+ * The effort to use from a menu: the current pick while the menu offers it, else
+ * Anima's default, else the menu's first level; '' when the model has no menu.
+ * Every place that picks an effort (manual or automatic) goes through this.
+ */
+export function preferredEffort(options: readonly string[], current?: string): string {
+  if (current && options.includes(current)) return current;
+  if (options.includes(DEFAULT_REASONING_EFFORT)) return DEFAULT_REASONING_EFFORT;
+  return options[0] ?? '';
 }
 
 export function providerStatus(
@@ -39,10 +59,10 @@ export function providerModelAuthorityLabel(
   provider: ProviderCatalogEntry | undefined,
   availability: ProviderAvailability[] | null | undefined,
 ): string | undefined {
-  if (!provider?.dynamicModels) return undefined;
+  if (!provider?.dynamicModels && !provider?.liveModels) return undefined;
   const status = providerStatus(provider, availability ?? null);
   if (!status?.checkedAt || !status.defaultModel || !status.models?.length) {
-    return 'Model catalog not checked';
+    return provider.liveModels ? 'Built-in model list' : 'Model catalog not checked';
   }
   const checkedAt = new Date(status.checkedAt);
   const rendered = Number.isNaN(checkedAt.getTime()) ? status.checkedAt : checkedAt.toLocaleString();

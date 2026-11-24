@@ -21,6 +21,7 @@ import {
 } from './AgentFields';
 import {
   effortOptionsForSelectedModel,
+  preferredEffort,
   providerModelAuthorityLabel,
   providerReady,
   providerUnavailableHint,
@@ -168,6 +169,8 @@ function RuntimeModal({
     'reasoningEffort' in provider && currentEffortOptions.length > 0
       ? (provider.reasoningEffort ?? '')
       : '';
+  // The level on disk, whether or not the current menu offers it.
+  const savedEffort = 'reasoningEffort' in provider ? (provider.reasoningEffort ?? null) : null;
 
   const hadCommandOverride =
     Boolean(provider.runtimeCommand) || (provider.runtimeArgs?.length ?? 0) > 0;
@@ -181,6 +184,8 @@ function RuntimeModal({
   const [draftKind, setDraftKind] = useState(provider.kind as string);
   const [draftModel, setDraftModel] = useState(provider.model);
   const [draftEffort, setDraftEffort] = useState(currentEffort);
+  // Set when the operator picks a level from the menu; a model or kind change clears it.
+  const [effortPicked, setEffortPicked] = useState(false);
   const [draftCommand, setDraftCommand] = useState(provider.runtimeCommand ?? '');
   const [draftArgs, setDraftArgs] = useState((provider.runtimeArgs ?? []).join('\n'));
   const [draftFastMode, setDraftFastMode] = useState(currentFastMode);
@@ -194,10 +199,8 @@ function RuntimeModal({
   const [envRows, setEnvRows] = useState<EnvDraftRow[]>(() => draftRowsFor(provider.env));
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState<{
-    update: AgentUpdateProviderRequest;
-    sessionBoundaryChanged: boolean;
-  } | null>(null);
+  // The update itself is rebuilt on confirm: a live menu can arrive while it is open.
+  const [confirming, setConfirming] = useState<{ sessionBoundaryChanged: boolean } | null>(null);
 
   // Focus lifecycle: mounted IS open (rendered as `{open && …}`). No
   // `initialFocusRef` — the first control is an edit, not a safe answer, so
@@ -239,10 +242,30 @@ function RuntimeModal({
   const draftInstalled =
     !providerAvailability || !draftEntry || providerReady(draftEntry, providerAvailability);
 
-  const nextEffort = hasDraftEffort ? draftEffort : undefined;
+  const modelChanged = kindChanged || draftModel !== provider.model;
+  // A live list can change after a pick. A model picked in this dialog must still be on
+  // the provider's list to save; the saved model stays as it is, listed or not.
+  const draftModelMissing = modelChanged && !draftModelOptions.includes(draftModel ?? '');
+  // The live menu can also change after a pick. A level for a newly picked model, or one
+  // picked by hand, follows the model's latest menu, both shown and sent: the preferred
+  // level while the menu has one, else null, which clears the saved level. An untouched
+  // level on the saved model is not sent (undefined), so it stays as saved.
+  const effortTouched = modelChanged || effortPicked;
+  const effortTarget: string | null | undefined = !effortTouched
+    ? undefined
+    : hasDraftEffort
+      ? preferredEffort(draftEffortOptions, draftEffort)
+      : null;
+  const selectedEffort = effortTouched ? (effortTarget ?? '') : currentEffort;
   const providerChanged =
-    kindChanged || draftModel !== provider.model || (nextEffort ?? '') !== currentEffort;
-  const saveBlocked = providerChanged && !draftInstalled;
+    modelChanged || (effortTarget !== undefined && effortTarget !== savedEffort);
+  const saveBlocked = draftModelMissing || (providerChanged && !draftInstalled);
+  // When a Select's value leaves its item list, Base UI moves it back to the value the
+  // Select opened with (or null) and reports that through onValueChange, which reads as an
+  // operator's pick: a dropped Astra would turn back into the saved Sol. A value that is
+  // not listed is passed as null, so Base UI leaves it alone; the triggers show the drafts.
+  const modelSelectValue = draftModelOptions.includes(draftModel ?? '') ? draftModel : null;
+  const effortSelectValue = draftEffortOptions.includes(selectedEffort) ? selectedEffort : null;
 
   function providerSelectable(option: ProviderCatalogEntry): boolean {
     if (option.kind === provider.kind) return true;
@@ -257,6 +280,7 @@ function RuntimeModal({
     setDraftKind(nextEntry.kind);
     setDraftModel(nextEntry.defaultModel);
     setDraftEffort(defaultEffortForModel(nextEntry, nextEntry.defaultModel, providerAvailability));
+    setEffortPicked(false);
     // A launch override written for the old provider's CLI does not transfer
     // (server drops it on kind change); the drafts mirror that. Fast mode is
     // provider-specific and is also dropped rather than transferred.
@@ -270,6 +294,7 @@ function RuntimeModal({
     if (!next || !draftEntry) return;
     setDraftModel(next);
     setDraftEffort(defaultEffortForModel(draftEntry, next, providerAvailability));
+    setEffortPicked(false);
     setError(undefined);
   }
 
@@ -294,7 +319,8 @@ function RuntimeModal({
     if (providerChanged) {
       update.kind = draftKind;
       update.model = draftModel;
-      if (nextEffort) update.reasoningEffort = nextEffort;
+      // null when the menu is empty: a hidden level must not ride along.
+      if (effortTarget !== undefined) update.reasoningEffort = effortTarget;
     }
 
     const commandDraft = draftCommand.trim();
@@ -361,10 +387,28 @@ function RuntimeModal({
       return;
     }
     if (launchAffecting) {
-      setConfirming({ update, sessionBoundaryChanged: kindChanged });
+      setConfirming({ sessionBoundaryChanged: kindChanged });
     } else {
       void commit(update, true);
     }
+  }
+
+  // Sends what the drafts build now, under the lists and menus as they are now. When
+  // those changed under the confirm so the save is blocked, it returns to the editor.
+  function handleConfirm() {
+    if (busy) return;
+    const result = saveBlocked ? undefined : buildUpdate();
+    if (!result || 'error' in result) {
+      setConfirming(null);
+      if (result) setError(result.error);
+      return;
+    }
+    if (Object.keys(result.update).length === 0) {
+      setConfirming(null);
+      onClose();
+      return;
+    }
+    void commit(result.update, !result.launchAffecting);
   }
 
   // The modal speaks the same ledger language as the Setup section behind it:
@@ -437,13 +481,17 @@ function RuntimeModal({
                     })}
                   </SelectContent>
                 </Select>
-                <Select value={draftModel} onValueChange={handleModelChange}>
+                <Select value={modelSelectValue} onValueChange={handleModelChange}>
                   <SelectTrigger
                     className="!h-[44px] w-full font-sans text-[13px] md:!h-8 md:w-48"
                     aria-label="Model"
                     disabled={busy}
                   >
-                    {providerValueLabel(draftModel)}
+                    {draftModelMissing ? (
+                      <span className="text-text-subtle">Pick a model</span>
+                    ) : (
+                      providerValueLabel(draftModel)
+                    )}
                   </SelectTrigger>
                   <SelectContent>
                     {draftModelOptions.map((opt) => (
@@ -453,11 +501,13 @@ function RuntimeModal({
                     ))}
                   </SelectContent>
                 </Select>
-                {hasDraftEffort && (
+                {hasDraftEffort && !draftModelMissing && (
                   <Select
-                    value={draftEffort}
+                    value={effortSelectValue}
                     onValueChange={(v) => {
-                      if (v) setDraftEffort(v);
+                      if (!v) return;
+                      setDraftEffort(v);
+                      setEffortPicked(true);
                     }}
                   >
                     <SelectTrigger
@@ -465,8 +515,8 @@ function RuntimeModal({
                       aria-label="Reasoning effort"
                       disabled={busy}
                     >
-                      {draftEffort ? (
-                        providerValueLabel(draftEffort)
+                      {selectedEffort ? (
+                        providerValueLabel(selectedEffort)
                       ) : (
                         <span className="text-text-subtle">Effort</span>
                       )}
@@ -484,6 +534,13 @@ function RuntimeModal({
               {draftUnavailableHint && (
                 <div className="font-sans text-[11px] leading-snug text-text-muted">
                   {draftUnavailableHint}
+                </div>
+              )}
+              {draftModelMissing && !draftUnavailableHint && (
+                <div className="font-sans text-[11px] leading-snug text-health-warn">
+                  {draftModel
+                    ? `${providerValueLabel(draftModel)} is no longer in the model list. Pick another model.`
+                    : 'Pick a model.'}
                 </div>
               )}
               {draftAuthority && !draftUnavailableHint && (
@@ -718,7 +775,7 @@ function RuntimeModal({
             isActive={isActive}
             sessionBoundaryChanged={confirming.sessionBoundaryChanged}
             saving={busy}
-            onConfirm={() => void commit(confirming.update, false)}
+            onConfirm={handleConfirm}
             onCancel={() => setConfirming(null)}
           />
         )}

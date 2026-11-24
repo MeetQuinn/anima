@@ -241,6 +241,32 @@ terminals keep the controller non-quiescent so idle cleanup and configuration re
 them down. Older Codex versions that do not implement the method continue without background-
 terminal reporting instead of failing the turn.
 
+Model menu:
+
+- The dashboard's Codex model and effort menus come from a short-lived `codex app-server`
+  that the server starts for each availability check: `initialize`, then `model/list` (following
+  `nextCursor` to the last page), then exit. It runs from `$ANIMA_HOME/cache/codex-model-probe` and
+  starts no thread. Hidden models are left out, and each model's `supportedReasoningEfforts` is its
+  effort menu. A list still paging after 100 pages counts as a failed read. The probe does not read
+  stderr, so it is not piped; the agy and Grok probes do the same.
+- The catalog entry's `liveModels` flag marks this. Unlike `dynamicModels`, the provider never
+  waits on the live read: when it fails, the built-in Codex list and menus are used.
+- The menu keeps Anima's default model when the live list has it, else Codex's `isDefault`.
+- The effort menu shows the live levels the built-in catalog also accepts for that model (the
+  full Codex list for a model the catalog does not name). Saves are validated against the
+  built-in catalog as before, so the menu never offers a level a save would reject.
+- When the dashboard switches an agent to a model with no effort menu, it sends
+  `reasoningEffort: null`, which clears the saved level, and the next thread starts (or resumes)
+  without `model_reasoning_effort`. A save that keeps the model and does not touch the level
+  leaves the saved level alone.
+- The live read can answer after the operator picks a model. A level for a newly picked model,
+  or one picked by hand, follows the model's latest menu in what the dashboard shows and sends;
+  when that menu is empty, the modal sends `null`. The Runtime modal builds the update again when
+  the restart confirm is accepted.
+- A model picked in the Runtime modal that the latest list no longer has blocks Save until another
+  model is picked; if the list drops it while the restart confirm is open, the modal returns to the
+  editor. The agent's saved model stays when the list lacks it and only other fields change.
+
 Active-run follow-up:
 
 - Once `turn/start` returns a turn id, the adapter exposes that id as ready.

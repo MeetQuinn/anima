@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { providerCatalog } from '@shared/provider-catalog';
+import { providerCatalog, type ProviderAvailability } from '@shared/provider-catalog';
 
+import { providerCatalogForAvailability } from '@/lib/provider-availability';
 import { RuntimeRow } from './RuntimeField';
 
 // Behavioral pins for the Runtime modal (task #183), added at Milo's gate on
@@ -18,6 +19,9 @@ import { RuntimeRow } from './RuntimeField';
 // PAYLOAD logic behind `onValueChange` — kind change resetting command/args
 // drafts, and the diff builder sending only typed values — not the dropdown's
 // internals, which are third-party and exercised by real input in production.
+// What Base UI does to a value on its own (moving a value that left the list
+// back to the one it opened with) is driven through the real Select in
+// RuntimeField.base-select.test.tsx.
 //
 // Runs in CI (`pnpm --dir web test`) and locally the same way.
 vi.mock('@/components/ui/select', async () => {
@@ -62,12 +66,13 @@ const providerOptions = providerCatalog();
 function openModal(
   provider: Record<string, unknown>,
   onCommit: (...args: never[]) => Promise<void>,
+  availability: ProviderAvailability[] | null = null,
 ) {
   render(
     <RuntimeRow
       provider={provider as never}
-      providerOptions={providerOptions}
-      providerAvailability={null}
+      providerOptions={availability ? providerCatalogForAvailability(providerOptions, availability) : providerOptions}
+      providerAvailability={availability}
       isActive
       onCommit={onCommit as never}
     />,
@@ -396,5 +401,254 @@ describe('Runtime modal — fast mode', () => {
     expect(update).toMatchObject({ kind: 'kimi-cli' });
     expect(update).not.toHaveProperty('fastMode');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
+  });
+});
+
+// Codex reads its model list live; each model's effort menu is what that read
+// reports and saves accept. A model switch whose menu is empty must clear the
+// saved level instead of letting the hidden one ride along.
+describe('Runtime modal — effort follows the new model', () => {
+  const liveCodex = (terraEfforts: string[]): ProviderAvailability[] => [
+    {
+      checkedAt: '2026-11-24T00:00:00.000Z',
+      defaultModel: 'gpt-6.2-astra',
+      kind: 'codex-cli',
+      modelReasoningEfforts: { 'gpt-6.1-terra': terraEfforts, 'gpt-6.2-astra': ['high', 'xhigh'] },
+      models: ['gpt-6.2-astra', 'gpt-6.1-terra'],
+      present: true,
+    },
+  ];
+  const saved = { kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'xhigh' };
+
+  for (const [name, efforts, expected] of [
+    ['no levels', [], null],
+    ['only levels saves reject', ['minimal'], null],
+    ['a level saves accept', ['high'], 'high'],
+  ] as const) {
+    it(`switching to a model with ${name} sends reasoningEffort: ${String(expected)}`, async () => {
+      const onCommit = vi.fn(async () => {});
+      const dialog = openModal(saved, onCommit, liveCodex([...efforts]));
+      fireEvent.click(dialog.getByRole('button', { name: 'GPT-6.1 Terra' }));
+      expect(dialog.queryAllByRole('button', { name: 'High' }).length > 0).toBe(expected === 'high');
+      fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+      fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+      expect(onCommit).toHaveBeenCalledWith(
+        { kind: 'codex-cli', model: 'gpt-6.1-terra', reasoningEffort: expected },
+        { envOnly: false },
+      );
+    });
+  }
+
+  // The live read can answer after the dialog opened: after the model pick, or
+  // after Save while the restart confirm is open. Astra's live menu here is High only.
+  const lateMenu: ProviderAvailability[] = [
+    {
+      checkedAt: '2026-11-24T00:00:00.000Z',
+      defaultModel: 'gpt-6.2-astra',
+      kind: 'codex-cli',
+      modelReasoningEfforts: { 'gpt-6.2-astra': ['high'], 'gpt-6.2-sol': ['high'] },
+      models: ['gpt-6.2-sol', 'gpt-6.2-astra'],
+      present: true,
+    },
+  ];
+  function openWithLateMenu(
+    provider: Record<string, unknown>,
+    onCommit: (...args: never[]) => Promise<void>,
+    menu: ProviderAvailability[] = lateMenu,
+  ) {
+    const row = (availability: ProviderAvailability[] | null) => (
+      <RuntimeRow
+        provider={provider as never}
+        providerOptions={providerCatalogForAvailability(providerOptions, availability)}
+        providerAvailability={availability}
+        isActive
+        onCommit={onCommit as never}
+      />
+    );
+    const { rerender } = render(row(null));
+    fireEvent.click(screen.getByRole('button', { name: /·/ }));
+    return {
+      dialog: within(screen.getByRole('dialog', { name: 'Runtime' })),
+      menuArrives: () => rerender(row(menu)),
+    };
+  }
+
+  for (const when of ['after the model pick', 'while the restart confirm is open'] as const) {
+    it(`a new model's level follows a live menu that arrives ${when}`, async () => {
+      const onCommit = vi.fn(async () => {});
+      const { dialog, menuArrives } = openWithLateMenu(
+        { kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: 'xhigh' },
+        onCommit,
+      );
+      fireEvent.click(dialog.getByRole('button', { name: 'GPT-6.2 Astra' }));
+      // Before the live read, the built-in menu offers Extra High, and it is the default.
+      expect(dialog.queryAllByRole('button', { name: 'Extra High' }).length).toBeGreaterThan(0);
+      if (when === 'after the model pick') {
+        menuArrives();
+        expect(dialog.queryAllByRole('button', { name: 'Extra High' })).toHaveLength(0);
+        expect(dialog.queryAllByRole('button', { name: 'High' }).length).toBeGreaterThan(0);
+      }
+      fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+      if (when === 'while the restart confirm is open') menuArrives();
+      fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+      expect(onCommit).toHaveBeenCalledWith(
+        { kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'high' },
+        { envOnly: false },
+      );
+    });
+  }
+
+  it('a level picked by hand follows a live menu that arrives later', async () => {
+    const onCommit = vi.fn(async () => {});
+    const { dialog, menuArrives } = openWithLateMenu(
+      { kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: 'xhigh' },
+      onCommit,
+    );
+    fireEvent.click(dialog.getByRole('button', { name: 'Max' }));
+    menuArrives();
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith(
+      { kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: 'high' },
+      { envOnly: false },
+    );
+  });
+
+  it('an untouched saved level stays when a late menu lacks it and only another field changes', async () => {
+    const onCommit = vi.fn(async () => {});
+    const { dialog, menuArrives } = openWithLateMenu(
+      { kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'xhigh' },
+      onCommit,
+    );
+    menuArrives();
+    fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
+    fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith({ fastMode: true }, { envOnly: false });
+  });
+
+  // Later reads can also drop a model from the list, or empty a model's effort menu.
+  const solMenu = (sol: string[], models = ['gpt-6.2-sol', 'gpt-6.1-terra']): ProviderAvailability[] => [
+    {
+      checkedAt: '2026-11-24T00:00:00.000Z',
+      defaultModel: 'gpt-6.1-terra',
+      kind: 'codex-cli',
+      modelReasoningEfforts: { 'gpt-6.1-terra': ['high'], 'gpt-6.2-sol': sol },
+      models,
+      present: true,
+    },
+  ];
+  const solXhigh = { kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: 'xhigh' };
+
+  it('a newly picked model the live list drops blocks Save until another is picked', async () => {
+    const onCommit = vi.fn(async () => {});
+    const { dialog, menuArrives } = openWithLateMenu(solXhigh, onCommit, solMenu(['high', 'xhigh']));
+    fireEvent.click(dialog.getByRole('button', { name: 'GPT-6.2 Astra' }));
+    menuArrives();
+    expect(dialog.getByText('Pick a model')).toBeTruthy();
+    expect(dialog.getByText(/GPT-6.2 Astra is no longer in the model list/)).toBeTruthy();
+    expect((dialog.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(dialog.getByRole('button', { name: 'GPT-6.1 Terra' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith(
+      { kind: 'codex-cli', model: 'gpt-6.1-terra', reasoningEffort: 'high' },
+      { envOnly: false },
+    );
+  });
+
+  it('a model dropped while the restart confirm is open sends nothing and returns to the editor', async () => {
+    const onCommit = vi.fn(async () => {});
+    const { dialog, menuArrives } = openWithLateMenu(solXhigh, onCommit, solMenu(['high', 'xhigh']));
+    fireEvent.click(dialog.getByRole('button', { name: 'GPT-6.2 Astra' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    menuArrives();
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Save and apply when idle?' })).toBeNull();
+    expect(dialog.getByText(/GPT-6.2 Astra is no longer in the model list/)).toBeTruthy();
+    expect((dialog.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('the saved model stays when the live list lacks it and only another field changes', async () => {
+    const onCommit = vi.fn(async () => {});
+    const { dialog, menuArrives } = openWithLateMenu(
+      { kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'xhigh' },
+      onCommit,
+      solMenu(['high']),
+    );
+    menuArrives();
+    fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
+    fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith({ fastMode: true }, { envOnly: false });
+  });
+
+  for (const [menuName, sol] of [
+    ['no levels', []],
+    ['only levels saves reject', ['minimal']],
+  ] as const) {
+    for (const when of ['before Save', 'while the restart confirm is open'] as const) {
+      it(`a level picked by hand on the saved model is cleared when its live menu has ${menuName} (${when})`, async () => {
+        const onCommit = vi.fn(async () => {});
+        const { dialog, menuArrives } = openWithLateMenu(solXhigh, onCommit, solMenu([...sol]));
+        fireEvent.click(dialog.getByRole('button', { name: 'High' }));
+        if (when === 'before Save') menuArrives();
+        fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+        if (when === 'while the restart confirm is open') menuArrives();
+        fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+        await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+        expect(onCommit).toHaveBeenCalledWith(
+          { kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: null },
+          { envOnly: false },
+        );
+      });
+    }
+  }
+
+  it('an untouched saved level stays when its live menu turns out empty and only fast mode changes', async () => {
+    const onCommit = vi.fn(async () => {});
+    const { dialog, menuArrives } = openWithLateMenu(solXhigh, onCommit, solMenu([]));
+    menuArrives();
+    fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
+    fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith({ fastMode: true }, { envOnly: false });
+  });
+
+  it('a hand-picked level that a later menu moves back to the saved one sends nothing', async () => {
+    const onCommit = vi.fn(async () => {});
+    const { dialog, menuArrives } = openWithLateMenu(solXhigh, onCommit, solMenu(['xhigh']));
+    fireEvent.click(dialog.getByRole('button', { name: 'High' }));
+    menuArrives();
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    expect(screen.queryByRole('dialog', { name: 'Save and apply when idle?' })).toBeNull();
+    expect(onCommit).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
+  });
+
+  it('a save that keeps the model sends no effort, even when the menu hides the saved level', async () => {
+    const onCommit = vi.fn(async () => {});
+    const dialog = openModal(
+      { kind: 'codex-cli', model: 'gpt-6.1-terra', reasoningEffort: 'xhigh' },
+      onCommit,
+      liveCodex([]),
+    );
+    fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
+    fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith({ fastMode: true }, { envOnly: false });
   });
 });

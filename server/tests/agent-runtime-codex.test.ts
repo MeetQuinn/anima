@@ -23,7 +23,9 @@ import { makeSlackEvent } from './helpers/slack.js';
 import { ingestEvent } from './helpers/inbox.js';
 import { allActivities, loadState } from './helpers/state.js';
 import { activitiesForInboxItemWindow } from '../runtime/item-activities.js';
-import { defaultAgentRegistryService } from '../agents/agent.service.js';
+import { AgentService, defaultAgentRegistryService } from '../agents/agent.service.js';
+import { ensureTestAgentConfig } from './helpers/runtime-worker.js';
+import type { AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
 import { agentTokenUsageServiceForAgent } from '../usage/agent-token-usage.service.js';
 import { runtimeInput, runtimeFollowupInput, assertFollowupPrompt, providerSessionStartedPayload, runtimeTestEnv } from './helpers/agent-runtime.js';
@@ -1305,5 +1307,128 @@ test('codex-cli app-server transport fails when process exits before turn comple
     });
   } finally {
     await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+// What the dashboard's Runtime modal sends reaches disk and the next turn's thread
+// params as is: thread/start for the first turn, thread/resume (same params) after.
+// The fake app-server refuses a level outside each model's live menu, as Codex
+// does, and the test can change those menus between turns.
+test('codex-cli: the Runtime modal payloads reach disk and the next thread params; other saves keep the level', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-codex-effort-save-'));
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const callsPath = join(stateDir, 'thread-start.jsonl');
+      const menusPath = join(stateDir, 'menus.json');
+      const fakeCodex = join(stateDir, 'codex');
+      const setLiveMenus = (sol: string[]) => writeFile(menusPath, JSON.stringify({
+        'gpt-6.1-terra': [], 'gpt-6.2-astra': ['high'], 'gpt-6.2-sol': sol,
+      }), 'utf8');
+      await setLiveMenus(['high', 'xhigh']);
+      await writeFile(fakeCodex, [
+        `#!${process.execPath}`,
+        "const { appendFileSync, readFileSync } = require('node:fs');",
+        `const menus = () => JSON.parse(readFileSync(${JSON.stringify(menusPath)}, 'utf8'));`,
+        "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+        "require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {",
+        '  const msg = JSON.parse(line);',
+        "  if (msg.method === 'initialize') send({ id: msg.id, result: { userAgent: 'fake-codex/0.170.0' } });",
+        "  if (msg.method === 'thread/start' || msg.method === 'thread/resume') {",
+        "    appendFileSync(process.env.CALLS_PATH, JSON.stringify({ method: msg.method, ...msg.params }) + '\\n');",
+        '    const effort = msg.params.config.model_reasoning_effort;',
+        '    if (effort !== undefined && !(menus()[msg.params.model] || []).includes(effort)) {',
+        "      send({ id: msg.id, error: { code: -32600, message: 'unsupported reasoning effort ' + effort } });",
+        '      return;',
+        '    }',
+        "    send({ id: msg.id, result: { thread: { id: 'effort-thread' } } });",
+        '  }',
+        "  if (msg.method !== 'turn/start') return;",
+        "  send({ id: msg.id, result: { turn: { id: 'turn-1', status: 'inProgress' } } });",
+        "  send({ method: 'item/agentMessage/delta', params: { threadId: 'effort-thread', turnId: 'turn-1', itemId: 'm1', delta: 'done' } });",
+        "  send({ method: 'turn/completed', params: { threadId: 'effort-thread', turn: { id: 'turn-1', status: 'completed', error: null } } });",
+        '});',
+        '',
+      ].join('\n'), 'utf8');
+      await chmod(fakeCodex, 0o755);
+
+      await ensureTestAgentConfig({ agentId: 'anima', stateDir });
+      const configPath = join(stateDir, 'agents', 'anima', 'config.json');
+      await writeFile(configPath, JSON.stringify({
+        enabled: true,
+        homePath: stateDir,
+        id: 'anima',
+        profile: { displayName: 'Anima', role: 'test' },
+        provider: { kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: 'xhigh' },
+      }), 'utf8');
+      const saved = async () => (JSON.parse(await readFile(configPath, 'utf8')) as AgentConfig).provider;
+      const service = new AgentService('anima');
+      const ctx = await ingestEvent(makeSlackEvent({
+        channelId: 'D-effort', teamId: 'T-effort', text: 'which effort?', userId: 'U-effort',
+      }), { agentId: 'anima', stateDir });
+      // One turn on the saved config; returns the thread call it made and the reply.
+      const startOnce = async () => {
+        const runtime = createAgentRuntime(
+          { ...(await saved()), env: runtimeTestEnv(stateDir, { CALLS_PATH: callsPath, CODEX_HOME: join(stateDir, 'codex-home') }) },
+          { command: fakeCodex },
+        );
+        await writeFile(callsPath, '', 'utf8');
+        try {
+          const text = await runtime.run(await runtimeInput(runtime, ctx)).then(
+            (result) => result.text ?? '',
+            (error: Error) => `failed: ${error.message}`,
+          );
+          const calls = (await readFile(callsPath, 'utf8')).trim().split('\n')
+            .map((line) => JSON.parse(line) as { config: Record<string, unknown>; method: string; model: string });
+          assert.equal(calls.length, 1);
+          return { config: calls[0]!.config, method: calls[0]!.method, model: calls[0]!.model, text };
+        } finally {
+          await runtime.close?.();
+        }
+      };
+
+      // Saves that leave the effort out keep it: a model re-save, an unrelated setting.
+      await service.updateProvider({ model: 'gpt-6.2-sol' });
+      await service.updateProvider({ fastMode: true });
+      assert.equal((await saved()).reasoningEffort, 'xhigh');
+      assert.deepEqual(
+        await startOnce(),
+        { config: { model_reasoning_effort: 'xhigh', model_reasoning_summary: 'auto' }, method: 'thread/start', model: 'gpt-6.2-sol', text: 'done' },
+      );
+
+      // Sol's live menu turns out empty after a level was picked by hand on it: the modal
+      // sends null for the saved model, and the stale xhigh no longer reaches Codex.
+      await setLiveMenus([]);
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: null });
+      assert.equal('reasoningEffort' in (await saved()), false);
+      assert.deepEqual(
+        await startOnce(),
+        { config: { model_reasoning_summary: 'auto' }, method: 'thread/resume', model: 'gpt-6.2-sol', text: 'done' },
+      );
+
+      // Astra's live menu is High only: the modal sends high (the stale xhigh is what Codex refuses).
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'high' });
+      assert.equal((await saved()).reasoningEffort, 'high');
+      assert.deepEqual(
+        await startOnce(),
+        { config: { model_reasoning_effort: 'high', model_reasoning_summary: 'auto' }, method: 'thread/resume', model: 'gpt-6.2-astra', text: 'done' },
+      );
+
+      // Terra has no menu: the modal sends null, the level is cleared, and thread/start omits it.
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.1-terra', reasoningEffort: null });
+      assert.equal('reasoningEffort' in (await saved()), false);
+      assert.deepEqual(
+        await startOnce(),
+        { config: { model_reasoning_summary: 'auto' }, method: 'thread/resume', model: 'gpt-6.1-terra', text: 'done' },
+      );
+
+      // Controls: the fake refuses a level outside the model's live menu, so the stale
+      // levels the modal no longer sends would have failed to start.
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'xhigh' });
+      assert.match((await startOnce()).text, /^failed: [\s\S]*unsupported reasoning effort xhigh/);
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: 'xhigh' });
+      assert.match((await startOnce()).text, /^failed: [\s\S]*unsupported reasoning effort xhigh/);
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
   }
 });

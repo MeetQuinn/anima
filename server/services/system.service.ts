@@ -80,7 +80,7 @@ export class SystemService {
       providers: await Promise.all(
         PROVIDER_CATALOG.map(async (entry) => {
           const present = await this.commandPresent(entry.command, providerPresenceArgs(entry.kind));
-          if (!present || !entry.dynamicModels)
+          if (!present || !(entry.dynamicModels || entry.liveModels))
             return {
               kind: entry.kind,
               present,
@@ -230,8 +230,9 @@ export function parseGrokAcpModelState(modelState: unknown): ProviderModelCatalo
   return { defaultModel, modelReasoningEfforts, models: uniqueModels };
 }
 
-/** Live model catalog per provider kind; only `dynamicModels` catalog entries reach here. */
+/** Live model catalog per provider kind; only `dynamicModels` and `liveModels` catalog entries reach here. */
 async function liveProviderModels(command: string, kind: ProviderKind): Promise<ProviderModelCatalog> {
+  if (kind === 'codex-cli') return codexAppServerModelCatalog(command);
   if (kind === 'pi') return piProviderModels(command);
   if (kind === 'antigravity-cli') return antigravityProviderModels(command);
   return grokProviderModels(command, runtimeProbeEnv());
@@ -376,7 +377,8 @@ export async function antigravityAcpModelCatalog(
   await mkdir(cwd, { recursive: true });
   const timeoutMs = options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS;
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, ['acp'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Nothing reads stderr, so it is not piped: a full pipe would stall the CLI.
+    const child = spawn(command, ['acp'], { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] });
     // Model switches stop here, leaving time to close the session within the timeout.
     const switchDeadline = Date.now() + Math.floor((timeoutMs * 2) / 3);
     ignoreChildStdinErrors(child);
@@ -495,6 +497,162 @@ export async function antigravityAcpModelCatalog(
       finish(undefined, catalog);
     })().catch((error: unknown) => finish(error instanceof Error ? error : new Error(String(error))));
   });
+}
+
+const CODEX_MODEL_PROBE_TIMEOUT_MS = 10_000;
+// A guard against a server that never stops paging, far above any real list.
+const CODEX_MODEL_LIST_MAX_PAGES = 100;
+
+/**
+ * Codex's live model list. `codex app-server` answers `model/list` without starting a
+ * thread, so the probe leaves nothing behind. It runs in a fixed empty directory, so
+ * no project's Codex config applies, on the runtime PATH as the agy and Grok probes
+ * do. Exported for tests.
+ */
+export async function codexAppServerModelCatalog(
+  command: string,
+  options: { killGraceMs?: number; timeoutMs?: number } = {},
+): Promise<ProviderModelCatalog> {
+  const cwd = join(resolveAnimaHome(), 'cache', 'codex-model-probe');
+  await mkdir(cwd, { recursive: true });
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, ['app-server', '--listen', 'stdio://'], {
+      cwd,
+      env: runtimeProbeEnv(),
+      // Nothing reads stderr, so it is not piped: a full pipe would stall the CLI.
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    ignoreChildStdinErrors(child);
+    let exited = false;
+    const pending = new Map<number, { reject(error: Error): void; resolve(result: Record<string, unknown>): void }>();
+    let nextId = 0;
+    let buffer = '';
+    let settled = false;
+    const finish = (error?: Error, value?: ProviderModelCatalog) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!exited) {
+        child.kill('SIGTERM');
+        const escalate = setTimeout(() => {
+          if (!exited) child.kill('SIGKILL');
+        }, options.killGraceMs ?? 2_000);
+        escalate.unref();
+        child.once('exit', () => clearTimeout(escalate));
+      }
+      if (error) reject(error);
+      else resolvePromise(value!);
+    };
+    const timer = setTimeout(
+      () => finish(new Error('Codex model catalog probe timed out')),
+      options.timeoutMs ?? CODEX_MODEL_PROBE_TIMEOUT_MS,
+    );
+    const write = (message: Record<string, unknown>) => child.stdin?.write(`${JSON.stringify(message)}\n`);
+    const request = (method: string, params: Record<string, unknown>) =>
+      new Promise<Record<string, unknown>>((resolveRequest, rejectRequest) => {
+        if (exited) {
+          rejectRequest(new Error(`Codex ${method} failed: app-server exited`));
+          return;
+        }
+        const id = ++nextId;
+        pending.set(id, { reject: rejectRequest, resolve: resolveRequest });
+        write({ id, method, params });
+      });
+
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let message: unknown;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (!isPlainRecord(message)) continue;
+        if (typeof message['method'] === 'string') {
+          // Nothing runs in this probe; refuse any server→client request.
+          if (message['id'] !== undefined) write({ error: { code: -32601, message: 'not supported' }, id: message['id'] });
+          continue;
+        }
+        const waiter = typeof message['id'] === 'number' ? pending.get(message['id']) : undefined;
+        if (!waiter) continue;
+        pending.delete(message['id'] as number);
+        const error = isPlainRecord(message['error']) ? message['error'] : undefined;
+        if (error) {
+          waiter.reject(new Error(`Codex request failed: ${typeof error['message'] === 'string' ? error['message'] : 'unknown error'}`));
+        } else {
+          waiter.resolve(isPlainRecord(message['result']) ? message['result'] : {});
+        }
+      }
+    });
+    child.on('error', (error) => finish(error instanceof Error ? error : new Error(String(error))));
+    child.on('exit', (code) => {
+      exited = true;
+      const error = new Error(`Codex model catalog probe exited (${code ?? 'signal'})`);
+      for (const waiter of pending.values()) waiter.reject(error);
+      pending.clear();
+      finish(error);
+    });
+
+    void (async () => {
+      await request('initialize', {
+        capabilities: { experimentalApi: true },
+        clientInfo: { name: 'anima', title: 'Anima', version: '0.1.0' },
+      });
+      write({ method: 'initialized' });
+      const pages: unknown[] = [];
+      let cursor: string | undefined;
+      do {
+        // A list cut short could miss the default, so hitting the cap is a failed read.
+        if (pages.length >= CODEX_MODEL_LIST_MAX_PAGES) {
+          throw new Error(`Codex model/list still had more pages after ${CODEX_MODEL_LIST_MAX_PAGES}`);
+        }
+        const page = await request('model/list', cursor ? { cursor } : {});
+        pages.push(page);
+        cursor = typeof page['nextCursor'] === 'string' && page['nextCursor'] ? page['nextCursor'] : undefined;
+      } while (cursor);
+      finish(undefined, parseCodexModelList(pages));
+    })().catch((error: unknown) => finish(error instanceof Error ? error : new Error(String(error))));
+  });
+}
+
+/**
+ * `model/list` pages → catalog. Hidden models stay out of the menu. Each model's
+ * effort menu is its `supportedReasoningEfforts`; the default is the one Codex marks
+ * `isDefault`, else the first. The web keeps Anima's own default when the live list
+ * has it.
+ */
+export function parseCodexModelList(pages: unknown[]): ProviderModelCatalog {
+  const models: string[] = [];
+  const modelReasoningEfforts: Record<string, string[]> = {};
+  let defaultModel = '';
+  for (const page of pages) {
+    const data = isPlainRecord(page) && Array.isArray(page['data']) ? page['data'] : [];
+    for (const entry of data) {
+      if (!isPlainRecord(entry) || entry['hidden'] === true) continue;
+      const slug = [entry['model'], entry['id']].find((value) => typeof value === 'string' && value.trim());
+      const model = typeof slug === 'string' ? slug.trim() : '';
+      if (!model || models.includes(model)) continue;
+      models.push(model);
+      // A model without the field keeps its static menu.
+      const supported = entry['supportedReasoningEfforts'];
+      if (Array.isArray(supported)) {
+        const efforts: string[] = [];
+        for (const item of supported) {
+          const value = typeof item === 'string' ? item : isPlainRecord(item) ? item['reasoningEffort'] : undefined;
+          if (typeof value === 'string' && value.trim() && !efforts.includes(value.trim())) efforts.push(value.trim());
+        }
+        modelReasoningEfforts[model] = efforts;
+      }
+      if (entry['isDefault'] === true && !defaultModel) defaultModel = model;
+    }
+  }
+  if (models.length === 0) throw new Error('Codex did not report any models');
+  return { defaultModel: defaultModel || models[0]!, modelReasoningEfforts, models };
 }
 
 const PI_MODEL_PROBE_ARGS = ['--mode', 'rpc', '--no-extensions', '--no-skills', '--no-context-files', '--no-session'];
@@ -638,7 +796,8 @@ async function grokAcpModelCatalog(command: string, env: NodeJS.ProcessEnv): Pro
     const child = spawn(
       command,
       ['--no-auto-update', 'agent', '--no-leader', '--always-approve', 'stdio'],
-      { env, stdio: ['pipe', 'pipe', 'pipe'] },
+      // Nothing reads stderr, so it is not piped: a full pipe would stall the CLI.
+      { env, stdio: ['pipe', 'pipe', 'ignore'] },
     );
     ignoreChildStdinErrors(child);
     let buffer = '';
