@@ -245,14 +245,19 @@ Model menu:
 
 - The dashboard's Codex model and effort menus come from a short-lived `codex app-server`
   that the server starts for each availability check: `initialize`, then `model/list` (following
-  `nextCursor`), then exit. It runs from `$ANIMA_HOME/cache/codex-model-probe` and starts no thread.
-  Hidden models are left out, and each model's `supportedReasoningEfforts` is its effort menu.
+  `nextCursor` to the last page), then exit. It runs from `$ANIMA_HOME/cache/codex-model-probe` and
+  starts no thread. Hidden models are left out, and each model's `supportedReasoningEfforts` is its
+  effort menu. A list still paging after 100 pages counts as a failed read. The probe does not read
+  stderr, so it is not piped; the agy and Grok probes do the same.
 - The catalog entry's `liveModels` flag marks this. Unlike `dynamicModels`, the provider never
   waits on the live read: when it fails, the built-in Codex list and menus are used.
 - The menu keeps Anima's default model when the live list has it, else Codex's `isDefault`.
 - The effort menu shows the live levels the built-in catalog also accepts for that model (the
   full Codex list for a model the catalog does not name). Saves are validated against the
   built-in catalog as before, so the menu never offers a level a save would reject.
+- When the dashboard switches an agent to a model with no effort menu, it sends
+  `reasoningEffort: null`, which clears the saved level, and the next thread starts without
+  `model_reasoning_effort`. A save that keeps the model leaves the saved level alone.
 
 Active-run follow-up:
 

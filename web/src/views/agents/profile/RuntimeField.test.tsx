@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { providerCatalog } from '@shared/provider-catalog';
+import { providerCatalog, type ProviderAvailability } from '@shared/provider-catalog';
 
+import { providerCatalogForAvailability } from '@/lib/provider-availability';
 import { RuntimeRow } from './RuntimeField';
 
 // Behavioral pins for the Runtime modal (task #183), added at Milo's gate on
@@ -62,12 +63,13 @@ const providerOptions = providerCatalog();
 function openModal(
   provider: Record<string, unknown>,
   onCommit: (...args: never[]) => Promise<void>,
+  availability: ProviderAvailability[] | null = null,
 ) {
   render(
     <RuntimeRow
       provider={provider as never}
-      providerOptions={providerOptions}
-      providerAvailability={null}
+      providerOptions={availability ? providerCatalogForAvailability(providerOptions, availability) : providerOptions}
+      providerAvailability={availability}
       isActive
       onCommit={onCommit as never}
     />,
@@ -396,5 +398,57 @@ describe('Runtime modal — fast mode', () => {
     expect(update).toMatchObject({ kind: 'kimi-cli' });
     expect(update).not.toHaveProperty('fastMode');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Runtime' })).toBeNull());
+  });
+});
+
+// Codex reads its model list live; each model's effort menu is what that read
+// reports and saves accept. A model switch whose menu is empty must clear the
+// saved level instead of letting the hidden one ride along.
+describe('Runtime modal — effort follows the new model', () => {
+  const liveCodex = (terraEfforts: string[]): ProviderAvailability[] => [
+    {
+      checkedAt: '2026-11-24T00:00:00.000Z',
+      defaultModel: 'gpt-6.2-astra',
+      kind: 'codex-cli',
+      modelReasoningEfforts: { 'gpt-6.1-terra': terraEfforts, 'gpt-6.2-astra': ['high', 'xhigh'] },
+      models: ['gpt-6.2-astra', 'gpt-6.1-terra'],
+      present: true,
+    },
+  ];
+  const saved = { kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'xhigh' };
+
+  for (const [name, efforts, expected] of [
+    ['no levels', [], null],
+    ['only levels saves reject', ['minimal'], null],
+    ['a level saves accept', ['high'], 'high'],
+  ] as const) {
+    it(`switching to a model with ${name} sends reasoningEffort: ${String(expected)}`, async () => {
+      const onCommit = vi.fn(async () => {});
+      const dialog = openModal(saved, onCommit, liveCodex([...efforts]));
+      fireEvent.click(dialog.getByRole('button', { name: 'GPT-6.1 Terra' }));
+      expect(dialog.queryAllByRole('button', { name: 'High' }).length > 0).toBe(expected === 'high');
+      fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+      fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+      expect(onCommit).toHaveBeenCalledWith(
+        { kind: 'codex-cli', model: 'gpt-6.1-terra', reasoningEffort: expected },
+        { envOnly: false },
+      );
+    });
+  }
+
+  it('a save that keeps the model sends no effort, even when the menu hides the saved level', async () => {
+    const onCommit = vi.fn(async () => {});
+    const dialog = openModal(
+      { kind: 'codex-cli', model: 'gpt-6.1-terra', reasoningEffort: 'xhigh' },
+      onCommit,
+      liveCodex([]),
+    );
+    fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
+    fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
+    expect(onCommit).toHaveBeenCalledWith({ fastMode: true }, { envOnly: false });
   });
 });

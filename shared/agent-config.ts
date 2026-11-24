@@ -125,7 +125,8 @@ const AgentProviderUpdateRequest = z
     runtimeCommand: ProviderRuntimeCommand.nullable().optional(),
     kind: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
-    reasoningEffort: z.string().trim().min(1).optional(),
+    // null clears the stored effort (the provider's own default applies).
+    reasoningEffort: z.string().trim().min(1).nullable().optional(),
     transport: ClaudeCodeTransport.optional(),
   })
   .strict();

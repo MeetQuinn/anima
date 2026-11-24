@@ -117,7 +117,14 @@ test('provider availability disables Grok auto-update during its presence probe'
  * As `agy`, `acp` serves a catalog session: gemini-4-neon (low/high) and
  * gemini-4-carbon (`carbon`, default high).
  */
-function fakeShim(names: string[], carbon = ['high']): string {
+/** Shell step a fake runs first to write `bytes` to stderr; an unread stderr pipe fills at about 64KB. */
+function floodStderr(bytes: number): string {
+  return bytes > 0
+    ? `require('child_process').execFileSync('/bin/sh', ['-c', 'exec /usr/bin/head -c ${bytes} /dev/zero >&2'], { stdio: ['ignore', 'ignore', 'inherit'] });`
+    : '';
+}
+
+function fakeShim(names: string[], carbon = ['high'], stderrBytes = 0): string {
   const grokState = {
     availableModels: [
       { _meta: { reasoningEfforts: [{ value: 'high' }], supportsReasoningEffort: true }, modelId: 'grok-4.6' },
@@ -131,6 +138,7 @@ function fakeShim(names: string[], carbon = ['high']): string {
     'const name = path.basename(process.argv[1]);',
     `if (!${JSON.stringify(names)}.includes(name)) process.exit(1);`,
     "if (process.argv[2] === '--version') { console.log(name + ' 0.0.0'); process.exit(0); }",
+    floodStderr(stderrBytes),
     `const levels = ${JSON.stringify(levels)};`,
     "const options = (current) => [",
     "  { category: 'model', currentValue: current, id: 'model', options: Object.keys(levels).reverse().map((value) => ({ value })), type: 'select' },",
@@ -370,9 +378,10 @@ test('parseCodexModelList reads model/list pages into models, menus and the defa
 });
 
 /** A fake `codex app-server` that logs each message it gets and serves two model/list pages. */
-function fakeCodexAppServer(log: string, options: { exitBeforeList?: boolean } = {}): string {
+function fakeCodexAppServer(log: string, options: { exitBeforeList?: boolean; stderrBytes?: number } = {}): string {
   return [
     `#!${process.execPath}`,
+    floodStderr(options.stderrBytes ?? 0),
     "const fs = require('fs');",
     `const log = ${JSON.stringify(log)};`,
     `const exitBeforeList = ${JSON.stringify(Boolean(options.exitBeforeList))};`,
@@ -429,6 +438,91 @@ test('Codex model catalog probe lists every model/list page and starts no thread
       [['initialize', null], ['initialized', null], ['model/list', null], ['reply', -32601], ['model/list', 'next']],
     );
   } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+/** A fake `codex app-server` serving `pages` one-model pages (endless: always one more); the default is on the last. */
+function fakeCodexPager(log: string, pages: number | 'endless'): string {
+  return [
+    `#!${process.execPath}`,
+    "const fs = require('fs');",
+    `const pages = ${JSON.stringify(pages)};`,
+    "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
+    "let buffer = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffer += chunk;',
+    "  const lines = buffer.split('\\n');",
+    "  buffer = lines.pop() || '';",
+    '  for (const line of lines) {',
+    '    if (!line.trim()) continue;',
+    '    const msg = JSON.parse(line);',
+    "    if (msg.method === 'initialize') send({ id: msg.id, result: { userAgent: 'fake/0.0.0' } });",
+    "    if (msg.method !== 'model/list') continue;",
+    "    fs.appendFileSync(" + JSON.stringify(log) + ", (msg.params.cursor || '-') + '\\n');",
+    "    const index = msg.params.cursor ? Number(msg.params.cursor.slice(1)) : 0;",
+    "    const last = pages !== 'endless' && index === pages - 1;",
+    "    const model = { id: 'm' + index, isDefault: last, model: 'm' + index, supportedReasoningEfforts: [{ reasoningEffort: 'high' }] };",
+    "    send({ id: msg.id, result: { data: [model], nextCursor: last ? null : 'p' + (index + 1) } });",
+    '  }',
+    '});',
+  ].join('\n');
+}
+
+test('Codex model catalog probe reads every page, and a list still paging at the cap is a failed read', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-codex-pages-'));
+  try {
+    const codex = join(dir, 'codex');
+    const log = join(dir, 'log');
+    await writeFile(codex, fakeCodexPager(log, 21), 'utf8');
+    await chmod(codex, 0o755);
+    const catalog = await withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex));
+    assert.equal(catalog.models.length, 21);
+    assert.equal(catalog.defaultModel, 'm20');
+
+    await writeFile(log, '', 'utf8');
+    await writeFile(codex, fakeCodexPager(log, 'endless'), 'utf8');
+    await assert.rejects(
+      withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex)),
+      /Codex model\/list still had more pages after 100/,
+    );
+    assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, 100);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// Nothing reads a probe's stderr, so a chatty CLI must not stall on a full pipe.
+test('live catalog probes return their catalog while the CLI floods stderr', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-probe-stderr-'));
+  const previousPath = process.env.PATH;
+  try {
+    const codex = join(dir, 'codex');
+    await writeFile(codex, fakeCodexAppServer(join(dir, 'log'), { stderrBytes: 1_000_000 }), 'utf8');
+    await chmod(codex, 0o755);
+    const codexCatalog = await withAnimaHome(join(dir, 'home'), () => codexAppServerModelCatalog(codex, { timeoutMs: 5_000 }));
+    assert.deepEqual(codexCatalog.models, ['gpt-6.2-sol', 'gpt-6.1-terra']);
+
+    const shims = join(dir, 'shims');
+    const shim = join(dir, 'tool-manager');
+    await mkdir(shims, { recursive: true });
+    await writeFile(shim, fakeShim(['agy', 'grok'], ['high'], 1_000_000), 'utf8');
+    await chmod(shim, 0o755);
+    await symlink(shim, join(shims, 'agy'));
+    await symlink(shim, join(shims, 'grok'));
+    process.env.PATH = `${shims}:/usr/bin:/bin`;
+    await withAnimaHome(join(dir, 'home'), async () => {
+      const { providers } = await new SystemService({
+        commandPresent: async (command) => command === 'agy' || command === 'grok',
+      }).providerAvailability();
+      const menus = (kind: string) => providers.find((provider) => provider.kind === kind)?.modelReasoningEfforts;
+      assert.deepEqual(menus('grok-cli'), { 'grok-4.6': ['high'] });
+      assert.deepEqual(menus('antigravity-cli'), { 'gemini-4-carbon': ['high'], 'gemini-4-neon': ['low', 'high'] });
+    });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
     await rm(dir, { force: true, recursive: true });
   }
 });

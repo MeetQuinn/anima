@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  DEFAULT_REASONING_EFFORT,
-  type ProviderAvailability,
-  type ProviderCatalogEntry,
-} from '@shared/provider-catalog';
+import { type ProviderAvailability, type ProviderCatalogEntry } from '@shared/provider-catalog';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -12,7 +8,7 @@ import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { EditAffordance, ErrorHint, Field, SavedHint } from './Primitives';
 import { ANIMA_MANAGED_PROVIDER_ENV_KEYS } from '@shared/agent-config';
 import type { TeamConfig } from '@shared/server-settings';
-import { effortOptionsForSelectedModel } from '@/lib/provider-availability';
+import { effortOptionsForSelectedModel, preferredEffort } from '@/lib/provider-availability';
 export const RESERVED_ENV_KEYS = new Set<string>(ANIMA_MANAGED_PROVIDER_ENV_KEYS);
 
 // ── WorkspacePickerModal ──────────────────────────────────────────────────────
@@ -278,11 +274,7 @@ export function defaultEffortForModel(
   model: string | undefined,
   availability: ProviderAvailability[] | null | undefined,
 ): string {
-  const options = effortOptionsForSelectedModel(provider, model, availability);
-  if (options.length === 0) return '';
-  return options.includes(DEFAULT_REASONING_EFFORT)
-    ? DEFAULT_REASONING_EFFORT
-    : (options[0] ?? '');
+  return preferredEffort(effortOptionsForSelectedModel(provider, model, availability));
 }
 
 // ── ProviderEnvRow ──────────────────────────────────────────────────────────

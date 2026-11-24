@@ -377,7 +377,8 @@ export async function antigravityAcpModelCatalog(
   await mkdir(cwd, { recursive: true });
   const timeoutMs = options.timeoutMs ?? ANTIGRAVITY_MODEL_PROBE_TIMEOUT_MS;
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, ['acp'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Nothing reads stderr, so it is not piped: a full pipe would stall the CLI.
+    const child = spawn(command, ['acp'], { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] });
     // Model switches stop here, leaving time to close the session within the timeout.
     const switchDeadline = Date.now() + Math.floor((timeoutMs * 2) / 3);
     ignoreChildStdinErrors(child);
@@ -499,7 +500,8 @@ export async function antigravityAcpModelCatalog(
 }
 
 const CODEX_MODEL_PROBE_TIMEOUT_MS = 10_000;
-const CODEX_MODEL_LIST_MAX_PAGES = 20;
+// A guard against a server that never stops paging, far above any real list.
+const CODEX_MODEL_LIST_MAX_PAGES = 100;
 
 /**
  * Codex's live model list. `codex app-server` answers `model/list` without starting a
@@ -517,7 +519,8 @@ export async function codexAppServerModelCatalog(
     const child = spawn(command, ['app-server', '--listen', 'stdio://'], {
       cwd,
       env: runtimeProbeEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
+      // Nothing reads stderr, so it is not piped: a full pipe would stall the CLI.
+      stdio: ['pipe', 'pipe', 'ignore'],
     });
     ignoreChildStdinErrors(child);
     let exited = false;
@@ -604,10 +607,14 @@ export async function codexAppServerModelCatalog(
       const pages: unknown[] = [];
       let cursor: string | undefined;
       do {
+        // A list cut short could miss the default, so hitting the cap is a failed read.
+        if (pages.length >= CODEX_MODEL_LIST_MAX_PAGES) {
+          throw new Error(`Codex model/list still had more pages after ${CODEX_MODEL_LIST_MAX_PAGES}`);
+        }
         const page = await request('model/list', cursor ? { cursor } : {});
         pages.push(page);
         cursor = typeof page['nextCursor'] === 'string' && page['nextCursor'] ? page['nextCursor'] : undefined;
-      } while (cursor && pages.length < CODEX_MODEL_LIST_MAX_PAGES);
+      } while (cursor);
       finish(undefined, parseCodexModelList(pages));
     })().catch((error: unknown) => finish(error instanceof Error ? error : new Error(String(error))));
   });
@@ -789,7 +796,8 @@ async function grokAcpModelCatalog(command: string, env: NodeJS.ProcessEnv): Pro
     const child = spawn(
       command,
       ['--no-auto-update', 'agent', '--no-leader', '--always-approve', 'stdio'],
-      { env, stdio: ['pipe', 'pipe', 'pipe'] },
+      // Nothing reads stderr, so it is not piped: a full pipe would stall the CLI.
+      { env, stdio: ['pipe', 'pipe', 'ignore'] },
     );
     ignoreChildStdinErrors(child);
     let buffer = '';

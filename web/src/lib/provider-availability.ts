@@ -1,6 +1,6 @@
 import type { ProviderCatalogEntry } from '@shared/provider-catalog';
 import type { ProviderAvailability } from '@shared/provider-catalog';
-import { reasoningEffortsForModel } from '@shared/provider-catalog';
+import { DEFAULT_REASONING_EFFORT, reasoningEffortsForModel } from '@shared/provider-catalog';
 
 export function providerCatalogForAvailability(
   providers: ProviderCatalogEntry[],
@@ -35,6 +35,17 @@ export function effortOptionsForSelectedModel(
   if (!provider) return [];
   const status = providerStatus(provider, availability ?? null);
   return reasoningEffortsForModel(provider.kind, model, status);
+}
+
+/**
+ * The effort to use from a menu: the current pick while the menu offers it, else
+ * Anima's default, else the menu's first level; '' when the model has no menu.
+ * Every place that picks an effort (manual or automatic) goes through this.
+ */
+export function preferredEffort(options: readonly string[], current?: string): string {
+  if (current && options.includes(current)) return current;
+  if (options.includes(DEFAULT_REASONING_EFFORT)) return DEFAULT_REASONING_EFFORT;
+  return options[0] ?? '';
 }
 
 export function providerStatus(

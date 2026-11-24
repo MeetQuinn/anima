@@ -148,7 +148,8 @@ selected model exactly:
 The dashboard reads the Codex model menu live from the installed CLI (`codex app-server`,
 `model/list`), with each model's effort levels, so models a Codex update adds appear without an
 Anima update. The Codex rows above are the built-in list it falls back to when that read fails. The
-effort menu offers only the levels Anima accepts for the model.
+effort menu offers only the levels Anima accepts for the model. Switching to a model with no effort
+menu clears the saved level, so Codex uses its own default.
 
 Codex also accepts a model ID neither list has, because the Codex CLI resolves the ID when the turn
 starts. Set it with `POST /api/agents/<agentId>/provider` and a body such as

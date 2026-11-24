@@ -295,6 +295,9 @@ function RuntimeModal({
       update.kind = draftKind;
       update.model = draftModel;
       if (nextEffort) update.reasoningEffort = nextEffort;
+      // The new model has no effort menu: clear the saved level rather than let a
+      // hidden one ride along. Saves that keep the model leave it alone.
+      else if (kindChanged || draftModel !== provider.model) update.reasoningEffort = null;
     }
 
     const commandDraft = draftCommand.trim();

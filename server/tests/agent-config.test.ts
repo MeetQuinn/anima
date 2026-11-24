@@ -10,7 +10,7 @@ import { defaultServerSettingsService } from '../settings/settings.service.js';
 import { defaultTeamService } from '../teams/team.service.js';
 import { KbRegistryStore, KbStore } from '../storage/schema/kb.store.js';
 import type { ServerConfig } from '../storage/schema/server.store.js';
-import type { AgentConfig } from '../../shared/agent-config.js';
+import { AgentUpdateProviderRequest, type AgentConfig } from '../../shared/agent-config.js';
 import { withAnimaHome } from './anima-home.js';
 
 type TestAgentConfig = Omit<Partial<AgentConfig>, 'profile' | 'slack'> & {
@@ -599,6 +599,43 @@ test('legacy operator field is migrated to owner on read, persisted as owner on 
       assert.equal('operator' in raw, false, 'persisted config must not have legacy operator field');
       const rawOwner = raw.owner as Record<string, unknown>;
       assert.equal(rawOwner['slackUserId'], 'UFAKEUSER1');
+    });
+  } finally {
+    await rm(configDir, { force: true, recursive: true });
+  }
+});
+
+// The dashboard sends reasoningEffort: null when the model it switches to offers
+// no effort menu; leaving the key out keeps the saved level.
+test('agent provider reasoningEffort: null clears it on the same kind and on a kind change; omitted keeps it', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'anima-effort-clear-'));
+  try {
+    await writeConfig(configDir, {
+      agents: [
+        { id: 'milo', homePath: 'agents/milo', provider: { kind: 'codex-cli', model: 'gpt-5.6-sol', reasoningEffort: 'high' } },
+      ],
+    });
+    assert.deepEqual(AgentUpdateProviderRequest.parse({ reasoningEffort: null }), { reasoningEffort: null });
+
+    await withAnimaHome(configDir, async () => {
+      const milo = agentService('milo');
+      const kept = await milo.updateProvider({ model: 'gpt-5.6-luna', fastMode: true });
+      assert.equal(kept.provider.reasoningEffort, 'high');
+
+      const cleared = await milo.updateProvider({ model: 'gpt-5.6-sol', reasoningEffort: null });
+      assert.equal('reasoningEffort' in cleared.provider, false);
+      assert.equal('reasoningEffort' in ((await readRawAgentFile(configDir, 'milo')).provider ?? {}), false);
+      // Nothing to clear: still fine, and the next omitted save adds nothing back.
+      await milo.updateProvider({ reasoningEffort: null });
+      const stillNone = await milo.updateProvider({ fastMode: false });
+      assert.equal('reasoningEffort' in stillNone.provider, false);
+
+      // A kind change without an effort takes the new kind's default; null takes none.
+      const defaulted = await milo.updateProvider({ kind: 'claude-code' });
+      assert.equal(typeof defaulted.provider.reasoningEffort, 'string');
+      const none = await milo.updateProvider({ kind: 'codex-cli', model: 'gpt-5.6-sol', reasoningEffort: null });
+      assert.equal('reasoningEffort' in none.provider, false);
+      assert.equal('reasoningEffort' in ((await readRawAgentFile(configDir, 'milo')).provider ?? {}), false);
     });
   } finally {
     await rm(configDir, { force: true, recursive: true });

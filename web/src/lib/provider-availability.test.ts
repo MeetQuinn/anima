@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { providerCatalog, type ProviderAvailability } from '@shared/provider-catalog';
 import {
   effortOptionsForSelectedModel,
+  preferredEffort,
   providerCatalogForAvailability,
   providerModelAuthorityLabel,
   providerReady,
@@ -55,5 +56,15 @@ describe('Codex live model list', () => {
     expect(effortOptionsForSelectedModel(codexEntry(availability), 'gpt-6-luna', availability)).toEqual(
       builtIn.modelReasoningEfforts?.['gpt-6-luna'],
     );
+  });
+});
+
+describe('preferredEffort', () => {
+  it('keeps the current pick while the menu offers it, else Anima default, else the first level', () => {
+    expect(preferredEffort(['low', 'high'], 'low')).toBe('low');
+    expect(preferredEffort(['high', 'xhigh'], 'low')).toBe('xhigh');
+    expect(preferredEffort(['high'], 'xhigh')).toBe('high');
+    expect(preferredEffort(['high'])).toBe('high');
+    expect(preferredEffort([], 'xhigh')).toBe('');
   });
 });

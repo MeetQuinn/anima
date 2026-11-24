@@ -22,6 +22,7 @@ import { agentIdFromName } from '@shared/agent-config';
 import {
   effortOptionsForSelectedModel,
   firstReadyProvider,
+  preferredEffort,
   providerCatalogForAvailability,
   providerModelAuthorityLabel,
   providerReady,
@@ -189,11 +190,18 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   const displayProvider = (v: string) => providerOptions.find((r) => r.kind === v)?.label ?? v;
   const displayEffort = (v: string) => (v === 'xhigh' ? 'Extra High' : v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
   const currentProvider = providerOptions.find((o) => o.kind === providerKind);
+  // A live model list can arrive after the pick: keep the pick while it is listed,
+  // else the provider's default. The effort follows the same rule for its menu.
+  const selectedModel =
+    currentProvider?.models.length && !currentProvider.models.includes(model)
+      ? currentProvider.defaultModel
+      : model;
   const selectedEffortOptions = effortOptionsForSelectedModel(
     currentProvider,
-    model,
+    selectedModel,
     providerAvailability,
   );
+  const selectedEffort = preferredEffort(selectedEffortOptions, effort);
   const selectedProviderReady = providerReady(currentProvider, providerAvailability);
   const selectedProviderHint = providerUnavailableHint(currentProvider, providerAvailability);
   const selectedProviderAuthority = providerModelAuthorityLabel(currentProvider, providerAvailability);
@@ -222,6 +230,9 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     setTimeout(() => {
       setProviderKind(next.kind);
       setModel(next.defaultModel);
+      setEffort(
+        preferredEffort(effortOptionsForSelectedModel(next, next.defaultModel, providerAvailability)),
+      );
     }, 0);
   }, [providerAvailability, providerKind, providerOptions]);
 
@@ -285,11 +296,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     const nextEfforts = effortOptionsForSelectedModel(nextProvider, nextModel, providerAvailability);
     setProviderKind(next);
     setModel(nextModel);
-    setEffort(
-      nextEfforts.includes(DEFAULT_REASONING_EFFORT)
-        ? DEFAULT_REASONING_EFFORT
-        : (nextEfforts[0] ?? ''),
-    );
+    setEffort(preferredEffort(nextEfforts));
   }
 
   async function persistPlatform(next: WorkspacePlatform) {
@@ -381,8 +388,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
     let nextAgentId = createdAgentId;
     const provider = {
       kind: providerKind,
-      model,
-      ...(selectedEffortOptions.length > 0 && effort ? { reasoningEffort: effort } : {}),
+      model: selectedModel,
+      ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}),
     };
     try {
       // Agent already created (user went back from connect) — re-apply the full
@@ -390,7 +397,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
       // (e.g. Claude Code) when the user switched to Grok on the return pass.
       if (nextAgentId) {
         await updateAgentProfile(nextAgentId, { displayName: name.trim(), role: role.trim() });
-        await updateAgentProvider(nextAgentId, provider);
+        // No effort menu: clear the one the first create may have saved.
+        await updateAgentProvider(nextAgentId, { ...provider, reasoningEffort: selectedEffort || null });
         refreshDashboardData();
       } else {
         const agent = await createAgent({
@@ -688,7 +696,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                     </SelectContent>
                   </Select>
                   <Select
-                    value={model}
+                    value={selectedModel}
                     onValueChange={(v) => {
                       if (!v) return;
                       const nextEfforts = effortOptionsForSelectedModel(
@@ -697,11 +705,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                         providerAvailability,
                       );
                       setModel(v);
-                      setEffort(
-                        nextEfforts.includes(DEFAULT_REASONING_EFFORT)
-                          ? DEFAULT_REASONING_EFFORT
-                          : (nextEfforts[0] ?? ''),
-                      );
+                      setEffort(preferredEffort(nextEfforts));
                     }}
                   >
                     <SelectTrigger className="!h-[44px] w-full font-sans text-[13px] md:!h-10">
@@ -717,7 +721,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                   </Select>
                   {selectedEffortOptions.length > 0 && (
                     <Select
-                      value={effort}
+                      value={selectedEffort}
                       onValueChange={(v) => {
                         if (v) setEffort(v);
                       }}
