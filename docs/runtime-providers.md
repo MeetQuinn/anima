@@ -257,10 +257,15 @@ Model menu:
   built-in catalog as before, so the menu never offers a level a save would reject.
 - When the dashboard switches an agent to a model with no effort menu, it sends
   `reasoningEffort: null`, which clears the saved level, and the next thread starts (or resumes)
-  without `model_reasoning_effort`. A save that keeps the model leaves the saved level alone.
+  without `model_reasoning_effort`. A save that keeps the model and does not touch the level
+  leaves the saved level alone.
 - The live read can answer after the operator picks a model. A level for a newly picked model,
   or one picked by hand, follows the model's latest menu in what the dashboard shows and sends;
-  the Runtime modal builds the update again when the restart confirm is accepted.
+  when that menu is empty, the modal sends `null`. The Runtime modal builds the update again when
+  the restart confirm is accepted.
+- A model picked in the Runtime modal that the latest list no longer has blocks Save until another
+  model is picked; if the list drops it while the restart confirm is open, the modal returns to the
+  editor. The agent's saved model stays when the list lacks it and only other fields change.
 
 Active-run follow-up:
 

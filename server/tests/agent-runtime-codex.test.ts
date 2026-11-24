@@ -1313,18 +1313,22 @@ test('codex-cli app-server transport fails when process exits before turn comple
 // What the dashboard's Runtime modal sends reaches disk and the next turn's thread
 // params as is: thread/start for the first turn, thread/resume (same params) after.
 // The fake app-server refuses a level outside each model's live menu, as Codex
-// does: Astra offers High only, Terra offers none.
+// does, and the test can change those menus between turns.
 test('codex-cli: the Runtime modal payloads reach disk and the next thread params; other saves keep the level', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-codex-effort-save-'));
   try {
     await withAnimaHome(stateDir, async () => {
       const callsPath = join(stateDir, 'thread-start.jsonl');
+      const menusPath = join(stateDir, 'menus.json');
       const fakeCodex = join(stateDir, 'codex');
-      const liveMenus = { 'gpt-6.1-terra': [], 'gpt-6.2-astra': ['high'], 'gpt-6.2-sol': ['high', 'xhigh'] };
+      const setLiveMenus = (sol: string[]) => writeFile(menusPath, JSON.stringify({
+        'gpt-6.1-terra': [], 'gpt-6.2-astra': ['high'], 'gpt-6.2-sol': sol,
+      }), 'utf8');
+      await setLiveMenus(['high', 'xhigh']);
       await writeFile(fakeCodex, [
         `#!${process.execPath}`,
-        "const { appendFileSync } = require('node:fs');",
-        `const menus = ${JSON.stringify(liveMenus)};`,
+        "const { appendFileSync, readFileSync } = require('node:fs');",
+        `const menus = () => JSON.parse(readFileSync(${JSON.stringify(menusPath)}, 'utf8'));`,
         "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');",
         "require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {",
         '  const msg = JSON.parse(line);',
@@ -1332,7 +1336,7 @@ test('codex-cli: the Runtime modal payloads reach disk and the next thread param
         "  if (msg.method === 'thread/start' || msg.method === 'thread/resume') {",
         "    appendFileSync(process.env.CALLS_PATH, JSON.stringify({ method: msg.method, ...msg.params }) + '\\n');",
         '    const effort = msg.params.config.model_reasoning_effort;',
-        '    if (effort !== undefined && !(menus[msg.params.model] || []).includes(effort)) {',
+        '    if (effort !== undefined && !(menus()[msg.params.model] || []).includes(effort)) {',
         "      send({ id: msg.id, error: { code: -32600, message: 'unsupported reasoning effort ' + effort } });",
         '      return;',
         '    }',
@@ -1391,6 +1395,16 @@ test('codex-cli: the Runtime modal payloads reach disk and the next thread param
         { config: { model_reasoning_effort: 'xhigh', model_reasoning_summary: 'auto' }, method: 'thread/start', model: 'gpt-6.2-sol', text: 'done' },
       );
 
+      // Sol's live menu turns out empty after a level was picked by hand on it: the modal
+      // sends null for the saved model, and the stale xhigh no longer reaches Codex.
+      await setLiveMenus([]);
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: null });
+      assert.equal('reasoningEffort' in (await saved()), false);
+      assert.deepEqual(
+        await startOnce(),
+        { config: { model_reasoning_summary: 'auto' }, method: 'thread/resume', model: 'gpt-6.2-sol', text: 'done' },
+      );
+
       // Astra's live menu is High only: the modal sends high (the stale xhigh is what Codex refuses).
       await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'high' });
       assert.equal((await saved()).reasoningEffort, 'high');
@@ -1407,8 +1421,11 @@ test('codex-cli: the Runtime modal payloads reach disk and the next thread param
         { config: { model_reasoning_summary: 'auto' }, method: 'thread/resume', model: 'gpt-6.1-terra', text: 'done' },
       );
 
-      // Control: the fake refuses a level outside the model's live menu.
+      // Controls: the fake refuses a level outside the model's live menu, so the stale
+      // levels the modal no longer sends would have failed to start.
       await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'xhigh' });
+      assert.match((await startOnce()).text, /^failed: [\s\S]*unsupported reasoning effort xhigh/);
+      await service.updateProvider({ kind: 'codex-cli', model: 'gpt-6.2-sol', reasoningEffort: 'xhigh' });
       assert.match((await startOnce()).text, /^failed: [\s\S]*unsupported reasoning effort xhigh/);
     });
   } finally {

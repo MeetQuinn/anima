@@ -169,6 +169,8 @@ function RuntimeModal({
     'reasoningEffort' in provider && currentEffortOptions.length > 0
       ? (provider.reasoningEffort ?? '')
       : '';
+  // The level on disk, whether or not the current menu offers it.
+  const savedEffort = 'reasoningEffort' in provider ? (provider.reasoningEffort ?? null) : null;
 
   const hadCommandOverride =
     Boolean(provider.runtimeCommand) || (provider.runtimeArgs?.length ?? 0) > 0;
@@ -241,17 +243,23 @@ function RuntimeModal({
     !providerAvailability || !draftEntry || providerReady(draftEntry, providerAvailability);
 
   const modelChanged = kindChanged || draftModel !== provider.model;
-  // The live menu can arrive after a pick, so a new model's level, or one picked by
-  // hand, follows the model's latest menu, both shown and sent. An untouched level on
-  // the saved model stays as saved.
-  const selectedEffort = !hasDraftEffort
-    ? ''
-    : modelChanged || effortPicked
+  // A live list can change after a pick. A model picked in this dialog must still be on
+  // the provider's list to save; the saved model stays as it is, listed or not.
+  const draftModelMissing = modelChanged && !draftModelOptions.includes(draftModel ?? '');
+  // The live menu can also change after a pick. A level for a newly picked model, or one
+  // picked by hand, follows the model's latest menu, both shown and sent: the preferred
+  // level while the menu has one, else null, which clears the saved level. An untouched
+  // level on the saved model is not sent (undefined), so it stays as saved.
+  const effortTouched = modelChanged || effortPicked;
+  const effortTarget: string | null | undefined = !effortTouched
+    ? undefined
+    : hasDraftEffort
       ? preferredEffort(draftEffortOptions, draftEffort)
-      : currentEffort;
-  const nextEffort = selectedEffort || undefined;
-  const providerChanged = modelChanged || selectedEffort !== currentEffort;
-  const saveBlocked = providerChanged && !draftInstalled;
+      : null;
+  const selectedEffort = effortTouched ? (effortTarget ?? '') : currentEffort;
+  const providerChanged =
+    modelChanged || (effortTarget !== undefined && effortTarget !== savedEffort);
+  const saveBlocked = draftModelMissing || (providerChanged && !draftInstalled);
 
   function providerSelectable(option: ProviderCatalogEntry): boolean {
     if (option.kind === provider.kind) return true;
@@ -305,10 +313,8 @@ function RuntimeModal({
     if (providerChanged) {
       update.kind = draftKind;
       update.model = draftModel;
-      if (nextEffort) update.reasoningEffort = nextEffort;
-      // The new model has no effort menu: clear the saved level rather than let a
-      // hidden one ride along. Saves that keep the model leave it alone.
-      else if (modelChanged) update.reasoningEffort = null;
+      // null when the menu is empty: a hidden level must not ride along.
+      if (effortTarget !== undefined) update.reasoningEffort = effortTarget;
     }
 
     const commandDraft = draftCommand.trim();
@@ -381,13 +387,19 @@ function RuntimeModal({
     }
   }
 
-  // Sends what the drafts build now, under the menus as they are now.
+  // Sends what the drafts build now, under the lists and menus as they are now. When
+  // those changed under the confirm so the save is blocked, it returns to the editor.
   function handleConfirm() {
     if (busy) return;
     const result = saveBlocked ? undefined : buildUpdate();
     if (!result || 'error' in result) {
       setConfirming(null);
       if (result) setError(result.error);
+      return;
+    }
+    if (Object.keys(result.update).length === 0) {
+      setConfirming(null);
+      onClose();
       return;
     }
     void commit(result.update, !result.launchAffecting);
@@ -469,7 +481,11 @@ function RuntimeModal({
                     aria-label="Model"
                     disabled={busy}
                   >
-                    {providerValueLabel(draftModel)}
+                    {draftModelMissing ? (
+                      <span className="text-text-subtle">Pick a model</span>
+                    ) : (
+                      providerValueLabel(draftModel)
+                    )}
                   </SelectTrigger>
                   <SelectContent>
                     {draftModelOptions.map((opt) => (
@@ -479,7 +495,7 @@ function RuntimeModal({
                     ))}
                   </SelectContent>
                 </Select>
-                {hasDraftEffort && (
+                {hasDraftEffort && !draftModelMissing && (
                   <Select
                     value={selectedEffort}
                     onValueChange={(v) => {
@@ -512,6 +528,13 @@ function RuntimeModal({
               {draftUnavailableHint && (
                 <div className="font-sans text-[11px] leading-snug text-text-muted">
                   {draftUnavailableHint}
+                </div>
+              )}
+              {draftModelMissing && !draftUnavailableHint && (
+                <div className="font-sans text-[11px] leading-snug text-health-warn">
+                  {draftModel
+                    ? `${providerValueLabel(draftModel)} is no longer in the model list. Pick another model.`
+                    : 'Pick a model.'}
                 </div>
               )}
               {draftAuthority && !draftUnavailableHint && (
