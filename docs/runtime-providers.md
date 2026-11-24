@@ -531,8 +531,12 @@ Model and context authority:
   Config writes: when the live ACP catalog is available for the selected model, that
   per-model menu is authoritative; otherwise the write vocabulary
   (`low` / `medium` / `high` / `xhigh`) is used so offline saves still work. The catalog comes
-  from the default command on `PATH`, so an agent that runs another command (its own runtime
-  command or the machine-wide Providers setting) always gets the write vocabulary. After
+  from the default command on the service `PATH`, so the menu applies only to an agent that
+  launches that same executable: found as the runtime finds it (the agent's runtime command,
+  else the machine-wide Providers command, else the default, on the agent's launch `PATH`), with
+  no runtime args and no provider env besides `PATH`. Any other launch gets the write vocabulary.
+  The check runs on the config being saved, so a concurrent save that changes the launch is
+  respected. After
   session init (new or loaded) and before the first prompt, the runtime sends at most one same-model
   `session/set_model` with `_meta.reasoningEffort`, and only when the exact live current model
   advertises that effort. Unknown current model, missing capability for that exact model, or an
@@ -786,7 +790,7 @@ Current process model:
   or that the switches do not reach within two thirds of the probe timeout, falls back to the
   provider vocabulary at write time and is gated by the live session at run time. Once the session has
   reported its models, an `agy` that exits or a probe that times out keeps the models and menus
-  read so far. As for Grok, the menus gate effort saves only for agents that run the probed command.
+  read so far. As for Grok, the menus gate effort saves only for agents that launch the probed executable.
 - Each item uses `session/prompt`, with the shared ACP mid-turn follow-up policy and
   `session/cancel` on operator cancellation, as for OpenCode.
 - ACP thinking, assistant text, usage, tool calls (named from the ACP tool `kind`: `Shell`,

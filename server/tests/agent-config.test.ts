@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -789,11 +790,11 @@ test('agent runtime command validation rejects relative paths and non-executable
   }
 });
 
-// Antigravity's live effort menus come from the `agy` on PATH, so they gate saves only
-// for an agent that runs that command. One that runs another command, its own or the
-// machine-wide Providers setting, keeps the write vocabulary: that command's menus can
-// differ, and its live session gates the level at run time.
-test('antigravity-cli live effort menus gate saves only for agents that run the probed agy', async () => {
+// Antigravity's live effort menus are read from the `agy` on the service PATH, so they
+// gate effort saves only for an agent that launches that same executable, with no
+// runtime args and no provider env but PATH. Any other launch keeps the write
+// vocabulary: its menus can differ, and its live session gates the level at run time.
+test('antigravity-cli live effort menus gate saves only for agents that launch the probed agy', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'anima-agy-effort-command-'));
   const previousPath = process.env.PATH;
   try {
@@ -801,47 +802,88 @@ test('antigravity-cli live effort menus gate saves only for agents that run the 
     const customBin = join(configDir, 'custom-bin');
     await mkdir(pathBin, { recursive: true });
     await mkdir(customBin, { recursive: true });
+    const probed = join(pathBin, 'agy');
     const custom = join(customBin, 'agy');
-    await writeFile(join(pathBin, 'agy'), fakeCatalogAgy(['high']), 'utf8');
+    const gate = join(configDir, 'probe-gate');
+    await writeFile(probed, fakeCatalogAgy(['high'], gate), 'utf8');
     await writeFile(custom, fakeCatalogAgy(['high', 'xhigh']), 'utf8');
-    await chmod(join(pathBin, 'agy'), 0o755);
+    await chmod(probed, 0o755);
     await chmod(custom, 0o755);
-    const agent = (id: string, runtimeCommand?: string): TestAgentConfig => ({
+    const agent = (
+      id: string,
+      launch: { env?: Record<string, string>; reasoningEffort?: string; runtimeArgs?: string[]; runtimeCommand?: string } = {},
+    ): TestAgentConfig => ({
       id,
       homePath: `agents/${id}`,
-      provider: {
-        kind: 'antigravity-cli',
-        model: 'gemini-4-carbon',
-        reasoningEffort: 'xhigh',
-        ...(runtimeCommand ? { runtimeCommand } : {}),
-      },
+      provider: { kind: 'antigravity-cli', model: 'gemini-4-carbon', reasoningEffort: 'xhigh', ...launch },
     });
-    await writeConfig(configDir, { agents: [agent('custom', custom), agent('plain')] });
-    const storedEffort = async (id: string) =>
-      ((await readRawAgentFile(configDir, id)).provider as { reasoningEffort?: string } | undefined)?.reasoningEffort;
-    // Only the fake is on PATH: the availability probe checks every provider's command.
+    await writeConfig(configDir, {
+      agents: [
+        agent('raced', { reasoningEffort: 'high' }),
+        agent('custom', { runtimeCommand: custom }),
+        agent('pathed', { env: { PATH: customBin } }),
+        agent('absolute', { runtimeCommand: probed }),
+        agent('with-env', { env: { EXAMPLE_FLAG: '1' } }),
+        agent('with-args', { runtimeArgs: ['--example'] }),
+        agent('plain'),
+      ],
+    });
+    const stored = async (id: string) =>
+      (await readRawAgentFile(configDir, id)).provider as
+        | { env?: Record<string, string>; reasoningEffort?: string; runtimeCommand?: string }
+        | undefined;
+    // Only the fakes are on PATH: the availability probe checks every provider's command.
     process.env.PATH = pathBin;
 
     await withAnimaHome(configDir, async () => {
-      // The agent's own agy has xhigh for carbon: an env-only save keeps it, an explicit one is accepted.
-      await agentService('custom').updateProvider({ env: { EXAMPLE_FLAG: '1' } });
-      assert.equal(await storedEffort('custom'), 'xhigh');
-      await agentService('custom').updateProvider({ reasoningEffort: 'xhigh' });
-      assert.equal(await storedEffort('custom'), 'xhigh');
-
-      // The agent that runs the probed agy follows its live carbon menu.
-      await assert.rejects(
-        agentService('plain').updateProvider({ reasoningEffort: 'xhigh' }),
-        /unsupported reasoningEffort xhigh/,
+      // An env-only save waits on the probe while another save gives the agent its own
+      // agy and xhigh. The menu is checked on the config being saved, so xhigh stays.
+      const envOnly = agentService('raced').updateProvider({ env: { EXAMPLE_FLAG: '1' } });
+      for (let waited = 0; !existsSync(`${gate}.waiting`); waited += 20) {
+        assert.ok(waited < 30_000, 'the probe reached the gemini-4-carbon switch');
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+      }
+      await agentService('raced').updateConfig((latest) => ({
+        ...latest,
+        provider: { ...latest.provider, reasoningEffort: 'xhigh', runtimeCommand: custom } as AgentConfig['provider'],
+      }));
+      await writeFile(gate, '', 'utf8');
+      await envOnly;
+      const raced = await stored('raced');
+      assert.deepEqual(
+        { env: raced?.env, reasoningEffort: raced?.reasoningEffort, runtimeCommand: raced?.runtimeCommand },
+        { env: { EXAMPLE_FLAG: '1' }, reasoningEffort: 'xhigh', runtimeCommand: custom },
       );
-      assert.equal(await storedEffort('plain'), 'xhigh');
-      await agentService('plain').updateProvider({ env: { EXAMPLE_FLAG: '1' } });
-      assert.equal(await storedEffort('plain'), undefined);
+
+      // Agents that launch another agy keep xhigh, explicitly saved or not.
+      for (const id of ['custom', 'pathed']) {
+        await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
+        assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
+        await agentService(id).updateProvider({ reasoningEffort: 'xhigh' });
+        assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
+      }
+      // So do ones whose launch the probe cannot vouch for.
+      for (const id of ['with-env', 'with-args']) {
+        await agentService(id).updateProvider({ reasoningEffort: 'xhigh' });
+        assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
+      }
+
+      // Agents that launch the probed agy, by name or by its path, follow its live carbon menu.
+      for (const id of ['plain', 'absolute']) {
+        await assert.rejects(
+          agentService(id).updateProvider({ reasoningEffort: 'xhigh' }),
+          /unsupported reasoningEffort xhigh/,
+          id,
+        );
+        assert.equal((await stored(id))?.reasoningEffort, 'xhigh', id);
+        await agentService(id).updateProvider({ model: 'gemini-4-carbon' });
+        assert.equal((await stored(id))?.reasoningEffort, undefined, id);
+      }
 
       // A machine-wide Providers command counts like the agent's own.
       await defaultServerSettingsService.setProviderRuntimeSettings('antigravity-cli', custom);
       await agentService('plain').updateProvider({ reasoningEffort: 'xhigh' });
-      assert.equal(await storedEffort('plain'), 'xhigh');
+      assert.equal((await stored('plain'))?.reasoningEffort, 'xhigh');
     });
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
@@ -852,16 +894,19 @@ test('antigravity-cli live effort menus gate saves only for agents that run the 
 
 /**
  * A fake `agy`: `--version` succeeds, and `agy acp` opens a model catalog session on
- * gemini-4-neon whose switch to gemini-4-carbon reports `carbonLevels`.
+ * gemini-4-neon whose switch to gemini-4-carbon reports `carbonLevels`. With `gate`, that
+ * switch writes `<gate>.waiting` and is answered only once `gate` exists.
  */
-function fakeCatalogAgy(carbonLevels: string[]): string {
+function fakeCatalogAgy(carbonLevels: string[], gate?: string): string {
   const models = ['gemini-4-neon', 'gemini-4-carbon'];
   const levels = { 'gemini-4-carbon': carbonLevels, 'gemini-4-neon': ['low', 'medium', 'high', 'xhigh'] };
   return [
     `#!${process.execPath}`,
+    "const fs = require('fs');",
     "if (process.argv[2] === '--version') { console.log('agy 0.0.0'); process.exit(0); }",
     `const models = ${JSON.stringify(models)};`,
     `const levels = ${JSON.stringify(levels)};`,
+    `const gate = ${JSON.stringify(gate ?? null)};`,
     'const options = (current) => [',
     "  { category: 'model', currentValue: current, id: 'model', options: models.map((value) => ({ value })), type: 'select' },",
     "  { category: 'thought_level', currentValue: 'high', id: 'thought_level', options: levels[current].map((value) => ({ value })), type: 'select' },",
@@ -879,8 +924,13 @@ function fakeCatalogAgy(carbonLevels: string[]): string {
     "    const send = (result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');",
     "    if (msg.method === 'initialize') send({ protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } } });",
     "    if (msg.method === 'session/new') send({ sessionId: 'probe', configOptions: options(current) });",
-    "    if (msg.method === 'session/set_config_option') { current = msg.params.value; send({ configOptions: options(current) }); }",
     "    if (msg.method === 'session/close') send({});",
+    "    if (msg.method !== 'session/set_config_option') continue;",
+    '    current = msg.params.value;',
+    '    const answer = () => send({ configOptions: options(current) });',
+    "    if (!gate || current !== 'gemini-4-carbon') { answer(); continue; }",
+    "    fs.writeFileSync(gate + '.waiting', '');",
+    '    const poll = setInterval(() => { if (fs.existsSync(gate)) { clearInterval(poll); answer(); } }, 20);',
     '  }',
     '});',
   ].join('\n');

@@ -37,40 +37,65 @@ import {
   type Session,
 } from '../storage/schema/session.store.js';
 import { defaultSystemService } from '../services/system.service.js';
+import { runtimeLaunchPath } from '../runtime/launch-path.js';
 import { defaultServerSettingsService } from '../settings/settings.service.js';
-import {
-  providerCatalogEntry,
-  providerHasLiveReasoningEfforts,
-  type ReasoningEffortAvailability,
-} from '../../shared/provider-catalog.js';
-import { agentProviderRuntimeCommand } from '../../shared/provider-runtime-commands.js';
+import { providerCatalogEntry, providerHasLiveReasoningEfforts } from '../../shared/provider-catalog.js';
+import { agentProviderRuntimeArgs, agentProviderRuntimeCommand } from '../../shared/provider-runtime-commands.js';
 import { ProviderUsageKind } from '../../shared/provider-usage.js';
 
 export { AgentConfigError } from './agent-config-ops.js';
 
+interface LiveReasoningMenus {
+  /** Real path of the executable the live catalog probe ran. */
+  executable: string;
+  modelReasoningEfforts: Record<string, string[]>;
+}
+
 /**
- * Best-effort live ACP effort menus (Grok, Antigravity) for write-time validation.
- * The menus come from the catalog's own command, so they apply only to an agent
- * that runs that command. An agent that runs another one (its own runtimeCommand
- * or the machine-wide Providers setting) gets the write vocabulary: that
- * command's menus can differ, and its live session gates the level at run time.
+ * Best-effort live ACP effort menus (Grok, Antigravity) for write-time
+ * validation, with the executable they were read from: the probe runs the
+ * catalog command on the service PATH.
  */
-async function loadLiveReasoningAvailability(
-  kind: string,
-  runtimeCommand: string | undefined,
-): Promise<ReasoningEffortAvailability> {
+async function loadLiveReasoningMenus(kind: string): Promise<LiveReasoningMenus | null> {
   try {
-    const providerKind = ProviderUsageKind.safeParse(kind);
-    const probed = providerCatalogEntry(kind)?.command;
-    if (!providerKind.success || !probed) return null;
-    const commands = await defaultServerSettingsService.getProviderRuntimeCommands();
-    if (agentProviderRuntimeCommand({ kind: providerKind.data, runtimeCommand }, commands) !== probed) return null;
+    const command = providerCatalogEntry(kind)?.command;
+    const probed = command ? await resolveProviderExecutable(command, process.env) : undefined;
+    if (!probed) return null;
     const { providers } = await defaultSystemService.providerAvailability();
     const entry = providers.find((provider) => provider.kind === kind);
     if (!entry?.modelReasoningEfforts) return null;
-    return { modelReasoningEfforts: entry.modelReasoningEfforts };
+    return { executable: probed.realPath, modelReasoningEfforts: entry.modelReasoningEfforts };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Whether an agent with this provider config launches what the live catalog
+ * probed: the same executable file, found as the runtime finds it (the agent's
+ * runtime command, else the machine-wide Providers command, else the catalog
+ * command, on the runtime PATH), with no runtime args and no provider env but
+ * PATH. Any other launch can report other menus, so its saves use the write
+ * vocabulary, and its live session gates the level at run time.
+ */
+async function launchesProbedExecutable(provider: AgentConfig['provider'], probed: string): Promise<boolean> {
+  try {
+    const kind = ProviderUsageKind.safeParse(provider.kind);
+    if (!kind.success) return false;
+    const env = provider.env ?? {};
+    if (Object.keys(env).some((key) => key !== 'PATH')) return false;
+    const [commands, args] = await Promise.all([
+      defaultServerSettingsService.getProviderRuntimeCommands(),
+      defaultServerSettingsService.getProviderRuntimeArgs(),
+    ]);
+    const overrides = { kind: kind.data, runtimeArgs: provider.runtimeArgs, runtimeCommand: provider.runtimeCommand };
+    if (agentProviderRuntimeArgs(overrides, args).length > 0) return false;
+    const launched = await resolveProviderExecutable(agentProviderRuntimeCommand(overrides, commands), {
+      PATH: runtimeLaunchPath(env),
+    });
+    return launched?.realPath === probed;
+  } catch {
+    return false;
   }
 }
 
@@ -133,24 +158,19 @@ export class AgentService {
     const current = await this.getConfig();
     await validateAgentRuntimeCommand(provider.runtimeCommand);
     const nextKind = provider.kind ?? current.provider.kind;
-    // The command the agent runs after this update: a kind change drops the old override.
-    const nextRuntimeCommand =
-      provider.runtimeCommand !== undefined
-        ? (provider.runtimeCommand ?? undefined)
-        : nextKind === current.provider.kind
-          ? current.provider.runtimeCommand
-          : undefined;
     // Grok and Antigravity: when the live ACP catalog is reachable, write-time
     // effort validation follows the per-model menu (same source as the Profile
-    // UI). Probe failure falls back to the write vocabulary so offline saves
+    // UI) for an agent that launches what the catalog probed. Probe failure,
+    // or any other launch, falls back to the write vocabulary so offline saves
     // still work.
-    const availability = providerHasLiveReasoningEfforts(nextKind)
-      ? await loadLiveReasoningAvailability(nextKind, nextRuntimeCommand)
-      : undefined;
+    const menus = providerHasLiveReasoningEfforts(nextKind) ? await loadLiveReasoningMenus(nextKind) : null;
     let previousProvider = current.provider;
-    const next = await this.updateConfig((latest) => {
+    const next = await this.updateConfig(async (latest) => {
       previousProvider = latest.provider;
-      return agentConfigWithProviderUpdate(latest, provider, availability);
+      const updated = agentConfigWithProviderUpdate(latest, provider);
+      // Checked on the config being saved: another update may have changed the launch during the probe.
+      if (!menus || !(await launchesProbedExecutable(updated.provider, menus.executable))) return updated;
+      return agentConfigWithProviderUpdate(latest, provider, { modelReasoningEfforts: menus.modelReasoningEfforts });
     });
     const archiveNote = providerSessionArchiveNote(previousProvider, next.provider);
     if (archiveNote) {
@@ -204,12 +224,12 @@ export class AgentService {
   // `change` runs inside the lock: do network calls before, not inside it.
   // Returning `current` unchanged skips normalize and validate. The file can
   // still be rewritten if its JSON isn't already in normalized form.
-  async updateConfig(change: (current: AgentConfig) => AgentConfig): Promise<AgentConfig> {
+  async updateConfig(change: (current: AgentConfig) => AgentConfig | Promise<AgentConfig>): Promise<AgentConfig> {
     const path = this.store.path();
     if (!this.store.exists()) throw new AgentConfigError(404, `Agent not found in config: ${this.agentId}`);
     return this.store.update(async (current) => {
       assertAgentConfigId(this.agentId, current, path);
-      const changed = change(current);
+      const changed = await change(current);
       if (changed === current) return current;
       const next = normalizeAgentConfig(this.agentId, changed);
       await validateAgentConfig(next);
