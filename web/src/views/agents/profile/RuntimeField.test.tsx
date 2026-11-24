@@ -19,6 +19,9 @@ import { RuntimeRow } from './RuntimeField';
 // PAYLOAD logic behind `onValueChange` — kind change resetting command/args
 // drafts, and the diff builder sending only typed values — not the dropdown's
 // internals, which are third-party and exercised by real input in production.
+// What Base UI does to a value on its own (moving a value that left the list
+// back to the one it opened with) is driven through the real Select in
+// RuntimeField.base-select.test.tsx.
 //
 // Runs in CI (`pnpm --dir web test`) and locally the same way.
 vi.mock('@/components/ui/select', async () => {

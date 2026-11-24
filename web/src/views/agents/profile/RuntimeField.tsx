@@ -260,6 +260,12 @@ function RuntimeModal({
   const providerChanged =
     modelChanged || (effortTarget !== undefined && effortTarget !== savedEffort);
   const saveBlocked = draftModelMissing || (providerChanged && !draftInstalled);
+  // When a Select's value leaves its item list, Base UI moves it back to the value the
+  // Select opened with (or null) and reports that through onValueChange, which reads as an
+  // operator's pick: a dropped Astra would turn back into the saved Sol. A value that is
+  // not listed is passed as null, so Base UI leaves it alone; the triggers show the drafts.
+  const modelSelectValue = draftModelOptions.includes(draftModel ?? '') ? draftModel : null;
+  const effortSelectValue = draftEffortOptions.includes(selectedEffort) ? selectedEffort : null;
 
   function providerSelectable(option: ProviderCatalogEntry): boolean {
     if (option.kind === provider.kind) return true;
@@ -475,7 +481,7 @@ function RuntimeModal({
                     })}
                   </SelectContent>
                 </Select>
-                <Select value={draftModel} onValueChange={handleModelChange}>
+                <Select value={modelSelectValue} onValueChange={handleModelChange}>
                   <SelectTrigger
                     className="!h-[44px] w-full font-sans text-[13px] md:!h-8 md:w-48"
                     aria-label="Model"
@@ -497,7 +503,7 @@ function RuntimeModal({
                 </Select>
                 {hasDraftEffort && !draftModelMissing && (
                   <Select
-                    value={selectedEffort}
+                    value={effortSelectValue}
                     onValueChange={(v) => {
                       if (!v) return;
                       setDraftEffort(v);
