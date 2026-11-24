@@ -179,8 +179,9 @@ every model. An explicit save adopts an existing value for the setting Anima man
 replacing only that key. After adoption, only Anima-marked keys are updated or removed. Running
 provider children are unchanged.
 
-OpenCode authentication follows the same machine-level rule. The DeepSeek API key lives in
-OpenCode's own credential store after `opencode auth login --provider deepseek`. The OpenCode
+OpenCode authentication follows the same machine-level rule. Provider API keys live in
+OpenCode's own credential store after `opencode auth login` (for example
+`opencode auth login --provider deepseek`). The OpenCode
 adapter pins the auth/config location (`HOME`, XDG, and custom config paths) to the Anima service
 environment and removes inline credential/config overrides from each child launch environment, so
 an agent-specific Launch env cannot silently replace the shared OpenCode identity.
@@ -477,6 +478,17 @@ Session handling:
    not expose a graded effort;
 5. the ACP session id is persisted as the `kimi-cli` provider session.
 
+Model menu:
+
+- The dashboard's Kimi model and effort menus come from `kimi provider list --json`, run for each
+  availability check from `$ANIMA_HOME/cache/kimi-model-probe` on the runtime `PATH`. It starts no
+  session. Only `models` is read: each key is a model alias `session/set_model` takes, and its
+  `supportEfforts` is the effort menu (a model without it has none). The output's `providers` part
+  holds credentials; Anima does not read it, and a failed read's error never includes the output.
+- The catalog entry is `liveModels`, as for Codex: when the read fails, the built-in Kimi list and
+  menus are used, and any model alias saves. A model the built-in list lacks takes `low`, `high` or
+  `max`.
+
 Provider `run` protocol:
 
 - each item sends one `session/prompt` with the bridge-built delivery prompt;
@@ -599,10 +611,10 @@ Current process model:
   built-in tools and first-party providers remain available.
 - Fresh work uses `session/new`. A stored provider session uses `session/resume`; only a confirmed
   missing session falls back to `session/new`.
-- The selected DeepSeek model is applied after session creation or resume and before the first
-  prompt with `session/set_config_option` using `configId: "model"`.
-- Optional `reasoningEffort` (`high` or `max`) is then applied before the first prompt with
-  `session/set_config_option` using `configId: "effort"`.
+- The selected model (`provider/id`) is applied after session creation or resume and before the
+  first prompt with `session/set_config_option` using `configId: "model"`.
+- Optional `reasoningEffort` (one of the model's variants) is then applied before the first prompt
+  with `session/set_config_option` using `configId: "effort"`.
 - Each item uses `session/prompt`. Compatible follow-ups use the shared ACP mid-turn interrupt
   policy (`server/providers/acp-midturn-followup.ts`): if a prompt is already in flight, Anima
   sends `session/cancel` first so the follow-up starts immediately. Cancelled-prompt assistant
@@ -611,9 +623,22 @@ Current process model:
 - ACP thinking, assistant text, usage, tool calls, tool failures, and permission requests are mapped
   into the same Anima activity and health surfaces as the other providers.
 
-Anima currently exposes `deepseek/deepseek-v4-pro` and `deepseek/deepseek-v4-flash` for OpenCode.
-Both support `high` and `max` effort. The retired `deepseek-chat` and `deepseek-reasoner` aliases
-are not accepted for new agent configuration.
+Model menu:
+
+- The dashboard's OpenCode model and effort menus come from `opencode models --verbose --pure`, run
+  for each availability check from `$ANIMA_HOME/cache/opencode-model-probe` with the runtime's
+  launch environment, so it sees the providers an agent's turn sees and no project's
+  `opencode.json`. It starts no session. Each listed `provider/id` is a model, its `variants` are
+  its effort menu (a model without any has none), and deprecated models are left out. Only ids,
+  status and variant names are read; the per-model JSON also carries provider headers and options.
+- The list is every model OpenCode can run, OpenCode Zen's free models included, not only DeepSeek.
+- The catalog entry is `liveModels`, as for Codex. When the read fails, the built-in list is used:
+  `deepseek/deepseek-v4-pro` and `deepseek/deepseek-flash` (DeepSeek V4.1 Flash; DeepSeek retired the
+  `deepseek-v4-flash` id), both with `high` and `max`. Any `provider/id` saves. For the built-in
+  models the effort menu is the live variants that the built-in menu also has; a model only the live
+  list has takes its live variants (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
+- A failed model selection or credential error names `opencode auth login --provider <provider>`
+  for the model's provider.
 
 OpenCode, Kimi, Grok, and Antigravity all use ACP, but most of their session and event contracts are
 provider-specific. Shared pieces:

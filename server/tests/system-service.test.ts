@@ -5,11 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  catalogCommandOutput,
   codexAppServerModelCatalog,
   docsUrl,
   parseCodexModelList,
   parseGrokAcpModelState,
   parseGrokModelsOutput,
+  parseKimiProviderList,
+  parseOpenCodeModelsOutput,
   parsePiModelCatalog,
   PI_NO_CREDENTIAL_MESSAGE,
   SystemService,
@@ -538,6 +541,172 @@ test('Codex model catalog probe fails when app-server exits before answering', a
       /Codex model catalog probe exited \(3\)|Codex model\/list failed: app-server exited/,
     );
   } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// `opencode models --verbose`: each `provider/id` line is followed by that model's JSON.
+function openCodeVerbose(models: Array<[string, Record<string, unknown> | string]>): string {
+  return models
+    .map(([id, info]) => `${id}\n${typeof info === 'string' ? info : JSON.stringify(info, null, 2)}`)
+    .join('\n') + '\n';
+}
+
+test('parseOpenCodeModelsOutput reads ids and variant names, and nothing else', () => {
+  const output = openCodeVerbose([
+    ['deepseek/deepseek-v4-pro', {
+      headers: { Authorization: 'Bearer sk-not-read' },
+      options: { apiKey: 'sk-not-read' },
+      status: 'active',
+      variants: { high: { reasoningEffort: 'high' }, low: { reasoningEffort: 'low' }, max: { reasoningEffort: 'max' } },
+    }],
+    ['opencode/big-pickle', { status: 'beta' }],
+    ['deepseek/deepseek-chat', { status: 'deprecated', variants: { high: {} } }],
+    ['deepseek/deepseek-flash', '{ not json'],
+    ['deepseek/deepseek-v4-pro', { variants: { minimal: {} } }],
+  ]);
+  const catalog = parseOpenCodeModelsOutput(output);
+  assert.deepEqual(catalog, {
+    defaultModel: 'deepseek/deepseek-v4-pro',
+    // A model whose JSON does not parse keeps its built-in menu (no entry).
+    modelReasoningEfforts: { 'deepseek/deepseek-v4-pro': ['high', 'low', 'max'], 'opencode/big-pickle': [] },
+    models: ['deepseek/deepseek-v4-pro', 'opencode/big-pickle', 'deepseek/deepseek-flash'],
+  });
+  assert.equal(JSON.stringify(catalog).includes('sk-not-read'), false);
+  assert.throws(() => parseOpenCodeModelsOutput(''), /OpenCode did not report any models/);
+});
+
+test('parseKimiProviderList reads model aliases and their efforts, never providers', () => {
+  const output = JSON.stringify({
+    models: {
+      'kimi-code/k3': { defaultEffort: 'high', model: 'k3', provider: 'managed:kimi-code', supportEfforts: ['low', 'high', 'max', 'high'] },
+      'kimi-code/kimi-for-coding': { capabilities: ['thinking'], model: 'kimi-for-coding', provider: 'managed:kimi-code' },
+    },
+    providers: { 'managed:kimi-code': { apiKey: 'sk-kimi-not-read', baseUrl: 'https://example.invalid' } },
+  });
+  const catalog = parseKimiProviderList(output);
+  assert.deepEqual(catalog, {
+    defaultModel: 'kimi-code/k3',
+    modelReasoningEfforts: { 'kimi-code/k3': ['low', 'high', 'max'], 'kimi-code/kimi-for-coding': [] },
+    models: ['kimi-code/k3', 'kimi-code/kimi-for-coding'],
+  });
+  assert.equal(JSON.stringify(catalog).includes('sk-kimi-not-read'), false);
+  // The error never carries the output, which can hold credentials.
+  assert.throws(() => parseKimiProviderList('apiKey = "sk-kimi-not-read"'), (error: Error) =>
+    error.message === 'Kimi Code provider list was not JSON');
+  assert.throws(() => parseKimiProviderList(JSON.stringify({ models: {}, providers: {} })), /Kimi Code did not report any models/);
+});
+
+test('catalog commands: stdout is read while stderr floods, and failures carry no output', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-catalog-command-'));
+  try {
+    const script = async (name: string, body: string) => {
+      const file = join(dir, name);
+      await writeFile(file, [`#!${process.execPath}`, body].join('\n'), 'utf8');
+      await chmod(file, 0o755);
+      return file;
+    };
+    const run = (command: string, options: { maxBytes?: number; timeoutMs?: number } = {}) =>
+      catalogCommandOutput('Test list', command, ['list'], { cwd: join(dir, 'probe'), env: process.env, killGraceMs: 200, ...options });
+
+    const chatty = await script('chatty', `${floodStderr(1_000_000)}\nprocess.stdout.write(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));`);
+    assert.deepEqual(JSON.parse(await run(chatty, { timeoutMs: 5_000 })), { argv: ['list'], cwd: await realpath(join(dir, 'probe')) });
+
+    const failing = await script('failing', "process.stdout.write('apiKey=sk-secret'); process.exit(3);");
+    await assert.rejects(run(failing), (error: Error) => error.message === 'Test list exited (3)');
+
+    const pidFile = join(dir, 'hang.pid');
+    const hanging = await script('hanging', `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.stdout.write('apiKey=sk-secret'); setInterval(() => {}, 1000);`);
+    // Long enough for a loaded machine to start node and write the pid file first.
+    await assert.rejects(run(hanging, { timeoutMs: 3_000 }), (error: Error) => error.message === 'Test list timed out');
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    assert.ok(pid > 0);
+    let alive = true;
+    for (let i = 0; i < 50 && alive; i += 1) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch {
+        alive = false;
+      }
+    }
+    assert.equal(alive, false);
+
+    const flooding = await script('flooding', "process.stdout.write('x'.repeat(4096));");
+    await assert.rejects(run(flooding, { maxBytes: 1024 }), (error: Error) => error.message === 'Test list wrote more output than expected');
+
+    await assert.rejects(run(join(dir, 'missing')), (error: Error) => error.message === 'Test list could not start (ENOENT)');
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+// The OpenCode and Kimi probes run the CLI's own list command by name on the runtime
+// PATH, from a fixed empty directory, with the runtime's flags and environment.
+test('provider availability reads the OpenCode and Kimi model lists from their CLIs', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'anima-opencode-kimi-models-'));
+  const previousPath = process.env.PATH;
+  try {
+    const bin = join(dir, 'bin');
+    const log = join(dir, 'calls.jsonl');
+    await mkdir(bin, { recursive: true });
+    const record = `require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), autoupdate: process.env.OPENCODE_DISABLE_AUTOUPDATE ?? null, cwd: process.cwd(), name: require('path').basename(process.argv[1]) }) + '\\n');`;
+    const opencodeOutput = openCodeVerbose([
+      ['deepseek/deepseek-v4-pro', { variants: { high: {}, low: {}, max: {} } }],
+      ['deepseek/deepseek-v5', { variants: { high: {} } }],
+    ]);
+    await writeFile(join(bin, 'opencode'), [
+      `#!${process.execPath}`,
+      "if (process.argv[2] === '--version') { console.log('1.19.5'); process.exit(0); }",
+      record,
+      floodStderr(200_000),
+      `process.stdout.write(${JSON.stringify(opencodeOutput)});`,
+    ].join('\n'), 'utf8');
+    await writeFile(join(bin, 'kimi'), [
+      `#!${process.execPath}`,
+      "if (process.argv[2] === '--version') { console.log('2.3.3'); process.exit(0); }",
+      record,
+      `process.stdout.write(${JSON.stringify(JSON.stringify({
+        models: { 'kimi-code/k3': { supportEfforts: ['low', 'high', 'max'] }, 'kimi-code/k4': {} },
+        providers: { 'managed:kimi-code': { apiKey: 'sk-kimi-not-read' } },
+      }))});`,
+    ].join('\n'), 'utf8');
+    await chmod(join(bin, 'opencode'), 0o755);
+    await chmod(join(bin, 'kimi'), 0o755);
+    process.env.PATH = `${bin}:/usr/bin:/bin`;
+    const home = join(dir, 'home');
+
+    const { providers } = await withAnimaHome(home, () => new SystemService({
+      commandPresent: async (command) => command === 'opencode' || command === 'kimi',
+      now: () => new Date('2026-11-25T00:00:00.000Z'),
+    }).providerAvailability());
+    assert.deepEqual(providers.find((provider) => provider.kind === 'opencode-cli'), {
+      checkedAt: '2026-11-25T00:00:00.000Z',
+      defaultModel: 'deepseek/deepseek-v4-pro',
+      kind: 'opencode-cli',
+      modelReasoningEfforts: { 'deepseek/deepseek-v4-pro': ['high', 'low', 'max'], 'deepseek/deepseek-v5': ['high'] },
+      models: ['deepseek/deepseek-v4-pro', 'deepseek/deepseek-v5'],
+      present: true,
+    });
+    assert.deepEqual(providers.find((provider) => provider.kind === 'kimi-cli'), {
+      checkedAt: '2026-11-25T00:00:00.000Z',
+      defaultModel: 'kimi-code/k3',
+      kind: 'kimi-cli',
+      modelReasoningEfforts: { 'kimi-code/k3': ['low', 'high', 'max'], 'kimi-code/k4': [] },
+      models: ['kimi-code/k3', 'kimi-code/k4'],
+      present: true,
+    });
+
+    const calls = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(calls.sort((a, b) => String(a['name']).localeCompare(String(b['name']))), [
+      { argv: ['provider', 'list', '--json'], autoupdate: null, cwd: await realpath(join(home, 'cache', 'kimi-model-probe')), name: 'kimi' },
+      { argv: ['models', '--verbose', '--pure'], autoupdate: '1', cwd: await realpath(join(home, 'cache', 'opencode-model-probe')), name: 'opencode' },
+    ]);
+    assert.deepEqual(await readdir(join(home, 'cache', 'opencode-model-probe')), []);
+    assert.deepEqual(await readdir(join(home, 'cache', 'kimi-model-probe')), []);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
     await rm(dir, { force: true, recursive: true });
   }
 });

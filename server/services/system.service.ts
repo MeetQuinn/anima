@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { resolveAnimaHome } from '../anima-home.js';
 import { ignoreChildStdinErrors } from '../providers/child-process.js';
 import { antigravityCommandProblem } from '../providers/antigravity.js';
+import { openCodeLaunchEnvironment } from '../providers/opencode.js';
 import { launchCandidatesFingerprint, runtimeLaunchPath } from '../runtime/launch-path.js';
 import { raceWithTimeout } from '../race-timeout.js';
 import { defaultServerSettingsService, type ServerSettingsService } from '../settings/settings.service.js';
@@ -233,6 +234,8 @@ export function parseGrokAcpModelState(modelState: unknown): ProviderModelCatalo
 /** Live model catalog per provider kind; only `dynamicModels` and `liveModels` catalog entries reach here. */
 async function liveProviderModels(command: string, kind: ProviderKind): Promise<ProviderModelCatalog> {
   if (kind === 'codex-cli') return codexAppServerModelCatalog(command);
+  if (kind === 'opencode-cli') return openCodeModelCatalog(command);
+  if (kind === 'kimi-cli') return kimiModelCatalog(command);
   if (kind === 'pi') return piProviderModels(command);
   if (kind === 'antigravity-cli') return antigravityProviderModels(command);
   return grokProviderModels(command, runtimeProbeEnv());
@@ -653,6 +656,165 @@ export function parseCodexModelList(pages: unknown[]): ProviderModelCatalog {
   }
   if (models.length === 0) throw new Error('Codex did not report any models');
   return { defaultModel: defaultModel || models[0]!, modelReasoningEfforts, models };
+}
+
+const CATALOG_COMMAND_TIMEOUT_MS = 10_000;
+const CATALOG_COMMAND_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Runs a one-shot catalog command and returns its stdout. Nothing reads stderr, so it is
+ * not piped (a full pipe would stall the CLI). Errors never carry the output: Kimi's
+ * includes provider credentials. Exported for tests.
+ */
+export async function catalogCommandOutput(
+  label: string,
+  command: string,
+  args: string[],
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    killGraceMs?: number;
+    maxBytes?: number;
+    timeoutMs?: number;
+  },
+): Promise<string> {
+  await mkdir(options.cwd, { recursive: true });
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'ignore'] });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let closed = false;
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error && !closed) {
+        child.kill('SIGTERM');
+        const escalate = setTimeout(() => {
+          if (!closed) child.kill('SIGKILL');
+        }, options.killGraceMs ?? 2_000);
+        escalate.unref();
+        child.once('close', () => clearTimeout(escalate));
+      }
+      if (error) reject(error);
+      else resolvePromise(Buffer.concat(chunks).toString('utf8'));
+    };
+    const timer = setTimeout(
+      () => finish(new Error(`${label} timed out`)),
+      options.timeoutMs ?? CATALOG_COMMAND_TIMEOUT_MS,
+    );
+    child.stdout?.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > (options.maxBytes ?? CATALOG_COMMAND_MAX_BYTES)) {
+        finish(new Error(`${label} wrote more output than expected`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.on('error', (error: NodeJS.ErrnoException) => finish(new Error(`${label} could not start (${error.code ?? 'error'})`)));
+    child.on('close', (code, signal) => {
+      closed = true;
+      if (code === 0) finish();
+      else finish(new Error(`${label} exited (${code ?? signal ?? 'signal'})`));
+    });
+  });
+}
+
+/**
+ * OpenCode's live model list: `opencode models --verbose`, which reads OpenCode's own
+ * config and model cache and starts no session. It runs with the runtime's `--pure`
+ * and launch environment, so it sees the providers an agent's turn sees, from a fixed
+ * empty directory, so no project's `opencode.json` applies.
+ */
+async function openCodeModelCatalog(command: string): Promise<ProviderModelCatalog> {
+  const output = await catalogCommandOutput('OpenCode model list', command, ['models', '--verbose', '--pure'], {
+    cwd: join(resolveAnimaHome(), 'cache', 'opencode-model-probe'),
+    env: openCodeLaunchEnvironment(runtimeProbeEnv()),
+  });
+  return parseOpenCodeModelsOutput(output);
+}
+
+/**
+ * `opencode models --verbose` → catalog. Each model is its `provider/id` on a line of its
+ * own, then its JSON. A model's `variants` are its effort menu (the values the
+ * runtime's `effort` option takes), and a model without any has no effort control; a
+ * model whose JSON does not parse keeps its built-in menu. Deprecated models stay out.
+ * Only ids, status and variant names are read: the JSON also carries provider headers
+ * and options.
+ */
+export function parseOpenCodeModelsOutput(output: string): ProviderModelCatalog {
+  const blocks: { body: string[]; model: string }[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (/^[^\s{}"]+\/\S+$/.test(line)) blocks.push({ body: [], model: line });
+    else blocks.at(-1)?.body.push(line);
+  }
+  const models: string[] = [];
+  const modelReasoningEfforts: Record<string, string[]> = {};
+  for (const { body, model } of blocks) {
+    if (models.includes(model)) continue;
+    let info: unknown;
+    try {
+      info = JSON.parse(body.join('\n'));
+    } catch {
+      info = undefined;
+    }
+    if (isPlainRecord(info) && info['status'] === 'deprecated') continue;
+    models.push(model);
+    if (!isPlainRecord(info)) continue;
+    const variants = info['variants'];
+    modelReasoningEfforts[model] = isPlainRecord(variants)
+      ? Object.keys(variants).filter((name) => name.trim() !== '')
+      : [];
+  }
+  if (models.length === 0) throw new Error('OpenCode did not report any models');
+  return { defaultModel: models[0]!, modelReasoningEfforts, models };
+}
+
+/**
+ * Kimi Code's live model list: `kimi provider list --json`, which prints the configured
+ * providers and model aliases and starts no session. It runs on the runtime PATH from
+ * a fixed empty directory.
+ */
+async function kimiModelCatalog(command: string): Promise<ProviderModelCatalog> {
+  const output = await catalogCommandOutput('Kimi Code model list', command, ['provider', 'list', '--json'], {
+    cwd: join(resolveAnimaHome(), 'cache', 'kimi-model-probe'),
+    env: runtimeProbeEnv(),
+  });
+  return parseKimiProviderList(output);
+}
+
+/**
+ * `kimi provider list --json` → catalog. Only `models` is read: `providers` holds
+ * credentials. Each key is an alias `session/set_model` takes; `supportEfforts` is the
+ * effort menu (the values of the runtime's `thinking` option), and a model without it
+ * has no effort control.
+ */
+export function parseKimiProviderList(output: string): ProviderModelCatalog {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error('Kimi Code provider list was not JSON');
+  }
+  const entries = isPlainRecord(parsed) && isPlainRecord(parsed['models']) ? parsed['models'] : {};
+  const models: string[] = [];
+  const modelReasoningEfforts: Record<string, string[]> = {};
+  for (const [alias, info] of Object.entries(entries)) {
+    const model = alias.trim();
+    if (!model || models.includes(model)) continue;
+    models.push(model);
+    const efforts = isPlainRecord(info) && Array.isArray(info['supportEfforts']) ? info['supportEfforts'] : [];
+    modelReasoningEfforts[model] = [
+      ...new Set(
+        efforts
+          .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+          .map((value) => value.trim()),
+      ),
+    ];
+  }
+  if (models.length === 0) throw new Error('Kimi Code did not report any models');
+  return { defaultModel: models[0]!, modelReasoningEfforts, models };
 }
 
 const PI_MODEL_PROBE_ARGS = ['--mode', 'rpc', '--no-extensions', '--no-skills', '--no-context-files', '--no-session'];

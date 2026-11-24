@@ -53,7 +53,7 @@ export function openCodeLaunchEnvironment(
     ...env,
     OPENCODE_DISABLE_AUTOUPDATE: '1',
   };
-  // DeepSeek auth is machine-global in OpenCode's auth store. Pin the paths
+  // Provider auth is machine-global in OpenCode's auth store. Pin the paths
   // which locate that store and the global OpenCode configuration to the
   // service environment rather than an agent's Launch env.
   for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR']) {
@@ -361,7 +361,7 @@ class OpenCodeAcpController {
     } catch (error) {
       if (!(error instanceof AcpJsonRpcError)) throw error;
       throw new Error(
-        `OpenCode could not select ${model}. Configure DeepSeek with \`opencode auth login --provider deepseek\`. ${error.message}`,
+        `OpenCode could not select ${model}. Configure its provider with \`${openCodeLoginCommand(model)}\`. ${error.message}`,
       );
     }
   }
@@ -705,11 +705,17 @@ function openCodeSetupError(error: unknown, model: string | undefined): unknown 
     return error;
   }
   return new Error(
-    `OpenCode could not use ${model ?? 'the selected DeepSeek model'}. `
-      + 'Configure the machine-level credential with `opencode auth login --provider deepseek`. '
+    `OpenCode could not use ${model ?? 'the selected model'}. `
+      + `Configure the machine-level credential with \`${openCodeLoginCommand(model)}\`. `
       + error.message,
     { cause: error },
   );
+}
+
+/** `opencode auth login` for the provider a `provider/id` model belongs to. */
+function openCodeLoginCommand(model: string | undefined): string {
+  const provider = model?.includes('/') ? model.slice(0, model.indexOf('/')).trim() : '';
+  return /^[\w.-]+$/.test(provider) ? `opencode auth login --provider ${provider}` : 'opencode auth login';
 }
 
 function permissionApprovalOptionId(message: Record<string, unknown>): string | undefined {
