@@ -27,7 +27,7 @@ export interface SettingsGroup {
  */
 export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
   {
-    label: 'Runtime',
+    label: 'System',
     pages: [
       { id: 'server', label: 'Server' },
       { id: 'providers', label: 'Providers' },

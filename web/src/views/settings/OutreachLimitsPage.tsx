@@ -33,10 +33,10 @@ const revealInRow = `${revealBase} group-hover/row:opacity-100 group-focus-withi
 interface Person { id: string; name: string; handle?: string; avatarUrl?: string }
 
 const PLATFORMS: Array<{ platform: ContactPlatform; label: string; blocks: string }> = [
-  { platform: 'slack', label: 'Slack', blocks: 'Not DMed or @mentioned. Ordinary channel posts are unaffected.' },
+  { platform: 'slack', label: 'Slack', blocks: 'No DMs or @mentions. Regular channel posts are unaffected.' },
   {
     platform: 'linear', label: 'Linear',
-    blocks: 'Not @mentioned, assigned, delegated or subscribed, in replies, comments, started sessions or API writes. Comments without a mention are unaffected, including answers in a session they opened.',
+    blocks: 'No @mentions, assignments, delegations, or subscriptions. Plain comments and replies in sessions they started are unaffected.',
   },
 ];
 
@@ -49,19 +49,19 @@ export default function OutreachLimitsPage() {
       <p className="text-[13px] leading-relaxed text-text">
         Agents will not reach out to the people listed here. Incoming messages are unaffected.
         <span className="mt-1.5 block text-[11px] leading-relaxed text-text-subtle">
-          Applies to every agent in this Anima instance, per workspace. Changes take effect immediately.
+          Applies to all agents, per workspace. Changes take effect immediately.
         </span>
       </p>
 
       {query.isPending && <p role="status" className="mt-6 border-t border-border-strong pt-4 text-[12px] text-text-muted">Loading list…</p>}
       {query.isError && (
         <div role="alert" className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 border-l-2 border-health-error pl-3 text-[12px] leading-relaxed text-health-error">
-          <span className="min-w-0 flex-1">Could not load the do-not-contact list. Existing restrictions have not been changed.</span>
+          <span className="min-w-0 flex-1">Could not load outreach limits. Existing restrictions haven’t changed.</span>
           <button type="button" className={actionClass} onClick={() => void query.refetch()}>Retry</button>
         </div>
       )}
       {!query.isPending && !query.isError && workspaces.length === 0 && (
-        <p className="mt-6 border-t border-border-strong pt-4 text-[12px] text-text-muted">Connect an agent to Slack or Linear to manage a workspace’s list.</p>
+        <p className="mt-6 border-t border-border-strong pt-4 text-[12px] text-text-muted">Connect an agent to Slack or Linear to manage outreach limits.</p>
       )}
 
       {!query.isError && PLATFORMS.map(({ platform, label, blocks }) => {
@@ -107,7 +107,7 @@ function WorkspaceBlock({ workspace, platformLabel }: { workspace: ContactWorksp
       ? changeLinearContactMember(workspace.id, user.id, action)
       : changeContactMember(workspace.id, user.id, action),
     onSuccess: async (_result, change) => {
-      setNotice(change.action === 'add' ? 'Added. Restriction is active.' : 'Removed. Restriction lifted.');
+      setNotice(change.action === 'add' ? 'Added to outreach limits.' : 'Removed from outreach limits.');
       setConfirm(null);
       setSearch('');
       await client.invalidateQueries({ queryKey: workspacesKey });
@@ -156,7 +156,7 @@ function WorkspaceBlock({ workspace, platformLabel }: { workspace: ContactWorksp
 
       {!workspace.canLookup && (
         <p role="status" className="mt-2 border-l-2 border-border-strong pl-3 text-[12px] leading-relaxed text-text-muted">
-          No {platformLabel} connection is available for this workspace. Saved IDs remain restricted.
+          No {platformLabel} connection for this workspace. Saved IDs stay restricted.
         </p>
       )}
       {directory.isError && (
@@ -200,7 +200,7 @@ function WorkspaceBlock({ workspace, platformLabel }: { workspace: ContactWorksp
       )}
 
       {members.length > 0 ? (
-        <ul aria-label={`Do-not-contact members · ${workspace.name}`} className="mt-1.5">
+        <ul aria-label={`Outreach limits · ${workspace.name}`} className="mt-1.5">
           {members.map(({ user, resolved }) => (
             <li key={user.id} className="group/row flex items-center gap-2.5 border-t border-border-soft py-1.5">
               <MemberIdentity user={user} unresolvedNote={resolved ? undefined : unresolvedNote} />
@@ -229,16 +229,16 @@ function WorkspaceBlock({ workspace, platformLabel }: { workspace: ContactWorksp
 
       <ConfirmModal
         open={confirm !== null}
-        title={confirm?.action === 'add' ? 'Add to do-not-contact list?' : 'Remove from do-not-contact list?'}
+        title={confirm?.action === 'add' ? 'Add to outreach limits?' : 'Remove from outreach limits?'}
         description={confirm && <>
           <span className="mb-2 block font-medium">{confirm.user.name} <span className="break-all font-mono text-[11px]">({confirm.user.id})</span></span>
           {confirm.action === 'add'
-            ? `All agents in this Anima instance connected to ${workspace.name} will be restricted from contacting this person through Anima tools.`
-            : `This lifts the restriction for all agents in this Anima instance connected to ${workspace.name}.`}
+            ? `No agent connected to ${workspace.name} will reach out to this person.`
+            : `Agents connected to ${workspace.name} will be able to reach out to this person again.`}
         </>}
         variant="warn"
         confirmVariant={confirm?.action === 'remove' ? 'destructive' : 'default'}
-        confirmLabel={confirm?.action === 'add' ? 'Add member' : 'Remove member'}
+        confirmLabel={confirm?.action === 'add' ? 'Add' : 'Remove'}
         busy={mutation.isPending}
         error={mutation.error?.message}
         onCancel={() => { if (!mutation.isPending) setConfirm(null); }}

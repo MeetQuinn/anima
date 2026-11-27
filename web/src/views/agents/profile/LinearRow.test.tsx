@@ -145,11 +145,11 @@ it('shows whether Linear can reach the public address while connecting', async (
   await screen.findByText('Not connected');
   const dialog = await openDialog();
   const alert = await within(dialog).findByRole('alert');
-  expect(alert.textContent).toContain('Not reachable yet');
-  expect(alert.textContent).toContain('A sign-in page or access rule answered (HTTP 302). Let /webhooks/ through it');
+  expect(alert.textContent).toContain('Not reachable');
+  expect(alert.textContent).toContain('A sign-in page or access rule blocked the check (HTTP 302). Bypass /webhooks/ in your gateway');
   api.check.mockResolvedValueOnce({ publicUrl: setup.publicUrl, reachable: true, status: 200, passwordSet: true, checkedAt: '2026-11-03T00:00:01Z' });
   fireEvent.click(within(alert).getByRole('button', { name: 'Check again' }));
-  await within(dialog).findByText(/Address reaches this Anima\./);
+  await within(dialog).findByText(/Address reaches this server\./);
   expect(api.check).toHaveBeenCalledTimes(2);
 });
 
@@ -215,7 +215,7 @@ it('keeps setup behind the row and contains and restores keyboard focus on dismi
     const dialog = await openDialog();
     expect(document.activeElement).toBe(dialog);
     await screen.findByRole('link', { name: 'Create app in Linear' });
-    await within(dialog).findByText(/Address reaches this Anima\./);
+    await within(dialog).findByText(/Address reaches this server\./);
     fireEvent.keyDown(dialog, { key: 'Tab' });
     expect(document.activeElement).toBe(closeButton());
     fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
@@ -344,7 +344,7 @@ it('asks for the public address in place when it is missing, then continues to t
   const input = screen.getByLabelText('Public address');
   expect(document.activeElement).toBe(input);
   // One forwarding target; no per-integration routes to copy.
-  expect(within(dialog).getByText(/Forward the whole address to this dashboard/)).toBeTruthy();
+  expect(within(dialog).getByText(/Point this address at the dashboard/)).toBeTruthy();
   expect(within(dialog).queryByText('/api/linear/oauth/callback')).toBeNull();
   expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
   api.saveAddress.mockResolvedValue({ publicUrl: 'https://agents.example.com' });

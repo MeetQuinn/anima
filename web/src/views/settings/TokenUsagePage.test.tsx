@@ -155,7 +155,7 @@ describe('TokenUsagePage', () => {
 
     // Measured usage still reads as measured even while aggregate coverage is
     // incomplete (Bram has never started tracking).
-    expect(screen.getByLabelText(/350 tokens · exact coverage incomplete/)).toBeTruthy();
+    expect(screen.getByLabelText(/350 tokens · partial tracking/)).toBeTruthy();
 
     // The prose and the per-kind cache breakdown are gone, and the per-agent
     // heatmap with them. Pinned as absences BECAUSE the positives above are

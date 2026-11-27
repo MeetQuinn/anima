@@ -138,8 +138,8 @@ export function BusyConfirmModal({
         </div>
         <div id={descriptionId} className="font-serif mt-2 text-[15px] leading-relaxed text-text-muted">
           {/* Continuity-first: named, saved, resumes — never "interrupt". */}
-          {subject} {verb} working. Their work is saved. After the {action} they&apos;ll continue
-          right where they left off. Nothing is lost.
+          {subject} {verb} working. Their progress is saved, and they’ll pick up where they left off
+          after the {action}.
         </div>
         {kind === 'upgrade' && target && (
           <div className="mt-2.5 font-sans text-[12px] text-text-muted">
@@ -296,7 +296,7 @@ export function RestartEchoToast() {
 
   if (!visible || !echo) return null;
 
-  const text = echo.kind === 'resumed' ? resumedText(echo.count) : 'Services restarted';
+  const text = echo.kind === 'resumed' ? resumedText(echo.count) : 'Anima restarted';
 
   return createPortal(
     <div

@@ -156,15 +156,15 @@ describe('ProvidersPage version slot', () => {
     window.localStorage.clear();
   });
 
-  it('says "version unknown" for an unverified binary and hides not-installed providers entirely', async () => {
+  it('says "Version unknown" for an unverified binary and hides not-installed providers entirely', async () => {
     renderPanel();
 
     // Collapsed rows surface version honesty without expanding.
-    expect(await screen.findByText('version unknown')).toBeTruthy();
+    expect(await screen.findByText('Version unknown')).toBeTruthy();
     // A provider whose binary isn't on this machine renders nothing at all
-    // (totoday 08-02) — no row, no `not installed` claim.
+    // (totoday 08-02) — no row, no `Not installed` claim.
     expect(screen.queryByText('Grok CLI')).toBeNull();
-    expect(screen.queryByText('not installed')).toBeNull();
+    expect(screen.queryByText('Not installed')).toBeNull();
     // An available update alone must not auto-expand a provider (totoday 08-02).
     const kimiToggle = screen.getByRole('button', { name: /Kimi Code/i });
     expect(kimiToggle.getAttribute('aria-expanded')).toBe('false');
@@ -178,7 +178,7 @@ describe('ProvidersPage version slot', () => {
     expect(screen.queryByText('Binary')).toBeNull();
     expect(screen.queryByRole('button', { name: /Add account/i })).toBeNull();
     fireEvent.click(screen.getByText(/Settings/i));
-    const command = screen.getByRole('textbox', { name: 'Claude Code runtime command' });
+    const command = screen.getByRole('textbox', { name: 'Claude Code command' });
     expect((command as HTMLInputElement).value).toBe('');
     expect(command.getAttribute('placeholder')).toBe('claude');
 
@@ -192,9 +192,24 @@ describe('ProvidersPage version slot', () => {
     renderPanel();
     fireEvent.click(await screen.findByRole('button', { name: /Kimi Code/i }));
     expect(await screen.findByText('Not signed in')).toBeTruthy();
+    // Plain-text button tooltips must not contain literal Markdown backticks.
+    const browserButton = screen.getByRole('button', { name: 'Sign in on this machine' });
+    const deviceButton = screen.getByRole('button', { name: 'Sign in with a code' });
+    expect(browserButton.getAttribute('title')).toBe(
+      'Runs mkimi login and opens the sign-in page in a browser on this machine',
+    );
+    expect(deviceButton.getAttribute('title')).toBe(
+      'Runs mkimi login --device-auth to sign in on any device with a one-time code',
+    );
+    expect(browserButton.getAttribute('title')).not.toContain('`');
+    expect(deviceButton.getAttribute('title')).not.toContain('`');
     // Unsupported providers never render the block.
     fireEvent.click(await screen.findByRole('button', { name: /Claude Code/i }));
     expect(screen.queryByTestId('provider-sign-in-claude-code')).toBeNull();
+
+    loginApi.start.mockRejectedValueOnce('network');
+    fireEvent.click(deviceButton);
+    expect(await screen.findByText('Could not start sign-in')).toBeTruthy();
 
     loginApi.start.mockResolvedValueOnce({
       providers: [
@@ -214,14 +229,16 @@ describe('ProvidersPage version slot', () => {
         },
       ],
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in with a code' }));
+    fireEvent.click(deviceButton);
     await waitFor(() => expect(loginApi.start).toHaveBeenCalledWith('kimi-cli', 'device'));
     expect((await screen.findByLabelText('Kimi Code one-time code')).textContent).toBe('ABCD-EFGH1');
     expect(screen.getByRole('link', { name: /example\.test\/device/ }).getAttribute('href')).toBe(
       'https://example.test/device',
     );
+    loginApi.cancel.mockRejectedValueOnce('network');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel sign-in' }));
     await waitFor(() => expect(loginApi.cancel).toHaveBeenCalledWith('kimi-cli'));
+    expect(await screen.findByText('Could not cancel sign-in')).toBeTruthy();
   });
 
   it('hides the sign-in controls entirely when the provider is already signed in', async () => {
@@ -245,7 +262,7 @@ describe('ProvidersPage version slot', () => {
     // expires the CLI reports signed_out and the controls come back.
     expect(screen.queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Sign in on this machine' })).toBeNull();
-    expect(screen.queryByText(/as this machine user/)).toBeNull();
+    expect(screen.queryByText(/stores your credentials/)).toBeNull();
   });
 
   it('shows the global Kimi context limit and saves the recommended cap', async () => {
@@ -271,10 +288,10 @@ describe('ProvidersPage version slot', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Kimi Code/i }));
     fireEvent.click(screen.getByText(/Settings/i));
 
-    const command = screen.getByRole('textbox', { name: 'Kimi Code runtime command' });
+    const command = screen.getByRole('textbox', { name: 'Kimi Code command' });
     expect(command.getAttribute('placeholder')).toBe('kimi');
     fireEvent.change(command, { target: { value: 'kimi-wrapper' } });
-    const args = screen.getByRole('textbox', { name: 'Kimi Code runtime arguments' });
+    const args = screen.getByRole('textbox', { name: 'Kimi Code arguments' });
     fireEvent.change(args, { target: { value: '--profile\nteam one\n' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
@@ -289,7 +306,7 @@ describe('ProvidersPage version slot', () => {
     expect((select as HTMLSelectElement).value).toBe('no-anima-limit');
     expect(screen.getByRole('option', { name: 'No Anima limit' })).toBeTruthy();
     expect(
-      screen.getByText('Global for every agent. Applies when its provider session next starts.'),
+      screen.getByText('Applies to all agents using this provider on their next session.'),
     ).toBeTruthy();
     fireEvent.change(select, { target: { value: '262144' } });
     await waitFor(() => expect(contextApi.save).toHaveBeenCalledWith('kimi-cli', 262144));

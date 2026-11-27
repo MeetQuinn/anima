@@ -19,8 +19,8 @@ import {
 // bounce `/settings` to an agent.
 
 describe('settings page grammar', () => {
-  it('lists every page exactly once across the two groups, Runtime before Policies', () => {
-    expect(SETTINGS_GROUPS.map((g) => g.label)).toEqual(['Runtime', 'Policies']);
+  it('lists every page exactly once across the two groups, System before Policies', () => {
+    expect(SETTINGS_GROUPS.map((g) => g.label)).toEqual(['System', 'Policies']);
     const ids = SETTINGS_GROUPS.flatMap((g) => g.pages.map((p) => p.id));
     expect(ids).toEqual(['server', 'providers', 'token-usage', 'outreach-limits']);
     expect(new Set(ids).size).toBe(ids.length);

@@ -64,9 +64,7 @@ export function UsageHeatmap({ coverageStartedAt, days, from, through }: UsageHe
   const coverageDate = coverageStartedAt ? localDate(new Date(coverageStartedAt)) : undefined;
   const weeks = usageWeeks(from, 52);
   const cuts = usageQuantileCuts(days);
-  const boundaryWeek = coverageDate
-    ? weeks.findIndex((week) => week.some((date) => date >= coverageDate))
-    : -1;
+  const boundaryWeek = coverageBoundaryWeek(coverageStartedAt, weeks);
 
   // The chart is wider than a phone. Without this the viewport lands on the
   // OLDEST weeks, which under the quiet no-data fill is a blank grid: the one
@@ -277,6 +275,16 @@ function usageLevel(value: number, cuts: [number, number, number]): 0 | 1 | 2 | 
   return 4;
 }
 
+export function hasCoverageRule(coverageStartedAt: string | undefined, from: string): boolean {
+  return coverageBoundaryWeek(coverageStartedAt, usageWeeks(from, 52)) > 0;
+}
+
+function coverageBoundaryWeek(coverageStartedAt: string | undefined, weeks: string[][]): number {
+  if (!coverageStartedAt) return -1;
+  const coverageDate = localDate(new Date(coverageStartedAt));
+  return weeks.findIndex((week) => week.some((date) => date >= coverageDate));
+}
+
 function usageWeeks(from: string, count: number): string[][] {
   const start = parseLocalDate(from);
   return Array.from({ length: count }, (_, weekIndex) =>
@@ -308,9 +316,9 @@ function usageDayTitle(
   if (state.future) return `${label}: future`;
   if (state.preCoverage && !day) return `${label}: before exact tracking began`;
   if (!day || (day.totalTokens === 0 && day.unknownRuns === 0)) return `${label}: 0 tokens`;
-  const parts = day.totalTokens > 0 ? [`${formatTokens(day.totalTokens)} tokens`] : ['Token usage unavailable'];
+  const parts = day.totalTokens > 0 ? [`${formatTokens(day.totalTokens)} tokens`] : ['token usage unavailable'];
   if (day.unknownRuns > 0 && day.totalTokens > 0) parts.push('provider reporting incomplete');
-  if (state.preCoverage) parts.push('exact coverage incomplete');
+  if (state.preCoverage) parts.push('partial tracking');
   return `${label}: ${parts.join(' · ')}`;
 }
 
