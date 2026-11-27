@@ -118,6 +118,7 @@ const groups = {
     'provider-login.test.js',
     'provider-runtime-commands.test.js',
     'provider-usage.test.js',
+    'provider-usage-antigravity.test.js',
     'provider-connection.test.js',
     'provider-controller-slot.test.js',
     'grok-launch-args.test.js',
