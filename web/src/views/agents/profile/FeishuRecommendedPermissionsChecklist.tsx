@@ -138,8 +138,8 @@ export function FeishuRecommendedPermissionsChecklist({
           Authorize Feishu permissions
         </div>
         <p className="font-serif text-[13px] leading-relaxed text-text-muted">
-          Lets your Feishu bot show teammate names, look up contacts, join multi-bot group chats,
-          and use Feishu Drive and Docs.
+          Lets your Feishu bot show teammate names, find people by email or phone, work fully in
+          group chats with people and other bots, and use Feishu Drive and Docs.
         </p>
       </div>
 

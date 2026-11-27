@@ -372,7 +372,7 @@ export function RecommendedPermissionsState({
             )}
             {isError && !data?.recommended.message && (
               <div className="font-sans text-[11px] text-text-subtle">
-                Could not check Feishu permissions.
+                Couldn’t check Feishu permissions.
               </div>
             )}
           </>
@@ -451,9 +451,10 @@ function SkipWarningDialog({
               Skip recommended permissions?
             </div>
             <p id={descriptionId} className="font-serif text-[13px] leading-relaxed text-text-muted">
-              Your bot can still send and receive messages, but teammate lookups, multi-bot group
-              chats, and Feishu Drive and Docs won’t work until these permissions are granted. You
-              can finish this anytime in the agent’s profile.
+              Your bot can still send and receive messages, but it won’t show teammate names, find
+              people by email or phone, work fully in group chats with people and other bots, or use
+              Feishu Drive and Docs until you add these permissions and publish a new app version.
+              You can finish this anytime in the agent’s profile.
             </p>
           </div>
         </div>

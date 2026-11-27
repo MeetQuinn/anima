@@ -41,7 +41,7 @@ describe('SlackConnectStepper', () => {
       'This isn’t a Bot User OAuth Token. Copy it from OAuth & Permissions in Slack (starts with xoxb-).',
     ],
   ] as const)('renders plain-text %s error with no literal Markdown backticks', async (reason, expected) => {
-    api.validate.mockResolvedValueOnce({
+    api.validate.mockResolvedValue({
       app: { valid: false, expected: 'app', reason: reason as SlackTokenValidation['reason'] },
       connection: { valid: false, reason: 'incomplete' },
     } satisfies SlackValidateResponse);
@@ -63,18 +63,25 @@ describe('SlackConnectStepper', () => {
         finishConnect = resolve;
       }),
     );
-    api.validate
-      .mockResolvedValueOnce({
-        app: { valid: true, expected: 'app', workspaceName: 'Demo workspace' },
-        connection: { valid: false, reason: 'incomplete' },
-      } satisfies SlackValidateResponse)
-      .mockResolvedValueOnce({
-        bot: { valid: true, expected: 'bot', botName: 'scout', workspaceName: 'Demo workspace' },
-        connection: { valid: false, reason: 'incomplete' },
-      } satisfies SlackValidateResponse)
-      .mockResolvedValueOnce({
-        connection: { valid: true, workspaceName: 'Demo workspace', botName: 'scout' },
-      } satisfies SlackValidateResponse);
+    api.validate.mockImplementation(
+      async (_agentId: string, body: { appToken?: string; botToken?: string }): Promise<SlackValidateResponse> => {
+        if (body.appToken && body.botToken) {
+          return {
+            connection: { valid: true, workspaceName: 'Demo workspace', botName: 'scout' },
+          };
+        }
+        if (body.appToken) {
+          return {
+            app: { valid: true, expected: 'app', workspaceName: 'Demo workspace' },
+            connection: { valid: false, reason: 'incomplete' },
+          };
+        }
+        return {
+          bot: { valid: true, expected: 'bot', botName: 'scout', workspaceName: 'Demo workspace' },
+          connection: { valid: false, reason: 'incomplete' },
+        };
+      },
+    );
 
     render(<SlackConnectStepper agentId="scout" />);
     fireEvent.click(screen.getByRole('button', { name: 'Use an existing app' }));

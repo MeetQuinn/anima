@@ -126,7 +126,8 @@ export function FeishuExistingCredentialsCard({
         onChange={onAppSecret}
       />
       <p className="font-sans text-[12px] leading-snug text-text-muted">
-        Find these under Credentials &amp; Basic Info in the Feishu Developer Console.
+        Find these under Credentials &amp; Basic Info in the Feishu Developer Console. The app must
+        receive events over a long-lived connection.
       </p>
       <Button className="w-full" onClick={onSubmit} disabled={disabled}>
         {saving ? <FeishuConnectingAppLabel /> : 'Connect Feishu app'}

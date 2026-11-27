@@ -248,7 +248,7 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
       {saved && (
         <div className="flex items-center gap-2 rounded-sm border border-health-ok/30 bg-health-ok-soft px-4 py-3">
           <Check className="h-4 w-4 text-health-ok" />
-          <span className="font-serif text-[13px] text-text">Connected to Feishu.</span>
+          <span className="font-serif text-[13px] text-text">Feishu app saved.</span>
         </div>
       )}
     </div>

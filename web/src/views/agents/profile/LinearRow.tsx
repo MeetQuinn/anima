@@ -22,9 +22,9 @@ import { inputClass, LinearConnectSteps, notACredentialField } from './LinearCon
 
 // The receiver's address is a config.json setting (linearWebhook), not a dashboard one.
 const listenerFailures = {
-  address_in_use: 'The webhook listener port is already in use. Free it, or set another port under linearWebhook in config.json.',
-  permission_denied: 'Permission to bind the webhook listener port was denied. Check linearWebhook in config.json.',
-  address_unavailable: 'The webhook listener address is unavailable. Check that linearWebhook in config.json uses an address on this machine.',
+  address_in_use: 'The local listener port is already in use. Free it, or set another port under linearWebhook in config.json.',
+  permission_denied: 'Permission to bind the local listener port was denied. Check linearWebhook in config.json.',
+  address_unavailable: 'The local listener address is unavailable. Check that linearWebhook in config.json uses an address on this machine.',
   other: 'The local listener couldn’t start. Check the runtime logs.',
 };
 
@@ -33,7 +33,7 @@ const listenerFailures = {
 const knownInstallErrors = new Map<string, string>([
   [
     'Set the Anima public URL in Server settings and refresh the connection form.',
-    'Set the public address in Server settings, then refresh the page.',
+    'Your public address changed or was removed. Check it in Settings → Server, then refresh the page.',
   ],
   ['Use a separate Linear app for each agent.', 'Use a separate Linear app for each agent.'],
   ['Remove the installed identity before replacing it.', 'Remove the installed identity before replacing it.'],
@@ -340,7 +340,7 @@ function LinearDialogBody({
           onClick={() => void onRemove()}
           className="inline-flex min-h-[44px] items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-health-error md:min-h-0"
         >
-          Remove Linear connection
+          Disconnect from Linear
         </button>
       )}
     </div>
@@ -454,8 +454,8 @@ function ConnectedView({
 
       {data.signatureFailures ? (
         <p className="font-sans text-[12px] leading-relaxed text-health-warn-ink">
-          {data.signatureFailures} incoming {data.signatureFailures === 1 ? 'request failed' : 'requests failed'}{' '}
-          webhook signature verification and {data.signatureFailures === 1 ? 'was' : 'were'} rejected.
+          {data.signatureFailures} incoming {data.signatureFailures === 1 ? 'request' : 'requests'} claiming this app
+          failed webhook signature verification and {data.signatureFailures === 1 ? 'was' : 'were'} rejected.
         </p>
       ) : null}
 
@@ -572,12 +572,12 @@ function ReauthorizeForm({
           {data.needsReauthorization
             ? 'Authorize again in Linear to grant the current permissions.'
             : 'Permissions are up to date.'}{' '}
-          Existing agent history is kept.
+          Authorizing again keeps Linear task and reply records.
         </p>
       </div>
       {data.reauthorizing && (
         <p role="status" className="font-sans text-[12px] text-text-muted">
-          Waiting for authorization in Linear. Start again if you closed the tab.
+          Waiting for authorization in Linear. If you left Linear before approving, authorize again.
         </p>
       )}
       {notice && (
@@ -645,8 +645,8 @@ function ReauthorizeForm({
 const clientSecretResults: Record<Exclude<LinearClientSecretResult, 'saved'>, string> = {
   rejected: 'Linear didn’t accept this Client secret. Check that it belongs to the app with this Client ID.',
   expired: 'Linear no longer accepts this authorization. Authorize again to reconnect.',
-  unavailable: 'Couldn’t reach Linear to verify this secret. Nothing was saved. Try again.',
-  unsaved: 'Couldn’t save the updated credentials. Try again. If Linear ended the previous authorization, authorize again.',
+  unavailable: 'Couldn’t verify this secret with Linear. Nothing was saved. Try again.',
+  unsaved: 'Couldn’t save the updated credentials. Try again. If Linear ended this authorization, you’ll be asked to authorize again.',
   changed: 'This connection changed while you were editing, so nothing was saved. Refresh and try again.',
 };
 

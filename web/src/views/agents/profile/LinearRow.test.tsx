@@ -166,7 +166,7 @@ for (const [reason, expected] of [
   ['Use a separate Linear app for each agent.', 'Use a separate Linear app for each agent.'],
   [
     'Set the Anima public URL in Server settings and refresh the connection form.',
-    'Set the public address in Server settings, then refresh the page.',
+    'Your public address changed or was removed. Check it in Settings → Server, then refresh the page.',
   ],
   ['private-input-sentinel', 'Couldn’t start authorization.'],
 ] as const) {
@@ -322,7 +322,7 @@ it.each([
   expect(screen.getByLabelText('Client ID')).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
   expect(dialog.textContent).not.toMatch(/prepare (authorization )?again|reinstall/i);
-  expect(Boolean(screen.queryByRole('button', { name: 'Remove Linear connection' }))).toBe(c.removable);
+  expect(Boolean(screen.queryByRole('button', { name: 'Disconnect from Linear' }))).toBe(c.removable);
   expect(api.remove).not.toHaveBeenCalled();
 });
 
@@ -332,7 +332,7 @@ it('a revoked identity can be disconnected before starting over', async () => {
   await screen.findByText('Linear access was revoked');
   await openDialog('Review');
   api.status.mockResolvedValue(base);
-  fireEvent.click(await screen.findByRole('button', { name: 'Remove Linear connection' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Disconnect from Linear' }));
   await waitFor(() => expect(api.remove).toHaveBeenCalledWith('scout'));
   await screen.findByRole('link', { name: 'Create app in Linear' });
   expect(screen.queryByRole('alert')).toBeNull();
@@ -387,7 +387,9 @@ it('connected: OAuth success is done, with facts, no delivery-test gate, and a c
   // Stored and accepted: nothing to do, so no action is offered.
   expect(fact('Client secret').textContent).toBe('Stored on this machine');
   expect(within(dialog).queryByRole('button', { name: /Client secret/ })).toBeNull();
-  expect(within(dialog).getByText('2 incoming requests failed webhook signature verification and were rejected.')).toBeTruthy();
+  expect(
+    within(dialog).getByText('2 incoming requests claiming this app failed webhook signature verification and were rejected.'),
+  ).toBeTruthy();
   expect(dialog.textContent).not.toMatch(/pending verification|send a test|verify connection|healthy|online/i);
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.queryByLabelText('Webhook signing secret')).toBeNull();
@@ -409,14 +411,14 @@ it('uses singular grammar when exactly one webhook request failed signature veri
   await screen.findByText('Demo workspace');
   const dialog = await openDialog('Manage');
   expect(
-    within(dialog).getByText('1 incoming request failed webhook signature verification and was rejected.'),
+    within(dialog).getByText('1 incoming request claiming this app failed webhook signature verification and was rejected.'),
   ).toBeTruthy();
 });
 
 it.each([
-  ['address_in_use', 'The webhook listener port is already in use. Free it, or set another port under linearWebhook in config.json.'],
-  ['permission_denied', 'Permission to bind the webhook listener port was denied. Check linearWebhook in config.json.'],
-  ['address_unavailable', 'The webhook listener address is unavailable. Check that linearWebhook in config.json uses an address on this machine.'],
+  ['address_in_use', 'The local listener port is already in use. Free it, or set another port under linearWebhook in config.json.'],
+  ['permission_denied', 'Permission to bind the local listener port was denied. Check linearWebhook in config.json.'],
+  ['address_unavailable', 'The local listener address is unavailable. Check that linearWebhook in config.json uses an address on this machine.'],
   ['other', 'The local listener couldn’t start. Check the runtime logs.'],
 ] as const)('a detected listener failure (%s) is named, with a way to fix it', async (reason, message) => {
   api.status.mockResolvedValue({
@@ -535,10 +537,10 @@ it('an installation made before secrets were kept offers a quiet Add, checked by
 it.each([
   ['rejected', 'Linear didn’t accept this Client secret. Check that it belongs to the app with this Client ID.'],
   ['expired', 'Linear no longer accepts this authorization. Authorize again to reconnect.'],
-  ['unavailable', 'Couldn’t reach Linear to verify this secret. Nothing was saved. Try again.'],
+  ['unavailable', 'Couldn’t verify this secret with Linear. Nothing was saved. Try again.'],
   [
     'unsaved',
-    'Couldn’t save the updated credentials. Try again. If Linear ended the previous authorization, authorize again.',
+    'Couldn’t save the updated credentials. Try again. If Linear ended this authorization, you’ll be asked to authorize again.',
   ],
   ['changed', 'This connection changed while you were editing, so nothing was saved. Refresh and try again.'],
   ['request failed', 'Couldn’t save the Client secret. Try again.'],
@@ -705,7 +707,9 @@ it('keeps the connected view for pending or failed reauthorization and removes t
   const client = mount();
   await screen.findByText('Demo workspace');
   const dialog = await openDialog('Review');
-  expect(within(dialog).getByText(/Waiting for authorization in Linear/)).toBeTruthy();
+  expect(
+    within(dialog).getByText('Waiting for authorization in Linear. If you left Linear before approving, authorize again.'),
+  ).toBeTruthy();
   api.status.mockResolvedValue({
     ...connected,
     needsReauthorization: true,
@@ -720,7 +724,9 @@ it('keeps the connected view for pending or failed reauthorization and removes t
   // Nothing left to review: the row is quiet again.
   expect(screen.getByRole('button', { name: 'Manage Linear' }).textContent).toBe('');
   expect(within(dialog).queryByRole('alert')).toBeNull();
-  expect(within(dialog).getByText(/Permissions are up to date\./)).toBeTruthy();
+  expect(
+    within(dialog).getByText('Permissions are up to date. Authorizing again keeps Linear task and reply records.'),
+  ).toBeTruthy();
 });
 
 it.each([

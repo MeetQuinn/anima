@@ -98,7 +98,9 @@ describe('Feishu onboarding skip warning — focus contract', () => {
     const describedBy = dialog.getAttribute('aria-describedby');
     expect(describedBy).toBeTruthy();
     const description = document.getElementById(describedBy!);
-    expect(description?.textContent).toContain('Feishu Drive and Docs');
+    expect(description?.textContent).toBe(
+      'Your bot can still send and receive messages, but it won’t show teammate names, find people by email or phone, work fully in group chats with people and other bots, or use Feishu Drive and Docs until you add these permissions and publish a new app version. You can finish this anytime in the agent’s profile.',
+    );
   });
 
   it('keeps Tab inside the warning instead of the form underneath', () => {

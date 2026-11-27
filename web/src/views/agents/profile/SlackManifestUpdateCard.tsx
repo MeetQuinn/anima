@@ -47,7 +47,7 @@ export function SlackManifestUpdateCard({ agentId, defaultOpen = false, onSaving
       setTimeout(() => setCopied(false), 2500);
     } catch {
       setDetailsOpen(true);
-      setCopyError('Couldn’t copy automatically. Copy the manifest YAML below.');
+      setCopyError('Couldn’t copy automatically. Copy the manifest YAML above.');
     }
   }
 

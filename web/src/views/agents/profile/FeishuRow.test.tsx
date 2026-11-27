@@ -58,6 +58,11 @@ it('puts missing permissions on the row and the checklist in the dialog, from on
   fireEvent.click(review);
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).getByText('Authorize Feishu permissions')).toBeTruthy();
+  expect(
+    within(dialog).getByText(
+      'Lets your Feishu bot show teammate names, find people by email or phone, work fully in group chats with people and other bots, and use Feishu Drive and Docs.',
+    ),
+  ).toBeTruthy();
   expect(within(dialog).getByRole('button', { name: 'Check permissions' })).toBeTruthy();
   // The card in the dialog reads the row's answer, it does not ask again.
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -84,14 +89,18 @@ it('quiets the row once a recheck in the dialog finds the permissions on', async
 });
 
 it.each([
-  ['the check fails', () => api.scopes.mockRejectedValue(new Error('feishu down'))],
-  ['Feishu cannot say', () => api.scopes.mockResolvedValue(scopeStatus('unknown'))],
-])('says so when %s instead of looking healthy', async (_, arrange) => {
+  ['the check fails', () => api.scopes.mockRejectedValue(new Error('feishu down')), true],
+  ['Feishu cannot say', () => api.scopes.mockResolvedValue(scopeStatus('unknown')), false],
+])('says so when %s instead of looking healthy', async (_, arrange, expectErrorLine) => {
   arrange();
   mount();
   expect(await screen.findByText('Couldn’t check permissions')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Review Feishu' }));
-  expect(within(screen.getByRole('dialog')).getByText('Authorize Feishu permissions')).toBeTruthy();
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText('Authorize Feishu permissions')).toBeTruthy();
+  if (expectErrorLine) {
+    expect(within(dialog).getByText('Couldn’t check Feishu permissions.')).toBeTruthy();
+  }
   // Opening the dialog does not send the row back to loading.
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(screen.getByText('Couldn’t check permissions')).toBeTruthy();

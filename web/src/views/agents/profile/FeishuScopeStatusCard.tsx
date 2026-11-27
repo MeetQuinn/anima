@@ -123,7 +123,7 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
           )}
           {isError && !lastCheckMessage && (
             <div className="font-sans text-[11px] text-text-subtle">
-              Could not check Feishu permissions.
+              Couldn’t check Feishu permissions.
             </div>
           )}
         </>
