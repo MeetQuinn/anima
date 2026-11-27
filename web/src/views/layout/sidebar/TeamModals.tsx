@@ -164,7 +164,7 @@ function TeamModal({
             <p id={descriptionId} className="font-sans mt-1 text-[11px] text-text-subtle">
               {isEdit
                 ? 'Applies to new agents only. Existing agents stay in their current folders.'
-                : 'New agents in this team are created under this folder.'}
+                : 'Required. New agents in this team are created under this folder.'}
             </p>
           </div>
 

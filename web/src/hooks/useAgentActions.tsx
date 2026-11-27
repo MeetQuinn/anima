@@ -72,7 +72,7 @@ export function useAgentActions() {
   const running = Boolean(status?.currentItemId);
   const health = status?.health;
   const healthSummary = agentHealthSummaryText(health);
-  const providerAction = agentHealthProviderAction(health);
+  const providerAction = agentHealthProviderAction(health, agent?.provider?.kind);
   const restartBlocked = agentHealthBlocksRestart(health);
 
   async function toggleEnabled(nextEnabled: boolean) {
@@ -210,9 +210,14 @@ export function useAgentActions() {
   }
 
   function goToProviderSettings() {
-    navigate(buildSettingsPath('providers'), {
-      state: rememberReturnTo(window.location.pathname + window.location.search),
-    });
+    if (providerAction?.kind === 'providers') {
+      navigate(buildSettingsPath('providers'), {
+        state: rememberReturnTo(window.location.pathname + window.location.search),
+      });
+      return;
+    }
+    if (!agentId) return;
+    navigate(`/agents/${agentId}/profile`);
   }
 
   return {

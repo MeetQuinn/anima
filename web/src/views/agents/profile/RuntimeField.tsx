@@ -27,6 +27,7 @@ import {
   providerUnavailableHint,
   providerUnavailableLabel,
 } from '@/lib/provider-availability';
+import { renderInlineCode } from '@/lib/inline-code';
 import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
 import { runtimeArgsFromEditor } from '@/components/usage/ProviderUnit';
 
@@ -533,7 +534,7 @@ function RuntimeModal({
               </div>
               {draftUnavailableHint && (
                 <div className="font-sans text-[11px] leading-snug text-text-muted">
-                  {draftUnavailableHint}
+                  {renderInlineCode(draftUnavailableHint)}
                 </div>
               )}
               {draftModelMissing && !draftUnavailableHint && (
@@ -551,7 +552,7 @@ function RuntimeModal({
               {kindChanged && (
                 <div className="font-sans text-[11px] leading-snug text-text-muted">
                   Starts a fresh session. Memory, notes, and history stay intact.
-                  {hadCommandOverride ? ' Previous command override was cleared.' : ''}
+                  {hadCommandOverride ? ' The previous command override was cleared.' : ''}
                   {currentFastMode ? ' Fast mode was turned off.' : ''}
                 </div>
               )}
@@ -673,8 +674,8 @@ function RuntimeModal({
                       </label>
                       {draftKind === 'claude-code' ? (
                         <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
-                          Runs at standard speed unless fast mode and usage credits are enabled on
-                          your Anthropic account.
+                          A request, not a guarantee. Needs fast mode and usage credits enabled for
+                          your Anthropic organization, and Claude can still run at standard speed.
                         </p>
                       ) : (
                         <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">

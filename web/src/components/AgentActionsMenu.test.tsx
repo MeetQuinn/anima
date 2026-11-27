@@ -96,11 +96,14 @@ describe('AgentActionsMenu Disable wiring (connected)', () => {
     expect(api.enableAgent.mock.calls.length).toBe(0);
   });
 
-  it('routes Open Providers to Settings -> Providers with return state on auth failure', () => {
+  it('routes Open Providers to Settings -> Providers with return state for Codex auth failure', () => {
     const previousUrl = `${window.location.pathname}${window.location.search}`;
     window.history.replaceState({}, '', '/agents/agent-1/activity?team=core');
     sessionStorage.clear();
     try {
+      directory.agents = [
+        { id: 'agent-1', name: 'Nora', provider: { kind: 'codex-cli', model: 'gpt-6.2-astra' } },
+      ];
       directory.statuses = [
         {
           agentId: 'agent-1',
@@ -117,7 +120,7 @@ describe('AgentActionsMenu Disable wiring (connected)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
       expect(screen.queryByText('Restart agent')).toBeNull();
       const openProviders = screen.getByRole('button', { name: /Open Providers/ });
-      expect(openProviders.textContent).toContain('Provider sign-in failed or credentials expired.');
+      expect(openProviders.textContent).toContain("Provider sign-in or credentials aren't working.");
 
       fireEvent.click(openProviders);
       expect(navigateMock).toHaveBeenCalledWith('/settings/providers', {
@@ -127,5 +130,31 @@ describe('AgentActionsMenu Disable wiring (connected)', () => {
       window.history.replaceState({}, '', previousUrl || '/');
       sessionStorage.clear();
     }
+  });
+
+  it('routes Check runtime settings to the agent profile for Claude Code auth failure', () => {
+    directory.agents = [
+      { id: 'agent-1', name: 'Nora', provider: { kind: 'claude-code', model: 'opus' } },
+    ];
+    directory.statuses = [
+      {
+        agentId: 'agent-1',
+        currentItemId: null,
+        health: {
+          state: 'unhealthy',
+          reason: 'provider_auth_failed',
+          updatedAt: '2026-11-27T00:00:00.000Z',
+        },
+      },
+    ];
+    render(<AgentActionsMenu />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.queryByText('Restart agent')).toBeNull();
+    const checkRuntime = screen.getByRole('button', { name: /Check runtime settings/ });
+    expect(checkRuntime.textContent).toContain("Provider sign-in or credentials aren't working.");
+
+    fireEvent.click(checkRuntime);
+    expect(navigateMock).toHaveBeenCalledWith('/agents/agent-1/profile');
   });
 });

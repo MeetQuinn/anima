@@ -65,7 +65,7 @@ export function providerModelAuthorityLabel(
   if (!provider?.dynamicModels && !provider?.liveModels) return undefined;
   const status = providerStatus(provider, availability ?? null);
   if (!status?.checkedAt || !status.defaultModel || !status.models?.length) {
-    return provider.liveModels ? 'Default model list' : 'Models not checked';
+    return provider.liveModels ? 'Built-in model list' : 'Models not checked';
   }
   return undefined;
 }
@@ -106,7 +106,7 @@ export function providerUnavailableHint(
 ): string | undefined {
   if (!provider || !availability) return undefined;
   const status = providerStatus(provider, availability);
-  if (!status?.present) return provider.installHint.replace(/`([^`]+)`/g, '$1');
+  if (!status?.present) return provider.installHint;
   if (provider.dynamicModels && (!status.defaultModel || !status.models?.length)) {
     return status.modelCheckError ?? 'Sign in or add credentials for this provider to load its available models.';
   }

@@ -1,3 +1,5 @@
+import type { ProviderKind } from '@shared/provider-catalog';
+import { providerLoginSpec } from '@shared/provider-login';
 import type {
   AgentHealthReason,
   AgentRuntimeHealthSummary,
@@ -14,13 +16,13 @@ export function agentHealthReasonText(reason: AgentHealthReason | undefined): st
     case 'provider_child_exited':
       return "This agent's provider stopped unexpectedly. Restart the agent.";
     case 'provider_auth_failed':
-      return "This agent can't authenticate with its provider. Check sign-in in Settings → Providers or your CLI credentials.";
+      return "This agent can't authenticate with its provider. Sign in again or update its credentials on this machine (Codex can sign in from Settings → Providers).";
     case 'provider_quota_exhausted':
-      return 'Provider quota reached. Work will resume once your plan resets or you add capacity.';
+      return "This agent's provider quota is used up, so it couldn't finish its last turn. Check your plan or credits with the provider.";
     case 'provider_error':
       return "This agent hit a provider error and couldn't finish its last turn.";
     case 'provider_rate_limited':
-      return 'Rate-limited by the provider. It will recover once the limit clears; if this persists, check your plan limits.';
+      return "This agent's provider is rate-limiting it. If this keeps happening, check your plan's rate limits.";
     case 'restart_failed':
       return 'Restart failed. Try again or check the logs.';
     case 'restart_pending':
@@ -46,18 +48,23 @@ export function agentHealthDegradedText(reason: AgentHealthReason | undefined): 
   }
 }
 
-export function agentHealthProviderAction(health: AgentRuntimeHealthSummary | undefined): {
+export function agentHealthProviderAction(
+  health: AgentRuntimeHealthSummary | undefined,
+  providerKind?: ProviderKind,
+): {
   description: string;
-  kind: 'settings';
+  kind: 'providers' | 'profile';
   label: string;
 } | null {
   switch (activeHealthReason(health)) {
-    case 'provider_auth_failed':
+    case 'provider_auth_failed': {
+      const hasDashboardSignIn = Boolean(providerKind && providerLoginSpec(providerKind));
       return {
-        description: 'Provider sign-in failed or credentials expired.',
-        kind: 'settings',
-        label: 'Open Providers',
+        description: "Provider sign-in or credentials aren't working.",
+        kind: hasDashboardSignIn ? 'providers' : 'profile',
+        label: hasDashboardSignIn ? 'Open Providers' : 'Check runtime settings',
       };
+    }
     default:
       return null;
   }

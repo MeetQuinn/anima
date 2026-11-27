@@ -30,6 +30,7 @@ import {
   providerUnavailableLabel,
   unavailableProviderHints,
 } from '@/lib/provider-availability';
+import { renderInlineCode } from '@/lib/inline-code';
 import { providerLabelList, providerValueLabel } from '@/lib/provider-display';
 import AnimaIcon from '@/components/AnimaIcon';
 import { StepDot, WorkspacePlatformStep } from './components';
@@ -206,6 +207,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   const selectedProviderHint = providerUnavailableHint(currentProvider, providerAvailability);
   const selectedProviderAuthority = providerModelAuthorityLabel(currentProvider, providerAvailability);
   const unavailableProviders = unavailableProviderHints(providerOptions, providerAvailability);
+  const allProvidersUnavailable = Boolean(
+    providerAvailability && unavailableProviders.length === providerOptions.length,
+  );
+  const otherUnavailableProviders = allProvidersUnavailable
+    ? []
+    : unavailableProviders.filter((item) => !(selectedProviderHint && item.kind === providerKind));
   const providerCheckPending = !providerAvailability && !providerAvailabilityError;
   const effectiveCreating = previewCreateLoading || creating;
   const effectiveCreateStage = previewCreateLoading ? 'feishu' : createStage;
@@ -499,7 +506,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
         : step === 'connect'
           ? `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}`
           : step === 'permissions'
-            ? 'Grant Feishu permissions'
+            ? 'Authorize Feishu permissions'
             : 'Pick an owner';
   const createDisabledReason = (() => {
     if (effectiveCreating) return undefined;
@@ -661,7 +668,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
               <label className="font-sans mb-1.5 block text-[12px] font-medium uppercase tracking-[0.08em] text-text-muted">
                 Provider
               </label>
-              {providerAvailability && unavailableProviders.length === providerOptions.length ? (
+              {allProvidersUnavailable ? (
                 <p className="font-sans text-[12px] text-health-warn">
                   No providers detected. Install {providerLabelList(providerOptions)} first.
                 </p>
@@ -741,7 +748,19 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                 </div>
               )}
               {selectedProviderHint && (
-                <p className="font-sans mt-1 text-[11px] text-health-warn">{selectedProviderHint}</p>
+                <p className="font-sans mt-1 text-[11px] leading-snug text-health-warn">
+                  {renderInlineCode(selectedProviderHint)}
+                </p>
+              )}
+              {otherUnavailableProviders.length > 0 && (
+                <div className="mt-1.5 space-y-1 font-sans text-[11px] leading-snug text-text-muted">
+                  {otherUnavailableProviders.map((item) => (
+                    <p key={item.kind}>
+                      <span className="font-medium text-text">{item.label}</span> ({item.status}):{' '}
+                      {renderInlineCode(item.hint)}
+                    </p>
+                  ))}
+                </div>
               )}
               {selectedProviderAuthority && !selectedProviderHint && (
                 <p className="font-sans mt-1 text-[10px] text-text-subtle">{selectedProviderAuthority}</p>

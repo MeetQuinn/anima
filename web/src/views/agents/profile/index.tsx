@@ -179,10 +179,12 @@ export default function Profile() {
   // One atomic save from the Runtime modal (provider selection, command/args
   // overrides, and env patch travel in a single provider update). Errors are
   // thrown back to the modal, which shows them inline and stays open.
-  async function commitRuntime(update: AgentUpdateProviderRequest) {
+  async function commitRuntime(update: AgentUpdateProviderRequest, opts: { envOnly: boolean }) {
     if (!agentId) return;
     await updateAgentProvider(agentId, update);
-    showApplyNoticeIfActive();
+    showApplyNoticeIfActive(
+      opts.envOnly ? 'Saved. Environment changes will apply once this agent finishes its current work.' : undefined,
+    );
     refreshAgentData(agentId);
   }
 

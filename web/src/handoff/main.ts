@@ -7,7 +7,7 @@ if (!appRoot) throw new Error('Handoff app root is missing');
 const app: HTMLElement = appRoot;
 
 const PROOF_LINE =
-  "Encrypted in this browser. Only your agent's key can open it.";
+  "Your secret is encrypted in this browser before you copy it. Only your agent's key can open it.";
 
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,

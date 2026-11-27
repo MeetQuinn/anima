@@ -382,7 +382,7 @@ export function OwnerPickerForm({
       {introduce && (
         <div>
           <label className="font-sans mb-1.5 block text-[12px] font-medium text-text-muted">
-            Note for the intro message <span className="font-normal">(optional)</span>
+            Context for the agent’s intro <span className="font-normal">(optional)</span>
           </label>
           <textarea
             value={openerNote}
