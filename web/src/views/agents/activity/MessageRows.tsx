@@ -33,6 +33,10 @@ function PlatformLink({ href, platform }: { href: string; platform?: string }) {
   );
 }
 
+function isGenericDmLabel(label?: string): boolean {
+  return !label || /^(Feishu )?DM$/i.test(label);
+}
+
 // ---------------------------------------------------------------------------
 // Outbound message row
 // ---------------------------------------------------------------------------
@@ -54,16 +58,25 @@ export function MessageOutRow({
   // editorial register; chip stays clean as just `#prod` / `@user`.
   const threaded = item.surface.kind === 'thread';
   const isDm = item.surface.kind === 'dm';
-  const verb = item.isEdit ? 'Edited' : 'Replied';
   // DM replies carry the recipient in the title so the line reads as a complete
   // sentence without the user having to look at the chip ("Replied to
   // Alice" vs bare "Replied" + "@alice" chip). Strip the leading @ if
   // surfaceChipForOutbound already included it (round-2 item 4).
-  const title = threaded
-    ? `${verb} in thread`
-    : isDm && item.surface.label
-      ? `${verb} to ${item.surface.label.replace(/^@/, '')}`
-      : verb;
+  const dmTarget =
+    isDm && !isGenericDmLabel(item.surface.label)
+      ? item.surface.label.replace(/^@/, '')
+      : '';
+  const title = item.isEdit
+    ? threaded
+      ? 'Edited message in thread'
+      : dmTarget
+        ? `Edited DM to ${dmTarget}`
+        : 'Edited message'
+    : threaded
+      ? 'Replied in thread'
+      : dmTarget
+        ? `Replied to ${dmTarget}`
+        : 'Replied';
   // Only present when the backend recorded the platform URL.
   const outLink = item.permalink;
   return (
@@ -105,10 +118,14 @@ export function FileOutRow({
   const base = `Sent ${item.files.length} ${noun}`;
   // Mirror MessageOutRow: DM sends carry the recipient in the title so the
   // row reads as a complete sentence without consulting the chip.
+  const dmTarget =
+    isDm && !isGenericDmLabel(item.surface.label)
+      ? item.surface.label.replace(/^@/, '')
+      : '';
   const title = threaded
     ? `${base} in thread`
-    : isDm && item.surface.label && item.surface.label !== 'DM'
-      ? `${base} to ${item.surface.label.replace(/^@/, '')}`
+    : dmTarget
+      ? `${base} to ${dmTarget}`
       : base;
   const fileLink = item.permalink;
   return (

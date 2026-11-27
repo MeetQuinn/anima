@@ -264,9 +264,19 @@ function LifecycleLineRow({ step }: { step: Step }) {
 export function deferredRetryAccessibleName(wake: DeferredWakeSummary): string {
   const until = clockHM(wake.notBefore);
   const deferrals = wake.deferrals ?? 0;
-  const kindLabel = wake.kind === 'slack' ? 'Slack' : wake.kind;
-  const deferralPart = deferrals === 1 ? '1 deferral' : `${deferrals} deferrals`;
-  return `Retry ${kindLabel} wake now (deferred until ${until}, ${deferralPart})`;
+  const kindLabel =
+    wake.kind === 'slack'
+      ? 'Slack'
+      : wake.kind === 'feishu'
+        ? 'Feishu'
+        : wake.kind === 'linear'
+          ? 'Linear'
+          : wake.kind;
+  if (deferrals > 0) {
+    const delayCount = deferrals === 1 ? 'once' : `${deferrals} times`;
+    return `Retry ${kindLabel} item now (waiting until ${until}, delayed ${delayCount})`;
+  }
+  return `Retry ${kindLabel} item now (waiting until ${until})`;
 }
 
 export function ActivityStatusSummary({
@@ -366,7 +376,7 @@ export function ActivityStatusSummary({
         )}
         {deferredWakes.length > 0 && (
           <span className="font-sans text-[11px] text-text-subtle">
-            {deferredWakes.length} deferred
+            {deferredWakes.length} delayed
           </span>
         )}
         {onRetryDeferred
@@ -478,10 +488,9 @@ function FeishuRecommendedPermissionsConnectBanner({
     <div className="flex shrink-0 items-start gap-3 border-b border-border-soft bg-health-warn-soft/60 px-4 py-2.5 md:px-10">
       <div className="min-w-0 flex-1">
         <p className="font-serif text-[13px] leading-snug text-text">
-          Connected. Your agents can message your team right away. Optional: authorize recommended
-          Feishu permissions so they can use teammate names, take part in group chats with people
-          and other bots, look people up by email or phone, invite members to chats, and work with
-          Feishu Drive and cloud documents.
+          Messaging is ready. Optionally authorize extra Feishu permissions for teammate names,
+          group messages and invites, finding people by email or phone, and Feishu Drive and cloud
+          docs.
         </p>
         {links.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
@@ -897,7 +906,7 @@ export default function Activity() {
         ) : (
           timelineByDay.length === 0 && (
             <EmptyMessage>
-              {loadingActivities ? 'Loading activity...' : 'No activity yet.'}
+              {loadingActivities ? 'Loading activity…' : 'No activity yet.'}
             </EmptyMessage>
           )
         )}

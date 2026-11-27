@@ -5,17 +5,17 @@ import type { MessageGroup } from '@/lib/message-model';
 import { clockHM, dateTimeFull } from '@/lib/format';
 import { MessageBody, messageGroupRowPropsEqual } from '../conversation/SlackTimeline';
 
-function eventDisplay(item: ActivityFeedItem) {
+function eventDisplay(item: ActivityFeedItem, agentName?: string) {
   const kind = item.kind === 'message-in' ? item.message.linearKind : item.kind === 'message-out' ? item.linearKind : undefined;
   switch (kind) {
-    case 'mention': return { label: 'mentioned this agent', Icon: ArrowDownLeft, color: 'text-activity-inbound' };
-    case 'session': return { label: 'session message', Icon: MessageCircle, color: 'text-text-muted' };
+    case 'mention': return { label: agentName ? `mentioned ${agentName}` : 'mentioned the agent', Icon: ArrowDownLeft, color: 'text-activity-inbound' };
+    case 'session': return { label: 'sent a session message', Icon: MessageCircle, color: 'text-text-muted' };
     case 'session-started': return { label: 'opened a work session', Icon: MessageCircle, color: 'text-text-muted' };
     case 'notification': return { label: 'sent an update', Icon: MessageCircle, color: 'text-text-muted' };
     case 'delegation': return { label: 'delegated', Icon: ArrowDownLeft, color: 'text-activity-inbound' };
     case 'comment': return { label: 'commented', Icon: MessageCircle, color: 'text-activity-inbound' };
     case 'prompt': return { label: 'followed up', Icon: ArrowDownLeft, color: 'text-activity-inbound' };
-    case 'thought': return { label: 'progress update', Icon: MoreHorizontal, color: 'text-text-muted' };
+    case 'thought': return { label: 'shared a progress update', Icon: MoreHorizontal, color: 'text-text-muted' };
     case 'elicitation': return { label: 'asked a question', Icon: MessageCircleQuestion, color: 'text-health-warn-ink' };
     case 'response': return { label: 'sent a result', Icon: ArrowUpRight, color: 'text-health-ok' };
     case 'error': return { label: 'reported an error', Icon: CircleAlert, color: 'text-health-error' };
@@ -40,12 +40,12 @@ export function LinearApiAction({ item, author }: { item: Extract<ActivityFeedIt
       {api.detail && <span className={`min-w-0 max-w-full break-words text-[12px] ${color}`}>· {api.detail}</span>}
       {failed && <span className="text-[12px] font-medium text-health-error">· {query ? 'Read failed' : 'Failed, outcome unknown'}</span>}
       {notSent && <span className="text-[12px] font-medium text-health-error">· Not sent</span>}
-      {api.state === 'unsuccessful' && <span className="text-[12px] font-medium text-health-error">· Reported unsuccessful</span>}
+      {api.state === 'unsuccessful' && <span className="text-[12px] font-medium text-health-error">· Unsuccessful</span>}
       {api.state === 'unconfirmed' && <span className="text-[12px] text-health-warn-ink">· Change not confirmed</span>}
       <span className="ml-1 inline-flex shrink-0 items-center gap-1 text-[10px] text-text-subtle">Details <ChevronRight className="h-3 w-3 transition-transform group-open/api:rotate-90" aria-hidden /></span>
     </summary>
     <div className="mt-1.5 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-1.5 border-l-2 border-border-soft/70 py-1 pl-3 text-[12px]">
-      <span className="text-text-subtle">Actor</span><span className="text-text-muted">{author}</span>
+      <span className="text-text-subtle">By</span><span className="text-text-muted">{author}</span>
       <span className="text-text-subtle">Operation</span><code className="break-all text-[11px] text-text-muted">{api.operation}{api.fields.length ? ` · ${api.fields.join(', ')}` : ''}</code>
       <span className="text-text-subtle">Result</span><span className={color}>{api.result}</span>
     </div>
@@ -71,7 +71,7 @@ function LinearActivityGroupImpl({ group, agentId, agentName, heading }: Props) 
       </header>}
       <div>
         {group.items.map(({ item, key }, index) => {
-          const { label, Icon, color } = eventDisplay(item);
+          const { label, Icon, color } = eventDisplay(item, agentName);
           const delegation = item.kind === 'message-in' && item.message.linearKind === 'delegation';
           const action = item.kind === 'linear-api';
           return <div key={key} className="grid grid-cols-[36px_minmax(0,1fr)] gap-x-3 sm:grid-cols-[44px_minmax(0,1fr)]">

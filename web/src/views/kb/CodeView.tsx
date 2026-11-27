@@ -53,8 +53,9 @@ export function CodeView({ body, language }: { body: string; language: string })
         <button
           type="button"
           onClick={toggleWrap}
+          aria-label="Wrap lines"
           aria-pressed={wrap}
-          title={wrap ? 'Disable soft wrap' : 'Enable soft wrap'}
+          title={wrap ? 'Unwrap lines' : 'Wrap lines'}
           className={[
             'chrome absolute right-12 top-2 z-10 flex h-7 items-center gap-1 rounded-sm px-2 text-[11px] transition-opacity',
             'opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100',

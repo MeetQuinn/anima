@@ -600,11 +600,10 @@ export function FileContent({
             href={rawUrl}
             target="_blank"
             rel="noreferrer"
-            title="Open the full-width report in a new tab"
             className="chrome flex items-center gap-1 rounded-sm px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
           >
             <ExternalLink className="h-3 w-3" />
-            Open full page
+            Open in new tab
           </a>
         </div>
         <iframe
@@ -638,11 +637,10 @@ export function FileContent({
             href={rawUrl}
             target="_blank"
             rel="noreferrer"
-            title="Open the video in a new tab"
             className="chrome flex items-center gap-1 rounded-sm px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
           >
             <ExternalLink className="h-3 w-3" />
-            Open full page
+            Open in new tab
           </a>
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center bg-surface-elevated/30 p-6">
@@ -671,11 +669,10 @@ export function FileContent({
             href={rawUrl}
             target="_blank"
             rel="noreferrer"
-            title="Open the PDF in a new tab"
             className="chrome flex items-center gap-1 rounded-sm px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-text-subtle transition-colors hover:bg-surface-elevated hover:text-text-muted"
           >
             <ExternalLink className="h-3 w-3" />
-            Open full page
+            Open in new tab
           </a>
         </div>
         <iframe
@@ -690,14 +687,14 @@ export function FileContent({
   if (file.truncated) {
     return (
       <div className="p-6 font-sans text-[13px] text-text-muted">
-        This file is too large to inline ({formatBytes(file.size)}).{' '}
+        This file is too large to preview ({formatBytes(file.size)}).{' '}
         <a
           href={rawUrl}
           target="_blank"
           rel="noreferrer"
           className="text-accent underline underline-offset-2"
         >
-          Open raw
+          Open raw file
         </a>
       </div>
     );
@@ -706,14 +703,14 @@ export function FileContent({
   if (file.kind === 'binary' || file.content === undefined) {
     return (
       <div className="p-6 font-sans text-[13px] text-text-muted">
-        Binary file ({formatBytes(file.size)}).{' '}
+        This file can’t be previewed ({formatBytes(file.size)}).{' '}
         <a
           href={rawUrl}
           target="_blank"
           rel="noreferrer"
           className="text-accent underline underline-offset-2"
         >
-          Open raw
+          Download
         </a>
       </div>
     );

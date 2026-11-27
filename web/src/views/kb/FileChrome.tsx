@@ -31,8 +31,8 @@ export function CopyButton({ text, variant = 'floating' }: { text: string; varia
   return (
     <button
       onClick={handleCopy}
-      title={copied ? 'Copied!' : 'Copy'}
-      aria-label={copied ? 'Copied' : 'Copy code'}
+      title={copied ? 'Copied' : 'Copy'}
+      aria-label={copied ? 'Copied' : 'Copy'}
       className={
         variant === 'floating'
           ? 'chrome absolute right-2 top-2 flex h-7 items-center gap-1 rounded-sm bg-surface-elevated/80 px-2 text-[11px] text-text-subtle opacity-0 transition-opacity hover:bg-surface-elevated hover:text-text focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100'
@@ -40,7 +40,7 @@ export function CopyButton({ text, variant = 'floating' }: { text: string; varia
       }
     >
       <Copy className="h-3 w-3" />
-      {copied && <span>Copied!</span>}
+      {copied && <span>Copied</span>}
     </button>
   );
 }
@@ -80,7 +80,7 @@ export function HeadingAnchor({ id }: { id: string }) {
       href={`#${id}`}
       onClick={handleCopy}
       aria-label={copied ? 'Link copied' : 'Copy link to this section'}
-      title={copied ? 'Link copied!' : 'Copy link to this section'}
+      title={copied ? 'Link copied' : 'Copy link to this section'}
       contentEditable={false}
       className="absolute right-full top-[0.1em] mr-1 inline-flex items-center px-1 text-text-subtle no-underline opacity-0 transition-opacity duration-100 hover:text-accent focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:ml-1 [@media(hover:none)]:mr-0 [@media(hover:none)]:px-1.5 [@media(hover:none)]:opacity-60"
     >
@@ -249,6 +249,8 @@ export function TocButton({ entries }: { entries: TocEntry[] }) {
       <button
         onClick={() => setOpen((o) => !o)}
         title="Table of contents"
+        aria-label="Table of contents"
+        aria-expanded={open}
         className={[
           'chrome flex min-h-[44px] shrink-0 items-center justify-center rounded-sm px-2 transition-colors',
           open
@@ -305,7 +307,6 @@ export function ViewModeToggle({ mode, onChange }: { mode: ViewMode; onChange: (
             type="button"
             role="tab"
             aria-selected={active}
-            title={label}
             onClick={() => onChange(value)}
             className={[
               'flex min-h-[44px] md:min-h-[28px] items-center gap-1.5 rounded-[5px] px-2 text-[11px] font-medium transition-colors',

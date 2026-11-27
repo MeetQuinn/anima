@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { activityRow, isNarrativeStep } from './activities';
+import { activityRow, heldSendDetail, isNarrativeStep } from './activities';
 import { buildActivityFeed } from './activity-feed';
 import type { Activity } from '@shared/activity';
 
@@ -26,7 +26,7 @@ describe('activityRow', () => {
   });
   it.each([
     ['contact-unverified', 'Send held: recipient could not be verified'],
-    ['contact-policy-config', 'Send refused: do-not-contact config invalid'],
+    ['contact-policy-config', 'Send refused: invalid do-not-contact settings'],
   ])('does not label %s failures as a do-not-contact list match', (failureKind, title) => {
     const error = 'Not sent. Could not verify the DM recipient for D0TRUNCATED.';
     const row = activityRow(activity({ tool: 'anima.message.send', failureKind, error }, 'tool.call.failed'));
@@ -106,7 +106,7 @@ describe('activityRow', () => {
         tool: 'anima.reminder.preflight',
       },
       {
-        title: 'Preflight succeeded',
+        title: 'Reminder check passed',
         target: 'Usage check · 42ms · exit 0',
         color: 'var(--color-activity-reminder)',
         kind: 'lifecycle',
@@ -123,7 +123,7 @@ describe('activityRow', () => {
         tool: 'anima.reminder.preflight',
       },
       {
-        title: 'Preflight declined',
+        title: 'Reminder skipped: condition not met',
         target: 'Usage check · 12ms · exit 1',
         color: 'var(--color-activity-reminder)',
         kind: 'lifecycle',
@@ -140,7 +140,7 @@ describe('activityRow', () => {
         tool: 'anima.reminder.preflight',
       },
       {
-        title: 'Preflight errored',
+        title: 'Reminder check failed',
         target: 'Usage check · 1000ms · timeout',
         color: 'var(--color-activity-reminder)',
         kind: 'lifecycle',
@@ -401,11 +401,107 @@ describe('activityRow', () => {
       tool: 'codex.webSearch',
     })).target).toBe('rate limit in https://docs.example/search');
   });
+
+  it('uses singular message count and omits raw question-mark fallback on anima.message.read', () => {
+    expect(activityRow(activity({
+      channelName: 'ops',
+      messageCount: 1,
+      tool: 'anima.message.read',
+    }, 'tool.call.completed'))).toMatchObject({
+      title: 'Read messages',
+      target: '#ops · 1 message',
+    });
+    expect(activityRow(activity({
+      messageCount: 1,
+      tool: 'anima.message.read',
+    }, 'tool.call.completed'))).toMatchObject({
+      title: 'Read messages',
+      target: '1 message',
+    });
+    expect(activityRow(activity({
+      channelName: 'ops',
+      messageCount: 3,
+      tool: 'anima.message.read',
+    }, 'tool.call.completed')).target).toBe('#ops · 3 messages');
+  });
+
+  it('humanizes failed tool titles and omits redundant dreaming quiet target', () => {
+    expect(activityRow(activity({
+      command: 'pnpm test',
+      error: 'exit code 1',
+      providerToolName: 'bash',
+      tool: 'bash',
+    }, 'tool.call.failed'))).toMatchObject({
+      title: 'Command failed',
+      target: 'pnpm test · exit 1',
+    });
+    expect(activityRow(activity({
+      error: 'permission denied',
+      tool: 'codex.fileChange',
+    }, 'tool.call.failed'))).toMatchObject({
+      title: 'File change failed',
+      target: 'permission denied',
+    });
+    expect(activityRow(activity({
+      outcome: 'quiet_skipped',
+    }, 'memory_coherence.outcome'))).toMatchObject({
+      title: 'Dreaming changed nothing',
+    });
+    expect(activityRow(activity({
+      outcome: 'quiet_skipped',
+    }, 'memory_coherence.outcome')).target).toBeUndefined();
+    expect(activityRow(activity({
+      allowAnyone: true,
+      effect: 'slack.ask.post',
+      optionLabels: ['Yes', 'No'],
+      question: 'Ship it?',
+    }, 'external.effect.completed'))).toMatchObject({
+      title: 'Asked anyone',
+      target: '"Ship it?" · [Yes / No]',
+    });
+  });
+
+  it('formats held send detail directly without duplicate prefix and keeps nothing-sent clause', () => {
+    expect(heldSendDetail(1)).toBe('1 new message arrived while composing; nothing was sent.');
+    expect(heldSendDetail(2)).toBe('2 new messages arrived while composing; nothing was sent.');
+    expect(heldSendDetail(2.9)).toBe('2 new messages arrived while composing; nothing was sent.');
+    expect(heldSendDetail(-3)).toBe('0 new messages arrived while composing; nothing was sent.');
+    expect(heldSendDetail(undefined)).toBe('0 new messages arrived while composing; nothing was sent.');
+    expect(activityRow(activity({
+      deltaCount: 1,
+      status: 'held',
+      tool: 'anima.message.send',
+    }, 'tool.call.completed'))).toMatchObject({
+      title: 'Send held',
+      target: '1 new message arrived while composing; nothing was sent.',
+      kind: 'tool',
+    });
+  });
+
+  it.each([
+    ['shutdown', {}, { title: 'Stopped when Anima shut down', target: undefined }],
+    ['user_stop', {}, { title: 'Stopped by user', target: undefined }],
+    ['operator_restart', {}, { title: 'Restarted by operator', target: undefined }],
+    ['idle_timeout', {}, { title: 'Timed out', target: 'No provider activity' }],
+    ['idle_timeout', { timeoutMs: 300_000 }, { title: 'Timed out', target: '5m with no provider activity' }],
+    ['stalled', { timeoutMs: 120_000 }, { title: 'Stopped to answer messages', target: '2m with no provider activity' }],
+    ['other', {}, { title: 'Agent stopped', target: undefined }],
+  ])('maps runtime.aborted reason %s to accurate lifecycle copy', (reason, extra, expected) => {
+    expect(activityRow(activity({ reason, ...extra }, 'runtime.aborted'))).toMatchObject({
+      ...expected,
+      kind: 'lifecycle',
+    });
+  });
 });
 
 
 describe('Linear API tool steps', () => {
-  it.each(['query', 'mutation', 'subscription', 'unknown'])('shows one completed %s request without claiming a business outcome or creating a message', (operation) => {
+  it.each([
+    ['query', 'Read Linear data'],
+    ['mutation', 'Change Linear data'],
+    ['subscription', 'Linear request'],
+    ['unknown', 'Linear request'],
+  ])('shows one completed %s request without claiming a business outcome or creating a message', (operation, expectedTarget) => {
     const payload = { tool: 'anima.linear.api', platform: 'linear', operation, callId: 'api-1' };
     const started = { ...activity(payload), activityId: 'started' };
     const completed = { ...activity({ ...payload, outcome: 'request_completed' }, 'tool.call.completed'), activityId: 'completed' };
@@ -415,19 +511,19 @@ describe('Linear API tool steps', () => {
     expect(isNarrativeStep(completed)).toBe(true);
     expect(activityRow(completed).title).toBe('Linear API');
     expect(activityRow(started).title).toBe('Linear API');
-    expect(activityRow(completed).target).toBe(operation === 'unknown' ? 'Unknown operation' : operation.charAt(0).toUpperCase() + operation.slice(1));
+    expect(activityRow(completed).target).toBe(expectedTarget);
   });
   it('shows unknown write outcomes without exposing arbitrary payload content', () => {
     const record = activity({ tool: 'anima.linear.api', operation: 'mutation', outcome: 'unknown', error: 'PRIVATE_ERROR', query: 'PRIVATE_QUERY' }, 'tool.call.failed');
     expect(isNarrativeStep(record)).toBe(true);
-    expect(activityRow(record)).toMatchObject({ title: 'Linear API failed', target: 'Mutation · outcome unknown', kind: 'failure' });
+    expect(activityRow(record)).toMatchObject({ title: 'Linear API failed', target: 'Change Linear data · outcome unknown', kind: 'failure' });
     expect(JSON.stringify(activityRow(record))).not.toContain('PRIVATE_');
   });
 
   it.each([
     ['do-not-contact', 'Send refused: do-not-contact list'],
     ['contact-unverified', 'Send held: recipient could not be verified'],
-    ['contact-policy-config', 'Send refused: do-not-contact config invalid'],
+    ['contact-policy-config', 'Send refused: invalid do-not-contact settings'],
   ])('shows a %s refusal of a Linear write as a refusal, not an unknown outcome', (failureKind, title) => {
     const error = "Not sent. nicholas (5c87ef88-14cd-402e-bd67-f4718e3d8848) is on this Linear workspace's do-not-contact list.";
     for (const tool of ['anima.linear.api', 'anima.linear.reply', 'anima.linear.start']) {
@@ -480,8 +576,8 @@ describe('Linear API tool steps', () => {
   });
 
   it.each([undefined, [], 'issueUpdate', [42]])('keeps the operation label for records without field names: %j', (fields) => {
-    expect(linearApi(fields).target).toBe('Mutation');
-    expect(linearApi(fields, { operation: 'query', issueKey: 'ANI-11' }).target).toBe('Query');
+    expect(linearApi(fields).target).toBe('Change Linear data');
+    expect(linearApi(fields, { operation: 'query', issueKey: 'ANI-11' }).target).toBe('Read Linear data');
   });
 });
 

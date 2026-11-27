@@ -322,7 +322,7 @@ function ConversationPane({
           )}
           {items.length === 0 ? (
             <EmptyMessage>
-              {loading ? 'Loading conversation…' : 'No messages in this channel yet.'}
+              {loading ? 'Loading conversation…' : 'No messages yet.'}
             </EmptyMessage>
           ) : (
             byDay.map(([day, dayItems]) => (
@@ -431,7 +431,7 @@ export default function Channels() {
         </div>
         {data?.slackMembershipDegraded ? (
           <p className="border-b border-border-soft px-4 py-3 font-mono text-[11px] leading-relaxed text-text-muted">
-            Slack membership could not be refreshed. This list may be incomplete.
+            Couldn’t refresh Slack channels. This list may be incomplete.
           </p>
         ) : null}
         {error ? (
@@ -442,7 +442,7 @@ export default function Channels() {
           </div>
         ) : channels.length === 0 && !data?.slackMembershipDegraded ? (
           <p className="px-4 py-6 font-serif italic text-[13px] text-text-subtle">
-            No local Slack conversations yet.
+            No Slack conversations yet.
           </p>
         ) : (
           channels.map((channel) => (
@@ -477,14 +477,14 @@ export default function Channels() {
           // silently resting on the first channel.
           <div className="flex h-full items-center justify-center px-6 text-center">
             <p className="max-w-prose font-serif italic text-[15px] text-text-subtle">
-              That conversation isn&apos;t in this list. The agent may have left the channel,
-              or it has no history here.{hasSelectableRows ? ' Pick one from the list to read it.' : ''}
+              This conversation isn’t available. The agent may have left it, or there’s no message
+              history yet.{hasSelectableRows ? ' Pick one from the list to read it.' : ''}
             </p>
           </div>
         ) : hasSelectableRows ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <p className="font-serif italic text-[15px] text-text-subtle">
-              Select a channel to read its conversation.
+              Select a conversation.
             </p>
           </div>
         ) : null}

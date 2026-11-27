@@ -236,9 +236,13 @@ export function TreeSummary({ nodes }: { nodes: KbTreeNode[] }) {
   const dirs = nodes.filter((n) => n.type === 'dir').length;
   const files = nodes.length - dirs;
   const label = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const parts = [
+    dirs > 0 ? label(dirs, 'folder') : null,
+    files > 0 ? label(files, 'file') : null,
+  ].filter(Boolean);
   return (
     <div className="px-4 pb-1.5 pt-2.5 font-sans text-[10.5px] font-semibold uppercase tracking-[0.09em] text-text-subtle md:hidden">
-      {label(dirs, 'folder')} · {label(files, 'file')}
+      {parts.join(' · ')}
     </div>
   );
 }

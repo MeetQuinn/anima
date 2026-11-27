@@ -44,7 +44,7 @@ function isPersonMessage(message: AgentMessageRecord): boolean {
 export function inboundAuthorName(message: AgentMessageRecord): string {
   if (message.kind === 'choice_response') {
     return (
-      message.actorHandle?.replace(/^@/, '') || message.actorDisplayName || 'Choice response'
+      message.actorHandle?.replace(/^@/, '') || message.actorDisplayName || 'Unknown user'
     );
   }
   if (message.kind === 'reminder') return message.reminderTitle?.trim() || 'Reminder';
