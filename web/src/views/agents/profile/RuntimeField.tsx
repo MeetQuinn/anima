@@ -27,6 +27,7 @@ import {
   providerUnavailableHint,
   providerUnavailableLabel,
 } from '@/lib/provider-availability';
+import { renderInlineCode } from '@/lib/inline-code';
 import { providerKindLabel, providerValueLabel } from '@/lib/provider-display';
 import { runtimeArgsFromEditor } from '@/components/usage/ProviderUnit';
 
@@ -96,7 +97,7 @@ export function RuntimeRow({
                   // model, so the full name and the hover both say "requested".
                   <span
                     className={`chrome ${showEffort ? 'ml-2' : ''} self-center rounded-sm border border-border-soft px-1.5 py-px text-[10px] font-medium uppercase tracking-[0.1em] text-text-muted`}
-                    title="Fast mode requested. Whether it applies depends on the account and model."
+                    title="Fast mode requested. Availability depends on your account and model."
                   >
                     Fast <span className="sr-only">mode requested</span>
                   </span>
@@ -533,7 +534,7 @@ function RuntimeModal({
               </div>
               {draftUnavailableHint && (
                 <div className="font-sans text-[11px] leading-snug text-text-muted">
-                  {draftUnavailableHint}
+                  {renderInlineCode(draftUnavailableHint)}
                 </div>
               )}
               {draftModelMissing && !draftUnavailableHint && (
@@ -550,13 +551,9 @@ function RuntimeModal({
               )}
               {kindChanged && (
                 <div className="font-sans text-[11px] leading-snug text-text-muted">
-                  Starts a fresh provider session; memory, notes, and history stay intact.
-                  {hadCommandOverride
-                    ? ' The command override below was cleared; it was written for the old provider.'
-                    : ''}
-                  {currentFastMode
-                    ? ' Fast mode was turned off; provider settings do not transfer.'
-                    : ''}
+                  Starts a fresh session. Memory, notes, and history stay intact.
+                  {hadCommandOverride ? ' The previous command override was cleared.' : ''}
+                  {currentFastMode ? ' Fast mode was turned off.' : ''}
                 </div>
               )}
             </div>
@@ -677,15 +674,13 @@ function RuntimeModal({
                       </label>
                       {draftKind === 'claude-code' ? (
                         <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
-                          Asks Claude for faster responses each session. A request, not a guarantee:
-                          sessions run at standard speed unless the Anthropic organization has fast
-                          mode enabled with usage credits.
+                          A request, not a guarantee. Needs fast mode and usage credits enabled for
+                          your Anthropic organization, and Claude can still run at standard speed.
                         </p>
                       ) : (
                         <p className="font-sans pl-[26px] text-[11px] leading-snug text-text-muted">
-                          Requests faster responses for supported Codex models. Uses 2.5×
-                          subscription usage or 2× purchased credits; API-key sessions use Priority
-                          pricing. Availability depends on the account and model.
+                          Available on supported models and accounts. Uses extra subscription quota
+                          (2.5×), purchased credits (2×), or Priority API pricing.
                         </p>
                       )}
                     </div>
@@ -736,7 +731,7 @@ function RuntimeModal({
                     </div>
                     {/* Only the two non-obvious facts; the rest the editor shows. */}
                     <p className="font-sans text-[11px] leading-snug text-text-muted">
-                      One argv entry per line. Empty falls back to the Providers-page settings.
+                      One argument per line. Leave blank to use the defaults in Settings → Providers.
                     </p>
                   </div>
                 </div>

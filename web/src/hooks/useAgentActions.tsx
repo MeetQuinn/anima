@@ -33,6 +33,7 @@ import { useConfirm } from '@/hooks/useConfirm';
 import { formatAgentDiagnostics } from '@/lib/diagnostics';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useAgents, useAgentStatuses } from '@/hooks/useAgentDirectory';
+import { buildSettingsPath, rememberReturnTo } from '@/views/settings/pages';
 
 export function useAgentActions() {
   const { data: agents = [] } = useAgents();
@@ -71,7 +72,7 @@ export function useAgentActions() {
   const running = Boolean(status?.currentItemId);
   const health = status?.health;
   const healthSummary = agentHealthSummaryText(health);
-  const providerAction = agentHealthProviderAction(health);
+  const providerAction = agentHealthProviderAction(health, agent?.provider?.kind);
   const restartBlocked = agentHealthBlocksRestart(health);
 
   async function toggleEnabled(nextEnabled: boolean) {
@@ -98,7 +99,7 @@ export function useAgentActions() {
       confirm({
         title: 'Agent is running',
         description:
-          'Disabling never interrupts work in progress. Wait for the current run to finish, then disable.',
+          'Wait for the current work to finish, or stop it first, before disabling.',
         variant: 'warn',
         confirmLabel: 'OK',
         confirmVariant: 'default',
@@ -132,11 +133,11 @@ export function useAgentActions() {
   function confirmRotateSession() {
     if (!agentId) return;
     confirm({
-      title: 'Rotate primary session?',
+      title: 'Rotate session?',
       description:
-        'The current work keeps running. Future work starts fresh, and the current provider session is archived.',
+        'Current work keeps running. New work starts in a fresh session, and the current session is archived.',
       variant: 'warn',
-      confirmLabel: 'Confirm',
+      confirmLabel: 'Rotate',
       busyLabel: 'Rotating…',
       onConfirm: async () => {
         await rotateAgentSession(agentId);
@@ -151,9 +152,8 @@ export function useAgentActions() {
       title: 'Restart this agent?',
       description: (
         <>
-          Use this only if the agent is hung. It will be forced to stop and start over immediately.
-          Any current work is dropped and is not retried, so re-run it manually afterward. Memory,
-          notes, and config are kept; queued work stays queued.
+          Use this if the agent is stuck. Current work will be dropped without retrying; memory,
+          settings, and queued work are kept.
           {healthSummary && (
             <span className="mt-2 block font-sans text-[12px] text-text-muted">
               Current health: {healthSummary}
@@ -178,12 +178,11 @@ export function useAgentActions() {
       description: feishuConsoleUrl ? (
         <>
           <p>
-            The agent will stop running and its local Anima config will be deleted. Home files are
-            not affected.
+            {"This agent will stop running and be removed from Anima. Its home folder won't be deleted."}
           </p>
           <p className="mt-2">
             {
-              "Removing this agent won't delete the Feishu bot you created. To remove it completely, delete the app in the Feishu console."
+              "This won't delete the connected Feishu app. To remove it completely, delete it in the Feishu console."
             }
           </p>
           <a
@@ -192,12 +191,12 @@ export function useAgentActions() {
             rel="noreferrer"
             className="mt-2 inline-flex items-center gap-1 font-sans text-[13px] text-text underline decoration-text-subtle/40 underline-offset-2 transition-colors hover:decoration-text/40"
           >
-            Open this app in the Feishu console
+            Open in Feishu console
             <ExternalLink className="h-3.5 w-3.5 shrink-0" />
           </a>
         </>
       ) : (
-        'The agent will stop running and its local Anima config will be deleted. Home files are not affected.'
+        "This agent will stop running and be removed from Anima. Its home folder won't be deleted."
       ),
       variant: 'error',
       confirmLabel: 'Remove',
@@ -211,6 +210,12 @@ export function useAgentActions() {
   }
 
   function goToProviderSettings() {
+    if (providerAction?.kind === 'providers') {
+      navigate(buildSettingsPath('providers'), {
+        state: rememberReturnTo(window.location.pathname + window.location.search),
+      });
+      return;
+    }
     if (!agentId) return;
     navigate(`/agents/${agentId}/profile`);
   }

@@ -8,7 +8,7 @@ export function ContextOccupancy({ stats }: { stats?: ProviderSessionStatsSummar
     // compactions). When there are no stats at all the agent hasn't run yet —
     // show a plain dash with no confusing provider message.
     const hint =
-      stats?.autoCompactWindow && stats.autoCompactWindow > 0 ? 'awaiting next item' : null;
+      stats?.autoCompactWindow && stats.autoCompactWindow > 0 ? 'awaiting next turn' : null;
     return (
       <div className="min-w-0">
         <span className="font-serif italic text-[14px] text-text-subtle">—</span>

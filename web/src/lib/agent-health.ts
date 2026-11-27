@@ -1,3 +1,5 @@
+import type { ProviderKind } from '@shared/provider-catalog';
+import { providerLoginSpec } from '@shared/provider-login';
 import type {
   AgentHealthReason,
   AgentRuntimeHealthSummary,
@@ -10,25 +12,25 @@ const RECOVERED_ACK_MS = 2_500;
 export function agentHealthReasonText(reason: AgentHealthReason | undefined): string {
   switch (reason) {
     case 'provider_child_missing':
-      return "This agent couldn't reconnect to its model. Restart the agent.";
+      return "This agent couldn't reconnect to its provider. Restart the agent.";
     case 'provider_child_exited':
-      return "This agent's model stopped unexpectedly. Restart the agent.";
+      return "This agent's provider stopped unexpectedly. Restart the agent.";
     case 'provider_auth_failed':
-      return "This agent can't reach its model. Check the model sign-in or API key in its provider settings.";
+      return "This agent can't authenticate with its provider. Sign in again or update its credentials on this machine (Codex can sign in from Settings → Providers).";
     case 'provider_quota_exhausted':
-      return "This agent's model plan is out of capacity. Check your plan or quota with the model provider, and it should pick back up.";
+      return "This agent's provider quota is used up, so it couldn't finish its last turn. Check your plan or credits with the provider.";
     case 'provider_error':
-      return "This agent ran into a problem with its model and couldn't complete its last turn.";
+      return "This agent hit a provider error and couldn't finish its last turn.";
     case 'provider_rate_limited':
-      return "This agent is being rate-limited by its model provider and can't complete work right now. It should recover on its own; if it keeps happening, check your plan's rate limits.";
+      return "This agent's provider is rate-limiting it. If this keeps happening, check your plan's rate limits.";
     case 'restart_failed':
       return 'Restart failed. Try again or check the logs.';
     case 'restart_pending':
       return 'Restart pending.';
     case 'stale_running_item':
-      return "The agent's current work has stalled. Restart the agent.";
+      return "This agent's current work has stalled. Restart the agent.";
     case 'start_failed':
-      return "The agent couldn't start. Check its settings, or restart the agent.";
+      return "This agent couldn't start. Check its runtime settings or restart the agent.";
     default:
       return 'Health unavailable.';
   }
@@ -38,26 +40,31 @@ export function agentHealthDegradedText(reason: AgentHealthReason | undefined): 
   switch (reason) {
     case 'provider_child_missing':
     case 'provider_child_exited':
-      return 'This agent lost its connection to its model and is reconnecting.';
+      return 'This agent lost connection to its provider and is reconnecting.';
     case 'provider_rate_limited':
-      return "This agent hit its model provider's rate limit and is retrying automatically.";
+      return "This agent hit the provider's rate limit and is retrying automatically.";
     default:
       return 'This agent is retrying automatically.';
   }
 }
 
-export function agentHealthProviderAction(health: AgentRuntimeHealthSummary | undefined): {
+export function agentHealthProviderAction(
+  health: AgentRuntimeHealthSummary | undefined,
+  providerKind?: ProviderKind,
+): {
   description: string;
-  kind: 'settings';
+  kind: 'providers' | 'profile';
   label: string;
 } | null {
   switch (activeHealthReason(health)) {
-    case 'provider_auth_failed':
+    case 'provider_auth_failed': {
+      const hasDashboardSignIn = Boolean(providerKind && providerLoginSpec(providerKind));
       return {
-        description: "The model sign-in or API key isn't working.",
-        kind: 'settings',
-        label: 'Check provider settings',
+        description: "Provider sign-in or credentials aren't working.",
+        kind: hasDashboardSignIn ? 'providers' : 'profile',
+        label: hasDashboardSignIn ? 'Open Providers' : 'Check runtime settings',
       };
+    }
     default:
       return null;
   }

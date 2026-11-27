@@ -7,6 +7,7 @@ import {
   providerCatalogForAvailability,
   providerModelAuthorityLabel,
   providerReady,
+  providerUnavailableHint,
   providerUnavailableLabel,
 } from './provider-availability';
 import { providerValueLabel } from './provider-display';
@@ -87,5 +88,39 @@ describe('preferredEffort', () => {
     expect(preferredEffort(['high'], 'xhigh')).toBe('high');
     expect(preferredEffort(['high'])).toBe('high');
     expect(preferredEffort([], 'xhigh')).toBe('');
+  });
+});
+
+describe('provider copy helpers', () => {
+  it('returns installHint for missing providers and sign-in guidance for dynamic providers without models', () => {
+    const provider = {
+      ...providerCatalog()[0]!,
+      installHint: 'Run `npm install -g @example/cli` and `cli login`.',
+    };
+    expect(providerUnavailableHint(provider, [{ kind: provider.kind, present: false }])).toBe(
+      'Run `npm install -g @example/cli` and `cli login`.',
+    );
+    const dynamicProvider = providerCatalog().find((candidate) => candidate.dynamicModels)!;
+    expect(
+      providerUnavailableHint(dynamicProvider, [{ kind: dynamicProvider.kind, present: true }]),
+    ).toBe('Sign in or add credentials for this provider to load its available models.');
+  });
+
+  it('omits providerModelAuthorityLabel once models are checked successfully', () => {
+    const entry = providerCatalog().find((candidate) => candidate.kind === 'codex-cli')!;
+    const availability = codex({
+      checkedAt: '2026-11-24T13:00:00.000Z',
+      defaultModel: 'gpt-6.2-sol',
+      models: ['gpt-6.2-sol'],
+    });
+    expect(providerModelAuthorityLabel(entry, availability)).toBeUndefined();
+  });
+
+  it('uses typographic ellipsis and clean fallback labels in providerUnavailableLabel', () => {
+    const dynamicProvider = providerCatalog().find((candidate) => candidate.dynamicModels)!;
+    expect(providerUnavailableLabel(dynamicProvider, undefined)).toBe('checking…');
+    expect(
+      providerUnavailableLabel(dynamicProvider, [{ kind: dynamicProvider.kind, present: true }]),
+    ).toBe('models unavailable');
   });
 });

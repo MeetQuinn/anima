@@ -10,7 +10,7 @@ import type { SlackUserCandidate } from '@shared/agent-config';
 function Rationale() {
   return (
     <p className="font-sans text-[13px] leading-relaxed text-text-muted">
-      The owner is the person this agent answers to. The agent introduces itself to them and checks in. It's how it knows who it's working for.
+      The person this agent works for.
     </p>
   );
 }
@@ -46,8 +46,8 @@ export function OwnerPickerForm({
   agentId,
   onConfirm,
   onSkip,
-  submitLabel = 'Assign owner →',
-  skipLabel = 'Skip for now →',
+  submitLabel = 'Assign owner',
+  skipLabel = 'Skip for now',
   autoFocus = true,
   showRationale = false,
 }: OwnerPickerFormProps) {
@@ -314,7 +314,7 @@ export function OwnerPickerForm({
           >
             {filtered.length === 0 ? (
               <div role="status" className="px-3 py-2 font-sans text-[12px] text-text-muted">
-                {candidates.length === 0 ? 'No workspace members found.' : 'No members match.'}
+                {candidates.length === 0 ? 'No Slack members found.' : 'No matching members.'}
               </div>
             ) : (
               filtered.map((user, idx) => {
@@ -358,53 +358,39 @@ export function OwnerPickerForm({
       </div>
 
       {/* Intro toggle */}
-      <div className="space-y-1">
-        <label className="flex cursor-pointer items-center gap-2.5">
-          <input
-            type="checkbox"
-            checked={introduce}
-            onChange={(e) => setIntroduce(e.target.checked)}
-            disabled={saving}
-            className="h-4 w-4 accent-accent"
-          />
-          <span className="font-sans text-[13px] text-text">
-            {selectedUser ? (
-              <>Notify <span className="font-medium">{selectedUser.displayName}</span> now</>
-            ) : (
-              'Notify the new owner now'
-            )}
-          </span>
-        </label>
-        <p className="font-sans pl-[26px] text-[11px] text-text-subtle">
-          The agent will DM them to introduce itself.
-        </p>
-      </div>
+      <label className="flex cursor-pointer items-center gap-2.5">
+        <input
+          type="checkbox"
+          checked={introduce}
+          onChange={(e) => setIntroduce(e.target.checked)}
+          disabled={saving}
+          className="h-4 w-4 accent-accent"
+        />
+        <span className="font-sans text-[13px] text-text">
+          {selectedUser ? (
+            <>
+              Have the agent DM <span className="font-medium">{selectedUser.displayName}</span> to
+              introduce itself
+            </>
+          ) : (
+            'Have the agent DM the owner to introduce itself'
+          )}
+        </span>
+      </label>
 
       {/* Opener textarea — gated on introduce ON */}
       {introduce && (
         <div>
           <label className="font-sans mb-1.5 block text-[12px] font-medium text-text-muted">
-            What should the agent know before it reaches out to{' '}
-            {selectedUser ? selectedUser.displayName : 'its owner'}?{' '}
-            <span className="font-normal">(optional)</span>
+            Context for the agent’s intro <span className="font-normal">(optional)</span>
           </label>
           <textarea
             value={openerNote}
             onChange={(e) => setOpenerNote(e.target.value)}
-            placeholder={
-              selectedUser
-                ? `e.g. I set this agent up to help ${selectedUser.displayName} with code review and deploys.`
-                : 'e.g. I set this agent up to help them with code review and deploys.'
-            }
+            placeholder="e.g. Set up to help with code review and deploys."
             rows={3}
             className="w-full resize-none rounded-sm border border-border-soft bg-surface px-3 py-2 font-sans text-[13px] text-text placeholder:text-text-subtle focus:border-accent focus:outline-none"
           />
-          <p className="font-sans mt-1 text-[11px] text-text-subtle">
-            Used as context for the agent's first message:{' '}
-            {selectedUser
-              ? `so ${selectedUser.displayName} knows who set it up and why.`
-              : 'so the owner knows who set it up and why.'}
-          </p>
         </div>
       )}
 
@@ -420,7 +406,7 @@ export function OwnerPickerForm({
           onClick={() => void handleConfirm()}
           disabled={saving || !selectedId}
         >
-          {saving ? 'Assigning…' : submitLabel}
+          {saving ? 'Saving…' : submitLabel}
         </Button>
         {onSkip && (
           <div className="text-center">

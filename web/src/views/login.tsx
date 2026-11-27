@@ -33,7 +33,7 @@ export function LoginPage() {
       await loginDashboard(password);
       navigate(nextPath, { replace: true });
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Login failed');
+      setError(submitError instanceof Error ? submitError.message : 'Sign-in failed');
     } finally {
       setSubmitting(false);
     }
@@ -76,7 +76,7 @@ export function LoginPage() {
             disabled={submitting || isLoading || password.length === 0}
             className="chrome mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-55"
           >
-            {submitting ? 'Signing in' : 'Continue'}
+            {submitting ? 'Signing in…' : 'Sign in'}
             <ArrowRight className="size-4" aria-hidden="true" />
           </button>
         </form>

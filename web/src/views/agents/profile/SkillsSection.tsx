@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { ChevronDown, FileText } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -184,9 +184,17 @@ function SkillGroup({
       </div>
       {skills.length === 0 ? (
         <div className="py-1">
-          <p className="font-serif text-[13px] italic text-text-subtle">None yet</p>
+          <p className="font-serif text-[13px] italic text-text-subtle">None</p>
           {emptyHint && (
-            <p className="mt-1 break-all font-mono text-[11px] text-text-muted">{emptyHint}</p>
+            <p className="mt-1 break-all font-sans text-[11px] text-text-muted">
+              Add skills in{' '}
+              {emptyHint.split(', ').map((hintPath, index) => (
+                <Fragment key={`${index}:${hintPath}`}>
+                  {index > 0 && ' or '}
+                  <span className="font-mono">{hintPath}</span>
+                </Fragment>
+              ))}
+            </p>
           )}
         </div>
       ) : visibleSources.length > 1 ? (

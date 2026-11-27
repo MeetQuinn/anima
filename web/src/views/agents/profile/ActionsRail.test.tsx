@@ -81,7 +81,7 @@ describe('ProfileActionsRail (connected)', () => {
 
     // Rotate → its dialog → rotateAgentSession only.
     fireEvent.click(railButton(/Rotate session/));
-    await confirmDialog('Rotate primary session?', 'Confirm');
+    await confirmDialog('Rotate session?', 'Rotate');
     expect(api.rotateAgentSession.mock.calls).toEqual([['agent-1']]);
     expect(api.restartAgent.mock.calls.length).toBe(0);
     expect(api.removeAgent.mock.calls.length).toBe(0);
@@ -129,8 +129,8 @@ describe('ProfileActionsRail (connected)', () => {
     // Notice, not a decision: exactly one button (OK), no Cancel.
     const buttons = Array.from(dialog.querySelectorAll('button'));
     expect(buttons.map((b) => b.textContent?.trim())).toEqual(['OK']);
-    // The notice promises it never interrupts work — pin that copy.
-    expect(dialog.textContent).toContain('Disabling never interrupts work in progress');
+    // The notice explains waiting or stopping before disabling — pin that copy.
+    expect(dialog.textContent).toContain('Wait for the current work to finish, or stop it first, before disabling.');
 
     fireEvent.click(buttons[0]!);
     await waitFor(() => {

@@ -9,7 +9,7 @@ export async function apiRequest<T>(url: string, init?: RequestInit): Promise<T>
     const message =
       typeof body === 'object' && body !== null && 'error' in body && typeof (body as { error?: unknown }).error === 'string'
         ? (body as { error: string }).error
-        : `HTTP ${res.status}`;
+        : `Request failed (HTTP ${res.status})`;
     if (res.status === 401) redirectToLogin(url);
     throw new Error(message);
   }

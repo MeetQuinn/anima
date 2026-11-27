@@ -116,7 +116,7 @@ export function HomeRow({ value, onCommit }: { value: string; onCommit: (next: s
             <div>
               <span className="block break-words font-mono text-[13px] text-text">{pendingPath}</span>
               <span className="font-sans text-[11px] tracking-wide text-text-muted">
-                Applies automatically when this agent is idle.
+                Applies when this agent is idle.
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -304,16 +304,16 @@ export function ConfirmRestartModal({
   onCancel: () => void;
 }) {
   const sessionCopy = sessionBoundaryChanged
-    ? ' Switching provider or Claude Code session mode starts a fresh provider session; MEMORY.md, notes, and activity history stay intact.'
+    ? ' Switching providers starts a fresh session; memory, notes, and history stay intact.'
     : '';
   return (
     <ConfirmModal
       open={true}
-      title={isActive ? 'Save and apply when idle?' : 'Apply provider change?'}
+      title={isActive ? 'Save and apply when idle?' : 'Apply runtime changes?'}
       description={
         isActive
-          ? `Anima is mid-item. Save this config now; this agent will reload itself after the item finishes.${sessionCopy}`
-          : `Save this config now; this agent will reload itself automatically.${sessionCopy}`
+          ? `This agent is working right now. Your changes will be saved and applied once it finishes.${sessionCopy}`
+          : `This agent will reload to apply your changes.${sessionCopy}`
       }
       variant="warn"
       busy={saving}
@@ -348,7 +348,7 @@ export function envPatchFromDraft(rows: EnvDraftRow[]): { patch: Record<string, 
       continue;
     }
     if (!key && !row.value.trim() && !originalKey) continue;
-    if (!key) return { error: 'Every env var needs a key.' };
+    if (!key) return { error: 'Every variable needs a key.' };
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       return { error: `${key} is not a valid environment variable key.` };
     }

@@ -143,7 +143,7 @@ function DirTreeNode({
           className="py-1 font-serif italic text-[12px] text-text-subtle"
           style={{ paddingLeft: pl + 36 }}
         >
-          No subdirectories
+          No subfolders
         </div>
       )}
 
@@ -424,12 +424,12 @@ export default function DirectoryPicker({
         )}
         {rootError && (
           <div className="px-4 py-3 font-sans text-[12px] text-health-error">
-            {rootError instanceof Error ? rootError.message : 'Error loading directory'}
+            {rootError instanceof Error ? rootError.message : 'Could not load folder'}
           </div>
         )}
         {!rootLoading && !rootError && rootEntries.length === 0 && (
           <div className="px-4 py-8 text-center font-serif italic text-[13px] text-text-subtle">
-            No subdirectories
+            No subfolders
           </div>
         )}
         {rootEntries.map((entry) => (

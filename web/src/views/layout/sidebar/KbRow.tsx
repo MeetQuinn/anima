@@ -66,8 +66,8 @@ export function KbRow({
         <button
           onClick={onMenu}
           className="mr-1 flex min-h-[44px] w-8 shrink-0 items-center justify-center rounded-sm text-text-on-spine-subtle opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-accent"
-          title="Knowledge Base options"
-          aria-label="Knowledge Base options"
+          title="Knowledge base options"
+          aria-label="Knowledge base options"
         >
           <MoreHorizontal className="h-3.5 w-3.5" />
         </button>

@@ -65,11 +65,9 @@ export function providerModelAuthorityLabel(
   if (!provider?.dynamicModels && !provider?.liveModels) return undefined;
   const status = providerStatus(provider, availability ?? null);
   if (!status?.checkedAt || !status.defaultModel || !status.models?.length) {
-    return provider.liveModels ? 'Built-in model list' : 'Model catalog not checked';
+    return provider.liveModels ? 'Built-in model list' : 'Models not checked';
   }
-  const checkedAt = new Date(status.checkedAt);
-  const rendered = Number.isNaN(checkedAt.getTime()) ? status.checkedAt : checkedAt.toLocaleString();
-  return `Model catalog checked ${rendered}`;
+  return undefined;
 }
 
 export function providerReady(
@@ -93,11 +91,11 @@ export function providerUnavailableLabel(
   provider: ProviderCatalogEntry,
   availability: ProviderAvailability[] | null | undefined,
 ): string | undefined {
-  if (!availability) return 'checking...';
+  if (!availability) return 'checking…';
   const status = providerStatus(provider, availability);
   if (!status?.present) return 'not installed';
   if (provider.dynamicModels && (!status.defaultModel || !status.models?.length)) {
-    return 'models not checked';
+    return 'models unavailable';
   }
   return undefined;
 }
@@ -110,7 +108,7 @@ export function providerUnavailableHint(
   const status = providerStatus(provider, availability);
   if (!status?.present) return provider.installHint;
   if (provider.dynamicModels && (!status.defaultModel || !status.models?.length)) {
-    return status.modelCheckError ?? 'Sign in to this provider so Anima can read its current model catalog.';
+    return status.modelCheckError ?? 'Sign in or add credentials for this provider to load its available models.';
   }
   return undefined;
 }

@@ -148,4 +148,44 @@ describe('create page: effort follows the menu of the model it sends', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'GPT-5.5' })).toBeNull());
     expect(await submittedProvider()).toEqual({ kind: 'codex-cli', model: 'gpt-6.2-astra', reasoningEffort: 'low' });
   });
+
+  it('shows unavailable provider hints with <code> commands when some providers are disabled', async () => {
+    renderFlow([
+      {
+        checkedAt: '2026-11-24T00:00:00.000Z',
+        defaultModel: 'opus',
+        kind: 'claude-code',
+        models: ['opus'],
+        present: true,
+      },
+      { kind: 'codex-cli', present: false },
+      { kind: 'grok-cli', present: true },
+    ]);
+
+    const codexHint = await screen.findByText(/Install Codex CLI so/);
+    expect(codexHint.textContent).toContain('Codex (not installed):');
+    expect(codexHint.textContent).not.toContain('`');
+    expect(codexHint.querySelector('code')?.textContent).toBe('codex --version');
+
+    const grokHint = screen.getByText(/Sign in or add credentials for this provider/);
+    expect(grokHint.textContent).toContain('Grok Build (models unavailable):');
+  });
+
+  it('omits the per-provider unavailable hint list when all providers are unavailable', () => {
+    renderFlow([
+      { kind: 'claude-code', present: false },
+      { kind: 'codex-cli', present: false },
+      { kind: 'kimi-cli', present: false },
+      { kind: 'grok-cli', present: false },
+      { kind: 'opencode-cli', present: false },
+      { kind: 'pi', present: false },
+      { kind: 'antigravity-cli', present: false },
+    ]);
+
+    expect(screen.getByText(/No providers detected\./)).toBeTruthy();
+    expect(screen.queryByText(/Codex \(not installed\):/)).toBeNull();
+    const claudeHint = screen.getByText(/Install Claude Code so/);
+    expect(claudeHint.querySelector('code')?.textContent).toBe('claude --version');
+    expect(claudeHint.textContent).not.toContain('`');
+  });
 });

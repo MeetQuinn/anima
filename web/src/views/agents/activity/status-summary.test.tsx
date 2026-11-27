@@ -28,7 +28,7 @@ describe('ActivityStatusSummary', () => {
       />,
     );
 
-    expect(screen.getByText('Background · 2')).toBeTruthy();
+    expect(screen.getByText('Background (2)')).toBeTruthy();
     expect(screen.queryByText('Idle')).toBeNull();
   });
 
@@ -56,7 +56,7 @@ describe('ActivityStatusSummary', () => {
       />,
     );
 
-    expect(screen.getByText('Working · Background 2')).toBeTruthy();
+    expect(screen.getByText('Working · Background (2)')).toBeTruthy();
   });
 
   it('offers Retry now only for retryable deferred wakes', async () => {

@@ -19,7 +19,7 @@ export function handoffStateFromFragment(fragment: string): HandoffPageState {
     return {
       kind: 'error',
       title: 'Encryption link required',
-      message: 'Open the complete link you received, then try again.',
+      message: 'Open the full link your agent sent you and try again.',
     };
   }
   try {
@@ -27,8 +27,8 @@ export function handoffStateFromFragment(fragment: string): HandoffPageState {
   } catch {
     return {
       kind: 'error',
-      title: 'Encryption link is invalid',
-      message: 'Ask for a fresh complete link and open it again.',
+      title: 'Invalid encryption link',
+      message: 'Ask your agent for a new link and open it again.',
     };
   }
 }

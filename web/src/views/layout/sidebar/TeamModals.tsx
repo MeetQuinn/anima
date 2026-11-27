@@ -46,9 +46,9 @@ function TeamModal({
   //
   // The name field is the safe control, not Cancel: this is a form, and the
   // point of opening it is to type. That replaces a `setTimeout(…, 0)` which
-  // focused the field a tick after the dialog appeared. The explanatory
-  // paragraph is the description because it carries the decision — what a rename
-  // does NOT touch, and where new agents land.
+  // focused the field a tick after the dialog appeared. The Home folder hint
+  // carries the decision — where new agents land, and that existing agents stay
+  // in their current folders — so it serves as `descriptionId`.
   const { dialogRef, initialFocusRef, titleId, descriptionId } =
     useDialogFocus<HTMLInputElement>(true);
 
@@ -115,11 +115,6 @@ function TeamModal({
         <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
           {isEdit ? 'Edit team' : 'New team'}
         </div>
-        <div id={descriptionId} className="font-serif mt-1 text-[13px] leading-relaxed text-text-muted">
-          {isEdit
-            ? "Rename the team or change where new agents land. Renaming won't affect existing agents."
-            : "A team groups your agents. New agents created in this team get their home under the team's folder. Existing agents stay visible."}
-        </div>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -166,18 +161,10 @@ function TeamModal({
                 Browse
               </button>
             </div>
-            <p className="font-sans mt-1 text-[11px] text-text-subtle">
-              {isEdit ? (
-                <>
-                  Only affects agents created after this. Existing agents keep their current
-                  folder and are not moved.
-                </>
-              ) : (
-                <>
-                  Required. Pick the team's home folder; new agents land under its{' '}
-                  <code>agents/</code> subfolder.
-                </>
-              )}
+            <p id={descriptionId} className="font-sans mt-1 text-[11px] text-text-subtle">
+              {isEdit
+                ? 'Applies to new agents only. Existing agents stay in their current folders.'
+                : 'Required. New agents in this team are created under this folder.'}
             </p>
           </div>
 

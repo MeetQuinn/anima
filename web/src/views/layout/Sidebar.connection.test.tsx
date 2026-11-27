@@ -74,9 +74,9 @@ it('keeps Slack warning and provider work separate in the collapsed rail', () =>
     </QueryClientProvider>
   );
   const view = render(ui);
-  const button = screen.getByRole('button', { name: 'Milo, working, Slack reconnecting' });
+  const button = screen.getByRole('button', { name: 'Milo, Working, Slack reconnecting' });
   expect(button.getAttribute('title')).toContain('network_error');
-  expect(button.querySelector('[title="working"]')).toBeTruthy();
+  expect(button.querySelector('[title="Working"]')).toBeTruthy();
   expect(button.textContent).toContain('!');
   status.health!.runtime!.transports!.slack!.state = 'connected';
   view.rerender(
@@ -86,9 +86,9 @@ it('keeps Slack warning and provider work separate in the collapsed rail', () =>
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  expect(screen.getByRole('button', { name: 'Milo, working' }).textContent).not.toContain('!');
+  expect(screen.getByRole('button', { name: 'Milo, Working' }).textContent).not.toContain('!');
   act(() => vi.advanceTimersByTime(35_000));
   expect(
-    screen.getByRole('button', { name: 'Milo, working, Slack status unavailable' }),
+    screen.getByRole('button', { name: 'Milo, Working, Slack status unavailable' }),
   ).toBeTruthy();
 });

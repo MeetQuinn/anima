@@ -53,7 +53,7 @@ export function AddKbModal({
       onAdded(id);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : 'Could not add knowledge base');
       setBusy(false);
     }
   }
@@ -76,12 +76,12 @@ export function AddKbModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div id={titleId} className="mb-3 font-serif text-[17px] font-semibold text-text">
-          Add Knowledge Base
+          Add knowledge base
         </div>
         <DirectoryPicker
           onChoose={handleSelect}
           onCancel={onClose}
-          confirmLabel={busy ? 'Adding…' : 'Add Knowledge Base'}
+          confirmLabel={busy ? 'Adding…' : 'Add'}
           confirmDisabled={busy}
         />
         {error && (
@@ -150,7 +150,7 @@ export function RenameKbModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
-          Rename Knowledge Base
+          Rename knowledge base
         </div>
         <form
           onSubmit={(e) => {
@@ -245,7 +245,7 @@ export function ConfirmDeleteModal({
       >
         <span aria-hidden className="absolute left-0 top-4 bottom-4 w-px bg-health-error/50" />
         <div id={titleId} className="font-serif text-[17px] font-semibold text-text">
-          Remove Knowledge Base?
+          Remove knowledge base?
         </div>
         <div id={descriptionId} className="font-serif mt-2 text-[14px] leading-relaxed text-text-muted">
           <span className="font-semibold text-text">{kb.label}</span> will be removed from
@@ -323,7 +323,7 @@ export function KebabDropdown({
         onClick={onDelete}
         className="flex w-full items-center px-3 py-1.5 font-sans text-[13px] text-health-error hover:bg-muted"
       >
-        Delete
+        Remove
       </button>
     </div>,
     document.body,

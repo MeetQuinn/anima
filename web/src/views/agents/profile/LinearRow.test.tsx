@@ -83,7 +83,7 @@ async function startAuthorizing() {
   fillCredentials();
   fireEvent.click(screen.getByRole('button', { name: /Authorize in Linear/ }));
 }
-const closeButton = () => screen.getByRole('button', { name: 'Close Linear settings' }) as HTMLButtonElement;
+const closeButton = () => screen.getByRole('button', { name: 'Close Linear' }) as HTMLButtonElement;
 const refetch = (client: QueryClient, queryKey: readonly string[]) =>
   act(async () => {
     await client.refetchQueries({ queryKey });

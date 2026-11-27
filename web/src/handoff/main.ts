@@ -7,7 +7,7 @@ if (!appRoot) throw new Error('Handoff app root is missing');
 const app: HTMLElement = appRoot;
 
 const PROOF_LINE =
-  "The value is encrypted in this browser. Only your agent's key can open it.";
+  "Your secret is encrypted in this browser before you copy it. Only your agent's key can open it.";
 
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -52,12 +52,6 @@ function seal(kind: 'lock' | 'check'): HTMLElement {
   const mark = element('div', kind === 'check' ? 'seal success' : 'seal');
   mark.append(kind === 'check' ? checkIcon() : lockIcon());
   return mark;
-}
-
-function proofNote(): HTMLElement {
-  const note = element('p', 'proof-note');
-  note.append(lockIcon(14), document.createTextNode(PROOF_LINE));
-  return note;
 }
 
 function render(): void {
@@ -109,7 +103,6 @@ function errorView(title: string, message: string): HTMLElement {
   heading.id = 'error-title';
   panel.append(
     seal('lock'),
-    element('p', 'eyebrow', 'Unable to continue'),
     heading,
     element('p', 'lede', message),
   );
@@ -182,7 +175,7 @@ function secretForm(publicKey: string, panel: HTMLElement): HTMLElement {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!input.value) {
-      status.textContent = 'Enter a value before encrypting.';
+      status.textContent = 'Enter a secret first.';
       input.focus();
       return;
     }
@@ -195,7 +188,7 @@ function secretForm(publicKey: string, panel: HTMLElement): HTMLElement {
       panel.replaceChildren(resultView(transfer.fencedBox));
     } catch (error) {
       status.textContent =
-        error instanceof Error ? error.message : 'The value could not be encrypted.';
+        error instanceof Error ? error.message : 'Could not encrypt this secret.';
       submit.disabled = false;
     }
   });
@@ -208,7 +201,7 @@ function resultView(fencedBox: string): HTMLElement {
   const result = element('section', 'result-view');
   result.setAttribute('aria-labelledby', 'result-title');
   result.append(seal('check'), element('p', 'eyebrow success', 'Encrypted'));
-  const heading = element('h2', undefined, 'Copy the encrypted value');
+  const heading = element('h2', undefined, 'Copy the encrypted secret');
   heading.id = 'result-title';
   result.append(
     heading,
@@ -219,25 +212,27 @@ function resultView(fencedBox: string): HTMLElement {
   output.readOnly = true;
   output.value = fencedBox;
   output.rows = 8;
-  output.setAttribute('aria-label', 'Encrypted value');
-  const copyStatus = element('p', 'form-status');
+  output.setAttribute('aria-label', 'Encrypted secret');
+  const copyStatus = element('p', 'form-status sr-only');
   copyStatus.setAttribute('role', 'status');
   copyStatus.setAttribute('aria-live', 'polite');
-  const copy = element('button', 'primary-action', 'Copy encrypted value');
+  const copy = element('button', 'primary-action', 'Copy');
   copy.type = 'button';
   copy.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(fencedBox);
       copy.replaceChildren(checkIcon(16), document.createTextNode('Copied'));
       copy.classList.add('copied');
-      copyStatus.textContent = 'Encrypted value copied.';
+      copyStatus.classList.add('sr-only');
+      copyStatus.textContent = 'Encrypted secret copied.';
     } catch {
       output.focus();
       output.select();
-      copyStatus.textContent = 'Clipboard access failed. The encrypted value is selected.';
+      copyStatus.classList.remove('sr-only');
+      copyStatus.textContent = 'Could not copy automatically. Copy the selected text manually.';
     }
   });
-  result.append(output, copy, copyStatus, proofNote());
+  result.append(output, copy, copyStatus);
   return result;
 }
 

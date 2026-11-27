@@ -83,7 +83,7 @@ export default function Profile() {
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
 
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
-  function flashApplyNotice(message = 'Saved. This agent will apply the change when the current item finishes.') {
+  function flashApplyNotice(message = 'Saved. Changes will apply once this agent finishes its current work.') {
     setApplyNotice(message);
     setTimeout(() => setApplyNotice(null), 6000);
   }
@@ -183,7 +183,7 @@ export default function Profile() {
     if (!agentId) return;
     await updateAgentProvider(agentId, update);
     showApplyNoticeIfActive(
-      opts.envOnly ? 'Saved. This agent will apply launch env changes when the current item finishes.' : undefined,
+      opts.envOnly ? 'Saved. Environment changes will apply once this agent finishes its current work.' : undefined,
     );
     refreshAgentData(agentId);
   }
@@ -255,8 +255,8 @@ export default function Profile() {
               <div className="relative py-3 pl-5" role="status">
                 <span aria-hidden className="absolute left-0 top-3 bottom-3 w-px bg-health-warn/60" />
                 <span className="font-serif text-[13px] leading-snug text-text-muted">
-                  This agent references team <span className="font-mono text-text">"{teamWarning.teamId}"</span>, which
-                  no longer exists. It is running under the default team - reassign it above to repair.
+                  Team <span className="font-mono text-text">"{teamWarning.teamId}"</span> no longer exists, so this
+                  agent is under the default team. Pick a team above to reassign it.
                 </span>
               </div>
             )}
@@ -301,7 +301,7 @@ export default function Profile() {
                   onClick={() => setOwnerPickerOpen(true)}
                   className="font-sans text-[13px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent transition-colors"
                 >
-                  Assign owner →
+                  Assign owner
                 </button>
               ) : (
                 <ReadonlyValue />
@@ -365,9 +365,9 @@ export default function Profile() {
                     setOwnerPickerOpen(false);
                     refreshAgentData(agentId);
                   }}
-                  submitLabel={agent.owner ? 'Change owner →' : 'Assign owner →'}
+                  submitLabel={agent.owner ? 'Change owner' : 'Assign owner'}
                   autoFocus
-                  showRationale
+                  showRationale={!agent.owner}
                 />
               </div>
             </div>

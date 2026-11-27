@@ -437,7 +437,7 @@ export default function Sidebar({
             {/* Knowledge Base section */}
             <div className="mb-4">
               <div className="mb-2 flex items-center justify-between pl-3">
-                <span className="caps text-text-on-spine-subtle">Knowledge Base</span>
+                <span className="caps text-text-on-spine-subtle">Knowledge bases</span>
                 <div className="flex items-center gap-1.5">
                   <span className="font-mono text-[10px] tabular-nums text-text-on-spine-muted">
                     {orderedKbs.length}
@@ -445,8 +445,8 @@ export default function Sidebar({
                   <button
                     onClick={() => setShowAddModal(true)}
                     className="flex h-7 w-7 items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                    title="Add Knowledge Base"
-                    aria-label="Add Knowledge Base"
+                    title="Add knowledge base"
+                    aria-label="Add knowledge base"
                   >
                     <Plus className="h-3 w-3" />
                   </button>
@@ -482,7 +482,7 @@ export default function Sidebar({
                     className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-on-spine-subtle hover:text-text-on-spine"
                   >
                     <Plus className="h-3 w-3" />
-                    Add Knowledge Base
+                    Add knowledge base
                   </button>
                 )}
               </div>

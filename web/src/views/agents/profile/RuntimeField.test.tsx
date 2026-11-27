@@ -194,7 +194,7 @@ describe('Runtime modal — save/dismissal contract', () => {
     // old provider's CLI must not survive into the new kind.
     fireEvent.click(dialog.getByRole('button', { name: 'Codex' }));
     expect(dialog.queryByDisplayValue('/opt/homebrew/bin/claude-canary')).toBeNull();
-    expect(dialog.getByText(/command override below was cleared/)).toBeTruthy();
+    expect(dialog.getByText(/The previous command override was cleared/)).toBeTruthy();
 
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
@@ -289,12 +289,11 @@ describe('Runtime modal — fast mode', () => {
     expect(box.checked).toBe(false);
     // The honest copy IS the contract (Milo's #686 gate: a wholesale rewrite
     // to "Enables fast mode…" left the suite green). Pin the two load-bearing
-    // meanings: request-not-guarantee, and org enablement + usage credits as
-    // the availability condition.
-    expect(dialog.getByText(/A request, not a guarantee/)).toBeTruthy();
+    // meanings: standard-speed fallback, and fast mode + usage credits on the
+    // Anthropic organization as the availability condition.
     expect(
       dialog.getByText(
-        /unless the Anthropic organization has fast mode enabled with usage credits/,
+        /A request, not a guarantee\. Needs fast mode and usage credits enabled for your Anthropic organization, and Claude can still run at standard speed\./,
       ),
     ).toBeTruthy();
     fireEvent.click(box);
@@ -338,10 +337,9 @@ describe('Runtime modal — fast mode', () => {
     const dialog = openModal({ kind: 'codex-cli', model: 'gpt-6.1-sol' }, onCommit);
 
     fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
-    expect(dialog.getByText(/Requests faster responses for supported Codex models/)).toBeTruthy();
-    expect(dialog.getByText(/2.5× subscription usage or 2× purchased credits/)).toBeTruthy();
-    expect(dialog.getByText(/API-key sessions use Priority pricing/)).toBeTruthy();
-    expect(dialog.getByText(/Availability depends on the account and model/)).toBeTruthy();
+    expect(dialog.getByText(/Available on supported models and accounts/)).toBeTruthy();
+    expect(dialog.getByText(/extra subscription quota \(2\.5×\), purchased credits \(2×\)/)).toBeTruthy();
+    expect(dialog.getByText(/Priority API pricing/)).toBeTruthy();
     fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
@@ -759,5 +757,17 @@ describe('Runtime modal — effort follows the new model', () => {
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
     expect(onCommit).toHaveBeenCalledWith({ fastMode: true }, { envOnly: false });
+  });
+
+  it('renders install hint commands inside <code> without literal backticks when the current provider is missing', () => {
+    const onCommit = vi.fn(async () => {});
+    const dialog = openModal(
+      { kind: 'claude-code', model: 'opus' },
+      onCommit,
+      [{ kind: 'claude-code', present: false }],
+    );
+    const code = screen.getByRole('dialog', { name: 'Runtime' }).querySelector('code');
+    expect(code?.textContent).toBe('claude --version');
+    expect(dialog.getByText(/Install Claude Code so/).textContent).not.toContain('`');
   });
 });
