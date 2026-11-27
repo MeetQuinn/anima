@@ -51,14 +51,14 @@ function TrackingNote({ coverageStartedAt, from }: { coverageStartedAt?: string;
   if (!coverageStartedAt) {
     return (
       <span className="max-w-xs font-sans text-[11px] leading-relaxed text-text-muted">
-        Exact tracking begins when this agent next restarts.
+        Exact tracking begins the next time this agent starts.
       </span>
     );
   }
   if (hasCoverageRule(coverageStartedAt, from)) return null;
   return (
     <span className="max-w-xs text-right font-sans text-[11px] leading-relaxed text-text-muted">
-      Exact since {formatUsageDate(localDate(new Date(coverageStartedAt)))}
+      Exact since {formatUsageDate(localDate(new Date(coverageStartedAt)), { includeYear: true })}
     </span>
   );
 }

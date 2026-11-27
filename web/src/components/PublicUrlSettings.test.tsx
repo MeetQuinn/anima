@@ -63,10 +63,11 @@ it('validates a global origin, saves it normalized, refreshes the Linear setup a
 it('a saved address is checked: one forwarding target, and what to update after changing it', async () => {
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   mount();
-  await screen.findByText(/Address reaches this server\./);
+  await screen.findByText(/Address reaches this dashboard\./);
   expect(api.check).toHaveBeenCalledTimes(1);
   expect(screen.getByText('Dashboard password enabled.')).toBeTruthy();
-  expect(screen.getByText(/Point this address at the dashboard/)).toBeTruthy();
+  expect(screen.getByText(/Point this address at this dashboard/)).toBeTruthy();
+  expect(screen.getByText('/webhooks/linear')).toBeTruthy();
   expect(screen.queryByText('/api/linear/oauth/callback')).toBeNull();
   expect(screen.queryByText(/update existing Linear apps’ webhook and callback URLs/)).toBeNull();
   expect(screen.queryByRole('textbox')).toBeNull();
@@ -95,7 +96,7 @@ it('warns prominently when Anima opened the dashboard through the address withou
   expect(within(alert).getByText('npx -y @meetquinn/animactl@latest dashboard-auth set --password-stdin')).toBeTruthy();
   // Still reachable, and no line beside it says what protects the dashboard.
   const status = screen.getByRole('status');
-  expect(status.textContent).toContain('Address reaches this server.');
+  expect(status.textContent).toContain('Address reaches this dashboard.');
   expect(status.textContent).not.toMatch(/password|gateway|couldn’t open/);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
 });
@@ -111,7 +112,7 @@ it.each([
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, ...result }));
   mount();
-  await screen.findByText(/Address reaches this server\./);
+  await screen.findByText(/Address reaches this dashboard\./);
   const status = screen.getByRole('status');
   expect(status.textContent).toContain(message);
   expect(status.textContent).not.toMatch(UNCONFIRMED);
@@ -133,7 +134,7 @@ it.each([
   api.read.mockResolvedValue({ publicUrl: 'https://anima.example.com' });
   api.check.mockResolvedValue(checked({ reachable: true, status: 200, passwordSet: false, dashboard: { open: false, status: code } }));
   mount();
-  await screen.findByText(/Address reaches this server\./);
+  await screen.findByText(/Address reaches this dashboard\./);
   const status = screen.getByRole('status');
   expect(status.textContent).toContain(`The dashboard check ${seen}; access protection is unconfirmed.`);
   expect(status.textContent).toMatch(UNCONFIRMED);
@@ -155,8 +156,8 @@ it('warns even when Linear’s path is blocked, next to what is in the way', asy
 });
 
 it.each([
-  [{ failure: 'gateway', status: 302 }, 'A sign-in page or access rule blocked the check (HTTP 302). Bypass /webhooks/ in your gateway'],
-  [{ failure: 'elsewhere', status: 404 }, 'Something responded (HTTP 404), but not this Anima server.'],
+  [{ failure: 'gateway', status: 302 }, 'A sign-in page or access rule answered (HTTP 302). Bypass /webhooks/ in your gateway'],
+  [{ failure: 'elsewhere', status: 404 }, 'Something responded (HTTP 404), but not this dashboard.'],
   [{ failure: 'unreachable', status: 530 }, 'Couldn’t reach this dashboard at this address (HTTP 530).'],
   [{ failure: 'unreachable' }, 'Couldn’t reach this dashboard at this address. Check that your tunnel or proxy is running'],
   [{ failure: 'timeout' }, 'Timed out after 5 seconds. Check that your tunnel or proxy is running.'],
@@ -168,7 +169,7 @@ it.each([
   expect(alert.textContent).toContain('Not reachable');
   expect(alert.textContent).toContain(message);
   fireEvent.click(within(alert).getByRole('button', { name: 'Check again' }));
-  await screen.findByText(/Address reaches this server\./);
+  await screen.findByText(/Address reaches this dashboard\./);
 });
 
 it('a failed read offers a retry instead of an empty form', async () => {

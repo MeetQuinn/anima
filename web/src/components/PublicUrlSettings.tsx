@@ -120,10 +120,13 @@ export const SET_PASSWORD_COMMAND = 'npx -y @meetquinn/animactl@latest dashboard
 export function PublicAddressGuidance() {
   return (
     <p className="max-w-prose font-serif text-[13px] leading-relaxed text-text-muted">
-      Point this address at the dashboard (for example, with Cloudflare Tunnel) and protect it with a
+      Point this address at this dashboard (for example, with Cloudflare Tunnel) and protect it with a
       sign-in gateway like Cloudflare Access or a dashboard password. If you use a gateway, bypass{' '}
-      <span className="font-mono text-[12px] text-text">/webhooks/</span> so integrations can connect
-      (older Linear apps may use <span className="font-mono text-[12px] text-text">/webhook</span>).
+      <span className="font-mono text-[12px] text-text">/webhooks/</span> so Linear can deliver
+      events. Linear apps that still post to{' '}
+      <span className="font-mono text-[12px] text-text">/webhook</span> need that path bypassed too,
+      or their webhook URL changed to{' '}
+      <span className="font-mono text-[12px] text-text">/webhooks/linear</span>.
     </p>
   );
 }
@@ -132,9 +135,9 @@ function failureText(check: PublicUrlCheck): string {
   const http = check.status ? ` (HTTP ${check.status})` : '';
   switch (check.failure) {
     case 'gateway':
-      return `A sign-in page or access rule blocked the check${http}. Bypass /webhooks/ in your gateway (for example, Cloudflare Access).`;
+      return `A sign-in page or access rule answered${http}. Bypass /webhooks/ in your gateway (for example, Cloudflare Access).`;
     case 'elsewhere':
-      return `Something responded${http}, but not this Anima server. Make sure this address forwards to this dashboard.`;
+      return `Something responded${http}, but not this dashboard. Make sure this address forwards to this dashboard.`;
     case 'timeout':
       return 'Timed out after 5 seconds. Check that your tunnel or proxy is running.';
     case 'not_configured':
@@ -239,7 +242,7 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
       {result.reachable ? (
         <div role="status" className="space-y-1 font-sans text-[12px] leading-relaxed">
           <p className="flex flex-wrap items-center gap-x-1.5 text-health-ok">
-            <Check className="size-3.5" aria-hidden="true" /> Address reaches this server.
+            <Check className="size-3.5" aria-hidden="true" /> Address reaches this dashboard.
             <span className="text-text-subtle">{again}</span>
           </p>
           {!open && <p className="max-w-prose text-text-subtle">{protection(result)}</p>}

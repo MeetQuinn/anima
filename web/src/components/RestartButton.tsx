@@ -141,7 +141,7 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
       {phase === 'restarting' && (
         <ProgressOverlay
           title="Restarting Anima…"
-          body="Working agents pause and resume where they left off. The dashboard reloads automatically when Anima is back."
+          body="Working agents are asked to pause, then continue after the restart. The dashboard reloads automatically when Anima is back."
         />
       )}
     </>

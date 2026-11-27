@@ -36,7 +36,7 @@ const PLATFORMS: Array<{ platform: ContactPlatform; label: string; blocks: strin
   { platform: 'slack', label: 'Slack', blocks: 'No DMs or @mentions. Regular channel posts are unaffected.' },
   {
     platform: 'linear', label: 'Linear',
-    blocks: 'No @mentions, assignments, delegations, or subscriptions. Plain comments and replies in sessions they started are unaffected.',
+    blocks: 'No @mentions, assignments, delegations, or subscriptions. Comments and replies without a mention are unaffected, including in sessions they started.',
   },
 ];
 
@@ -49,14 +49,14 @@ export default function OutreachLimitsPage() {
       <p className="text-[13px] leading-relaxed text-text">
         Agents will not reach out to the people listed here. Incoming messages are unaffected.
         <span className="mt-1.5 block text-[11px] leading-relaxed text-text-subtle">
-          Applies to all agents, per workspace. Changes take effect immediately.
+          Applies to all agents on this machine, per workspace. Changes take effect immediately.
         </span>
       </p>
 
       {query.isPending && <p role="status" className="mt-6 border-t border-border-strong pt-4 text-[12px] text-text-muted">Loading list…</p>}
       {query.isError && (
         <div role="alert" className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 border-l-2 border-health-error pl-3 text-[12px] leading-relaxed text-health-error">
-          <span className="min-w-0 flex-1">Could not load outreach limits. Existing restrictions haven’t changed.</span>
+          <span className="min-w-0 flex-1">Couldn’t load the do-not-contact list. Existing restrictions haven’t changed.</span>
           <button type="button" className={actionClass} onClick={() => void query.refetch()}>Retry</button>
         </div>
       )}
@@ -107,7 +107,7 @@ function WorkspaceBlock({ workspace, platformLabel }: { workspace: ContactWorksp
       ? changeLinearContactMember(workspace.id, user.id, action)
       : changeContactMember(workspace.id, user.id, action),
     onSuccess: async (_result, change) => {
-      setNotice(change.action === 'add' ? 'Added to outreach limits.' : 'Removed from outreach limits.');
+      setNotice(change.action === 'add' ? 'Added to the do-not-contact list.' : 'Removed from the do-not-contact list.');
       setConfirm(null);
       setSearch('');
       await client.invalidateQueries({ queryKey: workspacesKey });
@@ -200,7 +200,7 @@ function WorkspaceBlock({ workspace, platformLabel }: { workspace: ContactWorksp
       )}
 
       {members.length > 0 ? (
-        <ul aria-label={`Outreach limits · ${workspace.name}`} className="mt-1.5">
+        <ul aria-label={`Do-not-contact list · ${workspace.name}`} className="mt-1.5">
           {members.map(({ user, resolved }) => (
             <li key={user.id} className="group/row flex items-center gap-2.5 border-t border-border-soft py-1.5">
               <MemberIdentity user={user} unresolvedNote={resolved ? undefined : unresolvedNote} />
@@ -229,12 +229,12 @@ function WorkspaceBlock({ workspace, platformLabel }: { workspace: ContactWorksp
 
       <ConfirmModal
         open={confirm !== null}
-        title={confirm?.action === 'add' ? 'Add to outreach limits?' : 'Remove from outreach limits?'}
+        title={confirm?.action === 'add' ? 'Add to the do-not-contact list?' : 'Remove from the do-not-contact list?'}
         description={confirm && <>
           <span className="mb-2 block font-medium">{confirm.user.name} <span className="break-all font-mono text-[11px]">({confirm.user.id})</span></span>
           {confirm.action === 'add'
-            ? `No agent connected to ${workspace.name} will reach out to this person.`
-            : `Agents connected to ${workspace.name} will be able to reach out to this person again.`}
+            ? `Agents on this machine won’t reach out to this person in ${workspace.name} through Anima.`
+            : `Agents on this machine can reach out to this person in ${workspace.name} through Anima again.`}
         </>}
         variant="warn"
         confirmVariant={confirm?.action === 'remove' ? 'destructive' : 'default'}

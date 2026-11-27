@@ -109,7 +109,7 @@ export default function RuntimeUpgradeRow() {
           className="font-serif text-[14px] text-text-muted"
           title={status.unsupportedReason}
         >
-          In-app updates unavailable
+          Managed updates unavailable
         </span>
       </UpdateLabelRow>
     );
@@ -169,7 +169,7 @@ export default function RuntimeUpgradeRow() {
         <ProgressOverlay
           above
           title={availableTarget ? `Installing ${availableTarget}…` : 'Installing update…'}
-          body="Anima keeps running during install, then pauses working agents to restart. The dashboard reloads automatically when Anima is back."
+          body="Anima keeps running while the update installs, then asks working agents to pause and restarts. The dashboard reloads automatically when Anima is back."
         />
       )}
     </>

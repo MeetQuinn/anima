@@ -36,7 +36,7 @@ function mount() {
   return render(<QueryClientProvider client={client}><OutreachLimitsPage /></QueryClientProvider>);
 }
 const addIn = (name: string) => screen.findByRole('button', { name: `Add a person to ${name}` });
-const membersOf = (name: string) => screen.getByRole('list', { name: `Outreach limits · ${name}` });
+const membersOf = (name: string) => screen.getByRole('list', { name: `Do-not-contact list · ${name}` });
 async function openSearch(name = 'Example') {
   fireEvent.click(await addIn(name));
   return screen.findByRole('list', { name: `Slack search results · ${name}` });
@@ -47,7 +47,7 @@ describe('Outreach limits page', () => {
     mount();
     await screen.findByRole('heading', { name: 'Example' });
     expect(screen.getByText(/Agents will not reach out to the people listed here/)).toBeTruthy();
-    expect(screen.getByText(/Applies to all agents, per workspace/)).toBeTruthy();
+    expect(screen.getByText(/Applies to all agents on this machine, per workspace/)).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Slack' })).toBeTruthy();
     expect(screen.getByText('No DMs or @mentions. Regular channel posts are unaffected.')).toBeTruthy();
     // No Linear workspace, no Linear group.
@@ -68,7 +68,7 @@ describe('Outreach limits page', () => {
     expect(screen.getByText('0 people')).toBeTruthy();
     expect(screen.queryByText('T456')).toBeNull();
     expect(screen.getByText('No one listed.')).toBeTruthy();
-    expect(screen.queryByRole('list', { name: 'Outreach limits · Second' })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Do-not-contact list · Second' })).toBeNull();
 
     // Search opens only inside the block whose + was pressed.
     await openSearch('Second');
@@ -87,10 +87,11 @@ describe('Outreach limits page', () => {
     expect(within(results).queryByText('U123')).toBeNull();
     fireEvent.click(within(results).getByRole('button', { name: /Alex.*U456/ }));
     const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText(/No agent connected to Example will reach out to this person\./)).toBeTruthy();
+    expect(within(dialog).getByText('Add to the do-not-contact list?')).toBeTruthy();
+    expect(within(dialog).getByText(/Agents on this machine won’t reach out to this person in Example through Anima\./)).toBeTruthy();
     expect(changeContactMember).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
-    await screen.findByText('Added to outreach limits.');
+    await screen.findByText('Added to the do-not-contact list.');
     expect(changeContactMember).toHaveBeenCalledExactlyOnceWith('T123', 'U456', 'add');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
@@ -98,7 +99,8 @@ describe('Outreach limits page', () => {
   it('cancel and Escape never add or remove', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Remove USAVED' }));
-    expect(within(screen.getByRole('dialog')).getByText(/Agents connected to Example will be able to reach out to this person again\./)).toBeTruthy();
+    expect(within(screen.getByRole('dialog')).getByText('Remove from the do-not-contact list?')).toBeTruthy();
+    expect(within(screen.getByRole('dialog')).getByText(/Agents on this machine can reach out to this person in Example through Anima again\./)).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(changeContactMember).not.toHaveBeenCalled();
@@ -109,7 +111,7 @@ describe('Outreach limits page', () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Remove USAVED' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
-    await screen.findByText('Removed from outreach limits.');
+    await screen.findByText('Removed from the do-not-contact list.');
     expect(changeContactMember).toHaveBeenCalledExactlyOnceWith('T123', 'USAVED', 'remove');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove USAVED' })).toBeNull());
   });
@@ -117,7 +119,7 @@ describe('Outreach limits page', () => {
   it('a matched member whose name falls back to the ID keeps its handle and is not reported missing', async () => {
     vi.mocked(fetchContactDirectory).mockResolvedValue({ users: [user, { slackUserId: 'USAVED', displayName: 'USAVED', handle: 'real.person' }] });
     mount();
-    const list = await screen.findByRole('list', { name: 'Outreach limits · Example' });
+    const list = await screen.findByRole('list', { name: 'Do-not-contact list · Example' });
     await within(list).findByText('@real.person');
     expect(within(list).queryByText(/Not found in the Slack directory/)).toBeNull();
     expect(within(list).queryByText(/Saved ID/)).toBeNull();
@@ -126,7 +128,7 @@ describe('Outreach limits page', () => {
 
   it('a member missing from a loaded directory is kept and reported as not found', async () => {
     mount();
-    const list = await screen.findByRole('list', { name: 'Outreach limits · Example' });
+    const list = await screen.findByRole('list', { name: 'Do-not-contact list · Example' });
     await within(list).findByText(/Not found in the Slack directory · still restricted/);
     expect(within(list).getAllByText('USAVED').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
@@ -160,7 +162,8 @@ describe('Outreach limits page', () => {
   it('config-load failure is not presented as an empty list', async () => {
     vi.mocked(fetchContactWorkspaces).mockRejectedValue(new Error('invalid config'));
     mount();
-    await screen.findByRole('alert');
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Couldn’t load the do-not-contact list. Existing restrictions haven’t changed.');
     expect(screen.queryByText(/No one listed/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Add a person to/ })).toBeNull();
   });
@@ -192,7 +195,7 @@ describe('Outreach limits page', () => {
     await screen.findByText('Could not save configuration');
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Remove USAVED' })).toBeTruthy();
-    expect(screen.queryByText('Removed from outreach limits.')).toBeNull();
+    expect(screen.queryByText('Removed from the do-not-contact list.')).toBeNull();
   });
 
   it('an in-flight write cannot be submitted twice or dismissed by Escape', async () => {
@@ -225,7 +228,7 @@ describe('Outreach limits page · Linear', () => {
     mount();
     await screen.findByRole('heading', { name: 'Anima' });
     expect(screen.getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Slack', 'Example', 'Linear', 'Anima']);
-    expect(screen.getByText('No @mentions, assignments, delegations, or subscriptions. Plain comments and replies in sessions they started are unaffected.')).toBeTruthy();
+    expect(screen.getByText('No @mentions, assignments, delegations, or subscriptions. Comments and replies without a mention are unaffected, including in sessions they started.')).toBeTruthy();
     expect(screen.queryByText(org)).toBeNull();
     await within(membersOf('Anima')).findByText('Sam Lee');
     expect(within(membersOf('Anima')).getByText('@sam')).toBeTruthy();
@@ -244,7 +247,7 @@ describe('Outreach limits page · Linear', () => {
     expect(within(dialog).getByText(`(${alexId})`)).toBeTruthy();
     expect(changeLinearContactMember).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
-    await screen.findByText('Added to outreach limits.');
+    await screen.findByText('Added to the do-not-contact list.');
     expect(changeLinearContactMember).toHaveBeenCalledExactlyOnceWith(org, alexId, 'add');
     expect(changeContactMember).not.toHaveBeenCalled();
   });
@@ -272,7 +275,7 @@ describe('Outreach limits page · Linear', () => {
     expect(fetchLinearContactDirectory).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: `Remove ${savedId}` }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
-    await screen.findByText('Removed from outreach limits.');
+    await screen.findByText('Removed from the do-not-contact list.');
     expect(changeLinearContactMember).toHaveBeenCalledExactlyOnceWith(org, savedId, 'remove');
     await waitFor(() => expect(screen.queryByRole('button', { name: `Remove ${savedId}` })).toBeNull());
   });

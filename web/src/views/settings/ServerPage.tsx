@@ -124,7 +124,7 @@ export default function ServerPage() {
                 </div>
               </MetaRow>
               {info && (
-                <MetaRow label="Directory">
+                <MetaRow label="Home">
                   <div
                     className="min-w-0 break-all font-mono text-[12px] text-text"
                     title={info.animaHome}

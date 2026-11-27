@@ -294,7 +294,7 @@ export function ProviderUnit({
                 </label>
                 <div className="flex items-start justify-between gap-3">
                   <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
-                    Applies to all agents using this provider. Enter a command name or full path, with one argument per line (spaces are kept as-is).
+                    Applies to agents using this provider that don’t set their own command. Command: a name or full path. Arguments: one per line, passed as-is (no shell).
                   </p>
                   <button
                     type="submit"

@@ -256,7 +256,7 @@ export default function ProvidersPage() {
       <div className="py-5">
         {usageData?.providers.some((row) => row.connection) && (
           <p className="mb-5 font-sans text-[11px] leading-relaxed text-text-subtle">
-            Shows machine defaults; individual agents or custom commands may differ. “Configured” means credentials were found, not verified.
+            Shows machine defaults; individual agents or custom commands may differ. “Configured” means a credential or helper is set up; it isn’t tested.
           </p>
         )}
               {usageLoading || cliLoading ? (

@@ -163,9 +163,10 @@ export async function checkRuntimeUpgrade(): Promise<RuntimeUpgradeStatusRespons
 }
 
 /**
- * Apply errors carry the HTTP status so the UI can distinguish the gate race
- * (409 — an agent started working between status and click) and unavailable
- * (503) from generic failures, without re-deriving from the message string.
+ * Apply errors carry the HTTP status so the UI can distinguish a concurrent
+ * update conflict (409 — an update is already scheduled or running) and
+ * unavailable (503) from generic failures, without re-deriving from the
+ * message string.
  */
 export class RuntimeUpgradeApplyError extends Error {
   readonly status: number;

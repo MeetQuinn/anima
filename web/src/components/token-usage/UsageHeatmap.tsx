@@ -263,8 +263,12 @@ export function peakUsageDay(days: AgentTokenUsageDay[]): AgentTokenUsageDay | u
   );
 }
 
-export function formatUsageDate(date: string): string {
-  return parseLocalDate(date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+export function formatUsageDate(date: string, options?: { includeYear?: boolean }): string {
+  return parseLocalDate(date).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(options?.includeYear ? { year: 'numeric' } : {}),
+  });
 }
 
 function usageLevel(value: number, cuts: [number, number, number]): 0 | 1 | 2 | 3 | 4 {

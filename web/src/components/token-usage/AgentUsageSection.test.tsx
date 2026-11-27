@@ -93,16 +93,19 @@ describe('AgentUsageSection', () => {
     expect(screen.getByText('Provider-reported totals only. Output includes reasoning tokens.')).toBeTruthy();
   });
 
-  it('shows formatted Exact since once in the header when coverage started before the 52-week range', async () => {
+  it('shows formatted Exact since with the year once in the header when coverage started before the 52-week range', async () => {
     api.fetchAgentTokenUsage.mockResolvedValueOnce(reportWithCoverage('2025-01-15T12:00:00.000Z'));
     renderSection();
     expect(await screen.findByText('Tokens · Past 52 weeks')).toBeTruthy();
-    expect(screen.getAllByText(/^Exact since /)).toHaveLength(1);
+    const notes = screen.getAllByText(/^Exact since /);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.textContent).toContain('2025');
+    expect(notes[0]?.textContent).not.toContain('2025-01-15');
   });
 
   it('explains when exact tracking will begin if coverage has not started yet', async () => {
     api.fetchAgentTokenUsage.mockResolvedValueOnce(reportWithCoverage(undefined));
     renderSection();
-    expect(await screen.findByText('Exact tracking begins when this agent next restarts.')).toBeTruthy();
+    expect(await screen.findByText('Exact tracking begins the next time this agent starts.')).toBeTruthy();
   });
 });

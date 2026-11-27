@@ -112,7 +112,7 @@ export default function UpdateAnimaButton() {
         <ProgressOverlay
           above
           title={`Installing ${inProgressTarget ?? availableTarget}…`}
-          body="Anima keeps running during install, then pauses working agents to restart. The dashboard reloads automatically when Anima is back."
+          body="Anima keeps running while the update installs, then asks working agents to pause and restarts. The dashboard reloads automatically when Anima is back."
         />
       )}
     </div>
