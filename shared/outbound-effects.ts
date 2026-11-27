@@ -50,21 +50,6 @@ export function isHeldSendStatus(status: unknown): boolean {
   return status === 'held';
 }
 
-/**
- * Activity-tab copy for a held send. The delta is always conversation messages
- * that arrived while composing — never "files arrived" even when the held tool
- * was file send. "Nothing was sent" covers message/ask/file neutrally.
- */
-export function heldSendActivityCopy(input: { deltaCount?: unknown }): string {
-  const raw = input.deltaCount;
-  const n =
-    typeof raw === 'number' && Number.isFinite(raw)
-      ? Math.max(0, Math.floor(raw))
-      : 0;
-  const noun = n === 1 ? 'message' : 'messages';
-  return `Send held: ${n} new ${noun} arrived while composing; nothing was sent.`;
-}
-
 export function classifyOutboundEffect(input: {
   effect?: string | undefined;
   /** When `held`, never classifies as an outbound post (ledger / feed). */
