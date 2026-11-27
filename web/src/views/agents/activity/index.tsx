@@ -456,7 +456,7 @@ function FeishuHelloBanner({ onDismiss }: { onDismiss: () => void }) {
   return (
     <div className="flex shrink-0 items-start gap-3 border-b border-border-soft bg-accent-soft/40 px-4 py-3 md:px-10">
       <p className="flex-1 font-serif text-[13px] leading-snug text-text">
-        Feishu connected. Your agent will say hi in a moment.
+        Feishu connected. Your agent will say hi in Feishu in a moment.
       </p>
       <button
         type="button"
@@ -489,7 +489,8 @@ function FeishuRecommendedPermissionsConnectBanner({
       <div className="min-w-0 flex-1">
         <p className="font-serif text-[13px] leading-snug text-text">
           Messaging is ready. Optionally authorize extra Feishu permissions for teammate names,
-          group chats, member lookup, and Drive docs.
+          group messages and invites, finding people by email or phone, and Feishu Drive and cloud
+          docs.
         </p>
         {links.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">

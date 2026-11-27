@@ -472,8 +472,8 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 value={filterQuery}
                 onChange={(e) => setFilterQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Escape' && setFilterQuery('')}
-                placeholder="Search files…"
-                aria-label="Search files"
+                placeholder="Search file names…"
+                aria-label="Search file names"
                 className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text placeholder:text-text-subtle outline-none"
               />
               {filterQuery && (
@@ -564,7 +564,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 )}
                 {searchResult.data.truncated && (
                   <div className="px-4 py-3 font-sans text-[11px] text-text-subtle">
-                    Showing partial results. Try a more specific search.
+                    Showing partial results. Some matches may be missing.
                   </div>
                 )}
               </>
@@ -641,11 +641,13 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
             <div className="flex h-full flex-col items-start justify-start p-8">
               <div className="font-sans text-[13px] text-text-subtle">Loading…</div>
             </div>
-          ) : rootEntries.length > 0 && !treeError ? (
+          ) : !treeError ? (
             /* Minimal fallback when no README exists */
             <div className="flex h-full flex-col items-start justify-start p-8">
               <div className="font-sans text-[13px] text-text-muted">
-                Select a file to preview
+                {rootEntries.length > 0
+                  ? 'Select a file to preview'
+                  : 'This knowledge base is empty. Files added to its folder appear here.'}
               </div>
             </div>
           ) : null}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { activityRow, isNarrativeStep } from './activities';
+import { activityRow, heldSendDetail, isNarrativeStep } from './activities';
 import { buildActivityFeed } from './activity-feed';
 import type { Activity } from '@shared/activity';
 
@@ -20,13 +20,13 @@ describe('activityRow', () => {
   it('renders the exact do-not-contact refusal title and full agent-facing body', () => {
     const error = "Not sent. Jialin (U0AAAA) is on this workspace's do-not-contact list: they asked never to receive messages from agents. Do not DM or @mention them, do not try another agent or channel to reach them. If something needs to reach them, hand it to your human owner.";
     const row = activityRow(activity({ tool: 'anima.message.send', failureKind: 'do-not-contact', error }, 'tool.call.failed'));
-    expect(row.title).toBe('Send refused: outreach limits');
+    expect(row.title).toBe('Send refused: do-not-contact list');
     expect(row.target).toBe(error);
     expect(row.kind).toBe('failure');
   });
   it.each([
     ['contact-unverified', 'Send held: recipient could not be verified'],
-    ['contact-policy-config', 'Send refused: invalid outreach limits'],
+    ['contact-policy-config', 'Send refused: invalid do-not-contact settings'],
   ])('does not label %s failures as a do-not-contact list match', (failureKind, title) => {
     const error = 'Not sent. Could not verify the DM recipient for D0TRUNCATED.';
     const row = activityRow(activity({ tool: 'anima.message.send', failureKind, error }, 'tool.call.failed'));
@@ -123,7 +123,7 @@ describe('activityRow', () => {
         tool: 'anima.reminder.preflight',
       },
       {
-        title: 'Reminder check skipped',
+        title: 'Reminder skipped: condition not met',
         target: 'Usage check · 12ms · exit 1',
         color: 'var(--color-activity-reminder)',
         kind: 'lifecycle',
@@ -456,8 +456,40 @@ describe('activityRow', () => {
       optionLabels: ['Yes', 'No'],
       question: 'Ship it?',
     }, 'external.effect.completed'))).toMatchObject({
-      title: 'Asked channel',
+      title: 'Asked anyone',
       target: '"Ship it?" · [Yes / No]',
+    });
+  });
+
+  it('formats held send detail directly without duplicate prefix and keeps nothing-sent clause', () => {
+    expect(heldSendDetail(1)).toBe('1 new message arrived while composing; nothing was sent.');
+    expect(heldSendDetail(2)).toBe('2 new messages arrived while composing; nothing was sent.');
+    expect(heldSendDetail(2.9)).toBe('2 new messages arrived while composing; nothing was sent.');
+    expect(heldSendDetail(-3)).toBe('0 new messages arrived while composing; nothing was sent.');
+    expect(heldSendDetail(undefined)).toBe('0 new messages arrived while composing; nothing was sent.');
+    expect(activityRow(activity({
+      deltaCount: 1,
+      status: 'held',
+      tool: 'anima.message.send',
+    }, 'tool.call.completed'))).toMatchObject({
+      title: 'Send held',
+      target: '1 new message arrived while composing; nothing was sent.',
+      kind: 'tool',
+    });
+  });
+
+  it.each([
+    ['shutdown', {}, { title: 'Stopped when Anima shut down', target: undefined }],
+    ['user_stop', {}, { title: 'Stopped by user', target: undefined }],
+    ['operator_restart', {}, { title: 'Restarted by operator', target: undefined }],
+    ['idle_timeout', {}, { title: 'Timed out', target: 'No provider activity' }],
+    ['idle_timeout', { timeoutMs: 300_000 }, { title: 'Timed out', target: '5m with no provider activity' }],
+    ['stalled', { timeoutMs: 120_000 }, { title: 'Stopped to answer messages', target: '2m with no provider activity' }],
+    ['other', {}, { title: 'Agent stopped', target: undefined }],
+  ])('maps runtime.aborted reason %s to accurate lifecycle copy', (reason, extra, expected) => {
+    expect(activityRow(activity({ reason, ...extra }, 'runtime.aborted'))).toMatchObject({
+      ...expected,
+      kind: 'lifecycle',
     });
   });
 });
@@ -489,9 +521,9 @@ describe('Linear API tool steps', () => {
   });
 
   it.each([
-    ['do-not-contact', 'Send refused: outreach limits'],
+    ['do-not-contact', 'Send refused: do-not-contact list'],
     ['contact-unverified', 'Send held: recipient could not be verified'],
-    ['contact-policy-config', 'Send refused: invalid outreach limits'],
+    ['contact-policy-config', 'Send refused: invalid do-not-contact settings'],
   ])('shows a %s refusal of a Linear write as a refusal, not an unknown outcome', (failureKind, title) => {
     const error = "Not sent. nicholas (5c87ef88-14cd-402e-bd67-f4718e3d8848) is on this Linear workspace's do-not-contact list.";
     for (const tool of ['anima.linear.api', 'anima.linear.reply', 'anima.linear.start']) {

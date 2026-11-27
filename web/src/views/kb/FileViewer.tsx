@@ -694,7 +694,7 @@ export function FileContent({
           rel="noreferrer"
           className="text-accent underline underline-offset-2"
         >
-          Open in new tab
+          Open raw file
         </a>
       </div>
     );
@@ -710,7 +710,7 @@ export function FileContent({
           rel="noreferrer"
           className="text-accent underline underline-offset-2"
         >
-          Open in new tab
+          Download
         </a>
       </div>
     );

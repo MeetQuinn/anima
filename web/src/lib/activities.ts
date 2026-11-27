@@ -7,10 +7,7 @@ import { formatTimeShort, formatTokens } from './format';
 import type { Activity as ActivityRecord } from '@shared/activity';
 import { LINEAR_ISSUE_KEY } from '@shared/linear-issue-key';
 import { LinearApiSummary } from '@shared/linear-api-summary';
-import {
-  classifyOutboundEffect,
-  heldSendActivityCopy,
-} from '@shared/outbound-effects';
+import { classifyOutboundEffect } from '@shared/outbound-effects';
 
 type ActivityKind = 'tool' | 'lifecycle' | 'failure' | 'output' | 'unknown';
 
@@ -177,7 +174,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const err = pickString(payload, ['summary', 'text', 'error']);
     if (payload['failureKind'] === 'do-not-contact') {
       return {
-        title: 'Send refused: outreach limits',
+        title: 'Send refused: do-not-contact list',
         target: err,
         color: COLOR_FAILURE,
         kind: 'failure',
@@ -193,7 +190,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     }
     if (payload['failureKind'] === 'contact-policy-config') {
       return {
-        title: 'Send refused: invalid outreach limits',
+        title: 'Send refused: invalid do-not-contact settings',
         target: err,
         color: COLOR_FAILURE,
         kind: 'failure',
@@ -380,7 +377,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const title = status === 'succeeded'
       ? 'Reminder check passed'
       : status === 'declined'
-        ? 'Reminder check skipped'
+        ? 'Reminder skipped: condition not met'
         : 'Reminder check failed';
     const durationMs = typeof payload['durationMs'] === 'number' ? payload['durationMs'] : undefined;
     const name = reminderName(payload);
@@ -477,11 +474,11 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const reason = pickString(payload, ['reason']);
     const title =
       reason === 'shutdown'
-        ? 'Agent restarted'
+        ? 'Stopped when Anima shut down'
         : reason === 'user_stop'
-          ? 'Stopped'
+          ? 'Stopped by user'
           : reason === 'operator_restart'
-            ? 'Restarted'
+            ? 'Restarted by operator'
             : reason === 'idle_timeout'
               ? 'Timed out'
               : reason === 'stalled'
@@ -533,7 +530,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (activity.type === 'external.effect.completed') {
     if (String(payload['effect'] ?? '').toLowerCase() === 'slack.ask.post') {
       const audience = pickString(payload, ['allowedUserLabel']);
-      const title = payload['allowAnyone'] === true ? 'Asked channel' : audience ? `Asked ${audience}` : 'Asked';
+      const title = payload['allowAnyone'] === true ? 'Asked anyone' : audience ? `Asked ${audience}` : 'Asked';
       return {
         title,
         ...truncatedTarget(askActivityTarget(payload), 220),
@@ -1006,9 +1003,9 @@ function planStatusLabel(status: string): string {
 function idleTimeoutTarget(payload: Record<string, unknown>): string {
   const timeoutMs = payload['timeoutMs'];
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return 'No response from model';
+    return 'No provider activity';
   }
-  return `${formatDurationMinutes(timeoutMs)} with no model response`;
+  return `${formatDurationMinutes(timeoutMs)} with no provider activity`;
 }
 
 function formatDurationMinutes(ms: number): string {
@@ -1066,10 +1063,13 @@ function askActivityTarget(payload: Record<string, unknown>): string {
   return [quotedQuestion, options].filter(Boolean).join(' · ');
 }
 
-export function heldSendDetail(deltaCount: unknown): string {
-  return heldSendActivityCopy({ deltaCount })
-    .replace(/^Send held:\s*/i, '')
-    .replace(/;\s*nothing was sent\.?$/i, '');
+export function heldSendDetail(rawDelta: unknown): string {
+  const n =
+    typeof rawDelta === 'number' && Number.isFinite(rawDelta)
+      ? Math.max(0, Math.floor(rawDelta))
+      : 0;
+  const noun = n === 1 ? 'message' : 'messages';
+  return `${n} new ${noun} arrived while composing; nothing was sent.`;
 }
 
 // Short, scannable wake-time format for the audit register.

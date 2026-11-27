@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchKb, fetchKbDirectory } from '@/api/kb';
+import { fetchKb, fetchKbDirectory, searchKb } from '@/api/kb';
 import type { KbTreeNode } from '@shared/kb';
 import { CodeView } from './CodeView';
 import { TreeSummary } from './FileTree';
@@ -23,6 +23,7 @@ vi.mock('@/api/kb', async (importOriginal) => {
 
 const mockedFetchKb = vi.mocked(fetchKb);
 const mockedFetchKbDirectory = vi.mocked(fetchKbDirectory);
+const mockedSearchKb = vi.mocked(searchKb);
 
 function renderKb(id: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -56,13 +57,16 @@ afterEach(() => {
 });
 
 describe('KB copy and empty-state regressions', () => {
-  it('omits the Select a file prompt when the KB is empty or errored, and shows it when non-empty', async () => {
+  it('shows empty KB guidance, omits right-pane prompt on error, and prompts to select when non-empty', async () => {
     const kb = { id: 'empty-kb', label: 'Team KB', teamId: 'default' };
     mockedFetchKb.mockResolvedValue(kb);
     mockedFetchKbDirectory.mockResolvedValue({ kb, path: '', entries: [] });
 
     renderKb('empty-kb');
     expect(await screen.findByText('No files')).toBeTruthy();
+    expect(
+      screen.getByText('This knowledge base is empty. Files added to its folder appear here.'),
+    ).toBeTruthy();
     expect(screen.queryByText(/Select a file/i)).toBeNull();
 
     cleanup();
@@ -70,6 +74,7 @@ describe('KB copy and empty-state regressions', () => {
     renderKb('errored-kb');
     expect(await screen.findByText('disk error')).toBeTruthy();
     expect(screen.queryByText(/Select a file/i)).toBeNull();
+    expect(screen.queryByText(/This knowledge base is empty/i)).toBeNull();
 
     cleanup();
     mockedFetchKbDirectory.mockResolvedValue({
@@ -79,6 +84,32 @@ describe('KB copy and empty-state regressions', () => {
     });
     renderKb('filled-kb');
     expect(await screen.findByText('Select a file to preview')).toBeTruthy();
+  });
+
+  it('labels KB search input for file names and states partial search results accurately', async () => {
+    const kb = { id: 'search-kb', label: 'Team KB', teamId: 'default' };
+    mockedFetchKb.mockResolvedValue(kb);
+    mockedFetchKbDirectory.mockResolvedValue({
+      kb,
+      path: '',
+      entries: [{ name: 'notes.md', path: 'notes.md', type: 'file' }],
+    });
+    mockedSearchKb.mockResolvedValue({
+      kb,
+      query: 'note',
+      matches: [{ name: 'notes.md', path: 'notes.md', type: 'file' }],
+      scanned: 500,
+      truncated: true,
+    });
+
+    renderKb('search-kb');
+    const input = await screen.findByRole('textbox', { name: 'Search file names' });
+    expect(input.getAttribute('placeholder')).toBe('Search file names…');
+
+    fireEvent.change(input, { target: { value: 'note' } });
+    expect(
+      await screen.findByText('Showing partial results. Some matches may be missing.'),
+    ).toBeTruthy();
   });
 
   it.each([
@@ -104,7 +135,7 @@ describe('KB copy and empty-state regressions', () => {
     expect(screen.queryByText(/Open full page/i)).toBeNull();
   });
 
-  it('uses plain preview copy for binary and truncated files', () => {
+  it('uses accurate action labels for binary and truncated files', () => {
     const { rerender } = render(
       <MemoryRouter>
         <FileContent
@@ -119,7 +150,7 @@ describe('KB copy and empty-state regressions', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText(/This file can’t be previewed \(1\.0 KB\)\./)).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open in new tab' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Download' })).toBeTruthy();
 
     rerender(
       <MemoryRouter>
@@ -135,7 +166,7 @@ describe('KB copy and empty-state regressions', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText(/This file is too large to preview \(2\.0 KB\)\./)).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open in new tab' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open raw file' })).toBeTruthy();
   });
 
   it('omits zero counts in TreeSummary', () => {

@@ -123,7 +123,8 @@ describe('Activity ImageLightbox focus contract', () => {
       />,
     );
     const chip = screen.getByText('spec.pdf').closest('span[title]');
-    expect(chip?.getAttribute('title')).toBe('application/pdf · 1.0 KB · Not downloaded locally');
+    expect(chip?.getAttribute('title')).toBe('application/pdf · 1.0 KB');
+    expect(chip?.getAttribute('title')).not.toContain('Not downloaded locally');
     expect(chip?.getAttribute('title')).not.toContain('`');
   });
 });

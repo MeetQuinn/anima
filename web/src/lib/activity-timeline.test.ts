@@ -132,7 +132,7 @@ describe('activity timeline builders', () => {
     const held = items[1];
     if (held?.kind !== 'system-event') throw new Error('expected held system-event');
     expect(held.eventKind).toBe('held');
-    expect(held.body).toBe('2 new messages arrived while composing');
+    expect(held.body).toBe('2 new messages arrived while composing; nothing was sent.');
   });
 
   it('places Linear writes in the conversation as agent rows, between the messages around them', () => {

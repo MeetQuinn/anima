@@ -70,7 +70,7 @@ export function MessageOutRow({
     ? threaded
       ? 'Edited message in thread'
       : dmTarget
-        ? `Edited message to ${dmTarget}`
+        ? `Edited DM to ${dmTarget}`
         : 'Edited message'
     : threaded
       ? 'Replied in thread'

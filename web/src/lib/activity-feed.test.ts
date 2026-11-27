@@ -413,10 +413,10 @@ describe('buildActivityFeed', () => {
     );
     expect(heldRows.every((row) => row.eventKind === 'held')).toBe(true);
     expect(heldRows.map((row) => row.body)).toEqual([
-      '1 new message arrived while composing',
-      '2 new messages arrived while composing',
+      '1 new message arrived while composing; nothing was sent.',
+      '2 new messages arrived while composing; nothing was sent.',
       // File hold: delta is still conversation messages that arrived.
-      '1 new message arrived while composing',
+      '1 new message arrived while composing; nothing was sent.',
     ]);
     expect(heldRows.every((row) => row.label === 'Send held')).toBe(true);
     // Never misrender as outbound message/file/ask rows.
@@ -429,7 +429,7 @@ describe('buildActivityFeed', () => {
         kind: 'system-event',
         eventKind: 'held',
         label: 'Send held',
-        body: '3 new messages arrived while composing',
+        body: '3 new messages arrived while composing; nothing was sent.',
         timestamp: '2026-07-04T14:00:04.000Z',
       },
     ]);

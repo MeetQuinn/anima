@@ -53,7 +53,17 @@ describe('Linear issue links', () => {
     const { rerender } = render(
       <MessageOutRow item={{ ...base, isEdit: true, surface: { kind: 'dm', label: '@alice' } }} time="08:00" />,
     );
-    expect(screen.getByText('Edited message to alice')).toBeTruthy();
+    expect(screen.getByText('Edited DM to alice')).toBeTruthy();
+
+    rerender(
+      <MessageOutRow item={{ ...base, isEdit: true, surface: { kind: 'dm', label: 'Feishu DM' } }} time="08:00" />,
+    );
+    expect(screen.getByText('Edited message')).toBeTruthy();
+
+    rerender(
+      <MessageOutRow item={{ ...base, isEdit: true, surface: { kind: 'thread', label: '#ops' } }} time="08:00" />,
+    );
+    expect(screen.getByText('Edited message in thread')).toBeTruthy();
 
     rerender(
       <MessageOutRow item={{ ...base, isEdit: false, surface: { kind: 'dm', label: 'Feishu DM' } }} time="08:00" />,

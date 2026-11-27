@@ -92,7 +92,7 @@ export function AttachedFile({ file, agentId }: { file: SlackFile; agentId: stri
   return (
     <span
       className="inline-flex max-w-full items-center gap-1.5 rounded-sm border border-border-soft bg-surface-raised px-2 py-1 font-sans text-[11px] text-text-subtle"
-      title={`${file.mimetype} · ${formatBytes(file.sizeBytes)} · Not downloaded locally`}
+      title={`${file.mimetype} · ${formatBytes(file.sizeBytes)}`}
     >
       {Inner}
     </span>
