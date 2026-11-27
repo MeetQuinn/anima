@@ -201,7 +201,7 @@ export function ConnectionDialog({
             type="button"
             onClick={onClose}
             disabled={busy}
-            aria-label={`Close ${platform} settings`}
+            aria-label={`Close ${platform}`}
             className="-mr-2 flex size-11 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-40 md:size-8"
           >
             <X className="size-4" />

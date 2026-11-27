@@ -27,6 +27,7 @@ import {
   providerModelAuthorityLabel,
   providerReady,
   providerUnavailableHint,
+  providerUnavailableLabel,
   unavailableProviderHints,
 } from '@/lib/provider-availability';
 import { providerLabelList, providerValueLabel } from '@/lib/provider-display';
@@ -188,7 +189,6 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
   // Display helpers — Base UI SelectValue shows raw value before items register;
   // use render-prop form to always resolve a human label.
   const displayProvider = (v: string) => providerOptions.find((r) => r.kind === v)?.label ?? v;
-  const displayEffort = (v: string) => (v === 'xhigh' ? 'Extra High' : v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
   const currentProvider = providerOptions.find((o) => o.kind === providerKind);
   // A live model list can arrive after the pick: keep the pick while it is listed,
   // else the provider's default. The effort follows the same rule for its menu.
@@ -315,7 +315,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
       queryClient.setQueryData(queryKeys.workspacePlatform(), savedPlatform);
       setStep('agent');
     } catch (err) {
-      setPlatformError(err instanceof Error ? err.message : 'Failed to save workspace platform');
+      setPlatformError(err instanceof Error ? err.message : 'Could not save platform');
     } finally {
       setPlatformSaving(false);
     }
@@ -497,19 +497,17 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
       : step === 'agent'
         ? 'Create your agent'
         : step === 'connect'
-          ? workspacePlatform === 'feishu'
-            ? 'Create Feishu bot'
-            : `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}`
+          ? `Connect to ${WORKSPACE_PLATFORM_LABELS[workspacePlatform]}`
           : step === 'permissions'
-            ? 'Authorize Feishu permissions'
+            ? 'Grant Feishu permissions'
             : 'Pick an owner';
   const createDisabledReason = (() => {
     if (effectiveCreating) return undefined;
     if (!derivedId) return 'Enter a name';
     if (!role.trim()) return 'Enter a role';
     if (providerAvailabilityError) return 'Provider check failed';
-    if (providerCheckPending) return 'Checking providers...';
-    if (!selectedProviderReady) return 'Install a provider first';
+    if (providerCheckPending) return 'Checking providers…';
+    if (!selectedProviderReady) return 'Set up a provider first';
     return undefined;
   })();
   const createButtonLabel = effectiveCreating
@@ -685,11 +683,13 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                     </SelectTrigger>
                     <SelectContent>
                       {providerOptions.map((r) => {
-                        const hint = providerUnavailableHint(r, providerAvailability);
+                        const unavailableLabel = providerAvailability
+                          ? providerUnavailableLabel(r, providerAvailability)
+                          : undefined;
                         return (
-                          <SelectItem key={r.kind} value={r.kind} disabled={!!hint}>
+                          <SelectItem key={r.kind} value={r.kind} disabled={Boolean(unavailableLabel)}>
                             {r.label}
-                            {hint ? `: ${hint}` : ''}
+                            {unavailableLabel ? ` · ${unavailableLabel}` : ''}
                           </SelectItem>
                         );
                       })}
@@ -727,12 +727,12 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                       }}
                     >
                       <SelectTrigger className="!h-[44px] w-full font-sans text-[13px] md:!h-10">
-                        <SelectValue>{(v: string) => displayEffort(v)}</SelectValue>
+                        <SelectValue>{(v: string) => providerValueLabel(v)}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {selectedEffortOptions.map((e) => (
                           <SelectItem key={e} value={e}>
-                            {displayEffort(e)}
+                            {providerValueLabel(e)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -747,7 +747,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                 <p className="font-sans mt-1 text-[10px] text-text-subtle">{selectedProviderAuthority}</p>
               )}
               {providerCheckPending && (
-                <p className="font-sans mt-1 text-[11px] text-text-subtle">Checking installed provider CLIs...</p>
+                <p className="font-sans mt-1 text-[11px] text-text-subtle">Checking providers…</p>
               )}
               {providerAvailabilityError && (
                 <p className="font-sans mt-1 text-[11px] text-health-error">
@@ -772,7 +772,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                   className="font-sans flex items-center gap-1 text-[12px] text-text-muted hover:text-text transition-colors"
                 >
                   {homeExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                  Where it lives
+                  Home folder
                 </button>
 
                 {homeExpanded && (
@@ -780,12 +780,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="font-mono text-[13px] text-text break-all">{homePath}</div>
-                        <div className="font-sans mt-0.5 text-[11px] text-text-subtle">
-                          Will be created automatically
-                        </div>
-                        <p className="font-sans mt-2 text-[12px] text-text-muted">
-                          Your agent's memory lives here, in its own{' '}
-                          <strong className="font-semibold text-text">home folder</strong> under the team's folder.
+                        <p className="font-sans mt-1.5 text-[12px] text-text-muted">
+                          Created automatically for this agent's memory and files.
                         </p>
                       </div>
                       <button
@@ -793,7 +789,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                         onClick={() => setShowPicker(true)}
                         className="font-sans shrink-0 text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 hover:text-text hover:decoration-text/40 transition-colors"
                       >
-                        Change…
+                        Change
                       </button>
                     </div>
                     {customParent && (
@@ -859,8 +855,8 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
             agentId={createdAgentId}
             onConfirm={handleOwnerComplete}
             onSkip={handleOwnerComplete}
-            submitLabel="Start onboarding →"
-            skipLabel="Start without owner →"
+            submitLabel="Assign & finish →"
+            skipLabel="Skip for now →"
             showRationale
           />
         </div>
@@ -890,7 +886,7 @@ export function AgentCreateFlow({ firstRun, onClose, onComplete, teams, defaultT
                 <span className="font-serif text-[34px] font-semibold leading-none text-text">Anima</span>
               </div>
               <p className="animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 delay-75 motion-reduce:animate-none mt-4 max-w-sm text-balance font-serif text-[15px] leading-relaxed text-text-muted">
-                AI teammates in your chat, building shared team context.
+                AI teammates in your chat.
               </p>
 
               {/* Clear boundary: the brand arrival above, the actual choice

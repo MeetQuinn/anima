@@ -151,7 +151,7 @@ describe('Team dialog + home-folder picker — focus contract', () => {
 
   it('names itself with its heading and describes itself with the copy that carries the decision', () => {
     // Edit mode, because that is where the description is load-bearing: the
-    // sentence that says a rename does not touch existing agents. Both ids are
+    // hint that says existing agents stay in their current folders. Both ids are
     // resolved through the DOM rather than read back as strings — an
     // `aria-labelledby` pointing at nothing passes a string check and announces
     // nothing.
@@ -162,7 +162,7 @@ describe('Team dialog + home-folder picker — focus contract', () => {
     const describedBy = dialog.getAttribute('aria-describedby');
     expect(describedBy).toBeTruthy();
     const description = document.getElementById(describedBy!);
-    expect(description?.textContent).toContain("won't affect existing agents");
+    expect(description?.textContent).toContain('Existing agents stay in their current folders.');
   });
 
   it('moves focus into the picker, which has no safe control of its own', () => {

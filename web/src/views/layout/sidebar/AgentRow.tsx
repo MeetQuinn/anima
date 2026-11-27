@@ -27,17 +27,19 @@ export function sidebarDotTitle(
   workState: AgentDisplayState,
   backgroundTaskCount?: number,
 ): string {
-  if (!health || health.state === 'unknown') return 'health unavailable';
-  if (health.state === 'starting') return 'starting';
-  if (health.state === 'degraded') return 'retrying';
-  if (health.state === 'unhealthy') return 'needs attention';
+  if (!health || health.state === 'unknown') return 'Health unavailable';
+  if (health.state === 'starting') return 'Starting';
+  if (health.state === 'degraded') return 'Retrying';
+  if (health.state === 'unhealthy') return 'Needs attention';
   if (workState === 'working' && backgroundTaskCount) {
-    return `working · background ${backgroundTaskCount}`;
+    return `Working · ${backgroundTaskCount} in background`;
   }
   if (workState === 'background') {
-    return backgroundTaskCount ? `background · ${backgroundTaskCount}` : 'background';
+    return backgroundTaskCount ? `${backgroundTaskCount} in background` : 'Running in background';
   }
-  return workState;
+  if (workState === 'working') return 'Working';
+  if (workState === 'queued') return 'Queued';
+  return 'Idle';
 }
 
 export function sidebarUsesBackgroundRing(
@@ -186,7 +188,7 @@ export function AgentRow({
                   // OFF badge: pill with background so it reads as a status chip, not bare text
                   <span
                     className="font-sans shrink-0 rounded-sm border border-text-on-spine-subtle/40 bg-text-on-spine-subtle/10 px-1 py-0.5 text-[9px] uppercase tracking-[0.08em] text-text-on-spine-subtle"
-                    title="disabled by user"
+                    title="Disabled"
                   >
                     Off
                   </span>

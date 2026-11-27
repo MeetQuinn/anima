@@ -45,15 +45,15 @@ describe('AgentRow provider work status', () => {
       />,
     );
 
-    const background = view.container.querySelector<HTMLElement>('[title="background · 2"]');
+    const background = view.container.querySelector<HTMLElement>('[title="2 in background"]');
     expect(background).toBeTruthy();
     expect(background?.classList.contains('border-2')).toBe(true);
     expect(background?.classList.contains('bg-transparent')).toBe(true);
     expect(background?.style.borderColor).toBe('var(--color-health-warn)');
     expect(view.container.querySelector('.anima-dot-halo')).toBeNull();
-    expect(screen.getByRole('button', { name: /Milo.*background · 2/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Milo.*2 in background/ })).toBeTruthy();
     // Exact: the avatar initial is decorative and must not lead the name.
-    expect(screen.getByRole('button', { name: 'Milo background · 2' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Milo 2 in background' })).toBeTruthy();
 
     view.rerender(
       <AgentRow
@@ -66,10 +66,10 @@ describe('AgentRow provider work status', () => {
       />,
     );
 
-    expect(view.container.querySelector('[title="working · background 2"]')).toBeTruthy();
+    expect(view.container.querySelector('[title="Working · 2 in background"]')).toBeTruthy();
     expect(view.container.querySelector('.anima-dot-halo')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Milo.*working · background 2/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Milo working · background 2' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Milo.*Working · 2 in background/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Milo Working · 2 in background' })).toBeTruthy();
   });
 
   it('pins Background to warn and Queued to idle colors', () => {
@@ -95,7 +95,7 @@ describe('AgentRow provider work status', () => {
         status={unhealthyStatus}
       />,
     );
-    const unhealthy = view.container.querySelector<HTMLElement>('[title="needs attention"]');
+    const unhealthy = view.container.querySelector<HTMLElement>('[title="Needs attention"]');
     expect(unhealthy?.classList.contains('border-2')).toBe(false);
     expect(unhealthy?.style.background).toBe('var(--color-health-error)');
   });
@@ -124,10 +124,10 @@ describe('AgentRow provider work status', () => {
       );
       // Health owns the shape: a solid error dot, no halo and no ring.
       expect(view.container.querySelector('.anima-dot-halo')).toBeNull();
-      const dot = view.container.querySelector<HTMLElement>('[title="needs attention"]');
+      const dot = view.container.querySelector<HTMLElement>('[title="Needs attention"]');
       expect(dot?.classList.contains('border-2')).toBe(false);
       expect(dot?.style.background).toBe('var(--color-health-error)');
-      expect(screen.getByRole('button', { name: /Milo.*needs attention/ })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Milo.*Needs attention/ })).toBeTruthy();
       view.unmount();
     }
   });
@@ -144,7 +144,7 @@ describe('AgentRow Slack connection', () => {
     const view = render(<AgentRow {...props} />);
     expect(screen.getByText('Slack reconnecting')).toBeTruthy();
     expect(view.container.querySelector('.anima-dot-halo')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Milo.*working.*Slack reconnecting/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Milo.*Working.*Slack reconnecting/ })).toBeTruthy();
     status.health!.runtime!.transports!.slack!.state = 'connected';
     view.rerender(<AgentRow {...props} />);
     expect(screen.queryByText('Slack reconnecting')).toBeNull();

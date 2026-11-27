@@ -84,7 +84,7 @@ function pending() {
   return { resolve, reject };
 }
 function expectQuiet() {
-  expect(screen.getByRole('button', { name: /^Scout,? working$/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^Scout,? Working$/ })).toBeTruthy();
   expect(screen.queryByText(/Slack (status|connected|reconnecting|disconnected)/)).toBeNull();
 }
 

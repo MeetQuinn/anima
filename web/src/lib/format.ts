@@ -150,6 +150,9 @@ export function formatRelativeShort(iso: string | undefined, now: Date): string 
   }
   const absDay = absHr / 24;
   const d = Math.round(absDay);
-  if (d < 14) return future ? `in ${d} d` : `${d} d ago`;
+  if (d < 14) {
+    const unit = d === 1 ? 'day' : 'days';
+    return future ? `in ${d} ${unit}` : `${d} ${unit} ago`;
+  }
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }

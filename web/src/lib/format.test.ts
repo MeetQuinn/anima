@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatTokens } from './format';
+import { formatRelativeShort, formatTokens } from './format';
 
 describe('formatTokens', () => {
   it('prints counts below a thousand in full', () => {
@@ -51,5 +51,17 @@ describe('formatTokens', () => {
     // Not reachable from real usage data; pinned so the promotion loop's top
     // edge is a stated choice rather than an untested branch.
     expect(formatTokens(999_500_000_000)).toBe('1000B');
+  });
+});
+
+describe('formatRelativeShort', () => {
+  const now = new Date('2026-11-27T12:00:00.000Z');
+  const shiftDays = (days: number) => new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+
+  it('pluralizes days cleanly for past and future dates under two weeks', () => {
+    expect(formatRelativeShort(shiftDays(-1), now)).toBe('1 day ago');
+    expect(formatRelativeShort(shiftDays(-3), now)).toBe('3 days ago');
+    expect(formatRelativeShort(shiftDays(1), now)).toBe('in 1 day');
+    expect(formatRelativeShort(shiftDays(3), now)).toBe('in 3 days');
   });
 });

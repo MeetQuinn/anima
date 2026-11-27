@@ -194,7 +194,7 @@ describe('Runtime modal — save/dismissal contract', () => {
     // old provider's CLI must not survive into the new kind.
     fireEvent.click(dialog.getByRole('button', { name: 'Codex' }));
     expect(dialog.queryByDisplayValue('/opt/homebrew/bin/claude-canary')).toBeNull();
-    expect(dialog.getByText(/command override below was cleared/)).toBeTruthy();
+    expect(dialog.getByText(/Previous command override was cleared/)).toBeTruthy();
 
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));
@@ -289,14 +289,9 @@ describe('Runtime modal — fast mode', () => {
     expect(box.checked).toBe(false);
     // The honest copy IS the contract (Milo's #686 gate: a wholesale rewrite
     // to "Enables fast mode…" left the suite green). Pin the two load-bearing
-    // meanings: request-not-guarantee, and org enablement + usage credits as
-    // the availability condition.
-    expect(dialog.getByText(/A request, not a guarantee/)).toBeTruthy();
-    expect(
-      dialog.getByText(
-        /unless the Anthropic organization has fast mode enabled with usage credits/,
-      ),
-    ).toBeTruthy();
+    // meanings: standard-speed fallback, and fast mode + usage credits on the
+    // Anthropic account as the availability condition.
+    expect(dialog.getByText(/Runs at standard speed unless fast mode and usage credits are enabled on your Anthropic account/)).toBeTruthy();
     fireEvent.click(box);
 
     // Toggling changes provider launch config → the restart confirm must
@@ -338,10 +333,9 @@ describe('Runtime modal — fast mode', () => {
     const dialog = openModal({ kind: 'codex-cli', model: 'gpt-6.1-sol' }, onCommit);
 
     fireEvent.click(dialog.getByRole('button', { name: 'Advanced' }));
-    expect(dialog.getByText(/Requests faster responses for supported Codex models/)).toBeTruthy();
-    expect(dialog.getByText(/2.5× subscription usage or 2× purchased credits/)).toBeTruthy();
-    expect(dialog.getByText(/API-key sessions use Priority pricing/)).toBeTruthy();
-    expect(dialog.getByText(/Availability depends on the account and model/)).toBeTruthy();
+    expect(dialog.getByText(/Available on supported models and accounts/)).toBeTruthy();
+    expect(dialog.getByText(/extra subscription quota \(2\.5×\), purchased credits \(2×\)/)).toBeTruthy();
+    expect(dialog.getByText(/Priority API pricing/)).toBeTruthy();
     fireEvent.click(dialog.getByRole('checkbox', { name: 'Request fast mode' }));
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     fireEvent.click(within(confirmDialog()).getByRole('button', { name: 'Save' }));

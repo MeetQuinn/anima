@@ -240,7 +240,7 @@ export default function MobileNavScreen({
         {/* Knowledge Base section */}
         <div className="mb-4">
           <div className="mb-2 flex items-center justify-between pl-3">
-            <span className="caps text-text-on-spine-subtle">Knowledge Base</span>
+            <span className="caps text-text-on-spine-subtle">Knowledge bases</span>
             <div className="flex items-center gap-1.5">
               <span className="font-mono text-[10px] tabular-nums text-text-on-spine-muted">
                 {orderedKbs.length}
@@ -248,8 +248,8 @@ export default function MobileNavScreen({
               <button
                 onClick={() => setShowAddKbModal(true)}
                 className="flex h-[44px] w-[44px] items-center justify-center rounded-sm text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine"
-                aria-label="Add Knowledge Base"
-                title="Add Knowledge Base"
+                aria-label="Add knowledge base"
+                title="Add knowledge base"
               >
                 <Plus className="h-3.5 w-3.5" />
               </button>
@@ -274,7 +274,7 @@ export default function MobileNavScreen({
                     className="flex items-center gap-1.5 px-2 font-sans text-[11px] text-text-on-spine-subtle hover:text-text-on-spine"
                   >
                     <Plus className="h-3 w-3" />
-                    Add Knowledge Base
+                    Add knowledge base
                   </button>
                 )}
               </div>

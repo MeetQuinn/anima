@@ -126,7 +126,7 @@ it('stays open while the new token saves, so a failed save is still shown', asyn
 
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.getByRole('dialog')).toBeTruthy();
-  expect((screen.getByRole('button', { name: 'Close Slack settings' }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole('button', { name: 'Close Slack' }) as HTMLButtonElement).disabled).toBe(true);
 
   fail(new Error('invalid_auth'));
   expect(await within(screen.getByRole('dialog')).findByText('invalid_auth')).toBeTruthy();

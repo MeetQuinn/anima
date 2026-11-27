@@ -10,25 +10,25 @@ const RECOVERED_ACK_MS = 2_500;
 export function agentHealthReasonText(reason: AgentHealthReason | undefined): string {
   switch (reason) {
     case 'provider_child_missing':
-      return "This agent couldn't reconnect to its model. Restart the agent.";
+      return "This agent couldn't reconnect to its provider. Restart the agent.";
     case 'provider_child_exited':
-      return "This agent's model stopped unexpectedly. Restart the agent.";
+      return "This agent's provider stopped unexpectedly. Restart the agent.";
     case 'provider_auth_failed':
-      return "This agent can't reach its model. Check the model sign-in or API key in its provider settings.";
+      return "This agent can't authenticate with its provider. Check sign-in in Settings → Providers or your CLI credentials.";
     case 'provider_quota_exhausted':
-      return "This agent's model plan is out of capacity. Check your plan or quota with the model provider, and it should pick back up.";
+      return 'Provider quota reached. Work will resume once your plan resets or you add capacity.';
     case 'provider_error':
-      return "This agent ran into a problem with its model and couldn't complete its last turn.";
+      return "This agent hit a provider error and couldn't finish its last turn.";
     case 'provider_rate_limited':
-      return "This agent is being rate-limited by its model provider and can't complete work right now. It should recover on its own; if it keeps happening, check your plan's rate limits.";
+      return 'Rate-limited by the provider. It will recover once the limit clears; if this persists, check your plan limits.';
     case 'restart_failed':
       return 'Restart failed. Try again or check the logs.';
     case 'restart_pending':
       return 'Restart pending.';
     case 'stale_running_item':
-      return "The agent's current work has stalled. Restart the agent.";
+      return "This agent's current work has stalled. Restart the agent.";
     case 'start_failed':
-      return "The agent couldn't start. Check its settings, or restart the agent.";
+      return "This agent couldn't start. Check its runtime settings or restart the agent.";
     default:
       return 'Health unavailable.';
   }
@@ -38,9 +38,9 @@ export function agentHealthDegradedText(reason: AgentHealthReason | undefined): 
   switch (reason) {
     case 'provider_child_missing':
     case 'provider_child_exited':
-      return 'This agent lost its connection to its model and is reconnecting.';
+      return 'This agent lost connection to its provider and is reconnecting.';
     case 'provider_rate_limited':
-      return "This agent hit its model provider's rate limit and is retrying automatically.";
+      return "This agent hit the provider's rate limit and is retrying automatically.";
     default:
       return 'This agent is retrying automatically.';
   }
@@ -54,9 +54,9 @@ export function agentHealthProviderAction(health: AgentRuntimeHealthSummary | un
   switch (activeHealthReason(health)) {
     case 'provider_auth_failed':
       return {
-        description: "The model sign-in or API key isn't working.",
+        description: 'Provider sign-in failed or credentials expired.',
         kind: 'settings',
-        label: 'Check provider settings',
+        label: 'Open Providers',
       };
     default:
       return null;

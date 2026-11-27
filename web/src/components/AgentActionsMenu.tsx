@@ -95,7 +95,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 }}
               >
                 <PowerOff className="h-3.5 w-3.5 shrink-0" />
-                {toggling ? 'Saving...' : 'Disable'}
+                {toggling ? 'Disabling…' : 'Disable'}
               </button>
             ) : (
               <button
@@ -107,7 +107,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
                 }}
               >
                 <Power className="h-3.5 w-3.5 shrink-0" />
-                {toggling ? 'Saving...' : 'Enable'}
+                {toggling ? 'Enabling…' : 'Enable'}
               </button>
             )}
             {/* Rotate session */}
@@ -147,7 +147,7 @@ export default function AgentActionsMenu({ buttonClassName }: { buttonClassName?
             ) : restartBlocked ? null : (
               <button
                 disabled={!enabled}
-                title={!enabled ? 'Agent is disabled. Enable it to run.' : undefined}
+                title={!enabled ? 'Enable this agent before restarting.' : undefined}
                 className="flex min-h-[44px] w-full items-center gap-2.5 px-3 text-left font-sans text-[13px] text-text-muted hover:bg-surface-elevated hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
                 onClick={() => {
                   setMenuOpen(false);

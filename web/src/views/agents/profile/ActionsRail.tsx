@@ -94,7 +94,7 @@ export function ActionsRail({
             label: 'Restart agent',
             icon: <RefreshCw className={iconClass} />,
             disabled: !enabled,
-            disabledReason: 'Agent is disabled. Enable it to run.',
+            disabledReason: 'Enable this agent before restarting.',
             onSelect: onRestart,
           } satisfies RailAction,
         ]

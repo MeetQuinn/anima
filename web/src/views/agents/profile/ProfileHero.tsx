@@ -144,7 +144,7 @@ export function ProfileHero({
       <div className="min-w-0 flex-1">
         <HeroEditable
           value={agent.profile?.displayName ?? ''}
-          placeholder="Unnamed"
+          placeholder="Agent name"
           ariaLabel="Agent name"
           inputClassName="h-9 w-64 max-w-full font-serif text-[18px] font-semibold"
           onCommit={onCommitName}
@@ -163,7 +163,7 @@ export function ProfileHero({
         <div className="mt-1">
           <HeroEditable
             value={agent.profile?.role ?? ''}
-            placeholder="No role"
+            placeholder="Add a role"
             ariaLabel="Agent role"
             inputClassName="h-8 w-full max-w-md font-serif text-[14px]"
             onCommit={onCommitRole}

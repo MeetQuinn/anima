@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { AddKbModal, ConfirmDeleteModal, RenameKbModal } from './KbModals';
+import { AddKbModal, ConfirmDeleteModal, KebabDropdown, RenameKbModal } from './KbModals';
 import type { KbView } from '@shared/kb';
 
 // Focus contract for the three sidebar KB dialogs, which adopt `useDialogFocus`
@@ -121,7 +121,7 @@ describe('KB sidebar dialogs — focus contract', () => {
     expect(wrapped).toBe(false);
     expect(document.activeElement).not.toBe(opener);
     expect(
-      screen.getByRole('dialog', { name: 'Rename Knowledge Base' }).contains(document.activeElement),
+      screen.getByRole('dialog', { name: 'Rename knowledge base' }).contains(document.activeElement),
     ).toBe(true);
 
     // Save is disabled until the label actually changes, so the last control a
@@ -179,7 +179,7 @@ describe('KB sidebar dialogs — focus contract', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove knowledge base' }));
 
     expect(document.activeElement).toBe(
-      screen.getByRole('dialog', { name: 'Remove Knowledge Base?' }),
+      screen.getByRole('dialog', { name: 'Remove knowledge base?' }),
     );
   });
 
@@ -204,7 +204,7 @@ describe('KB sidebar dialogs — focus contract', () => {
     opener.focus();
     fireEvent.click(opener);
 
-    const dialog = screen.getByRole('dialog', { name: 'Add Knowledge Base' });
+    const dialog = screen.getByRole('dialog', { name: 'Add knowledge base' });
     expect(document.activeElement).toBe(dialog);
 
     const forward = fireEvent.keyDown(dialog, { key: 'Tab' });
@@ -232,12 +232,12 @@ describe('KB sidebar dialogs — focus contract', () => {
     // string check and still announces nothing.
     render(<RenameHost />);
     fireEvent.click(screen.getByRole('button', { name: 'Rename knowledge base' }));
-    expect(screen.getByRole('dialog', { name: 'Rename Knowledge Base' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Rename knowledge base' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     render(<AddHost />);
     fireEvent.click(screen.getByRole('button', { name: 'Add knowledge base' }));
-    expect(screen.getByRole('dialog', { name: 'Add Knowledge Base' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Add knowledge base' })).toBeTruthy();
   });
 
   it('describes the delete confirm with the copy that carries the decision', () => {
@@ -247,10 +247,26 @@ describe('KB sidebar dialogs — focus contract', () => {
     render(<DeleteHost />);
     fireEvent.click(screen.getByRole('button', { name: 'Remove knowledge base' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Remove Knowledge Base?' });
+    const dialog = screen.getByRole('dialog', { name: 'Remove knowledge base?' });
     const describedBy = dialog.getAttribute('aria-describedby');
     expect(describedBy).toBeTruthy();
     const description = document.getElementById(describedBy!);
     expect(description?.textContent).toContain('Files on disk are not affected');
+  });
+
+  it('labels the kebab removal action Remove (not Delete) to match the non-destructive modal', () => {
+    const onDelete = vi.fn();
+    render(
+      <KebabDropdown
+        anchorRect={{ bottom: 40, right: 120 } as DOMRect}
+        onRename={() => {}}
+        onDelete={onDelete}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
   });
 });

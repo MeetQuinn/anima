@@ -184,9 +184,11 @@ function SkillGroup({
       </div>
       {skills.length === 0 ? (
         <div className="py-1">
-          <p className="font-serif text-[13px] italic text-text-subtle">None yet</p>
+          <p className="font-serif text-[13px] italic text-text-subtle">None</p>
           {emptyHint && (
-            <p className="mt-1 break-all font-mono text-[11px] text-text-muted">{emptyHint}</p>
+            <p className="mt-1 break-all font-sans text-[11px] text-text-muted">
+              Add skills in <span className="font-mono">{emptyHint}</span>
+            </p>
           )}
         </div>
       ) : visibleSources.length > 1 ? (

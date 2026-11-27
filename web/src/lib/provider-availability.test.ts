@@ -7,6 +7,7 @@ import {
   providerCatalogForAvailability,
   providerModelAuthorityLabel,
   providerReady,
+  providerUnavailableHint,
   providerUnavailableLabel,
 } from './provider-availability';
 import { providerValueLabel } from './provider-display';
@@ -44,7 +45,7 @@ describe('Codex live model list', () => {
     expect(entry.defaultModel).toBe(builtIn.defaultModel);
     expect(providerReady(entry, availability)).toBe(true);
     expect(providerUnavailableLabel(entry, availability)).toBeUndefined();
-    expect(providerModelAuthorityLabel(entry, availability)).toBe('Built-in model list');
+    expect(providerModelAuthorityLabel(entry, availability)).toBe('Default model list');
   });
 
   it('offers the live effort menu for the selected model', () => {
@@ -87,5 +88,35 @@ describe('preferredEffort', () => {
     expect(preferredEffort(['high'], 'xhigh')).toBe('high');
     expect(preferredEffort(['high'])).toBe('high');
     expect(preferredEffort([], 'xhigh')).toBe('');
+  });
+});
+
+describe('provider copy helpers', () => {
+  it('strips markdown backticks from installHint in providerUnavailableHint', () => {
+    const provider = {
+      ...providerCatalog()[0]!,
+      installHint: 'Run `npm install -g @example/cli` and `cli login`.',
+    };
+    const hint = providerUnavailableHint(provider, [{ kind: provider.kind, present: false }]);
+    expect(hint).toBe('Run npm install -g @example/cli and cli login.');
+    expect(hint).not.toContain('`');
+  });
+
+  it('omits providerModelAuthorityLabel once models are checked successfully', () => {
+    const entry = providerCatalog().find((candidate) => candidate.kind === 'codex-cli')!;
+    const availability = codex({
+      checkedAt: '2026-11-24T13:00:00.000Z',
+      defaultModel: 'gpt-6.2-sol',
+      models: ['gpt-6.2-sol'],
+    });
+    expect(providerModelAuthorityLabel(entry, availability)).toBeUndefined();
+  });
+
+  it('uses typographic ellipsis and clean fallback labels in providerUnavailableLabel', () => {
+    const dynamicProvider = providerCatalog().find((candidate) => candidate.dynamicModels)!;
+    expect(providerUnavailableLabel(dynamicProvider, undefined)).toBe('checking…');
+    expect(
+      providerUnavailableLabel(dynamicProvider, [{ kind: dynamicProvider.kind, present: true }]),
+    ).toBe('models unavailable');
   });
 });

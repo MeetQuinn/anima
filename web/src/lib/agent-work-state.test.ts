@@ -26,7 +26,7 @@ describe('agentWorkState', () => {
     }));
 
     expect(background).toEqual({ backgroundTaskCount: 2, state: 'background' });
-    expect(agentWorkStateLabel(background)).toBe('Background · 2');
+    expect(agentWorkStateLabel(background)).toBe('Background (2)');
   });
 
   it('shows a provider-native rewake as working without inventing a current item', () => {
@@ -55,7 +55,7 @@ describe('agentWorkState', () => {
       },
     }));
     expect(workingWithBackground).toEqual({ backgroundTaskCount: 1, state: 'working' });
-    expect(agentWorkStateLabel(workingWithBackground)).toBe('Working · Background 1');
+    expect(agentWorkStateLabel(workingWithBackground)).toBe('Working · Background (1)');
     expect(agentWorkState(status({ queueDepth: 1 }))).toEqual({ state: 'queued' });
     expect(agentWorkState(status())).toEqual({ state: 'idle' });
   });
