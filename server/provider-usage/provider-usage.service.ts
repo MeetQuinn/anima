@@ -1,4 +1,5 @@
 import type { ProviderUsageKind, ProviderUsageResponse, ProviderUsageRow } from '../../shared/provider-usage.js';
+import { fetchAntigravityUsage } from './providers/antigravity.js';
 import { fetchClaudeConnectionUsage, fetchCodexConnectionUsage } from './connection.js';
 import { fetchGrokUsage } from './providers/grok.js';
 import { fetchKimiUsage } from './providers/kimi.js';
@@ -255,6 +256,13 @@ export function defaultProviderUsageAdapters(): ProviderUsageAdapter[] {
       fetch: async () => [await fetchOpenCodeUsage()],
       label: 'OpenCode',
       provider: 'opencode-cli',
+      source: 'native',
+    },
+    {
+      // agy's own read-only `/usage` command (no turn, no quota spent).
+      fetch: async () => [await fetchAntigravityUsage()],
+      label: 'Antigravity',
+      provider: 'antigravity-cli',
       source: 'native',
     },
   ];

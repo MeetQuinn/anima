@@ -343,7 +343,7 @@ Model menu:
 
 - The dashboard's Claude Code model and effort menus come from Claude Code's answer to a stream-json
   `initialize` request: `claude -p --input-format stream-json --output-format stream-json
-  --verbose`, with hooks off (`--settings '{"disableAllHooks":true}'`) and no MCP servers
+--verbose`, with hooks off (`--settings '{"disableAllHooks":true}'`) and no MCP servers
   (`--strict-mcp-config`), run for each availability check from
   `$ANIMA_HOME/cache/claude-model-probe` on the runtime `PATH`. The probe sends that one request and
   closes stdin, so no prompt runs. Only `models` is read from the answer, which also names the
@@ -902,6 +902,18 @@ your limits. Resets in 3h20m5s.` Anima does not deliver that notice as the agent
 Sign-in is machine-level (the OS keychain and `~/.gemini`), so Anima pins `HOME` to the service
 environment. `agy` has no check-only update mode, so **Settings > Providers** shows the installed
 version and the manual `agy update` command rather than a managed update.
+
+**Settings > Providers** shows the account's quota from `agy -p /usage --output-format json`,
+which `agy` answers itself, without a turn and without spending quota. Each group of models that
+share limits (Gemini; Claude and GPT) gets its 5-hour and weekly windows, as `5h Gemini`,
+`Weekly Gemini` and so on. Anima first runs `agy --version` and skips the check below 1.1.11,
+where `agy` would send `/usage` to the model as a prompt. It also passes
+`--settings '{"disableSlashCommands":false}'`, because with slash commands turned off in `agy`'s
+settings `/usage` would go to the model too; that setting applies to this run only and is not
+saved. An `agy` that does not know `--settings` exits 2 with a flag error, and the card asks for
+`agy update`. The check runs from a fixed directory under the Anima home and writes `agy`'s log
+to one file there, so repeated checks do not add log files to `~/.gemini`. An API-key sign-in has
+no account quota: `agy` exits 2 and the card says so.
 
 ## Agent Activities
 

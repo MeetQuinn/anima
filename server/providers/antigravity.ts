@@ -199,10 +199,7 @@ export interface AntigravityAgentCheckOptions {
 
 /**
  * Runs `agy --add-dir <dir> agents` and returns what it prints. The check runs
- * while the provider launch permit is held, so it is bounded. It starts in a
- * process group of its own, so a wrapper script and the CLI it starts are
- * stopped together: on timeout or abort the group gets SIGTERM, then SIGKILL
- * after a grace period, and the check waits for the group to be gone.
+ * while the provider launch permit is held, so it is bounded.
  */
 async function listAntigravityAgents(
   command: string,
@@ -210,10 +207,37 @@ async function listAntigravityAgents(
   input: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal | undefined },
   options: AntigravityAgentCheckOptions,
 ): Promise<string> {
+  const result = await runAntigravityCommand(command, ['--add-dir', dir, 'agents'], 'agy agents', input, options);
+  if (result.code === 0) return result.stdout;
+  const detail = result.stderr.trim() ? `: ${result.stderr.trim()}` : '';
+  throw new Error(`\`agy agents\` exited with ${result.signal ?? `code ${String(result.code)}`}${detail}`);
+}
+
+/** How a bounded `agy` run ended: exit code or signal, the first MiB of stdout, the last 4 KiB of stderr. */
+export interface AntigravityCommandResult {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+  stdout: string;
+}
+
+/**
+ * Runs `agy <args>` to its end, or to `timeoutMs` (it then rejects, naming the run
+ * `name`). It starts in a process group of its own, so a wrapper script and the CLI
+ * it starts are stopped together: on timeout or abort the group gets SIGTERM, then
+ * SIGKILL after a grace period, and the call waits for the group to be gone.
+ */
+export async function runAntigravityCommand(
+  command: string,
+  args: string[],
+  name: string,
+  input: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal | undefined },
+  options: AntigravityAgentCheckOptions,
+): Promise<AntigravityCommandResult> {
   input.signal?.throwIfAborted();
   const timeoutMs = options.timeoutMs ?? 15_000;
   const killGraceMs = options.killGraceMs ?? 2_000;
-  const child = spawn(command, ['--add-dir', dir, 'agents'], {
+  const child = spawn(command, args, {
     cwd: input.cwd,
     detached: true,
     env: input.env,
@@ -233,19 +257,12 @@ async function listAntigravityAgents(
   let onAbort: (() => void) | undefined;
   let stopped = false;
   try {
-    return await new Promise<string>((resolve, reject) => {
+    return await new Promise<AntigravityCommandResult>((resolve, reject) => {
       child.once('error', reject);
-      child.once('close', (code, signal) => {
-        if (code === 0) {
-          resolve(stdout);
-          return;
-        }
-        const detail = stderr.trim() ? `: ${stderr.trim()}` : '';
-        reject(new Error(`\`agy agents\` exited with ${signal ?? `code ${String(code)}`}${detail}`));
-      });
+      child.once('close', (code, signal) => resolve({ code, signal, stderr, stdout }));
       timer = setTimeout(() => {
         stopped = true;
-        reject(new Error(`\`agy agents\` did not finish within ${timeoutMs} ms`));
+        reject(new Error(`\`${name}\` did not finish within ${timeoutMs} ms`));
       }, timeoutMs);
       onAbort = () => {
         stopped = true;
