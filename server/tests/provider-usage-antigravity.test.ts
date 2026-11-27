@@ -164,10 +164,11 @@ test('Antigravity usage keeps /usage a command when agy settings turn slash comm
 });
 
 test('Antigravity usage never sends /usage to an agy too old to answer it without a turn', async (t) => {
-  for (const [version, message] of [
-    ['1.1.10', /Antigravity CLI 1\.1\.10 cannot report quota; 1\.1\.11 or later can/],
-    ['0.9.30', /0\.9\.30 cannot report quota/],
-    ['agy (development build)', /Could not read the Antigravity CLI version/],
+  // An old agy is `not_configured`, so the card shows its `agy update` hint.
+  for (const [version, type, message] of [
+    ['1.1.10', 'not_configured', /Antigravity CLI 1\.1\.10 cannot report quota; 1\.1\.11 or later can \(`agy update`\)/],
+    ['0.9.30', 'not_configured', /0\.9\.30 cannot report quota/],
+    ['agy (development build)', 'unknown', /Could not read the Antigravity CLI version/],
   ] as const) {
     const agy = await fakeAgy(t);
     const usage = await fetchAntigravityUsage({
@@ -176,7 +177,7 @@ test('Antigravity usage never sends /usage to an agy too old to answer it withou
       env: agyEnv(join(agy.dir, '..'), { AGY_VERSION: version }),
     });
     assert.equal(usage.status, 'unavailable', version);
-    assert.equal(usage.error?.type, 'unknown');
+    assert.equal(usage.error?.type, type, version);
     assert.match(usage.error?.message ?? '', message);
     assert.deepEqual(await agy.calls(), [`${agy.dir}|--version`], version);
   }
@@ -212,7 +213,7 @@ test('Antigravity usage explains an API-key sign-in, a failed run and a missing 
     }),
   });
   assert.equal(noSettingsUsage.status, 'unavailable');
-  assert.equal(noSettingsUsage.error?.type, 'unknown');
+  assert.equal(noSettingsUsage.error?.type, 'not_configured');
   assert.match(noSettingsUsage.error?.message ?? '', /does not accept `--settings`.*agy update/);
 
   const failed = await fakeAgy(t);
