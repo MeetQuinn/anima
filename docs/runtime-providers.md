@@ -747,8 +747,9 @@ Current process model:
   default 272K window, so agents on either CLI carry about the same context. `agy` ignores a value
   above the model's window, so GPT-OSS 120B (131K) keeps its own point. An agent can set its own
   value in its Launch env: a token count, a `K` or `M` shorthand, or a percentage of the model's
-  window; an empty value leaves the point to `agy`. The profile's context gauge measures against
-  this point.
+  window. `0` leaves the point to `agy`; the profile form does not save an empty value. The
+  profile's context gauge measures against a count or shorthand. For a percentage or `0` it has
+  no token count to use, so it shows how full the model's window is instead.
 - The Anima runtime profile replaces Antigravity's own system prompt. Before it starts the
   process, Anima writes the profile as a custom agent, `.agents/agents/anima-runtime.md` under
   `~/.anima/run/agents/<id>/antigravity-cli-agent/`, with `excludeDefaultComponents: true` and a
