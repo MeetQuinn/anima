@@ -22,20 +22,26 @@ import { inputClass, LinearConnectSteps, notACredentialField } from './LinearCon
 
 // The receiver's address is a config.json setting (linearWebhook), not a dashboard one.
 const listenerFailures = {
-  address_in_use: 'Its local port is already in use. Free it, or set another port in linearWebhook in config.json.',
-  permission_denied: 'Permission to bind its local port was denied. Check linearWebhook in config.json.',
-  address_unavailable: 'Its local address is unavailable. Check that linearWebhook in config.json names this machine.',
-  other: 'Its local receiver could not start. Check the runtime logs.',
+  address_in_use: 'The local listener port is already in use. Free it, or set another port under linearWebhook in config.json.',
+  permission_denied: 'Permission to bind the local listener port was denied. Check linearWebhook in config.json.',
+  address_unavailable: 'The local listener address is unavailable. Check that linearWebhook in config.json uses an address on this machine.',
+  other: 'The local listener couldn’t start. Check the runtime logs.',
 };
 
 // Only fixed installation reasons are safe to display; schema/storage errors
 // can contain user input or local paths.
-const knownInstallErrors = new Set([
-  'Set the Anima public URL in Server settings and refresh the connection form.',
-  'Use a separate Linear app for each agent.',
-  'Remove the installed identity before replacing it.',
-  'Linear connection changed. Refresh the page and try again.',
-  'Enter this app’s Client secret to authorize again.',
+const knownInstallErrors = new Map<string, string>([
+  [
+    'Set the Anima public URL in Server settings and refresh the connection form.',
+    'Your public address changed or was removed. Check it in Settings → Server, then refresh the page.',
+  ],
+  ['Use a separate Linear app for each agent.', 'Use a separate Linear app for each agent.'],
+  ['Remove the installed identity before replacing it.', 'Remove the installed identity before replacing it.'],
+  [
+    'Linear connection changed. Refresh the page and try again.',
+    'Linear connection changed. Refresh the page and try again.',
+  ],
+  ['Enter this app’s Client secret to authorize again.', 'Enter this app’s Client secret to authorize again.'],
 ]);
 
 type Notice = { title: string; body?: string };
@@ -53,7 +59,7 @@ function failureNotice(lastError: string): Notice {
       body: withDetail(
         detail?.endsWith('invalid_client')
           ? 'Linear didn’t accept the Client ID and Client secret. Copy both again from the app’s page in Linear, then authorize again.'
-          : 'Check the Client ID and Client secret, that the app’s callback URL in Linear uses your public address, and this machine’s network. Then authorize again.',
+          : 'Check the Client ID, Client secret, and this machine’s network, and make sure the app’s callback URL in Linear uses your public address. Then authorize again.',
       ),
     };
   if (lastError.startsWith('Linear app identity could not be verified'))
@@ -130,10 +136,10 @@ export function LinearRow({
       // Same tab: Linear returns through Anima's completion page to this profile.
       openLinearAuthorization(result.authorizationUrl);
     } catch (err) {
+      const known = err instanceof Error ? knownInstallErrors.get(err.message) : undefined;
       setError(
-        err instanceof Error && knownInstallErrors.has(err.message)
-          ? err.message
-          : 'Authorization could not start. Check the Client ID, Client secret and Webhook signing secret. If the public address changed, refresh this form.',
+        known ??
+          'Couldn’t start authorization. Check the Client ID, Client secret, and Webhook signing secret. If your public address changed, refresh the page and try again.',
       );
       setBusy(false);
     }
@@ -145,11 +151,8 @@ export function LinearRow({
       const result = await reauthorizeLinear(agentId, input);
       openLinearAuthorization(result.authorizationUrl);
     } catch (err) {
-      setError(
-        err instanceof Error && knownInstallErrors.has(err.message)
-          ? err.message
-          : 'Authorization could not start. Refresh the page and try again.',
-      );
+      const known = err instanceof Error ? knownInstallErrors.get(err.message) : undefined;
+      setError(known ?? 'Couldn’t start authorization. Refresh the page and try again.');
       setBusy(false);
     }
   }
@@ -161,7 +164,7 @@ export function LinearRow({
       await status.refetch();
       refreshAgentData(agentId);
     } catch {
-      setError('Could not disconnect. Refresh the page and try again.');
+      setError('Couldn’t disconnect. Refresh the page and try again.');
     } finally {
       setBusy(false);
     }
@@ -178,7 +181,7 @@ export function LinearRow({
     notes.push({
       tone: 'error',
       text: status.isError
-        ? 'Status unavailable'
+        ? 'Couldn’t check status'
         : data?.listenerStatus?.state === 'failed'
           ? 'Not receiving events'
           : clientRejected
@@ -278,12 +281,12 @@ function LinearDialogBody({
         onChanged={async () => (await status.refetch()).data}
       />
     );
-  if (!setup.data) return <ReadError what="machine settings" onRetry={() => void setup.refetch()} />;
+  if (!setup.data) return <ReadError what="server settings" onRetry={() => void setup.refetch()} />;
   if (!setup.data.publicUrl || !setup.data.callbackUrl)
     return <PublicAddressStep onSaved={() => void setup.refetch()} />;
   // A background refresh failed: keep what the user typed, but pause
   // authorizing until the state it would act on can be read again.
-  const stale = status.isError ? 'Linear status' : setup.isError ? 'machine settings' : '';
+  const stale = status.isError ? 'Linear status' : setup.isError ? 'server settings' : '';
   return (
     <div className="space-y-6">
       {stale && (
@@ -337,7 +340,7 @@ function LinearDialogBody({
           onClick={() => void onRemove()}
           className="inline-flex min-h-[44px] items-center font-sans text-[12px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-health-error md:min-h-0"
         >
-          Disconnect from Linear instead
+          Disconnect from Linear
         </button>
       )}
     </div>
@@ -403,7 +406,7 @@ function ConnectedView({
         ? 'Failed'
         : listener?.state === 'stopped'
           ? 'Stopped'
-          : 'Not observed yet';
+          : 'Unknown';
   return (
     <div className="space-y-5">
       <ConnectionHeader problem={data.clientRejected} title={`Connected to ${data.workspaceName ?? 'Linear'}`}>
@@ -432,7 +435,7 @@ function ConnectedView({
             <p className="font-sans text-[12px] leading-relaxed text-text-muted">
               {data.clientSecretSaved
                 ? 'Access couldn’t be renewed. Check the Client ID and Client secret on the app’s page in Linear, and replace the secret below if it changed.'
-                : 'Access couldn’t be renewed. Add the app’s Client secret below, from its page in Linear.'}
+                : 'Access couldn’t be renewed. Copy the Client secret from the app’s page in Linear and add it below.'}
             </p>
           </div>
         </div>
@@ -451,8 +454,8 @@ function ConnectedView({
 
       {data.signatureFailures ? (
         <p className="font-sans text-[12px] leading-relaxed text-health-warn-ink">
-          {data.signatureFailures} request{data.signatureFailures === 1 ? '' : 's'} claiming this app failed
-          signature checks and were rejected.
+          {data.signatureFailures} incoming {data.signatureFailures === 1 ? 'request' : 'requests'} claiming this app
+          failed webhook signature verification and {data.signatureFailures === 1 ? 'was' : 'were'} rejected.
         </p>
       ) : null}
 
@@ -468,11 +471,11 @@ function ConnectedView({
           </dl>
           {!authorizationNeedsAttention && reauthorize}
           <p className="font-sans text-[12px] leading-relaxed text-text-subtle">
-            No “Received by Anima.” after a mention? Check the{' '}
+            Not seeing “Received by Anima” after a mention? Check your{' '}
             <a href="/settings/server#public-url" className="underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted">
               public address
             </a>
-            , webhook URL and event subscriptions in Linear.
+            , webhook URL, and event subscriptions in Linear.
           </p>
         </div>
       </details>
@@ -487,7 +490,7 @@ function ConnectedView({
         {confirming ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="font-sans text-[12px] text-text-muted">
-              Stop Linear here? The app stays in Linear.
+              Disconnect from Linear? Your app stays in Linear.
             </span>
             <Button
               variant="outline"
@@ -503,7 +506,7 @@ function ConnectedView({
               onClick={() => setConfirming(false)}
               className="h-[44px] px-3 text-[13px] font-normal md:h-9"
             >
-              Keep
+              Cancel
             </Button>
           </div>
         ) : (
@@ -568,13 +571,13 @@ function ReauthorizeForm({
         <p className="font-sans text-[12px] leading-relaxed text-text-muted">
           {data.needsReauthorization
             ? 'Authorize again in Linear to grant the current permissions.'
-            : 'The current permissions have been granted.'}{' '}
-          Task and reply records are kept.
+            : 'Permissions are up to date.'}{' '}
+          Authorizing again keeps Linear task and reply records.
         </p>
       </div>
       {data.reauthorizing && (
         <p role="status" className="font-sans text-[12px] text-text-muted">
-          Authorization is pending in Linear. You can start again if that page was closed.
+          Waiting for authorization in Linear. If you left Linear before approving, authorize again.
         </p>
       )}
       {notice && (
@@ -642,9 +645,9 @@ function ReauthorizeForm({
 const clientSecretResults: Record<Exclude<LinearClientSecretResult, 'saved'>, string> = {
   rejected: 'Linear didn’t accept this Client secret. Check that it belongs to the app with this Client ID.',
   expired: 'Linear no longer accepts this authorization. Authorize again to reconnect.',
-  unavailable: 'Couldn’t check it with Linear. Nothing was saved; try again later.',
-  unsaved: 'Anima couldn’t store Linear’s answer, so nothing was saved. Try again. If Linear has ended this authorization, you’ll be asked to authorize again.',
-  changed: 'This connection changed meanwhile, so nothing was saved.',
+  unavailable: 'Couldn’t verify this secret with Linear. Nothing was saved. Try again.',
+  unsaved: 'Couldn’t save the updated credentials. Try again. If Linear ended this authorization, you’ll be asked to authorize again.',
+  changed: 'This connection changed while you were editing, so nothing was saved. Refresh and try again.',
 };
 
 /**
@@ -689,7 +692,7 @@ function ClientSecretFact({
       // a stored secret Linear accepts leaves nothing to try again.
       const now = await onChanged().catch(() => undefined);
       if (now?.clientSecretSaved && !now.clientRejected) setEditing(false);
-      else setMessage({ ok: false, text: 'Couldn’t save it. Try again.' });
+      else setMessage({ ok: false, text: 'Couldn’t save the Client secret. Try again.' });
     } finally {
       setValue('');
       setSaving(false);
@@ -736,7 +739,7 @@ function ClientSecretFact({
               className={inputClass}
             />
             <p id={`${ids}-client-secret-help`} className="font-sans text-[11px] leading-relaxed text-text-subtle">
-              From the app’s page in Linear. Linear checks it before Anima stores it on this machine.
+              Copy from the app’s page in Linear. Verified with Linear before saving.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button type="submit" disabled={saving || disabled || !value.trim()} className="h-[44px] px-4 text-[13px] md:h-9">
@@ -782,7 +785,7 @@ function Loading() {
 function ReadError({ what, refresh = false, onRetry }: { what: string; refresh?: boolean; onRetry: () => void }) {
   return (
     <p role="alert" className="font-sans text-[13px] text-health-error">
-      Could not {refresh ? 'refresh' : 'read'} {what}.{' '}
+      Couldn’t {refresh ? 'refresh' : 'load'} {what}.{' '}
       <button type="button" onClick={onRetry} className="inline-flex min-h-[44px] items-center px-1 underline md:min-h-8">
         Retry
       </button>

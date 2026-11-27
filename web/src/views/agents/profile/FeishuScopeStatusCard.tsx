@@ -36,7 +36,7 @@ export function feishuScopeNote({ data, isError, errorUpdateCount }: ScopeQuery)
   if (!failed && (!data || state === 'granted' || state === 'not_connected')) return null;
   return {
     tone: 'warn',
-    text: failed || state === 'unknown' ? 'Could not check Feishu permissions' : 'Permissions to authorize',
+    text: failed || state === 'unknown' ? 'Couldn’t check permissions' : 'Authorize permissions',
   };
 }
 
@@ -96,7 +96,7 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">
-            Recommended Feishu permissions are on. Your Feishu bot is good to go.
+            All recommended permissions are enabled.
           </p>
         </div>
       </div>
@@ -123,7 +123,7 @@ export function FeishuScopeStatusCard({ agentId }: Props) {
           )}
           {isError && !lastCheckMessage && (
             <div className="font-sans text-[11px] text-text-subtle">
-              Could not check Feishu permissions.
+              Couldn’t check Feishu permissions.
             </div>
           )}
         </>

@@ -52,13 +52,18 @@ it.each(['granted', 'not_connected'] as const)('stays quiet when permissions are
 it('puts missing permissions on the row and the checklist in the dialog, from one request', async () => {
   api.scopes.mockResolvedValue(scopeStatus('missing'));
   mount();
-  expect(await screen.findByText('Permissions to authorize')).toBeTruthy();
+  expect(await screen.findByText('Authorize permissions')).toBeTruthy();
   const review = screen.getByRole('button', { name: 'Review Feishu' });
   expect(review.textContent).toBe('Review');
   fireEvent.click(review);
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).getByText('Authorize Feishu permissions')).toBeTruthy();
-  expect(within(dialog).getByRole('button', { name: 'Recheck access' })).toBeTruthy();
+  expect(
+    within(dialog).getByText(
+      'Lets your Feishu bot show teammate names, find people by email or phone, work fully in group chats with people and other bots, and use Feishu Drive and Docs.',
+    ),
+  ).toBeTruthy();
+  expect(within(dialog).getByRole('button', { name: 'Check permissions' })).toBeTruthy();
   // The card in the dialog reads the row's answer, it does not ask again.
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(api.scopes).toHaveBeenCalledTimes(1);
@@ -70,7 +75,7 @@ it('quiets the row once a recheck in the dialog finds the permissions on', async
   fireEvent.click(await screen.findByRole('button', { name: 'Review Feishu' }));
   let answer: (status: AgentFeishuScopeStatus) => void = () => undefined;
   api.scopes.mockReturnValue(new Promise((resolve) => (answer = resolve)));
-  const recheck = within(screen.getByRole('dialog')).getByRole('button', { name: 'Recheck access' });
+  const recheck = within(screen.getByRole('dialog')).getByRole('button', { name: 'Check permissions' });
   fireEvent.click(recheck);
   await waitFor(() => expect(recheck.getAttribute('aria-disabled')).toBe('true'));
   // A second press while asking does not start over.
@@ -78,23 +83,27 @@ it('quiets the row once a recheck in the dialog finds the permissions on', async
   fireEvent.click(recheck);
   expect(api.scopes.mock.calls.length).toBe(asked);
   answer(scopeStatus('granted'));
-  expect(await screen.findByText(/Recommended Feishu permissions are on/)).toBeTruthy();
-  expect(screen.queryByText('Permissions to authorize')).toBeNull();
+  expect(await screen.findByText('All recommended permissions are enabled.')).toBeTruthy();
+  expect(screen.queryByText('Authorize permissions')).toBeNull();
   expect(screen.getByRole('button', { name: 'Manage Feishu' }).textContent).toBe('');
 });
 
 it.each([
-  ['the check fails', () => api.scopes.mockRejectedValue(new Error('feishu down'))],
-  ['Feishu cannot say', () => api.scopes.mockResolvedValue(scopeStatus('unknown'))],
-])('says so when %s instead of looking healthy', async (_, arrange) => {
+  ['the check fails', () => api.scopes.mockRejectedValue(new Error('feishu down')), true],
+  ['Feishu cannot say', () => api.scopes.mockResolvedValue(scopeStatus('unknown')), false],
+])('says so when %s instead of looking healthy', async (_, arrange, expectErrorLine) => {
   arrange();
   mount();
-  expect(await screen.findByText('Could not check Feishu permissions')).toBeTruthy();
+  expect(await screen.findByText('Couldn’t check permissions')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Review Feishu' }));
-  expect(within(screen.getByRole('dialog')).getByText('Authorize Feishu permissions')).toBeTruthy();
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText('Authorize Feishu permissions')).toBeTruthy();
+  if (expectErrorLine) {
+    expect(within(dialog).getByText('Couldn’t check Feishu permissions.')).toBeTruthy();
+  }
   // Opening the dialog does not send the row back to loading.
   await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(screen.getByText('Could not check Feishu permissions')).toBeTruthy();
+  expect(screen.getByText('Couldn’t check permissions')).toBeTruthy();
   expect(api.scopes).toHaveBeenCalledTimes(1);
 });
 
@@ -104,14 +113,14 @@ it('keeps the card, the note and the focus while a failed check is asked again',
   fireEvent.click(await screen.findByRole('button', { name: 'Review Feishu' }));
   let answer: (status: AgentFeishuScopeStatus) => void = () => undefined;
   api.scopes.mockReturnValue(new Promise((resolve) => (answer = resolve)));
-  const recheck = within(screen.getByRole('dialog')).getByRole('button', { name: 'Recheck access' });
+  const recheck = within(screen.getByRole('dialog')).getByRole('button', { name: 'Check permissions' });
   recheck.focus();
   fireEvent.click(recheck);
   await waitFor(() => expect(recheck.getAttribute('aria-disabled')).toBe('true'));
 
   // Still a failed check until an answer comes back: nothing unmounts.
   expect(recheck.isConnected).toBe(true);
-  expect(screen.getByText('Could not check Feishu permissions')).toBeTruthy();
+  expect(screen.getByText('Couldn’t check permissions')).toBeTruthy();
   // Focusable while busy (a disabled button would drop focus to the page),
   // and a second press does not ask twice.
   expect((recheck as HTMLButtonElement).disabled).toBe(false);
@@ -122,7 +131,7 @@ it('keeps the card, the note and the focus while a failed check is asked again',
 
   answer(scopeStatus('granted'));
   const done = await screen.findByRole('status');
-  expect(done.textContent).toMatch(/Recommended Feishu permissions are on/);
+  expect(done.textContent).toMatch(/All recommended permissions are enabled\./);
   // The button is gone; its focus moves to the answer, inside the dialog.
   expect(document.activeElement).toBe(done);
   expect(screen.getByRole('dialog').contains(done)).toBe(true);
@@ -136,4 +145,6 @@ it('gives each Feishu ID a full row in the dialog', async () => {
   for (const label of ['App ID', 'Bot Open ID']) {
     expect(within(dialog).getByText(label).parentElement!.className).toMatch(/\bcol-span-2\b/);
   }
+  expect(within(dialog).queryByText('Credentials')).toBeNull();
+  expect(within(dialog).queryByText('Delivery')).toBeNull();
 });

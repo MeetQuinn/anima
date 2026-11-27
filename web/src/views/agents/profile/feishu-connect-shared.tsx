@@ -55,7 +55,7 @@ export function FeishuConnectAffordances({
           <ExternalLink className="h-4 w-4" aria-hidden />
         </Button>
         <p className="mt-3 max-w-xs text-balance font-serif text-[13px] leading-relaxed text-text-muted">
-          Open Feishu to confirm the new app there.
+          Confirm the new app in Feishu to finish connecting.
         </p>
       </div>
     );
@@ -67,7 +67,7 @@ export function FeishuConnectAffordances({
         <QRCode value={verificationUrl} size={144} bgColor="#ffffff" fgColor="#1c1a17" level="M" />
       </span>
       <p className="mt-3 max-w-[18rem] text-balance font-serif text-[13px] leading-relaxed text-text-muted">
-        Scan with Feishu, then confirm the new app there.
+        Scan with Feishu to confirm the new app.
       </p>
       <a
         className="mt-3 inline-flex items-center gap-1.5 font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
@@ -75,7 +75,7 @@ export function FeishuConnectAffordances({
         rel="noreferrer"
         target="_blank"
       >
-        Or open the Feishu tab in your browser
+        Or open Feishu in your browser
         <ExternalLink className="h-3 w-3" aria-hidden />
       </a>
     </div>
@@ -94,7 +94,7 @@ export function FeishuExistingCredentialsCard({
 }: {
   appId: string;
   appSecret: string;
-  description: string;
+  description?: string;
   disabled: boolean;
   onAppId: (value: string) => void;
   onAppSecret: (value: string) => void;
@@ -107,26 +107,27 @@ export function FeishuExistingCredentialsCard({
         <div className="font-serif text-[14px] font-semibold text-text">
           Connect an existing Feishu app
         </div>
-        <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">
-          {description}
-        </p>
+        {description && (
+          <p className="mt-1 font-serif text-[12px] leading-snug text-text-muted">
+            {description}
+          </p>
+        )}
       </div>
       <FeishuCredentialField
         label="App ID"
-        placeholder="cli_..."
+        placeholder="cli_…"
         value={appId}
         onChange={onAppId}
       />
       <FeishuCredentialField
         label="App Secret"
-        placeholder="App secret"
         secret
         value={appSecret}
         onChange={onAppSecret}
       />
       <p className="font-sans text-[12px] leading-snug text-text-muted">
-        Find these on your app&apos;s Credentials &amp; Basic Info page in the Feishu Open Platform
-        Developer Console.
+        Find these under Credentials &amp; Basic Info in the Feishu Developer Console. The app must
+        receive events over a long-lived connection.
       </p>
       <Button className="w-full" onClick={onSubmit} disabled={disabled}>
         {saving ? <FeishuConnectingAppLabel /> : 'Connect Feishu app'}
@@ -146,7 +147,7 @@ function FeishuCredentialField({
   label: string;
   onChange: (value: string) => void;
   optional?: boolean;
-  placeholder: string;
+  placeholder?: string;
   secret?: boolean;
   value: string;
 }) {

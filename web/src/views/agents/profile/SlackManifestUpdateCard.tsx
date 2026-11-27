@@ -47,7 +47,7 @@ export function SlackManifestUpdateCard({ agentId, defaultOpen = false, onSaving
       setTimeout(() => setCopied(false), 2500);
     } catch {
       setDetailsOpen(true);
-      setCopyError('Copy failed. Manifest details are open below so you can copy the full YAML manually.');
+      setCopyError('Couldn’t copy automatically. Copy the manifest YAML above.');
     }
   }
 
@@ -106,7 +106,7 @@ export function SlackManifestUpdateCard({ agentId, defaultOpen = false, onSaving
                 className="inline-flex min-h-[44px] items-center gap-1 rounded-sm border border-border-soft px-2 py-1 font-sans text-[11px] text-text hover:border-border hover:bg-surface md:min-h-0"
               >
                 {copied ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
-                {copied ? 'Copied' : 'Copy full manifest'}
+                {copied ? 'Copied' : 'Copy manifest'}
               </button>
               {data.appManifestUrl && (
                 <a
@@ -121,7 +121,7 @@ export function SlackManifestUpdateCard({ agentId, defaultOpen = false, onSaving
             </div>
           </div>
           <div className="font-serif text-[13px] leading-snug text-text-muted">
-            Open the Slack app manifest editor, replace its YAML with the copied manifest, then save.
+            Replace the YAML in Slack’s App Manifest editor with the copied manifest, then save.
           </div>
           <button
             type="button"
@@ -129,7 +129,7 @@ export function SlackManifestUpdateCard({ agentId, defaultOpen = false, onSaving
             className="inline-flex items-center gap-1 font-sans text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted hover:decoration-text-muted/40"
           >
             <ChevronDown className={`h-3 w-3 transition-transform ${detailsOpen ? 'rotate-180' : ''}`} />
-            {detailsOpen ? 'Hide manifest details' : 'Show manifest details'}
+            {detailsOpen ? 'Hide manifest YAML' : 'Show manifest YAML'}
           </button>
           {detailsOpen && (
             <pre className="max-h-52 overflow-auto rounded-sm border border-border-soft bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed text-text-muted">
@@ -168,14 +168,14 @@ export function SlackManifestUpdateCard({ agentId, defaultOpen = false, onSaving
                 setBotToken(event.target.value);
                 setError(null);
               }}
-              placeholder="Paste new xoxb-… Bot User OAuth Token"
+              placeholder="New Bot User OAuth Token (xoxb-…)"
               className="min-w-0 flex-1 rounded-sm border border-border bg-muted/30 px-3 py-1.5 font-mono text-[12px] text-text placeholder:font-sans placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-ring"
             />
             <Button onClick={() => void saveUpgrade()} disabled={saving || !botToken.trim()}>
               {saving ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Saving
+                  Saving…
                 </>
               ) : 'Save'}
             </Button>

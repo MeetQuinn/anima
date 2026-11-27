@@ -39,16 +39,36 @@ describe('Slack connection display', () => {
       slackConnectionDisplay(health({ disconnectedAt: iso(now - 300_000) }), now)?.severity,
     ).toBe('error');
   });
-  it('uses the singular for the first connection attempt', () => {
+  it('uses the singular for the first connection attempt and omits zero attempts', () => {
     expect(slackConnectionDisplay(health({ attempts: 1 }), now)?.detail).toContain(
       '1 connection attempt.',
     );
+    expect(
+      slackConnectionDisplay(
+        health({
+          state: 'connecting',
+          attempts: 0,
+          disconnectedAt: undefined,
+          reason: undefined,
+          retryAt: undefined,
+        }),
+        now,
+      ),
+    ).toEqual({
+      label: 'Slack connecting',
+      severity: 'warning',
+      detail: 'Connecting now.',
+    });
   });
   it('distinguishes terminal failures and stopped listeners from automatic retries', () => {
     expect(slackConnectionDisplay(health({ state: 'failed' }), now)?.detail).toContain(
-      'Automatic retries stopped',
+      'Automatic retries stopped. Check Slack in Profile.',
     );
-    expect(slackConnectionDisplay(health({ state: 'stopped' }), now)?.label).toBe('Slack stopped');
+    expect(slackConnectionDisplay(health({ state: 'stopped' }), now)).toEqual({
+      label: 'Slack stopped',
+      severity: 'warning',
+      detail: 'Not listening for Slack messages.',
+    });
     expect(
       slackConnectionDisplay(health({ state: 'connecting', disconnectedAt: undefined }), now)
         ?.label,
@@ -57,13 +77,19 @@ describe('Slack connection display', () => {
   it('clears warnings on recovery and never treats stale snapshots as proof of connection', () => {
     expect(slackConnectionDisplay(health({ state: 'connected' }), now)?.severity).toBe('normal');
     expect(
-      slackConnectionDisplay(health({ state: 'connected', observedAt: iso(now - 30_001) }), now)
-        ?.label,
-    ).toBe('Slack status unavailable');
+      slackConnectionDisplay(health({ state: 'connected', observedAt: iso(now - 30_001) }), now),
+    ).toEqual({
+      label: 'Slack status unavailable',
+      severity: 'warning',
+      detail: 'Slack status hasn’t updated recently. Check that the agent is running.',
+    });
     expect(
-      slackConnectionDisplay({ ...health({ state: 'connected' }), reason: 'start_failed' }, now)
-        ?.label,
-    ).toBe('Slack status unavailable');
+      slackConnectionDisplay({ ...health({ state: 'connected' }), reason: 'start_failed' }, now),
+    ).toEqual({
+      label: 'Slack status unavailable',
+      severity: 'warning',
+      detail: 'The agent failed to start, so Slack isn’t connected.',
+    });
     expect(slackConnectionDisplay(undefined, now)).toBeUndefined();
     expect(slackConnectionDisplay({ state: 'healthy', updatedAt: iso(now) }, now)).toBeUndefined();
   });

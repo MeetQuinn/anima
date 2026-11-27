@@ -9,12 +9,16 @@ const api = vi.hoisted(() => ({
   upgrade: vi.fn(),
   refresh: vi.fn(),
   sync: vi.fn(),
+  copy: vi.fn(),
 }));
 vi.mock('@/api/agents', () => ({
   fetchAgentSlackManifestUpdate: api.manifest,
   upgradeAgentSlackManifest: api.upgrade,
   refreshAgentData: api.refresh,
   syncAgentAvatar: api.sync,
+}));
+vi.mock('@/lib/clipboard', () => ({
+  copyTextToClipboard: api.copy,
 }));
 
 const upToDate: AgentSlackManifestUpdateInfo = {
@@ -44,6 +48,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.manifest.mockResolvedValue(upToDate);
   api.sync.mockResolvedValue({});
+  api.copy.mockResolvedValue(undefined);
 });
 
 it('reads like every other connection row: workspace icon and name, one action', async () => {
@@ -81,7 +86,7 @@ it('says when the avatar sync fails instead of failing silently', async () => {
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'Manage Slack' }));
   fireEvent.click(screen.getByRole('button', { name: 'Sync avatar from Slack' }));
-  expect((await screen.findByRole('alert')).textContent).toBe('Could not sync the avatar. Try again in a moment.');
+  expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t sync the avatar. Try again in a moment.');
   expect(api.refresh).not.toHaveBeenCalled();
 });
 
@@ -93,7 +98,7 @@ it('surfaces a pending app update on the row and opens it expanded', async () =>
     manifestUpdateYaml: 'display_information:\n  name: scout\n',
   });
   mount();
-  expect(await screen.findByText('Slack app update available')).toBeTruthy();
+  expect(await screen.findByText('App update available')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Review Slack' }).textContent).toBe('Review');
   fireEvent.click(screen.getByRole('button', { name: 'Review Slack' }));
   const dialog = screen.getByRole('dialog');
@@ -132,4 +137,22 @@ it('stays open while the new token saves, so a failed save is still shown', asyn
   expect(await within(screen.getByRole('dialog')).findByText('invalid_auth')).toBeTruthy();
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('expands the manifest YAML above the error when copying automatically fails', async () => {
+  api.manifest.mockResolvedValue({
+    ...upToDate,
+    agentVersion: 3,
+    needsUpdate: true,
+    manifestUpdateYaml: 'display_information:\n  name: scout\n',
+  });
+  api.copy.mockRejectedValueOnce(new Error('clipboard denied'));
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Review Slack' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Copy manifest' }));
+  const error = await within(dialog).findByText('Couldn’t copy automatically. Copy the manifest YAML above.');
+  const yaml = dialog.querySelector('pre');
+  expect(yaml?.textContent).toContain('display_information:');
+  expect(yaml!.compareDocumentPosition(error) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

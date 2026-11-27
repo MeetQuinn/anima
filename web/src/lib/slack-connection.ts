@@ -23,7 +23,10 @@ export function slackConnectionDisplay(
   if (health?.reason === 'start_failed' || stale) {
     return {
       label: 'Slack status unavailable',
-      detail: 'Connection status has not been updated. Check the runtime.',
+      detail:
+        health?.reason === 'start_failed'
+          ? 'The agent failed to start, so Slack isn’t connected.'
+          : 'Slack status hasn’t updated recently. Check that the agent is running.',
       severity: 'warning' as const,
     };
   }
@@ -41,19 +44,23 @@ export function slackConnectionDisplay(
   if (connection.state === 'failed') {
     return {
       label: 'Slack disconnected',
-      detail: `${duration}${reason}Automatic retries stopped. Check the Slack connection settings.`,
+      detail: `${duration}${reason}Automatic retries stopped. Check Slack in Profile.`,
       severity: 'error' as const,
     };
   }
   if (connection.state === 'stopped') {
     return {
       label: 'Slack stopped',
-      detail: 'The Slack listener is stopped.',
+      detail: 'Not listening for Slack messages.',
       severity: 'warning' as const,
     };
   }
   const attention =
     connection.disconnectedAt && now - Date.parse(connection.disconnectedAt) >= ATTENTION_AFTER_MS;
+  const attempts =
+    connection.attempts > 0
+      ? `${connection.attempts} connection ${connection.attempts === 1 ? 'attempt' : 'attempts'}. `
+      : '';
   const retry =
     connection.retryAt && Date.parse(connection.retryAt) > now
       ? `Next retry in ${elapsed(Date.parse(connection.retryAt) - now)}.`
@@ -64,7 +71,7 @@ export function slackConnectionDisplay(
       : connection.state === 'connecting'
         ? 'Slack connecting'
         : 'Slack reconnecting',
-    detail: `${duration}${reason}${connection.attempts} connection ${connection.attempts === 1 ? 'attempt' : 'attempts'}. ${retry}`,
+    detail: `${duration}${reason}${attempts}${retry}`,
     severity: attention ? ('error' as const) : ('warning' as const),
   };
 }

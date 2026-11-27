@@ -79,7 +79,7 @@ function fillCredentials() {
   }
 }
 async function startAuthorizing() {
-  fireEvent.click(await screen.findByRole('button', { name: 'I already have one' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use an existing app' }));
   fillCredentials();
   fireEvent.click(screen.getByRole('button', { name: /Authorize in Linear/ }));
 }
@@ -162,11 +162,14 @@ it('warns in the Linear dialog too when the dashboard opens at the public addres
   expect(alert.textContent).toContain('Anyone can open the dashboard at this address');
 });
 
-for (const reason of [
-  'Use a separate Linear app for each agent.',
-  'Set the Anima public URL in Server settings and refresh the connection form.',
-  'private-input-sentinel',
-]) {
+for (const [reason, expected] of [
+  ['Use a separate Linear app for each agent.', 'Use a separate Linear app for each agent.'],
+  [
+    'Set the Anima public URL in Server settings and refresh the connection form.',
+    'Your public address changed or was removed. Check it in Settings → Server, then refresh the page.',
+  ],
+  ['private-input-sentinel', 'Couldn’t start authorization.'],
+] as const) {
   it(`shows only allowlisted reasons when authorization cannot start: ${reason}`, async () => {
     api.install.mockRejectedValueOnce(new Error(reason));
     mount();
@@ -174,7 +177,7 @@ for (const reason of [
     await openDialog();
     await startAuthorizing();
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain(reason === 'private-input-sentinel' ? 'Authorization could not start.' : reason);
+    expect(alert.textContent).toContain(expected);
     expect(alert.textContent).not.toContain('private-input-sentinel');
     expect(api.open).not.toHaveBeenCalled();
     expect(closeButton().disabled).toBe(false);
@@ -199,7 +202,7 @@ it.each(['install', 'remove'] as const)('cannot dismiss a pending %s or lose its
   fireEvent.click(dialog.parentElement!);
   expect(screen.getByRole('dialog')).toBe(dialog);
   await act(async () => reject(new Error('private-failure-sentinel')));
-  await screen.findByText(operation === 'remove' ? /Could not disconnect/ : /Authorization could not start/);
+  await screen.findByText(operation === 'remove' ? /Couldn’t disconnect/ : /Couldn’t start authorization/);
   expect(screen.queryByText(/private-failure-sentinel/)).toBeNull();
   fireEvent.keyDown(dialog, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBeNull();
@@ -221,7 +224,7 @@ it('keeps setup behind the row and contains and restores keyboard focus on dismi
     fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
     // The public address check closes the dialog's content.
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Check again' }));
-    fireEvent.click(screen.getByRole('button', { name: 'I already have one' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use an existing app' }));
     fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: 'discarded-client-secret' } });
     fireEvent.change(screen.getByLabelText('Webhook signing secret'), { target: { value: 'discarded-secret' } });
     if (dismiss === 'escape') fireEvent.keyDown(dialog, { key: 'Escape' });
@@ -231,7 +234,7 @@ it('keeps setup behind the row and contains and restores keyboard focus on dismi
     expect(document.activeElement).toBe(opener);
   }
   await openDialog();
-  fireEvent.click(await screen.findByRole('button', { name: 'I already have one' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use an existing app' }));
   expect((screen.getByLabelText('Webhook signing secret') as HTMLInputElement).value).toBe('');
   expect((screen.getByLabelText('Client secret') as HTMLInputElement).value).toBe('');
   expect(api.install).not.toHaveBeenCalled();
@@ -260,7 +263,7 @@ it.each([
         'Linear authorization could not be exchanged (HTTP 400). Check the Client ID, registered redirect URL and network, then prepare authorization again.',
     },
     title: 'Authorization couldn’t be completed',
-    body: 'Check the Client ID and Client secret, that the app’s callback URL in Linear uses your public address, and this machine’s network. Then authorize again. Details: HTTP 400.',
+    body: 'Check the Client ID, Client secret, and this machine’s network, and make sure the app’s callback URL in Linear uses your public address. Then authorize again. Details: HTTP 400.',
     removable: false,
   },
   {
@@ -319,7 +322,7 @@ it.each([
   expect(screen.getByLabelText('Client ID')).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
   expect(dialog.textContent).not.toMatch(/prepare (authorization )?again|reinstall/i);
-  expect(Boolean(screen.queryByRole('button', { name: 'Disconnect from Linear instead' }))).toBe(c.removable);
+  expect(Boolean(screen.queryByRole('button', { name: 'Disconnect from Linear' }))).toBe(c.removable);
   expect(api.remove).not.toHaveBeenCalled();
 });
 
@@ -329,7 +332,7 @@ it('a revoked identity can be disconnected before starting over', async () => {
   await screen.findByText('Linear access was revoked');
   await openDialog('Review');
   api.status.mockResolvedValue(base);
-  fireEvent.click(await screen.findByRole('button', { name: 'Disconnect from Linear instead' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Disconnect from Linear' }));
   await waitFor(() => expect(api.remove).toHaveBeenCalledWith('scout'));
   await screen.findByRole('link', { name: 'Create app in Linear' });
   expect(screen.queryByRole('alert')).toBeNull();
@@ -384,14 +387,16 @@ it('connected: OAuth success is done, with facts, no delivery-test gate, and a c
   // Stored and accepted: nothing to do, so no action is offered.
   expect(fact('Client secret').textContent).toBe('Stored on this machine');
   expect(within(dialog).queryByRole('button', { name: /Client secret/ })).toBeNull();
-  expect(within(dialog).getByText(/2 requests claiming this app failed/)).toBeTruthy();
+  expect(
+    within(dialog).getByText('2 incoming requests claiming this app failed webhook signature verification and were rejected.'),
+  ).toBeTruthy();
   expect(dialog.textContent).not.toMatch(/pending verification|send a test|verify connection|healthy|online/i);
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.queryByLabelText('Webhook signing secret')).toBeNull();
 
   fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
-  expect(within(dialog).getByText('Stop Linear here? The app stays in Linear.')).toBeTruthy();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Keep' }));
+  expect(within(dialog).getByText('Disconnect from Linear? Your app stays in Linear.')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   expect(api.remove).not.toHaveBeenCalled();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
   api.status.mockResolvedValue(base);
@@ -400,11 +405,21 @@ it('connected: OAuth success is done, with facts, no delivery-test gate, and a c
   await within(dialog).findByRole('link', { name: 'Create app in Linear' });
 });
 
+it('uses singular grammar when exactly one webhook request failed signature verification', async () => {
+  api.status.mockResolvedValue({ ...connected, signatureFailures: 1 });
+  mount();
+  await screen.findByText('Demo workspace');
+  const dialog = await openDialog('Manage');
+  expect(
+    within(dialog).getByText('1 incoming request claiming this app failed webhook signature verification and was rejected.'),
+  ).toBeTruthy();
+});
+
 it.each([
-  ['address_in_use', 'Its local port is already in use. Free it, or set another port in linearWebhook in config.json.'],
-  ['permission_denied', 'Permission to bind its local port was denied.'],
-  ['address_unavailable', 'Its local address is unavailable.'],
-  ['other', 'Its local receiver could not start. Check the runtime logs.'],
+  ['address_in_use', 'The local listener port is already in use. Free it, or set another port under linearWebhook in config.json.'],
+  ['permission_denied', 'Permission to bind the local listener port was denied. Check linearWebhook in config.json.'],
+  ['address_unavailable', 'The local listener address is unavailable. Check that linearWebhook in config.json uses an address on this machine.'],
+  ['other', 'The local listener couldn’t start. Check the runtime logs.'],
 ] as const)('a detected listener failure (%s) is named, with a way to fix it', async (reason, message) => {
   api.status.mockResolvedValue({
     ...connected,
@@ -422,8 +437,8 @@ it.each([
 });
 
 it.each([
-  [{ state: 'unknown' }, 'Not observed yet'],
-  [undefined, 'Not observed yet'],
+  [{ state: 'unknown' }, 'Unknown'],
+  [undefined, 'Unknown'],
   [{ state: 'stopped', observedAt: '2026-10-11T00:00:00Z' }, 'Stopped'],
 ] as const)('without a detected failure, nothing blames the port: %s', async (listenerStatus, label) => {
   api.status.mockResolvedValue({ ...connected, listenerStatus });
@@ -436,7 +451,7 @@ it.each([
   expect(screen.queryByRole('alert')).toBeNull();
   expect(dialog.textContent).not.toMatch(/\bport\b/i);
   expect(dialog.textContent).toContain(
-    'Check the public address, webhook URL and event subscriptions in Linear.',
+    'Check your public address, webhook URL, and event subscriptions in Linear.',
   );
   expect(within(dialog).getByRole('link', { name: 'public address' }).getAttribute('href')).toBe('/settings/server#public-url');
 });
@@ -444,11 +459,11 @@ it.each([
 it('an unreadable status cannot start an installation and recovers on retry', async () => {
   api.status.mockRejectedValue(new Error('unavailable'));
   mount();
-  await screen.findByText('Status unavailable');
+  await screen.findByText('Couldn’t check status');
   expect(screen.getByText('Unavailable')).toBeTruthy();
   expect(screen.queryByText('Not connected')).toBeNull();
   const dialog = await openDialog();
-  await within(dialog).findByText(/Could not read Linear status/);
+  await within(dialog).findByText(/Couldn’t load Linear status/);
   expect(screen.queryByRole('button', { name: /Authorize in Linear/ })).toBeNull();
   expect(screen.queryByRole('link', { name: 'Create app in Linear' })).toBeNull();
   api.status.mockResolvedValue(base);
@@ -458,13 +473,13 @@ it('an unreadable status cannot start an installation and recovers on retry', as
 });
 
 it.each([
-  ['status', ['agent', 'scout', 'linear'], 'Could not refresh Linear status.'],
-  ['machine settings', ['linear', 'setup'], 'Could not refresh machine settings.'],
+  ['status', ['agent', 'scout', 'linear'], 'Couldn’t refresh Linear status.'],
+  ['server settings', ['linear', 'setup'], 'Couldn’t refresh server settings.'],
 ] as const)('a failed background refresh of %s keeps typed input and focus but pauses Authorize', async (_, key, message) => {
   const client = mount();
   await screen.findByText('Not connected');
   await openDialog();
-  fireEvent.click(await screen.findByRole('button', { name: 'I already have one' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use an existing app' }));
   fillCredentials();
   const input = screen.getByLabelText('Client ID') as HTMLInputElement;
   input.focus();
@@ -522,13 +537,13 @@ it('an installation made before secrets were kept offers a quiet Add, checked by
 it.each([
   ['rejected', 'Linear didn’t accept this Client secret. Check that it belongs to the app with this Client ID.'],
   ['expired', 'Linear no longer accepts this authorization. Authorize again to reconnect.'],
-  ['unavailable', 'Couldn’t check it with Linear. Nothing was saved; try again later.'],
+  ['unavailable', 'Couldn’t verify this secret with Linear. Nothing was saved. Try again.'],
   [
     'unsaved',
-    'Anima couldn’t store Linear’s answer, so nothing was saved. Try again. If Linear has ended this authorization, you’ll be asked to authorize again.',
+    'Couldn’t save the updated credentials. Try again. If Linear ended this authorization, you’ll be asked to authorize again.',
   ],
-  ['changed', 'This connection changed meanwhile, so nothing was saved.'],
-  ['request failed', 'Couldn’t save it. Try again.'],
+  ['changed', 'This connection changed while you were editing, so nothing was saved. Refresh and try again.'],
+  ['request failed', 'Couldn’t save the Client secret. Try again.'],
 ] as const)('a secret that was not saved (%s) says why and keeps nothing typed', async (result, message) => {
   api.status.mockResolvedValue({ ...connected, clientSecretSaved: false });
   if (result === 'request failed') api.saveSecret.mockRejectedValue(new Error('private-failure-sentinel'));
@@ -568,7 +583,7 @@ it('a secret that does not match Linear’s rules is not sent', async () => {
 });
 
 it.each([
-  [false, 'Add', 'Access couldn’t be renewed. Add the app’s Client secret below, from its page in Linear.'],
+  [false, 'Add', 'Access couldn’t be renewed. Copy the Client secret from the app’s page in Linear and add it below.'],
   [
     true,
     'Replace',
@@ -615,7 +630,7 @@ it('a lost answer for a secret Linear still rejects asks to try again', async ()
   fireEvent.change(within(dialog).getByLabelText('Client secret'), { target: { value: 'synthetic-client-secret-sentinel' } });
   const reads = api.status.mock.calls.length;
   fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-  expect(await within(dialog).findByText('Couldn’t save it. Try again.')).toBeTruthy();
+  expect(await within(dialog).findByText('Couldn’t save the Client secret. Try again.')).toBeTruthy();
   expect(api.status.mock.calls.length).toBeGreaterThan(reads);
   expect((within(dialog).getByLabelText('Client secret') as HTMLInputElement).value).toBe('');
   expect(dialog.textContent).not.toContain('private-failure-sentinel');
@@ -676,7 +691,7 @@ it('asks only a legacy connection for the missing secret and clears it after sub
   expect(api.reauthorize).not.toHaveBeenCalled();
   fireEvent.change(input, { target: { value: 'synthetic-client-secret' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Authorize in Linear' }));
-  await within(dialog).findByText('Authorization could not start. Refresh the page and try again.');
+  await within(dialog).findByText('Couldn’t start authorization. Refresh the page and try again.');
   expect(api.reauthorize).toHaveBeenCalledWith('scout', {
     installationId: 'installation-1',
     clientSecret: 'synthetic-client-secret',
@@ -692,7 +707,9 @@ it('keeps the connected view for pending or failed reauthorization and removes t
   const client = mount();
   await screen.findByText('Demo workspace');
   const dialog = await openDialog('Review');
-  expect(within(dialog).getByText(/Authorization is pending in Linear/)).toBeTruthy();
+  expect(
+    within(dialog).getByText('Waiting for authorization in Linear. If you left Linear before approving, authorize again.'),
+  ).toBeTruthy();
   api.status.mockResolvedValue({
     ...connected,
     needsReauthorization: true,
@@ -707,7 +724,9 @@ it('keeps the connected view for pending or failed reauthorization and removes t
   // Nothing left to review: the row is quiet again.
   expect(screen.getByRole('button', { name: 'Manage Linear' }).textContent).toBe('');
   expect(within(dialog).queryByRole('alert')).toBeNull();
-  expect(within(dialog).getByText(/The current permissions have been granted/)).toBeTruthy();
+  expect(
+    within(dialog).getByText('Permissions are up to date. Authorizing again keeps Linear task and reply records.'),
+  ).toBeTruthy();
 });
 
 it.each([

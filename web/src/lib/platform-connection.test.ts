@@ -46,19 +46,27 @@ describe('Linear connection display', () => {
   });
 
   it('calls out what stops the agent hearing Linear, revocation first', () => {
-    expect(linearConnectionDisplay(linear({ listener: 'failed' }), now)).toMatchObject({ label: 'Linear not receiving', severity: 'error' });
+    expect(linearConnectionDisplay(linear({ listener: 'failed' }), now)).toMatchObject({
+      label: 'Linear not receiving events',
+      detail: 'Anima can’t receive Linear events because the local listener failed. Check Linear in Profile.',
+      severity: 'error',
+    });
     expect(linearConnectionDisplay(linear({ clientRejected: true, listener: 'failed' }), now)).toMatchObject({ label: 'Linear credentials not accepted', severity: 'error' });
-    expect(linearConnectionDisplay(linear({ state: 'revoked', clientRejected: true }), now)).toMatchObject({ label: 'Linear access revoked', severity: 'error' });
+    expect(linearConnectionDisplay(linear({ state: 'revoked', clientRejected: true }), now)).toMatchObject({
+      label: 'Linear access revoked',
+      detail: 'Linear access was revoked. Authorize again under Linear in Profile.',
+      severity: 'error',
+    });
   });
 });
 
 describe('Agent connection display across platforms', () => {
   it('shows a Linear-only agent its Linear problem', () => {
-    expect(agentConnectionDisplay({ linear: linear({ listener: 'failed' }) }, now)).toMatchObject({ label: 'Linear not receiving', severity: 'error' });
+    expect(agentConnectionDisplay({ linear: linear({ listener: 'failed' }) }, now)).toMatchObject({ label: 'Linear not receiving events', severity: 'error' });
   });
 
   it('shows the problem when the other platform is fine', () => {
-    expect(agentConnectionDisplay({ health: slackUp, linear: linear({ listener: 'failed' }) }, now)?.label).toBe('Linear not receiving');
+    expect(agentConnectionDisplay({ health: slackUp, linear: linear({ listener: 'failed' }) }, now)?.label).toBe('Linear not receiving events');
     expect(agentConnectionDisplay({ health: slackDown, linear: linear() }, now)?.label).toBe('Slack disconnected');
   });
 

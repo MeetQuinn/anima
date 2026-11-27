@@ -71,19 +71,17 @@ export function FeishuRecheckMissingVerdict({ anyGranted }: { anyGranted: boolea
               Some permissions aren’t active yet
             </p>
             <p className="font-serif text-[12px] leading-snug text-text-muted">
-              The ones still marked below need granting in Feishu. Add them in the console, publish a
-              new app version, then recheck.
+              Add the missing permissions below in Feishu, publish a new app version, then recheck.
             </p>
           </>
         ) : (
           <>
             <p className="font-serif text-[13px] font-semibold leading-snug text-text">
-              Not authorized yet.
+              Permissions aren’t active yet
             </p>
             <p className="font-serif text-[12px] leading-snug text-text-muted">
-              Feishu hasn’t applied the new permissions. This usually means step 2 wasn’t published
-              yet. Publish a new app version, then recheck. If you just published, give it a moment
-              and recheck.
+              Publish a new app version in Feishu (step 2) so the changes take effect, then recheck.
+              If you just published, wait a moment and try again.
             </p>
           </>
         )}
@@ -140,9 +138,8 @@ export function FeishuRecommendedPermissionsChecklist({
           Authorize Feishu permissions
         </div>
         <p className="font-serif text-[13px] leading-relaxed text-text-muted">
-          These let your Feishu bot recognize teammates by name, take part in group chats with
-          people and other bots, look people up by email or phone, and work with Feishu Drive and
-          cloud documents.
+          Lets your Feishu bot show teammate names, find people by email or phone, work fully in
+          group chats with people and other bots, and use Feishu Drive and Docs.
         </p>
       </div>
 
@@ -158,7 +155,9 @@ export function FeishuRecommendedPermissionsChecklist({
             {permissionLinks.length > 0 && (
               <div className="space-y-1.5">
                 <p className="font-serif text-[12px] leading-snug text-text-subtle">
-                  Open the groups you need in Feishu.
+                  {permissionLinks.length > 1
+                    ? 'Open the permission groups you want in Feishu.'
+                    : 'Open Feishu to add permissions.'}
                 </p>
                 <div className="grid gap-1.5 sm:grid-cols-2">
                   {permissionLinks.map((link) => (
@@ -183,7 +182,7 @@ export function FeishuRecommendedPermissionsChecklist({
                 aria-expanded={open}
                 className="inline-flex items-center gap-1 font-sans text-[12px] text-text-muted transition-colors hover:text-text"
               >
-                Permissions
+                {open ? 'Hide permissions' : 'Show permissions'}
                 <ChevronDown
                   className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
                   aria-hidden
@@ -233,7 +232,7 @@ export function FeishuRecommendedPermissionsChecklist({
               Publish a new app version
             </span>
             <p className="font-serif text-[12px] leading-snug text-text-subtle">
-              Feishu applies the new permissions only after you publish a version by hand.
+              New permissions take effect only after you publish a version in Feishu.
             </p>
           </div>
         </li>
@@ -241,7 +240,7 @@ export function FeishuRecommendedPermissionsChecklist({
         <li className="flex items-start gap-3">
           <FeishuStepBadge n={3} />
           <div className="flex-1 space-y-2">
-            <span className="font-serif text-[13px] leading-snug text-text">Verify access</span>
+            <span className="font-serif text-[13px] leading-snug text-text">Verify permissions</span>
             <div>
               {/* aria-disabled, not disabled: a focused button that turns
                   disabled drops focus to the page, out of the dialog. */}
@@ -258,7 +257,7 @@ export function FeishuRecommendedPermissionsChecklist({
                 ) : (
                   <RotateCw className="h-3 w-3" aria-hidden />
                 )}
-                Recheck access
+                {isRechecking ? 'Checking…' : confirmedMissing ? 'Recheck permissions' : 'Check permissions'}
               </button>
             </div>
           </div>

@@ -75,7 +75,7 @@ export function LinearConnectSteps({
       callbackUrl: callback,
     });
     if (!parsed.success) {
-      setError('Check the Client ID, Client secret and Webhook signing secret.');
+      setError('Check the Client ID, Client secret, and Webhook signing secret.');
       return;
     }
     setError('');
@@ -149,7 +149,7 @@ export function LinearConnectSteps({
                   }}
                   className="inline-flex min-h-[44px] items-center font-sans text-[13px] text-text-muted underline decoration-text-subtle/50 underline-offset-2 hover:text-text disabled:opacity-50 md:min-h-8"
                 >
-                  I already have one
+                  Use an existing app
                 </button>
               </div>
               {renaming || !validName ? (
@@ -192,13 +192,13 @@ export function LinearConnectSteps({
         </Step>
 
         <form id={`${ids}-form`} onSubmit={(event) => void install(event)} className="contents">
-          <Step n={2} state={step2} title="Copy its credentials">
+          <Step n={2} state={step2} title="Paste its credentials">
             {appReady && (
               <div className="space-y-3">
                 <p className="font-serif text-[13px] leading-relaxed text-text-muted">
                   {retrying
-                    ? 'Enter them again from your app’s page in Linear. The secrets are not kept after a failed attempt.'
-                    : 'All three are on the app’s page in Linear, right after you create it.'}
+                    ? 'Re-enter them from your app’s page in Linear. Secrets aren’t kept after a failed attempt.'
+                    : 'Copy all three from your app’s page in Linear.'}
                 </p>
                 <div className="space-y-3">
                   <div className="min-w-0 space-y-1">

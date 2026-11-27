@@ -16,18 +16,18 @@ const REASON_COPY: Record<NonNullable<SlackTokenValidation['reason']>, string> =
   missing_token: '', // quiet — no red while mid-typing
   wrong_token_type: '', // handled inline with routing hint — see reasonMessage()
   unknown_token_type:
-    "This doesn't look like a Slack token. Bot tokens start with `xoxb-`, app-level tokens with `xapp-`.",
+    'This doesn’t look like a Slack token. App-Level Tokens start with xapp- and Bot User OAuth Tokens start with xoxb-.',
   invalid_token:
-    "Slack didn't recognize this token. Check you copied the whole thing and the app is still installed.",
+    'Slack didn’t recognize this token. Check that you copied it completely and that the app is installed.',
   missing_connections_write:
-    "Slack says this App-Level Token is missing `connections:write`. In App-Level Tokens, regenerate it with that scope checked.",
+    'This App-Level Token is missing the connections:write scope. Regenerate it under App-Level Tokens with connections:write selected.',
   not_bot_token:
-    "Slack says this is not the Bot User OAuth Token. Copy Bot User OAuth Token from OAuth & Permissions. It starts with `xoxb-`.",
-  slack_api_error: "Couldn't reach Slack to check this token. Try again in a moment.",
+    'This isn’t a Bot User OAuth Token. Copy it from OAuth & Permissions in Slack (starts with xoxb-).',
+  slack_api_error: 'Couldn’t reach Slack to check this token. Try again in a moment.',
 };
 
 const MISMATCH_COPY =
-  'These two tokens are from different Slack apps. Make sure both came from the same app you just created.';
+  'These tokens belong to different Slack apps. Copy both from the same app.';
 
 // ---------------------------------------------------------------------------
 // Types & helpers
@@ -47,10 +47,10 @@ function reasonMessage(result: SlackTokenValidation, field: 'app' | 'bot'): stri
   if (!result.reason || result.reason === 'missing_token') return '';
   if (result.reason === 'wrong_token_type') {
     return field === 'app'
-      ? "That’s a Bot token (`xoxb-…`). The App-Level Token goes here. It starts with `xapp-`."
-      : "That’s an App-Level Token (`xapp-…`). The Bot User OAuth Token goes here. It starts with `xoxb-`.";
+      ? 'That’s a Bot User OAuth Token (xoxb-…). Paste the App-Level Token (xapp-…) here.'
+      : 'That’s an App-Level Token (xapp-…). Paste the Bot User OAuth Token (xoxb-…) here.';
   }
-  return REASON_COPY[result.reason] || 'Validation failed.';
+  return REASON_COPY[result.reason] || 'Couldn’t verify this token. Try again.';
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +233,7 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
       refreshDashboardData();
       onConnect?.();
     } catch (err) {
-      setConnectError(err instanceof Error ? err.message : 'Connection failed');
+      setConnectError(err instanceof Error ? err.message : 'Couldn’t connect to Slack. Try again.');
       setConnectionResult(null);
     } finally {
       setConnecting(false);
@@ -257,10 +257,10 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
       } else if (res.connection.reason === 'incomplete') {
         // Quiet — waiting on the other token; no red
       } else {
-        setConnectError('Could not connect. Try again.');
+        setConnectError('Couldn’t connect. Try again.');
       }
     } catch {
-      setConnectError('Could not reach Slack to validate the token pair.');
+      setConnectError('Couldn’t reach Slack to verify your tokens. Try again in a moment.');
     }
   }
 
@@ -347,7 +347,7 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
         />
         <div className="flex-1">
           <div className="font-serif text-[14px] font-semibold text-text">
-            Create &amp; install the Slack app
+            Create the Slack app
           </div>
           <div className="mt-1 font-serif text-[13px] leading-snug text-text-muted">
             <button
@@ -356,15 +356,15 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
             >
               Create app in Slack
             </button>
-            {' '}→ pick your workspace → click <strong>Install</strong>.
-            {' '}Anima fills in the manifest; reusing an older app only works if Interactivity is enabled.
+            {' '}→ pick your workspace → click <strong>Create</strong>.
+            {' '}Anima prefills the app settings. If you reuse an existing app, enable Interactivity in Slack first.
           </div>
           {!step1Done && (
             <button
               onClick={() => setStep1Done(true)}
               className="mt-1.5 font-sans text-[11px] text-text-subtle underline decoration-text-subtle/40 underline-offset-2 hover:text-text-muted hover:decoration-text-muted/40"
             >
-              I already created the app
+              Use an existing app
             </button>
           )}
         </div>
@@ -450,9 +450,8 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
         <div className="flex-1">
           <div className="font-serif text-[14px] font-semibold text-text">Paste Bot User OAuth Token</div>
           <div className="mt-1 font-serif text-[13px] leading-snug text-text-muted">
-            In Slack: OAuth &amp; Permissions → Install to Workspace. Copy{' '}
-            <strong>Bot User OAuth Token</strong> and paste the{' '}
-            <span className="font-mono text-[11px]">xoxb-…</span> token here.
+            In Slack: OAuth &amp; Permissions → Install to Workspace, then paste the{' '}
+            <strong>Bot User OAuth Token</strong> (<span className="font-mono text-[11px]">xoxb-…</span>) below.
           </div>
           {step3Active && (
             <div className="mt-2 space-y-3">
@@ -498,8 +497,8 @@ export function SlackConnectStepper({ agentId, onConnect }: Props) {
         </div>
       </div>
 
-      {/* Success card — persists from validation */}
-      {connectionResult?.valid && (
+      {/* Success card — shown once connected */}
+      {connected && connectionResult?.valid && (
         <ConnectionSuccess conn={connectionResult} />
       )}
     </div>

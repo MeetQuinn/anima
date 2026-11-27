@@ -59,7 +59,7 @@ it('reveals credentials after the app step, enables Authorize only with all thre
   expect(screen.queryByLabelText('Client ID')).toBeNull();
   expect(screen.queryByRole('button', { name: /Authorize in Linear/ })).toBeNull();
 
-  fireEvent.click(screen.getByRole('button', { name: 'I already have one' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Use an existing app' }));
   expect(screen.getByText('Using an app you already created.')).toBeTruthy();
   expect(step(2).getAttribute('aria-current')).toBe('step');
   const authorize = screen.getByRole('button', { name: /Authorize in Linear/ }) as HTMLButtonElement;
@@ -112,7 +112,7 @@ it('clicking Create marks the app step done so the credentials come next', () =>
 it('a retry starts at the credentials of the existing app and shows why the last attempt could not start', () => {
   mount({ retrying: true, error: 'Use a separate Linear app for each agent.' });
   expect(screen.getByText('Using an app you already created.')).toBeTruthy();
-  expect(screen.getByText(/Enter them again/)).toBeTruthy();
+  expect(screen.getByText(/Re-enter them/)).toBeTruthy();
   expect(screen.getByRole('alert').textContent).toBe('Use a separate Linear app for each agent.');
 });
 
