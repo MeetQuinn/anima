@@ -14,7 +14,7 @@ distinction is in [Concepts](/concepts#people-and-structure).
 
 ## Register a folder
 
-Select the team that should own the knowledge base, then click **+** beside **Knowledge Base** in
+Select the team that should own the knowledge base, then click **+** beside **Knowledge bases** in
 the dashboard navigation.
 
 Choose an existing folder under your home directory or create a folder in the picker. Anima records
@@ -55,7 +55,7 @@ On desktop, the tree and reader share the screen. At the knowledge-base root:
 
 - a top-level `README.md` becomes the default document
 - returning to the root in the same browser tab resumes the last open file
-- the filter narrows the file tree without changing the folder on disk
+- **Search file names…** searches file names across the knowledge base without changing the folder on disk
 
 For Markdown files:
 

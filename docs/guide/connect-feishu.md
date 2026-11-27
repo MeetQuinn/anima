@@ -33,9 +33,9 @@ The next Anima step groups the missing permissions by capability.
 
 1. Open each permission group Anima shows and grant the requested scopes in Feishu.
 2. In the Feishu developer console, **publish a new app version**. Feishu does not apply the new permissions until a version is published.
-3. Return to Anima and select **Recheck access**.
+3. Return to Anima and select **Check permissions** (or **Recheck permissions** after a previous check).
 
-When every recommended permission is active, select **Start activity**. The agent can now recognize teammates, participate in group conversations, look people up when authorized, and work with the Feishu document surfaces covered by those scopes.
+When every recommended permission is active, select **Open Activity**. The agent can now recognize teammates, participate in group conversations, look people up when authorized, and work with the Feishu document surfaces covered by those scopes.
 
 You can skip the recommended set, but the connection will have reduced capabilities. The agent may still send and receive basic messages while teammate lookup, group work, or document actions fail until the missing permissions are granted and published.
 
@@ -73,4 +73,3 @@ The target user is outside the app's availability range. Add that person, depart
 ## What is stored
 
 The Feishu App ID and App Secret are stored locally in the agent configuration and injected at runtime. Secret values are hidden in the dashboard. See [Security and data](../security-and-data.md) for the host and credential boundaries.
-

@@ -31,20 +31,20 @@ The create-agent flow checks whether `claude`, `codex`, `kimi`, `grok`, `opencod
 
 - Missing providers are disabled.
 - If one available provider exists, onboarding can select it automatically.
-- If none are found, creation stops with **Install a provider first**.
+- If none are found, creation stops with **Set up a provider first**.
 
 Detection proves that an executable exists. The first real turn proves that its authentication and provider account are usable.
 
 ## Customize the runtime launch
 
-Each provider has machine-wide **Runtime command** and **Arguments** fields under
+Each provider has machine-wide **Command** and **Arguments** fields under
 **Settings > Providers**. Leave the command blank to use the default shown in the placeholder:
 `claude`, `codex`, `kimi`, `grok`, `opencode`, `pi`, or `agy`. Set it to another executable name or an absolute
 executable path when every Anima agent using that provider should launch through a compatible
 wrapper, for example `mcodex` for Codex.
 
 The command is one executable name or absolute path, not a shell command. Put optional CLI arguments
-in **Arguments**, one exact argv entry per line. Spaces within a line are preserved; Anima does not
+in **Arguments**, one argument per line. Spaces within a line are preserved; Anima does not
 invoke a shell or split quotes, pipes, redirects, or environment assignments. For example, add
 `--chrome` as one line for Claude Code when that machine has a paired Claude in Chrome extension.
 
@@ -111,7 +111,7 @@ agent launch environment, CLI arguments and custom wrappers can override it. Cla
 `CLAUDE_CONFIG_DIR` and Codex's `CODEX_HOME` select the inspected native directory.
 Claude key/bearer/helper configuration takes priority over a saved subscription login.
 Codex inspects the default profile/provider and file-based login; keyring, ephemeral,
-unsupported or unreadable configurations remain **Not inspected**.
+unsupported or unreadable configurations remain **Not checked**.
 
 Credential-store read failures stay unknown; they do not imply a missing login.
 After a credential is found, quota-query errors do not erase that connection evidence.
