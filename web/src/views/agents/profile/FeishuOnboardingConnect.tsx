@@ -154,7 +154,7 @@ export function FeishuOnboardingConnect({
       }
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : 'Could not refresh Feishu app setup');
+      setError(err instanceof Error ? err.message : 'Couldn’t check Feishu app setup status. Try again.');
     },
   });
 
@@ -201,7 +201,7 @@ export function FeishuOnboardingConnect({
       }
     } catch (err) {
       if (runId !== registrationRunRef.current) return;
-      setError(err instanceof Error ? err.message : 'Could not start creating your Feishu app.');
+      setError(err instanceof Error ? err.message : 'Couldn’t create your Feishu app.');
       setPhase('fallback');
     } finally {
       if (runId === registrationRunRef.current && !keepWaiting) {
@@ -226,7 +226,11 @@ export function FeishuOnboardingConnect({
       setAppSecret('');
       handleConnected('manual');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Feishu connection failed');
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Couldn’t connect to Feishu. Check your App ID and App Secret and try again.',
+      );
     } finally {
       setSaving(false);
     }
@@ -336,10 +340,10 @@ export function RecommendedPermissionsState({
         <div className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-ok" />
           <p className="font-serif text-[13px] leading-snug text-text">
-            Recommended Feishu permissions are on. Your Feishu bot is good to go.
+            Recommended permissions are enabled. Your Feishu bot is ready.
           </p>
         </div>
-        <Button className="w-full" onClick={onContinue}>Start activity</Button>
+        <Button className="w-full" onClick={onContinue}>Open Activity</Button>
       </div>
     );
   }
@@ -444,13 +448,12 @@ function SkipWarningDialog({
               id={titleId}
               className="font-serif text-[14px] font-semibold leading-tight text-text"
             >
-              Skipping leaves some teammate and document features off
+              Skip recommended permissions?
             </div>
             <p id={descriptionId} className="font-serif text-[13px] leading-relaxed text-text-muted">
-              Your Feishu bot keeps sending and receiving messages, but it won&rsquo;t recognize
-              teammates by name, work fully in group chats with people and other bots, or work
-              with Feishu Drive and cloud documents. Looking people up by email or phone also
-              stays off. You can authorize anytime from the agent&rsquo;s profile.
+              Your bot can still send and receive messages, but teammate lookups, multi-bot group
+              chats, and Feishu Drive and Docs won’t work until these permissions are granted. You
+              can finish this anytime in the agent’s profile.
             </p>
           </div>
         </div>
@@ -463,7 +466,7 @@ function SkipWarningDialog({
             Skip anyway
           </button>
           <Button ref={initialFocusRef} size="sm" onClick={onKeepSettingUp}>
-            Keep setting up
+            Continue setup
           </Button>
         </div>
       </div>
@@ -536,14 +539,14 @@ function FallbackState({
     <div className="space-y-3">
       <div className="space-y-2 rounded-sm border border-border-soft bg-surface px-4 py-3">
         <Button className="w-full" onClick={onRetry} disabled={saving || retrying}>
-          {retrying ? <FeishuCreatingAppLabel /> : 'Try creating a new Feishu app again'}
+          {retrying ? <FeishuCreatingAppLabel /> : 'Retry creating app'}
         </Button>
         {retrying && retrySlow && <FeishuSlowLine />}
       </div>
       <FeishuExistingCredentialsCard
         appId={appId}
         appSecret={appSecret}
-        description="We couldn't finish creating the new app. Connect an app you already have to continue."
+        description="Automatic setup failed. Retry above, or enter an existing app’s credentials below."
         disabled={disabled}
         saving={saving}
         onAppId={onAppId}

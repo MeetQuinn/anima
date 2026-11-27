@@ -81,7 +81,7 @@ it('says when the avatar sync fails instead of failing silently', async () => {
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'Manage Slack' }));
   fireEvent.click(screen.getByRole('button', { name: 'Sync avatar from Slack' }));
-  expect((await screen.findByRole('alert')).textContent).toBe('Could not sync the avatar. Try again in a moment.');
+  expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t sync the avatar. Try again in a moment.');
   expect(api.refresh).not.toHaveBeenCalled();
 });
 
@@ -93,7 +93,7 @@ it('surfaces a pending app update on the row and opens it expanded', async () =>
     manifestUpdateYaml: 'display_information:\n  name: scout\n',
   });
   mount();
-  expect(await screen.findByText('Slack app update available')).toBeTruthy();
+  expect(await screen.findByText('App update available')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Review Slack' }).textContent).toBe('Review');
   fireEvent.click(screen.getByRole('button', { name: 'Review Slack' }));
   const dialog = screen.getByRole('dialog');

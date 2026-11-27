@@ -29,6 +29,8 @@ interface Props {
 type SetupMode = 'create' | 'existing';
 type ExistingModeReason = 'manual' | 'failed';
 
+const CREATE_APP_FALLBACK_ERROR = 'Couldn’t create your Feishu app.';
+
 export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
   const defaultBotName = agentName?.trim() || 'Anima {user}';
   const [setupMode, setSetupMode] = useState<SetupMode>('create');
@@ -80,7 +82,7 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
       }
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : 'Could not refresh Feishu app registration');
+      setError(err instanceof Error ? err.message : 'Couldn’t check Feishu app setup status. Try again.');
     },
   });
 
@@ -132,7 +134,7 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
     } catch (err) {
       if (!isCurrentCreateRun(runId)) return;
       clearSlowTimer();
-      setError(err instanceof Error ? err.message : 'Could not start creating your Feishu app.');
+      setError(err instanceof Error && err.message ? err.message : CREATE_APP_FALLBACK_ERROR);
       setExistingReason('failed');
       setSetupMode('existing');
     } finally {
@@ -159,7 +161,11 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
       refreshDashboardData();
       onConnect?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Feishu connection failed');
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Couldn’t connect to Feishu. Check your App ID and App Secret and try again.',
+      );
     } finally {
       setSaving(false);
     }
@@ -215,7 +221,7 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
             className="font-sans text-[12px] text-text-muted underline decoration-text-muted/40 underline-offset-2 transition-colors hover:text-text hover:decoration-text/40"
             onClick={() => showExistingCredentials('manual')}
           >
-            Use an existing Feishu app
+            Use an existing app
           </button>
         </>
       )}
@@ -235,14 +241,14 @@ export function FeishuConnectStepper({ agentId, agentName, onConnect }: Props) {
         />
       )}
 
-      {error && (
+      {error && !(setupMode === 'existing' && existingReason === 'failed' && error === CREATE_APP_FALLBACK_ERROR) && (
         <p className="font-sans text-[12px] text-health-error">{error}</p>
       )}
 
       {saved && (
         <div className="flex items-center gap-2 rounded-sm border border-health-ok/30 bg-health-ok-soft px-4 py-3">
           <Check className="h-4 w-4 text-health-ok" />
-          <span className="font-serif text-[13px] text-text">Feishu app credentials saved.</span>
+          <span className="font-serif text-[13px] text-text">Connected to Feishu.</span>
         </div>
       )}
     </div>
@@ -286,16 +292,18 @@ function ExistingCredentialsForm({
       {reason === 'failed' && (
         <div className="rounded-sm border border-border-soft bg-surface px-4 py-3">
           <Button className="w-full" onClick={onRetry} disabled={saving}>
-            Try creating a new Feishu app again
+            Retry creating app
           </Button>
         </div>
       )}
       <FeishuExistingCredentialsCard
         appId={appId}
         appSecret={appSecret}
-        description={reason === 'failed'
-          ? "We couldn't finish creating the new app. Connect an app you already have to continue."
-          : 'Connect an app you already have to continue.'}
+        description={
+          reason === 'failed'
+            ? 'Automatic setup failed. Retry above, or enter an existing app’s credentials below.'
+            : undefined
+        }
         disabled={disabled}
         saving={saving}
         onAppId={onAppId}

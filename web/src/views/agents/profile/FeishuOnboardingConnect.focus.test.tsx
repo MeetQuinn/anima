@@ -27,7 +27,7 @@ vi.mock('@/api/agents', () => ({
   startAgentFeishuAppRegistration: vi.fn(),
 }));
 
-const TITLE = 'Skipping leaves some teammate and document features off';
+const TITLE = 'Skip recommended permissions?';
 
 /** Preview mode disables the query; use it for the plain focus cases. */
 function renderPreview() {
@@ -83,7 +83,7 @@ describe('Feishu onboarding skip warning — focus contract', () => {
     renderPreview();
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
 
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep setting up' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Continue setup' }));
   });
 
   it('exposes its title as the accessible name and its warning as the description', () => {
@@ -98,7 +98,7 @@ describe('Feishu onboarding skip warning — focus contract', () => {
     const describedBy = dialog.getAttribute('aria-describedby');
     expect(describedBy).toBeTruthy();
     const description = document.getElementById(describedBy!);
-    expect(description?.textContent).toContain('Feishu Drive and cloud documents');
+    expect(description?.textContent).toContain('Feishu Drive and Docs');
   });
 
   it('keeps Tab inside the warning instead of the form underneath', () => {
@@ -106,7 +106,7 @@ describe('Feishu onboarding skip warning — focus contract', () => {
     const opener = screen.getByRole('button', { name: 'Skip for now' });
     fireEvent.click(opener);
 
-    const keep = screen.getByRole('button', { name: 'Keep setting up' });
+    const keep = screen.getByRole('button', { name: 'Continue setup' });
     const skip = screen.getByRole('button', { name: 'Skip anyway' });
 
     // Keep is the last control, so a forward Tab wraps to the first one inside
@@ -128,7 +128,7 @@ describe('Feishu onboarding skip warning — focus contract', () => {
     fireEvent.click(opener);
     expect(document.activeElement).not.toBe(opener);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Keep setting up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue setup' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(opener);
   });
@@ -161,7 +161,7 @@ describe('Feishu onboarding skip warning — focus contract', () => {
     // heads, because the stale entry holds a null root and its listener returns.
     const { client } = renderLive();
     fireEvent.click(await screen.findByRole('button', { name: 'Skip for now' }));
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep setting up' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Continue setup' }));
 
     setScopes(client, 'granted');
 
@@ -173,7 +173,7 @@ describe('Feishu onboarding skip warning — focus contract', () => {
 
     // Deliberately no accessible-name query here: this half measures the focus
     // registration and nothing else, so it stays red for exactly one reason.
-    const keep = await screen.findByRole('button', { name: 'Keep setting up' });
+    const keep = await screen.findByRole('button', { name: 'Continue setup' });
     expect(document.activeElement).toBe(keep);
   });
 });

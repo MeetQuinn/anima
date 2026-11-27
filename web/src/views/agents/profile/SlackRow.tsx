@@ -47,7 +47,7 @@ export function SlackRow({
       await syncAgentAvatar(agentId);
       refreshAgentData(agentId);
     } catch {
-      setSyncError('Could not sync the avatar. Try again in a moment.');
+      setSyncError('Couldn’t sync the avatar. Try again in a moment.');
     } finally {
       setSyncing(false);
     }
@@ -60,7 +60,7 @@ export function SlackRow({
         connected
         workspace={workspaceName}
         iconUrl={workspaceIconUrl}
-        notes={updateAvailable ? [{ tone: 'warn', text: 'Slack app update available' }] : []}
+        notes={updateAvailable ? [{ tone: 'warn', text: 'App update available' }] : []}
         action="Manage"
         onAction={() => setOpen(true)}
       />

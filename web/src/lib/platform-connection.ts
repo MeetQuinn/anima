@@ -19,7 +19,7 @@ export function linearConnectionDisplay(
   if (linear.state === 'revoked') {
     return {
       label: 'Linear access revoked',
-      detail: 'Linear access was revoked. Authorize again from Linear in Profile.',
+      detail: 'Linear access was revoked. Authorize again under Linear in Profile.',
       severity: 'error',
     };
   }
@@ -32,8 +32,8 @@ export function linearConnectionDisplay(
   }
   if (linear.listener === 'failed') {
     return {
-      label: 'Linear not receiving',
-      detail: 'Anima can’t receive Linear events: the local listener failed. See Linear in Profile.',
+      label: 'Linear not receiving events',
+      detail: 'Anima can’t receive Linear events because the local listener failed. Check Linear in Profile.',
       severity: 'error',
     };
   }
