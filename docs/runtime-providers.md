@@ -740,6 +740,15 @@ Current process model:
 - Anima starts one persistent `agy acp --dangerously-skip-permissions` process and speaks ACP over
   stdio. Operator **Arguments** go after `acp`. Anima refuses the Antigravity desktop app's `agy`
   editor launcher, which would open an editor window instead of an ACP server.
+- Anima launches `agy` with `AGY_CLI_AUTO_COMPACT_OVERRIDE=240000`, so a conversation compacts at
+  240K tokens (`agy` 1.5.15 and later read it for every model). Without it, `agy` compacts where
+  its server decides, and a Gemini conversation can grow toward the model's 1M-token window, with
+  every model call carrying all of it. 240K is about where Claude Code compacts under Anima's
+  default 272K window, so agents on either CLI carry about the same context. `agy` ignores a value
+  above the model's window, so GPT-OSS 120B (131K) keeps its own point. An agent can set its own
+  value in its Launch env: a token count, a `K` or `M` shorthand, or a percentage of the model's
+  window; an empty value leaves the point to `agy`. The profile's context gauge measures against
+  this point.
 - The Anima runtime profile replaces Antigravity's own system prompt. Before it starts the
   process, Anima writes the profile as a custom agent, `.agents/agents/anima-runtime.md` under
   `~/.anima/run/agents/<id>/antigravity-cli-agent/`, with `excludeDefaultComponents: true` and a

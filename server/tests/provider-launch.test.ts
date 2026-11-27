@@ -16,6 +16,11 @@ import {
   claudeFastModeArgs,
   claudeProviderEnv,
 } from '../providers/claude-launch.js';
+import {
+  ANTIGRAVITY_DEFAULT_AUTO_COMPACT_TOKENS,
+  antigravityAutoCompactTokensFor,
+  antigravityProviderEnv,
+} from '../providers/antigravity-launch.js';
 import { ControllerAgentRuntime } from '../providers/provider-runtime.js';
 import { withAnimaHome } from './anima-home.js';
 import { ingestEvent } from './helpers/inbox.js';
@@ -151,6 +156,31 @@ test('claude fast mode is an explicit per-agent launch opt-in', () => {
     '--settings',
     CLAUDE_FAST_MODE_SETTINGS,
   ]);
+});
+
+test('antigravity provider env sets Anima\'s compaction point unless the agent sets its own', () => {
+  assert.deepEqual(antigravityProviderEnv({ kind: 'antigravity-cli' }), {
+    AGY_CLI_AUTO_COMPACT_OVERRIDE: String(ANTIGRAVITY_DEFAULT_AUTO_COMPACT_TOKENS),
+  });
+  assert.deepEqual(
+    antigravityProviderEnv({ env: { AGY_CLI_AUTO_COMPACT_OVERRIDE: '', EXTRA: 'kept' }, kind: 'antigravity-cli' }),
+    { AGY_CLI_AUTO_COMPACT_OVERRIDE: '', EXTRA: 'kept' },
+  );
+});
+
+test('antigravity compaction point reads the counts and shorthands agy takes', () => {
+  const at = (value: string | undefined) =>
+    antigravityAutoCompactTokensFor('antigravity-cli', value === undefined ? {} : { AGY_CLI_AUTO_COMPACT_OVERRIDE: value });
+  assert.equal(ANTIGRAVITY_DEFAULT_AUTO_COMPACT_TOKENS, 240_000);
+  assert.equal(at(undefined), 240_000);
+  assert.equal(antigravityAutoCompactTokensFor('antigravity-cli', undefined), 240_000);
+  assert.equal(at('150000'), 150_000);
+  assert.equal(at(' 240K '), 240_000);
+  assert.equal(at('240k'), 240_000);
+  assert.equal(at('0.25M'), 250_000);
+  assert.equal(at('1m'), 1_000_000);
+  for (const value of ['', '80%', 'abc', '0', '1.5', '-5', '12KB']) assert.equal(at(value), undefined, value);
+  assert.equal(antigravityAutoCompactTokensFor('claude-code', {}), undefined);
 });
 
 test('claude auto-compact window resolution keeps env override semantics', () => {

@@ -18,6 +18,7 @@ import { ClassifiedProviderError, providerFailureReasonFromError } from './provi
 import { classifyProviderRetry, providerRateLimitResumeAt } from './provider-retry.js';
 import { acpPermissionApprovalOptionId } from './acp-permissions.js';
 import { antigravityInputTag } from './antigravity-input-tag.js';
+import { antigravityProviderEnv } from './antigravity-launch.js';
 import {
   copyNumberLike,
   extractAcpText,
@@ -379,7 +380,7 @@ export interface AntigravityWakeTiming {
 
 export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<AntigravityAcpController> {
   readonly command: string;
-  readonly env: Record<string, string> | undefined;
+  readonly env: Record<string, string>;
   readonly kind = ANTIGRAVITY_RUNTIME_KIND;
   private readonly agentCheck: AntigravityAgentCheckOptions;
   private readonly config: AntigravityCliAgentProviderConfig;
@@ -397,7 +398,7 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
     this.wakeTiming = options.wake ?? {};
     this.config = config;
     this.command = command;
-    this.env = config.env;
+    this.env = antigravityProviderEnv(config);
     this.providerArgs = [...providerArgs];
   }
 
