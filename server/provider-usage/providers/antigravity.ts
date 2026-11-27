@@ -19,6 +19,11 @@ type AntigravityUsage = Omit<ProviderUsageRow, 'checkedAt' | 'label' | 'provider
  * send "/usage" to the model as a prompt, so the version is checked first.
  */
 const MIN_USAGE_VERSION = [1, 1, 11] as const;
+/**
+ * `disableSlashCommands: true` in agy's settings makes `-p /usage` a prompt to the
+ * model. These settings apply to the check's run only; agy never saves them.
+ */
+const USAGE_SETTINGS = JSON.stringify({ disableSlashCommands: false });
 const USAGE_TIMEOUT_MS = 20_000;
 const VERSION_TIMEOUT_MS = 10_000;
 const WINDOW_SECONDS: Record<string, number> = { '5h': 5 * 3600, daily: 86_400, weekly: 7 * 86_400 };
@@ -34,9 +39,10 @@ export interface AntigravityUsageOptions extends AntigravityAgentCheckOptions {
 /**
  * Antigravity's quota as `agy -p /usage --output-format json` reports it. agy answers
  * that read-only command without starting a turn or spending quota, and reads its own
- * sign-in; Anima never touches the credential. Every run uses one directory and one
- * log file there, which the next run replaces, so checks do not add a log file each
- * to agy's own log directory.
+ * sign-in; Anima never touches the credential. The run turns slash commands on for
+ * itself, so a machine that turned them off still gets a command, not a prompt. Every
+ * run uses one directory and one log file there, which the next run replaces, so
+ * checks do not add a log file each to agy's own log directory.
  */
 export async function fetchAntigravityUsage(options: AntigravityUsageOptions = {}): Promise<AntigravityUsage> {
   const command = options.command ?? 'agy';
@@ -55,11 +61,18 @@ export async function fetchAntigravityUsage(options: AntigravityUsageOptions = {
     if (tooOld) return unavailable(usageError('unknown', tooOld));
     const result = await runAntigravityCommand(
       command,
-      ['--log-file', join(dir, 'agy.log'), '-p', '/usage', '--output-format', 'json'],
+      ['--log-file', join(dir, 'agy.log'), '--settings', USAGE_SETTINGS, '-p', '/usage', '--output-format', 'json'],
       'agy -p /usage',
       input,
       { killGraceMs: options.killGraceMs, timeoutMs: options.timeoutMs ?? USAGE_TIMEOUT_MS },
     );
+    // agy also exits 2 for a flag it does not know, so `--settings` on an agy without it.
+    if (result.code === 2 && result.stderr.includes('provided but not defined')) {
+      return unavailable(usageError(
+        'unknown',
+        'This Antigravity CLI does not accept `--settings`, which the quota check needs; update it with `agy update`.',
+      ));
+    }
     // agy exits 2 when the sign-in is an API key, which has no account quota.
     if (result.code === 2) {
       return unavailable(usageError(

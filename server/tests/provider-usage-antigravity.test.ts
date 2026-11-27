@@ -91,6 +91,9 @@ test('Antigravity usage parser skips disabled buckets and rejects anything but a
 /**
  * A fake `agy`: records its directory and arguments in calls.log, prints AGY_VERSION
  * for `--version`, and otherwise writes AGY_STDERR, exits AGY_EXIT, or prints usage.json.
+ * With AGY_SLASH_COMMANDS_OFF it acts like agy with `disableSlashCommands: true` in its
+ * settings: unless `--settings` turns slash commands back on, `/usage` goes to the
+ * model, which it records as a "model request" line.
  */
 async function fakeAgy(t: TestContext): Promise<{ calls: () => Promise<string[]>; command: string; dir: string }> {
   // Real path: the fake reports its working directory as the shell resolves it.
@@ -105,6 +108,12 @@ async function fakeAgy(t: TestContext): Promise<{ calls: () => Promise<string[]>
       'if [ "$1" = --version ]; then printf \'%s\\n\' "$AGY_VERSION"; exit 0; fi',
       'if [ -n "$AGY_STDERR" ]; then printf \'%b\' "$AGY_STDERR" >&2; fi',
       'if [ -n "$AGY_EXIT" ]; then exit "$AGY_EXIT"; fi',
+      'if [ -n "$AGY_SLASH_COMMANDS_OFF" ]; then',
+      '  case " $* " in',
+      '    *\' --settings {"disableSlashCommands":false} \'*) ;;',
+      '    *) echo "model request" >> "$AGY_CALLS"; echo \'{"status":"SUCCESS","response":"ok","num_turns":1}\'; exit 0 ;;',
+      '  esac',
+      'fi',
       'cat "$AGY_USAGE"',
       '',
     ].join('\n'),
@@ -138,8 +147,20 @@ test('Antigravity usage asks agy /usage from its own directory with a log file t
   ]);
   assert.deepEqual(await agy.calls(), [
     `${agy.dir}|--version`,
-    `${agy.dir}|--log-file ${join(agy.dir, 'agy.log')} -p /usage --output-format json`,
+    `${agy.dir}|--log-file ${join(agy.dir, 'agy.log')} --settings {"disableSlashCommands":false} -p /usage --output-format json`,
   ]);
+});
+
+test('Antigravity usage keeps /usage a command when agy settings turn slash commands off', async (t) => {
+  const agy = await fakeAgy(t);
+  const usage = await fetchAntigravityUsage({
+    command: agy.command,
+    dir: agy.dir,
+    env: agyEnv(join(agy.dir, '..'), { AGY_SLASH_COMMANDS_OFF: '1' }),
+  });
+  assert.equal(usage.status, 'available');
+  assert.equal(usage.windows.length, 4);
+  assert.equal((await agy.calls()).filter((call) => call === 'model request').length, 0);
 });
 
 test('Antigravity usage never sends /usage to an agy too old to answer it without a turn', async (t) => {
@@ -180,6 +201,19 @@ test('Antigravity usage explains an API-key sign-in, a failed run and a missing 
   assert.equal(keyUsage.status, 'unavailable');
   assert.equal(keyUsage.error?.type, 'not_configured');
   assert.match(keyUsage.error?.message ?? '', /API key, which has no account quota/);
+
+  const noSettings = await fakeAgy(t);
+  const noSettingsUsage = await fetchAntigravityUsage({
+    command: noSettings.command,
+    dir: noSettings.dir,
+    env: agyEnv(join(noSettings.dir, '..'), {
+      AGY_EXIT: '2',
+      AGY_STDERR: 'flags provided but not defined: -settings\\nUsage of agy:\\n  --add-dir  Add a directory\\n',
+    }),
+  });
+  assert.equal(noSettingsUsage.status, 'unavailable');
+  assert.equal(noSettingsUsage.error?.type, 'unknown');
+  assert.match(noSettingsUsage.error?.message ?? '', /does not accept `--settings`.*agy update/);
 
   const failed = await fakeAgy(t);
   const failedUsage = await fetchAntigravityUsage({

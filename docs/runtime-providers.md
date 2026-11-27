@@ -907,9 +907,13 @@ version and the manual `agy update` command rather than a managed update.
 which `agy` answers itself, without a turn and without spending quota. Each group of models that
 share limits (Gemini; Claude and GPT) gets its 5-hour and weekly windows, as `5h Gemini`,
 `Weekly Gemini` and so on. Anima first runs `agy --version` and skips the check below 1.1.11,
-where `agy` would send `/usage` to the model as a prompt. The check runs from a fixed directory
-under the Anima home and writes `agy`'s log to one file there, so repeated checks do not add log
-files to `~/.gemini`. An API-key sign-in has no account quota: `agy` exits 2 and the card says so.
+where `agy` would send `/usage` to the model as a prompt. It also passes
+`--settings '{"disableSlashCommands":false}'`, because with slash commands turned off in `agy`'s
+settings `/usage` would go to the model too; that setting applies to this run only and is not
+saved. An `agy` that does not know `--settings` exits 2 with a flag error, and the card asks for
+`agy update`. The check runs from a fixed directory under the Anima home and writes `agy`'s log
+to one file there, so repeated checks do not add log files to `~/.gemini`. An API-key sign-in has
+no account quota: `agy` exits 2 and the card says so.
 
 ## Agent Activities
 
