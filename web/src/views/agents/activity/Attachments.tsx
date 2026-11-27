@@ -92,7 +92,7 @@ export function AttachedFile({ file, agentId }: { file: SlackFile; agentId: stri
   return (
     <span
       className="inline-flex max-w-full items-center gap-1.5 rounded-sm border border-border-soft bg-surface-raised px-2 py-1 font-sans text-[11px] text-text-subtle"
-      title={`${file.mimetype} · ${formatBytes(file.sizeBytes)} (not cached: call \`anima file fetch ${file.id}\`)`}
+      title={`${file.mimetype} · ${formatBytes(file.sizeBytes)} · Not downloaded locally`}
     >
       {Inner}
     </span>
@@ -252,9 +252,6 @@ export function ImageLightbox({
           <div className="flex flex-col items-center gap-2 rounded-sm border border-border-soft bg-surface px-8 py-10 text-center shadow-deep">
             <FileWarning className="h-6 w-6 text-text-subtle" />
             <div className="font-serif text-[15px] text-text-muted">Preview unavailable</div>
-            <div className="font-sans text-[12px] text-text-subtle">
-              Slack didn't generate a thumbnail for this image.
-            </div>
           </div>
         ) : (
           <img

@@ -65,7 +65,7 @@ describe('Slack membership degradation', () => {
 
     expect(await screen.findByText('product')).toBeTruthy();
     expect(screen.getByText(
-      'Slack membership could not be refreshed. This list may be incomplete.',
+      'Couldn’t refresh Slack channels. This list may be incomplete.',
     )).toBeTruthy();
     expect(screen.queryByText('Could not load channels')).toBeNull();
   });
@@ -74,13 +74,13 @@ describe('Slack membership degradation', () => {
     renderChannels({ channels: [], slackMembershipDegraded: true });
 
     expect(await screen.findByText(
-      'Slack membership could not be refreshed. This list may be incomplete.',
+      'Couldn’t refresh Slack channels. This list may be incomplete.',
     )).toBeTruthy();
-    expect(screen.queryByText('No local Slack conversations yet.')).toBeNull();
+    expect(screen.queryByText('No Slack conversations yet.')).toBeNull();
 
     cleanup();
     renderChannels({ channels: [] });
-    expect(await screen.findByText('No local Slack conversations yet.')).toBeTruthy();
+    expect(await screen.findByText('No Slack conversations yet.')).toBeTruthy();
   });
 
   it('leaves healthy rows unchanged and omits the degradation notice', async () => {
@@ -96,7 +96,7 @@ describe('Slack membership degradation', () => {
 
     expect(await screen.findByText('general')).toBeTruthy();
     expect(screen.queryByText(
-      'Slack membership could not be refreshed. This list may be incomplete.',
+      'Couldn’t refresh Slack channels. This list may be incomplete.',
     )).toBeNull();
   });
 });
@@ -144,7 +144,7 @@ describe('detail pane never instructs an action with no object', () => {
 
   it('stays silent on a healthy empty list, degraded empty list, and load failure', async () => {
     const { container: healthy } = renderChannels({ channels: [] });
-    expect(await screen.findByText('No local Slack conversations yet.')).toBeTruthy();
+    expect(await screen.findByText('No Slack conversations yet.')).toBeTruthy();
     expect(detailText(healthy)).not.toMatch(INSTRUCTS_PICKING_A_ROW);
 
     cleanup();
@@ -153,7 +153,7 @@ describe('detail pane never instructs an action with no object', () => {
       slackMembershipDegraded: true,
     });
     expect(await screen.findByText(
-      'Slack membership could not be refreshed. This list may be incomplete.',
+      'Couldn’t refresh Slack channels. This list may be incomplete.',
     )).toBeTruthy();
     expect(detailText(degraded)).not.toMatch(INSTRUCTS_PICKING_A_ROW);
 
@@ -171,9 +171,9 @@ describe('detail pane never instructs an action with no object', () => {
     // Settle on a left-pane string that only exists after the response lands,
     // so this is the empty state and not the pending one.
     expect(await screen.findByText(
-      'Slack membership could not be refreshed. This list may be incomplete.',
+      'Couldn’t refresh Slack channels. This list may be incomplete.',
     )).toBeTruthy();
-    expect(screen.getByText(/That conversation isn't in this list/)).toBeTruthy();
+    expect(screen.getByText(/This conversation isn’t available/)).toBeTruthy();
     expect(detailText(container)).not.toMatch(INSTRUCTS_PICKING_A_ROW);
   });
 
@@ -186,7 +186,7 @@ describe('detail pane never instructs an action with no object', () => {
 
     expect(await screen.findByText('prod')).toBeTruthy();
     expect(detailText(container)).toMatch(INSTRUCTS_PICKING_A_ROW);
-    expect(screen.getByText('Select a channel to read its conversation.')).toBeTruthy();
+    expect(screen.getByText('Select a conversation.')).toBeTruthy();
   });
 
   it('still offers the instruction on a missing deep link when rows exist', async () => {
@@ -197,11 +197,9 @@ describe('detail pane never instructs an action with no object', () => {
     // the pending frame, when there is still nothing to pick. Asserting on it
     // would read the loading state and call it settled.
     expect(await screen.findByText('prod')).toBeTruthy();
-    // Byte-identical to the sentence before it was split: this change subtracts
-    // under a condition, it does not reword.
     expect(detailText(container).replace(/\s+/g, ' ').trim()).toBe(
-      "That conversation isn't in this list. The agent may have left the channel,"
-      + ' or it has no history here. Pick one from the list to read it.',
+      'This conversation isn’t available. The agent may have left it, or there’s no message'
+      + ' history yet. Pick one from the list to read it.',
     );
   });
 
@@ -212,13 +210,13 @@ describe('detail pane never instructs an action with no object', () => {
   it('decides on the rows, not on the viewport', async () => {
     setViewportMatches(false);
     const { container: narrow } = renderChannels({ channels: [] });
-    expect(await screen.findByText('No local Slack conversations yet.')).toBeTruthy();
+    expect(await screen.findByText('No Slack conversations yet.')).toBeTruthy();
     const narrowText = detailText(narrow);
 
     cleanup();
     setViewportMatches(true);
     const { container: wide } = renderChannels({ channels: [] });
-    expect(await screen.findByText('No local Slack conversations yet.')).toBeTruthy();
+    expect(await screen.findByText('No Slack conversations yet.')).toBeTruthy();
 
     expect(detailText(wide)).toBe(narrowText);
     expect(narrowText.trim()).toBe('');
@@ -235,6 +233,6 @@ describe('detail pane never instructs an action with no object', () => {
 
     expect(await screen.findByText('prod')).toBeTruthy();
     await screen.findByRole('button', { name: /back/i });
-    expect(detailText(container)).not.toMatch(/Select a channel to read its conversation\./);
+    expect(detailText(container)).not.toMatch(/Select a conversation\./);
   });
 });

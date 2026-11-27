@@ -139,7 +139,7 @@ function AgentHomeDirectoryRows({
         className="tree-row py-2 pr-3 font-sans text-[12px] text-health-error"
         style={depthStyle}
       >
-        {query.error instanceof Error ? query.error.message : String(query.error)}
+        Could not load folder
       </div>
     );
   }
@@ -179,7 +179,7 @@ function AgentHomeDirectoryRows({
           className="tree-row py-1.5 pr-3 font-sans text-[11px] text-text-subtle"
           style={depthStyle}
         >
-          Showing the first {query.data.entries.length.toLocaleString()} entries in this folder.
+          Showing first {query.data.entries.length.toLocaleString()} items.
         </div>
       )}
     </>
@@ -366,7 +366,7 @@ function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: s
         >
           {rootError && (
             <div className="px-4 py-3 font-sans text-[12px] text-health-error">
-              {rootError instanceof Error ? rootError.message : String(rootError)}
+              Could not load files
             </div>
           )}
           {!rootListing && !rootError && (
@@ -388,7 +388,7 @@ function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: s
           )}
           {isEmpty && (
             <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">
-              This agent's home is empty.
+              No files yet.
             </div>
           )}
           {!filterQuery && rootNodes.length > 0 && <TreeSummary nodes={rootNodes} />}
@@ -422,13 +422,12 @@ function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: s
           ))}
           {filterQuery && rootNodes.length > 0 && (
             <div className="mt-1 border-t border-border-soft px-4 py-2 font-sans text-[11px] text-text-subtle">
-              Filter applies to loaded folders only. Expand a folder to search inside it.
+              Searches expanded folders only.
             </div>
           )}
           {rootListing?.truncated && (
             <div className="mt-1 border-t border-border-soft px-4 py-2 font-sans text-[11px] text-text-subtle">
-              Showing the first {rootListing.entries.length.toLocaleString()} entries in the home
-              root.
+              Showing first {rootListing.entries.length.toLocaleString()} items.
             </div>
           )}
         </div>
@@ -501,15 +500,11 @@ function AgentFilesContent({ agentId, filePath }: { agentId: string; filePath: s
               />
             </div>
           </div>
-        ) : (
+        ) : isEmpty || rootError ? null : (
           <div className="hidden h-full flex-col items-start justify-start p-8 md:flex">
             <div className="font-serif text-[20px] font-semibold text-text">Files</div>
             <div className="mt-3 font-sans text-[13px] text-text-muted">
-              {!rootListing && !rootError
-                ? 'Loading…'
-                : isEmpty
-                  ? "This agent's home is empty."
-                  : 'Select a file from the list to view it.'}
+              {!rootListing ? 'Loading…' : 'Select a file.'}
             </div>
           </div>
         )}

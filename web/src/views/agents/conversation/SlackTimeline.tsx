@@ -168,7 +168,7 @@ function SlackPreviewCard({ preview }: { preview: SlackMessagePreview }) {
   const meta = [
     author,
     preview.channelId,
-    preview.isPrivate ? 'private preview' : '',
+    preview.isPrivate ? 'private' : '',
   ].filter(Boolean).join(' · ');
   return (
     <div className="max-w-full rounded-md border border-border-soft bg-surface-raised/65 px-3 py-2">
@@ -211,9 +211,10 @@ const SURFACE_CHIP_BASE =
 
 function GroupSurfaceChip({ chip, agentId }: { chip: SurfaceChip; agentId: string }) {
   if (chip.href) {
+    const labelWithTitle = chip.linkTitle ? `${chip.linkTitle}: ${chip.label}` : chip.label;
     return (
-      <a href={chip.href} target="_blank" rel="noreferrer" title={`${chip.label} — ${chip.linkTitle}`}
-        aria-label={`${chip.linkTitle}: ${chip.label}`}
+      <a href={chip.href} target="_blank" rel="noreferrer" title={labelWithTitle}
+        aria-label={labelWithTitle}
         className="min-w-0 truncate rounded-sm bg-surface-raised px-1.5 py-px font-sans text-[10px] text-text-subtle underline-offset-2 hover:text-accent hover:underline focus-visible:ring-1 focus-visible:ring-accent">
         {chip.label}
       </a>
@@ -225,7 +226,7 @@ function GroupSurfaceChip({ chip, agentId }: { chip: SurfaceChip; agentId: strin
   return (
     <Link
       to={`/agents/${agentId}/channels?c=${encodeURIComponent(chip.channelId)}`}
-      aria-label={`Open ${chip.label} in the Channels tab`}
+      aria-label={`Open ${chip.label} in Channels`}
       className={`${SURFACE_CHIP_BASE} cursor-pointer underline-offset-2 transition-colors hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
     >
       {chip.label}

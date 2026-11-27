@@ -117,7 +117,7 @@ describe('mobile KB list after returning from a file', () => {
     await waitFor(() => expect(treeScrolls).toEqual(['docs/guide.md']));
 
     // Clearing a filter does not repeat it: the restore is done for this return.
-    const filter = screen.getByPlaceholderText('Filter files…');
+    const filter = screen.getByPlaceholderText('Search files…');
     fireEvent.change(filter, { target: { value: 'g' } });
     await settle();
     fireEvent.change(filter, { target: { value: '' } });

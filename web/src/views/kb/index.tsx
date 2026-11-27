@@ -268,7 +268,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
   // Handlers
   // ---------------------------------------------------------------------------
 
-  const kbTitle = kb?.label ?? 'Knowledge Base';
+  const kbTitle = kb?.label ?? 'Knowledge base';
 
   const toggleDir = useCallback((path: string) => {
     restorePendingRef.current = false;
@@ -441,7 +441,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
 
       {kbError && (
         <div className="px-5 py-4 font-sans text-[13px] text-health-error">
-          Failed to load Knowledge Base:{' '}
+          Could not load knowledge base:{' '}
           {kbError instanceof Error ? kbError.message : String(kbError)}
         </div>
       )}
@@ -472,12 +472,16 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 value={filterQuery}
                 onChange={(e) => setFilterQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Escape' && setFilterQuery('')}
-                placeholder="Filter files…"
+                placeholder="Search files…"
+                aria-label="Search files"
                 className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text placeholder:text-text-subtle outline-none"
               />
               {filterQuery && (
                 <button
+                  type="button"
                   onClick={() => setFilterQuery('')}
+                  aria-label="Clear search"
+                  title="Clear search"
                   className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-subtle hover:text-text-muted"
                 >
                   <X className="h-3 w-3" />
@@ -512,7 +516,7 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
             )}
             {!hasFilter && !treeLoading && !treeError && rootEntries.length === 0 && (
               <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">
-                No files.
+                No files
               </div>
             )}
             {!hasFilter && !treeLoading && !treeError && !rootQuery.hasNextPage && (
@@ -555,12 +559,12 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
                 ))}
                 {filteredTree.length === 0 && (
                   <div className="px-4 py-3 font-sans text-[12px] text-text-subtle">
-                    No files match "{filterQuery}".
+                    No files match "{searchQuery}"
                   </div>
                 )}
                 {searchResult.data.truncated && (
                   <div className="px-4 py-3 font-sans text-[11px] text-text-subtle">
-                    Showing a limited result set. Refine the filter to search less of this Knowledge Base.
+                    Showing partial results. Try a more specific search.
                   </div>
                 )}
               </>
@@ -635,17 +639,16 @@ function KbContent({ id, filePath }: { id: string; filePath: string | null }) {
             /* Loading, or about to redirect to the remembered file — hold the
                README so it doesn't flash before the resume redirect fires. */
             <div className="flex h-full flex-col items-start justify-start p-8">
-              <div className="font-sans text-[13px] text-text-subtle">Loading files…</div>
+              <div className="font-sans text-[13px] text-text-subtle">Loading…</div>
             </div>
-          ) : (
+          ) : rootEntries.length > 0 && !treeError ? (
             /* Minimal fallback when no README exists */
             <div className="flex h-full flex-col items-start justify-start p-8">
-              <div className="font-serif text-[20px] font-semibold text-text">{kbTitle}</div>
-              <div className="mt-3 font-sans text-[13px] text-text-muted">
-                Select a file from the tree to view it.
+              <div className="font-sans text-[13px] text-text-muted">
+                Select a file to preview
               </div>
             </div>
-          )}
+          ) : null}
         </section>
       </div>
     </div>

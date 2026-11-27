@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 
-import { ImageLightbox } from './Attachments';
+import { AttachedFile, ImageLightbox } from './Attachments';
 import type { OutboundFile } from '@/lib/activity-feed';
 
 // Focus contract for the Activity image lightbox, adopted from the shared
@@ -107,5 +107,23 @@ describe('Activity ImageLightbox focus contract', () => {
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('shows plain Preview unavailable on image error and clean tooltip for uncached files', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'open preview' }));
+    fireEvent.error(screen.getByAltText('diagram.png'));
+    expect(screen.getByText('Preview unavailable')).toBeTruthy();
+    expect(screen.queryByText(/Slack didn't generate/)).toBeNull();
+
+    render(
+      <AttachedFile
+        file={{ id: 'F9', name: 'spec.pdf', mimetype: 'application/pdf', sizeBytes: 1024 }}
+        agentId="nora"
+      />,
+    );
+    const chip = screen.getByText('spec.pdf').closest('span[title]');
+    expect(chip?.getAttribute('title')).toBe('application/pdf · 1.0 KB · Not downloaded locally');
+    expect(chip?.getAttribute('title')).not.toContain('`');
   });
 });

@@ -28,6 +28,10 @@ describe('inboundAuthorName', () => {
     expect(inboundAuthorName(rec({ platform: 'slack', actor: 'Ada (@ada)', actorDisplayName: 'Ada', actorHandle: '@ada' }))).toBe('Ada');
     expect(inboundAuthorName(rec({ platform: 'slack' }))).toBe('Unknown user');
   });
+
+  it('falls back to Unknown user for anonymous choice responses', () => {
+    expect(inboundAuthorName(rec({ kind: 'choice_response', platform: 'slack' }))).toBe('Unknown user');
+  });
 });
 
 describe('inboundSlackUserId', () => {

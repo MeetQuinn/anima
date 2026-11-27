@@ -8,11 +8,10 @@ import type { Activity as ActivityRecord, AgentActivityFeedPage } from '@shared/
 import type { AgentMessageHistoryPage, AgentMessageRecord } from '@shared/messages';
 import {
   classifyOutboundEffect,
-  heldSendActivityCopy,
   isHeldSendStatus,
 } from '@shared/outbound-effects';
 import { isRuntimeEventNoise } from '@shared/runtime-event-noise';
-import { linearApiDisplay, type LinearApiDisplay } from './activities';
+import { heldSendDetail, linearApiDisplay, type LinearApiDisplay } from './activities';
 
 // Hidden by default. Toggled on by "show all steps".
 //   - runtime.* are spawn-lifecycle plumbing
@@ -205,7 +204,7 @@ function systemEventForMessage(
       kind: 'system-event',
       eventKind: 'onboarding',
       label: 'Onboarding',
-      body: 'Agent onboarding started',
+      body: 'Started',
       timestamp: message.timestamp,
     };
   }
@@ -214,7 +213,7 @@ function systemEventForMessage(
       kind: 'system-event',
       eventKind: 'reminder',
       label: 'Reminder',
-      body: message.reminderTitle?.trim() || 'Reminder fired',
+      body: message.reminderTitle?.trim() || 'Fired',
       timestamp: message.timestamp,
     };
   }
@@ -377,9 +376,9 @@ function systemEventForAttentionSuggestion(
   activity: ActivityRecord,
 ): Extract<ActivityFeedItem, { kind: 'system-event' }> {
   const suggestion =
-    typeof activity.payload?.['suggestion'] === 'string'
+    typeof activity.payload?.['suggestion'] === 'string' && activity.payload['suggestion'].trim()
       ? activity.payload['suggestion']
-      : 'Attention suggestion attached';
+      : 'Review suggested';
   const platform =
     typeof activity.payload?.['platform'] === 'string'
       ? activity.payload['platform']
@@ -401,7 +400,7 @@ function systemEventForAttentionSuggestion(
     kind: 'system-event',
     eventKind: 'attention',
     label: 'Attention',
-    body: threadTs ? `${surface} · thread suggestion attached` : `${surface} suggestion attached`,
+    body: threadTs ? `${surface} · thread` : surface,
     meta: suggestion,
     timestamp: activity.createdAt,
   };
@@ -420,7 +419,7 @@ function surfaceLabelForAttentionSuggestion(input: {
   if (input.channelId) {
     return input.platform === 'feishu' ? `Feishu ${input.channelId}` : input.channelId;
   }
-  return input.platform === 'feishu' ? 'Feishu chat' : 'conversation';
+  return input.platform === 'feishu' ? 'Feishu chat' : 'Conversation';
 }
 
 export function buildMessageFeed(messagePage: AgentMessageHistoryPage): ActivityFeedItem[] {
@@ -546,9 +545,7 @@ function projectRecordedAction(
         kind: 'system-event',
         eventKind: 'held',
         label: 'Send held',
-        body: heldSendActivityCopy({
-          deltaCount: payload['deltaCount'],
-        }),
+        body: heldSendDetail(payload['deltaCount']),
         timestamp: activity.createdAt,
       },
       rememberText: false,
@@ -699,9 +696,10 @@ function surfaceChipForSlackMessage(message: AgentMessageRecord): SurfaceChip {
 
 function surfaceChipForFeishuMessage(message: AgentMessageRecord): SurfaceChip {
   const chatType = message.channelKind ?? 'group';
-  const label = chatType === 'p2p' ? 'Feishu DM' : `Feishu ${chatType || 'chat'}`;
+  const isDm = chatType === 'p2p' || chatType === 'open_id';
+  const label = isDm ? 'Feishu DM' : `Feishu ${chatType || 'chat'}`;
   if (message.threadTs) return { kind: 'thread', label: `${label} · topic` };
-  if (chatType === 'p2p') return { kind: 'dm', label };
+  if (isDm) return { kind: 'dm', label };
   return { kind: 'channel', label };
 }
 
@@ -803,7 +801,7 @@ function outboundSurfaceChip(fields: OutboundSurfaceFields): SurfaceChip {
   if (platform === 'feishu') {
     const kind = payloadChannelKind || (payloadChannel.startsWith('oc_') ? 'group' : 'chat');
     if (kind === 'open_id') {
-      return { kind: 'dm', label: payloadChannelDisplayName || 'Feishu owner' };
+      return { kind: 'dm', label: payloadChannelDisplayName || 'Feishu DM' };
     }
     const base = kind === 'p2p' ? 'Feishu DM' : `Feishu ${kind}`;
     if (payloadThreadTs) return { kind: 'thread', label: `${base} · topic` };

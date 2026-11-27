@@ -177,7 +177,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const err = pickString(payload, ['summary', 'text', 'error']);
     if (payload['failureKind'] === 'do-not-contact') {
       return {
-        title: 'Send refused: do-not-contact list',
+        title: 'Send refused: outreach limits',
         target: err,
         color: COLOR_FAILURE,
         kind: 'failure',
@@ -193,7 +193,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     }
     if (payload['failureKind'] === 'contact-policy-config') {
       return {
-        title: 'Send refused: do-not-contact config invalid',
+        title: 'Send refused: invalid outreach limits',
         target: err,
         color: COLOR_FAILURE,
         kind: 'failure',
@@ -221,12 +221,18 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     if (outboundFailure) return outboundFailure;
     // A failed shell drops its most useful detail if we only show the error —
     // lead with the command, append a terse reason (exit code or first line).
+    const failedTitle =
+      normalized === 'bash' || normalized === 'shell'
+        ? 'Command failed'
+        : tool
+          ? `${humanizeIdentifier(tool)} failed`
+          : 'Step failed';
     if (normalized === 'bash' || normalized === 'shell') {
       const cmd = stripShellWrapper(pickString(payload, ['command', 'target']));
       if (cmd) {
         const reason = failureReason(err);
         return {
-          title: tool ? `Failed: ${tool}` : 'Failed',
+          title: 'Command failed',
           ...truncatedTarget(reason ? `${cmd} · ${reason}` : cmd, 200),
           color: COLOR_FAILURE,
           kind: 'failure',
@@ -239,7 +245,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
       const inline = [subject, reason].filter(Boolean).join(' · ');
       const full = [subject, err].filter(Boolean).join('\n\n');
       return {
-        title: tool ? `Failed: ${tool}` : 'Failed',
+        title: failedTitle,
         ...truncatedTarget(inline, 200),
         ...(full && full !== inline ? { targetFull: full } : {}),
         color: COLOR_FAILURE,
@@ -247,7 +253,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
       };
     }
     return {
-      title: tool ? `Failed: ${tool}` : 'Failed',
+      title: failedTitle,
       ...truncatedTarget(err, 200),
       color: COLOR_FAILURE,
       kind: 'failure',
@@ -293,9 +299,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (status === 'held') {
     return {
       title: 'Send held',
-      target: heldSendActivityCopy({
-        deltaCount: payload['deltaCount'],
-      }),
+      target: heldSendDetail(payload['deltaCount']),
       color: COLOR_TOOL,
       kind: 'tool',
     };
@@ -323,10 +327,10 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const display = pickString(payload, ['channelDisplayName']);
     const id = pickString(payload, ['channelId', 'channel']);
     const count = payload['messageCount'];
-    const dest = ch ? `#${ch.replace(/^#/, '')}` : display ? display : id || '?';
+    const dest = ch ? `#${ch.replace(/^#/, '')}` : display || id || undefined;
     const slice = readSliceLabel(payload);
-    const countStr = count !== undefined ? `${count} messages` : undefined;
-    const target = [dest, slice, countStr].filter(Boolean).join(' · ');
+    const countStr = count !== undefined ? `${count} ${count === 1 ? 'message' : 'messages'}` : undefined;
+    const target = [dest, slice, countStr].filter(Boolean).join(' · ') || undefined;
     return {
       title: 'Read messages',
       target,
@@ -348,7 +352,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   }
   if (normalized === 'anima.reminder.cancel') {
     return {
-      title: 'Cancelled reminder',
+      title: 'Canceled reminder',
       target: reminderName(payload),
       color: 'var(--color-activity-reminder)',
       kind: 'tool',
@@ -374,10 +378,10 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (normalized === 'anima.reminder.preflight') {
     const status = pickString(payload, ['status']);
     const title = status === 'succeeded'
-      ? 'Preflight succeeded'
+      ? 'Reminder check passed'
       : status === 'declined'
-        ? 'Preflight declined'
-        : 'Preflight errored';
+        ? 'Reminder check skipped'
+        : 'Reminder check failed';
     const durationMs = typeof payload['durationMs'] === 'number' ? payload['durationMs'] : undefined;
     const name = reminderName(payload);
     const detail = [
@@ -438,10 +442,10 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const count = payload['archivedCount'];
     const note = pickString(payload, ['note']);
     const countStr =
-      typeof count === 'number' ? `Archived ${count} provider session${count === 1 ? '' : 's'}` : undefined;
+      typeof count === 'number' ? `Archived ${count} previous session${count === 1 ? '' : 's'}` : undefined;
     const target = [countStr, note].filter(Boolean).join(' · ') || undefined;
     return {
-      title: 'Session rotated',
+      title: 'Session reset',
       target,
       color: COLOR_WORKING,
       kind: 'lifecycle',
@@ -473,16 +477,16 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     const reason = pickString(payload, ['reason']);
     const title =
       reason === 'shutdown'
-        ? 'Runtime restarted'
+        ? 'Agent restarted'
         : reason === 'user_stop'
-          ? 'Stopped by user'
+          ? 'Stopped'
           : reason === 'operator_restart'
-            ? 'Restarted by operator'
+            ? 'Restarted'
             : reason === 'idle_timeout'
-              ? 'Idle timeout'
+              ? 'Timed out'
               : reason === 'stalled'
                 ? 'Stopped to answer messages'
-                : 'Runtime stopped';
+                : 'Agent stopped';
     return {
       title,
       target: reason === 'idle_timeout' || reason === 'stalled' ? idleTimeoutTarget(payload) : undefined,
@@ -497,7 +501,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     // users can explain why a reply lagged behind a busy item. Copy
     // is intentionally count-free in v1 — the row is the explanation, not
     // a queue-depth indicator.
-    return { title: 'Queued behind current item', color: COLOR_TOOL, kind: 'lifecycle' };
+    return { title: 'Queued behind current task', color: COLOR_TOOL, kind: 'lifecycle' };
   }
   if (activity.type === 'runtime.output') {
     // Hidden by default (HIDDEN_TYPES); only surfaces in Audit show-all.
@@ -529,7 +533,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (activity.type === 'external.effect.completed') {
     if (String(payload['effect'] ?? '').toLowerCase() === 'slack.ask.post') {
       const audience = pickString(payload, ['allowedUserLabel']);
-      const title = payload['allowAnyone'] === true ? 'Asked anyone' : audience ? `Asked ${audience}` : 'Asked';
+      const title = payload['allowAnyone'] === true ? 'Asked channel' : audience ? `Asked ${audience}` : 'Asked';
       return {
         title,
         ...truncatedTarget(askActivityTarget(payload), 220),
@@ -543,7 +547,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
   if (activity.type === 'external.effect.failed') {
     const err = pickString(payload, ['summary', 'text', 'error']);
     return {
-      title: 'External effect failed',
+      title: 'Action failed',
       ...truncatedTarget(err, 200),
       color: COLOR_FAILURE,
       kind: 'failure',
@@ -559,7 +563,7 @@ export function activityRow(activity: ActivityRecord): ActivityRow {
     }
     if (eventType.endsWith('.compact.failed')) {
       return {
-        title: 'Compact failed',
+        title: 'Context compaction failed',
         ...truncatedTarget(pickString(payload, ['error']), 160),
         color: COLOR_FAILURE,
         kind: 'failure',
@@ -632,7 +636,7 @@ function memoryCoherenceOutcomeRow(payload: Record<string, unknown>): ActivityRo
   if (outcome === 'quiet_skipped') {
     return {
       title: 'Dreaming changed nothing',
-      ...truncatedTarget(target || 'Nothing needed changing', 200),
+      ...truncatedTarget(target, 200),
       color: COLOR_IDLE,
       kind: 'lifecycle',
     };
@@ -700,8 +704,8 @@ function linearApiLabel(payload: Record<string, unknown>): string {
   const fields = linearApiFields(payload);
   // Records from before field names were kept.
   if (!fields.length) {
-    return operation === 'query' ? 'Query' : operation === 'mutation' ? 'Mutation'
-      : operation === 'subscription' ? 'Subscription' : 'Unknown operation';
+    return operation === 'query' ? 'Read Linear data' : operation === 'mutation' ? 'Change Linear data'
+      : 'Linear request';
   }
   const action = fields.map(linearApiAction).find(Boolean);
   const first = action
@@ -752,7 +756,7 @@ export function linearApiDisplay(activity: ActivityRecord): LinearApiDisplay {
       : state === 'unconfirmed' ? 'Request completed; the change was not confirmed'
       : state === 'not-sent' ? 'Request not sent'
       : state === 'failed' ? operation === 'query' ? 'Read request failed' : 'Request failed; the remote outcome is unknown'
-      : state === 'read' ? 'Query returned' : 'Request completed',
+      : state === 'read' ? 'Read completed' : 'Request completed',
   };
   if (issueKey) display.issueKey = issueKey;
   if (summary?.issueTitle) display.issueTitle = summary.issueTitle;
@@ -909,7 +913,7 @@ function runtimeEventRow(eventType: string, payload: Record<string, unknown>): A
     const reason = pickString(payload, ['reason']);
     const error = pickString(payload, ['error']);
     return {
-      title: eventType.endsWith('.resume_retry') ? 'Provider resume retry' : 'Provider retry',
+      title: eventType.endsWith('.resume_retry') ? 'Retrying session resume' : 'Provider retry',
       ...truncatedTarget([reason, error].filter(Boolean).join(' · '), 200),
       color: COLOR_WORKING,
       kind: 'lifecycle',
@@ -1002,9 +1006,9 @@ function planStatusLabel(status: string): string {
 function idleTimeoutTarget(payload: Record<string, unknown>): string {
   const timeoutMs = payload['timeoutMs'];
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return 'No provider activity';
+    return 'No response from model';
   }
-  return `${formatDurationMinutes(timeoutMs)} with no provider activity`;
+  return `${formatDurationMinutes(timeoutMs)} with no model response`;
 }
 
 function formatDurationMinutes(ms: number): string {
@@ -1059,7 +1063,13 @@ function askActivityTarget(payload: Record<string, unknown>): string {
     : [];
   const options = labels.length ? `[${labels.join(' / ')}]` : '';
   const quotedQuestion = question ? `"${question}"` : '';
-  return [quotedQuestion, options].filter(Boolean).join(' - ');
+  return [quotedQuestion, options].filter(Boolean).join(' · ');
+}
+
+export function heldSendDetail(deltaCount: unknown): string {
+  return heldSendActivityCopy({ deltaCount })
+    .replace(/^Send held:\s*/i, '')
+    .replace(/;\s*nothing was sent\.?$/i, '');
 }
 
 // Short, scannable wake-time format for the audit register.

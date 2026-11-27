@@ -21,9 +21,29 @@ it('shows task identity and separates progress from a result using recorded type
   render(<LinearActivityGroup group={group(items)} heading={surface} agentId="ada" agentName="Ada" />);
   expect(screen.getByRole('link', { name: 'Open ANI-30 in Linear' }).getAttribute('href')).toBe(surface.href);
   expect(screen.getByText('Clear activity')).toBeTruthy();
-  expect(screen.getByText('progress update')).toBeTruthy();
+  expect(screen.getByText('shared a progress update')).toBeTruthy();
   expect(screen.getByText('sent a result')).toBeTruthy();
   expect(screen.getByText('The body says Done but this is progress')).toBeTruthy();
+});
+
+it('uses agentName for mentions and full verb phrases for session messages', () => {
+  const items = buildMessageFeed({ entries: [
+    {
+      direction: 'in' as const, kind: 'message' as const, messageId: 'm1', text: 'Ping',
+      linearKind: 'mention', platform: 'linear', issueKey: 'ANI-30', timestamp,
+      source: { kind: 'inbox' as const, id: 'm1' },
+    },
+    {
+      direction: 'in' as const, kind: 'message' as const, messageId: 'm2', text: 'Hello',
+      linearKind: 'session', platform: 'linear', issueKey: 'ANI-30', timestamp,
+      source: { kind: 'inbox' as const, id: 'm2' },
+    },
+  ] });
+  const { rerender } = render(<LinearActivityGroup group={group(items)} agentId="ada" agentName="Ada" />);
+  expect(screen.getByText('mentioned Ada')).toBeTruthy();
+  expect(screen.getByText('sent a session message')).toBeTruthy();
+  rerender(<LinearActivityGroup group={group(items)} agentId="ada" />);
+  expect(screen.getByText('mentioned the agent')).toBeTruthy();
 });
 
 it('omits repeated task headings while retaining each row and author', () => {

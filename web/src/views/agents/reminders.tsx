@@ -21,9 +21,21 @@ import type { Reminder, ReminderSchedule } from '@shared/reminder';
 /** How many past reminders show before the Show-all disclosure. */
 const PAST_PREVIEW = 12;
 
+const PREFLIGHT_STATUS_LABEL = {
+  succeeded: 'passed',
+  declined: 'not met',
+  errored: 'failed',
+} as const;
+
+const REMINDER_STATUS_LABEL: Record<Reminder['status'], string> = {
+  scheduled: 'Scheduled',
+  fired: 'Fired',
+  cancelled: 'Canceled',
+};
+
 function describeSchedule(schedule: ReminderSchedule, nextDueAt?: string): string {
   if (schedule.kind === 'once') {
-    if (!nextDueAt) return 'One-shot';
+    if (!nextDueAt) return 'One-time';
     return new Date(nextDueAt).toLocaleString(undefined, {
       month: 'short',
       day: 'numeric',
@@ -51,7 +63,7 @@ function describeSchedule(schedule: ReminderSchedule, nextDueAt?: string): strin
   if (schedule.kind === 'daily') return `Daily at ${schedule.time}`;
   if (schedule.kind === 'weekly') {
     const days = schedule.weekdays.map((d) => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ');
-    return `Weekly ${days} at ${schedule.time}`;
+    return `Weekly on ${days} at ${schedule.time}`;
   }
   return 'Scheduled';
 }
@@ -77,7 +89,7 @@ function ExpandedDetail({
           <div className="mt-1 font-mono text-[12px] break-all text-text">{reminder.preflight.command}</div>
           {reminder.preflightLastResult && (
             <div className="mt-1 text-[11px]">
-              Last preflight: <span className="font-mono">{reminder.preflightLastResult.status}</span>
+              Last check: <span className="font-mono">{PREFLIGHT_STATUS_LABEL[reminder.preflightLastResult.status]}</span>
               {reminder.preflightLastResult.exitCode !== undefined
                 ? ` · exit ${reminder.preflightLastResult.exitCode}`
                 : ''}
@@ -85,7 +97,7 @@ function ExpandedDetail({
             </div>
           )}
           {reminder.preflightError && (
-            <div className="mt-1 text-[11px] text-health-warn">Needs attention · preflight-error</div>
+            <div className="mt-1 text-[11px] text-health-warn">Needs attention · Check failed</div>
           )}
         </div>
       )}
@@ -121,7 +133,7 @@ function ExpandedDetail({
             onClick={onViewStream}
             className="chrome flex min-h-[44px] items-center text-[11px] uppercase tracking-[0.12em] text-text-muted underline decoration-border-soft underline-offset-4 hover:text-accent hover:decoration-accent md:min-h-0"
           >
-            View activity stream →
+            View activity →
           </button>
         )}
       </div>
@@ -224,7 +236,7 @@ function PastRow({
             floor for normal text, and 10px caps is not "large text". The
             cancelled/fired distinction lives in the dimmed title instead. */}
         <span className="chrome shrink-0 text-[10px] uppercase tracking-[0.1em] text-text-muted">
-          {reminder.status}
+          {REMINDER_STATUS_LABEL[reminder.status]}
         </span>
         <span className="font-sans shrink-0 text-[11px] tracking-wide text-text-muted">
           {formatRelativeShort(when, now)}
@@ -304,7 +316,7 @@ export default function Reminders() {
       <div className="max-w-3xl">
         {error && (
           <div className="mb-6 rounded-sm border border-border-soft bg-surface-raised px-4 py-3 text-[13px] text-text-subtle">
-            {error instanceof Error ? error.message : String(error)}
+            Could not load reminders
           </div>
         )}
         <section className="first:mt-0">

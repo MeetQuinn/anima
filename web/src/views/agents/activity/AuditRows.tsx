@@ -29,7 +29,7 @@ export function ReactOutRow({
   // user can see _what_ was reacted with; glyph primary, name via title hover.
   // Workspace-custom emoji have no Unicode equivalent → fall back to the
   // `:name:` mono form rather than rendering nothing.
-  const verb = item.action === 'added' ? 'Reacted' : 'Unreacted';
+  const verb = item.action === 'added' ? 'Reacted' : 'Removed reaction';
   const glyph = emojiGlyph(item.emoji);
   return (
     <Row
@@ -63,7 +63,7 @@ export function ReactOutRow({
           <SurfaceText chip={item.surface} />
           {item.noop && (
             <span className="chrome text-[10px] text-text-subtle">
-              {item.action === 'added' ? 'already present' : 'already absent'}
+              {item.action === 'added' ? 'already present' : 'not present'}
             </span>
           )}
         </span>

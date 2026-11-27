@@ -38,7 +38,7 @@ describe('buildActivityFeed', () => {
     if (item?.kind !== 'system-event') throw new Error('expected system event');
     expect(item.eventKind).toBe('attention');
     expect(item.label).toBe('Attention');
-    expect(item.body).toBe('#build · thread suggestion attached');
+    expect(item.body).toBe('#build · thread');
     expect(item.meta).toBe('Anima note: you\'ve been reading channel C123 without posting. If it is not relevant, mute it with `anima subscription mute --channel C123`.');
     expect(item.timestamp).toBe('2026-07-04T14:00:00.000Z');
   });
@@ -413,10 +413,10 @@ describe('buildActivityFeed', () => {
     );
     expect(heldRows.every((row) => row.eventKind === 'held')).toBe(true);
     expect(heldRows.map((row) => row.body)).toEqual([
-      'Send held: 1 new message arrived while composing; nothing was sent.',
-      'Send held: 2 new messages arrived while composing; nothing was sent.',
+      '1 new message arrived while composing',
+      '2 new messages arrived while composing',
       // File hold: delta is still conversation messages that arrived.
-      'Send held: 1 new message arrived while composing; nothing was sent.',
+      '1 new message arrived while composing',
     ]);
     expect(heldRows.every((row) => row.label === 'Send held')).toBe(true);
     // Never misrender as outbound message/file/ask rows.
@@ -429,7 +429,7 @@ describe('buildActivityFeed', () => {
         kind: 'system-event',
         eventKind: 'held',
         label: 'Send held',
-        body: 'Send held: 3 new messages arrived while composing; nothing was sent.',
+        body: '3 new messages arrived while composing',
         timestamp: '2026-07-04T14:00:04.000Z',
       },
     ]);
@@ -519,7 +519,7 @@ describe('buildMessageFeed', () => {
     if (onboarding?.kind !== 'system-event') throw new Error('expected system event');
     expect(onboarding.eventKind).toBe('onboarding');
     // The raw onboarding prompt is collapsed to a short fixed label.
-    expect(onboarding.body).toBe('Agent onboarding started');
+    expect(onboarding.body).toBe('Started');
   });
 
   it('projects outbound records to flat message/file/reaction rows', () => {

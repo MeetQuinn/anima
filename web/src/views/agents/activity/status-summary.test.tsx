@@ -92,10 +92,10 @@ describe('ActivityStatusSummary', () => {
       />,
     );
 
-    expect(screen.getByText('2 deferred')).toBeTruthy();
-    const buttons = screen.getAllByRole('button', { name: /Retry Slack wake now/ });
+    expect(screen.getByText('2 delayed')).toBeTruthy();
+    const buttons = screen.getAllByRole('button', { name: /Retry Slack item now/ });
     expect(buttons).toHaveLength(1);
-    expect(buttons[0]!.getAttribute('title')).toMatch(/deferred until/);
+    expect(buttons[0]!.getAttribute('title')).toMatch(/waiting until/);
     buttons[0]!.click();
     expect(onRetryDeferred).toHaveBeenCalledWith('slack:T:C:1.0');
   });
@@ -124,7 +124,7 @@ describe('ActivityStatusSummary', () => {
       />,
     );
 
-    expect(screen.getByText('1 deferred')).toBeTruthy();
+    expect(screen.getByText('1 delayed')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
   });
 
@@ -152,7 +152,7 @@ describe('ActivityStatusSummary', () => {
       />,
     );
 
-    expect(screen.getByText('1 deferred')).toBeTruthy();
+    expect(screen.getByText('1 delayed')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
   });
 
@@ -189,7 +189,7 @@ describe('ActivityStatusSummary', () => {
       />,
     );
 
-    const buttons = screen.getAllByRole('button', { name: /Retry Slack wake now/ });
+    const buttons = screen.getAllByRole('button', { name: /Retry Slack item now/ });
     expect(buttons).toHaveLength(2);
     expect(buttons.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
     expect(screen.getByText('Retrying…')).toBeTruthy();
@@ -205,7 +205,25 @@ describe('ActivityStatusSummary', () => {
         notBefore: '2099-01-01T09:00:00.000Z',
         retryable: true,
       }),
-    ).toMatch(/^Retry Slack wake now \(deferred until \d{2}:\d{2}, 1 deferral\)$/);
+    ).toMatch(/^Retry Slack item now \(waiting until \d{2}:\d{2}, delayed once\)$/);
+    expect(
+      deferredRetryAccessibleName({
+        deferrals: 2,
+        id: 'feishu:1',
+        kind: 'feishu',
+        notBefore: '2099-01-01T09:00:00.000Z',
+        retryable: true,
+      }),
+    ).toMatch(/^Retry Feishu item now \(waiting until \d{2}:\d{2}, delayed 2 times\)$/);
+    expect(
+      deferredRetryAccessibleName({
+        deferrals: 0,
+        id: 'linear:1',
+        kind: 'linear',
+        notBefore: '2099-01-01T09:00:00.000Z',
+        retryable: true,
+      }),
+    ).toMatch(/^Retry Linear item now \(waiting until \d{2}:\d{2}\)$/);
   });
 });
 

@@ -6,7 +6,7 @@ import { buildActivityAuthorResolvers } from '@/lib/activity-authors';
 import { groupByAuthor } from '@/lib/message-model';
 import type { AgentMessageRecord } from '@shared/messages';
 import { MessageGroupRow, messageGroupRowPropsEqual } from './SlackTimeline';
-import { MessageOutRow } from '../activity/MessageRows';
+import { FileOutRow, MessageOutRow } from '../activity/MessageRows';
 
 const issueUrl = 'https://linear.app/anima/issue/ANI-21';
 const record: AgentMessageRecord = {
@@ -41,9 +41,46 @@ describe('Linear issue links', () => {
     const link = screen.getByRole('link', { name: 'Open in Linear: ANI-21 · Show the issue · thread' });
     expect(link.getAttribute('href')).toBe(issueUrl);
     expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('title')).toBe('Open in Linear: ANI-21 · Show the issue · thread');
+    expect(link.getAttribute('title')).not.toContain('—');
     expect(messageGroupRowPropsEqual({ group, agentId: 'scout' }, {
       group: { ...group, surface: { ...group.surface!, href: `${issueUrl}/renamed` } }, agentId: 'scout',
     })).toBe(false);
+  });
+
+  it('formats edited DM titles grammatically and omits generic DM recipients', () => {
+    const base = { kind: 'message-out' as const, text: 'hello', timestamp: '2026-11-04T00:00:00Z' };
+    const { rerender } = render(
+      <MessageOutRow item={{ ...base, isEdit: true, surface: { kind: 'dm', label: '@alice' } }} time="08:00" />,
+    );
+    expect(screen.getByText('Edited message to alice')).toBeTruthy();
+
+    rerender(
+      <MessageOutRow item={{ ...base, isEdit: false, surface: { kind: 'dm', label: 'Feishu DM' } }} time="08:00" />,
+    );
+    expect(screen.getByText('Replied')).toBeTruthy();
+    expect(screen.queryByText(/Replied to Feishu DM/)).toBeNull();
+
+    rerender(
+      <MessageOutRow item={{ ...base, isEdit: false, surface: { kind: 'dm', label: 'DM' } }} time="08:00" />,
+    );
+    expect(screen.getByText('Replied')).toBeTruthy();
+
+    rerender(
+      <FileOutRow
+        item={{
+          kind: 'file-out',
+          caption: '',
+          files: [{ fileId: 'f1', filename: 'a.pdf', mimetype: 'application/pdf', sizeBytes: 12 }],
+          surface: { kind: 'dm', label: 'Feishu DM' },
+          timestamp: '2026-11-04T00:00:00Z',
+        }}
+        time="08:00"
+        agentId="scout"
+      />,
+    );
+    expect(screen.getByText('Sent 1 file')).toBeTruthy();
+    expect(screen.queryByText(/Sent 1 file to Feishu DM/)).toBeNull();
   });
 
   it.each(['linear', 'slack', 'feishu', undefined])('names the platform on the outbound link: %s', (platform) => {
