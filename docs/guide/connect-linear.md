@@ -32,7 +32,7 @@ dashboard, for example with a Cloudflare Tunnel to `http://127.0.0.1:4174`. Set 
 3. Select **Create app in Linear**. Linear opens in a new tab with the agent's name, its
    avatar when available (see below), both URLs and the event subscriptions filled in.
    Review and create the app. To reuse an app you already created, select
-   **I already have one** and make sure its URLs and subscriptions match.
+   **Use an existing app** and make sure its URLs and subscriptions match.
 4. Copy the **Client ID**, **Client secret** and **Webhook signing secret** into Anima.
    Do not paste the secrets into chat.
 5. Select **Authorize in Linear**. Linear opens in the same tab and asks which teams the
@@ -155,7 +155,7 @@ When a return from Linear cannot be tied to an attempt in this browser session, 
 expired, was replaced or was started in another browser, Anima shows a page that names no
 agent and asks you to open the agent and authorize again. It never completes or clears
 another agent's attempt. An unfinished or revoked connection can also be cleared with
-**Disconnect from Linear instead**. Disconnecting never uninstalls the app at Linear.
+**Disconnect from Linear**. Disconnecting never uninstalls the app at Linear.
 There is no separate CLI installation flow.
 
 The row shows the workspace name saved during installation, or **Connected** for an older
@@ -166,7 +166,7 @@ A connection records the verified app identity. It does not prove that the publi
 is reachable; that is the public address check. **Local listener** reports a recent runtime
 observation of the receiver: **Listening**, **Failed** or **Stopped**. A failure shows a
 coarse reason (port in use, permission denied, address unavailable or other) and what to
-check. **Not observed yet** is shown if
+check. **Unknown** is shown if
 the record is missing, unreadable, future-dated, 90 seconds old or older, from an exited
 process or for a different configured address. The runtime refreshes this small record during reconciliation. An observation write
 failure does not stop intake; it can leave an earlier observation visible until it expires.

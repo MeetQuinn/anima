@@ -15,16 +15,16 @@ You need permission to create and install an app in the target Slack workspace. 
 
 The dashboard generates the app manifest. Use that generated flow instead of assembling scopes, events, Socket Mode, and interactivity by hand.
 
-## 1. Create and install the app
+## 1. Create the app
 
 Select **Create app in Slack** in the dashboard. Slack opens with the generated manifest already filled in.
 
 1. Choose the target workspace.
 2. Review the requested app configuration.
-3. Select **Install** or **Install to Workspace** and approve the app.
+3. Select **Create**.
 4. Return to Anima.
 
-If you reuse an older Slack app, its manifest must match Anima's current requirements and Interactivity must be enabled. Creating a new app is the reliable first-install path.
+To reuse an older Slack app instead, select **Use an existing app**. Its manifest must match Anima's current requirements and Interactivity must be enabled. Creating a new app is the reliable first-install path.
 
 ## 2. Add the App-Level Token
 
@@ -42,7 +42,7 @@ Anima validates the token with Slack. Wait for the verified state before continu
 In the same Slack app:
 
 1. Open **OAuth & Permissions**.
-2. Install or reinstall the app to the workspace if Slack asks.
+2. Select **Install to Workspace** (or reinstall if Slack asks) and approve the app.
 3. Copy **Bot User OAuth Token**, beginning with `xoxb-`.
 4. Paste it into the matching Anima field.
 

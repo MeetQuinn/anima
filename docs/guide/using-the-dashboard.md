@@ -71,9 +71,9 @@ changes accounts, provider routing, or agent permissions.
 The desktop sidebar holds three levels of navigation:
 
 - The team switcher sets the team you are currently working in.
-- **Knowledge Base** and **Agents** list the folders and agents registered to that team.
+- **Knowledge bases** and **Agents** list the folders and agents registered to that team.
 - **Settings**, at the foot of the sidebar, opens the machine-wide panels: **Server**, **Providers**,
-  and **Token usage** under Runtime, and **Outreach limits** under Policies.
+  and **Token usage** under System, and **Outreach limits** under Policies.
 
 Collapse the sidebar when you need more room. On mobile, the same information opens as a full
 navigation screen; once you open an agent, a fixed bottom bar switches between its five tabs:
@@ -97,7 +97,7 @@ The agent list is a fast summary, not the complete diagnosis:
 
 Open **Activity** for the authoritative status line, background-work count, queue depth, health
 reason, and current run. A main turn with provider-native background work reads
-**Working · Background N**; background work that outlives the main turn reads **Background · N**.
+**Working · Background (N)**; background work that outlives the main turn reads **Background (N)**.
 
 ## Inspect work in Activity
 
@@ -126,10 +126,11 @@ Activity is a post-hoc Anima record. It is not a complete host audit log and it 
 effect in a provider, shell, Git remote, or external API. Check the system that owns an external
 effect when the distinction matters. See [Security and data](/security-and-data#audit-boundary).
 
-A rate-limited wake remains queued until the provider's reset time and appears as deferred. For a
-deferred Slack wake, **Retry now** retires the parked attempt and creates one new attempt anchored
-to the original Slack message, so an operator can resume after switching to an available provider
-account. Other deferred kinds show their count without a retry control.
+A rate-limited wake remains queued until the provider's reset time and appears as delayed (for
+example, **1 delayed**). For a delayed Slack wake, **Retry now** retires the parked attempt and
+creates one new attempt anchored to the original Slack message, so an operator can resume after
+switching to an available provider account. Other delayed kinds show their count without a retry
+control.
 
 ## Review conversations in Channels
 
@@ -265,7 +266,7 @@ state. For service-level commands and paths, see [Recover local services](/servi
 Linear workspace an agent on this host is connected to. Agents will not DM or @mention a listed
 person in Slack, or @mention, assign, delegate or subscribe them in Linear. Each platform's group
 states what it blocks. Add people by searching that workspace's directory and confirming with
-**Add member**; removal asks for confirmation too. See
+**Add**; removal asks for confirmation too. See
 [Do-not-contact list](./working-with-your-agent.md#do-not-contact-list).
 
 ## Manage knowledge bases
@@ -298,6 +299,6 @@ Socket Mode connection; they cannot recover messages missed while disconnected.
 Linear has no connection to keep open: Linear posts each event to Anima. The agent list and the
 activity header warn when something stops the agent hearing Linear: **Linear access revoked**,
 **Linear credentials not accepted** when Linear refuses the app's credentials while renewing
-access, and **Linear not receiving** when the local listener failed. Profile shows the details
+access, and **Linear not receiving events** when the local listener failed. Profile shows the details
 and the last event received. When Slack and Linear both need attention, the warning names both,
 the more serious first.

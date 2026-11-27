@@ -33,7 +33,7 @@ Open **Settings > Outreach limits** in the dashboard. The page groups the lists 
 platform and states what each one blocks. Each connected Slack workspace, and each
 Linear workspace an agent on this host is connected to, has its own list. Choose
 **+** (Add a person) on that workspace's list, search by name or `@username`, and
-confirm with **Add member**. Check the member ID before confirming, especially for
+confirm with **Add**. Check the member ID before confirming, especially for
 duplicate names. Removal also asks for confirmation because it lifts the restriction.
 
 Anima reads the directory on the server. For Slack, it selects a configured
