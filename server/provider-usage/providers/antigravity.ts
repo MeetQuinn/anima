@@ -58,7 +58,7 @@ export async function fetchAntigravityUsage(options: AntigravityUsageOptions = {
       timeoutMs: VERSION_TIMEOUT_MS,
     });
     const tooOld = versionProblem(version.code === 0 ? version.stdout : '');
-    if (tooOld) return unavailable(usageError('unknown', tooOld));
+    if (tooOld) return unavailable(tooOld);
     const result = await runAntigravityCommand(
       command,
       ['--log-file', join(dir, 'agy.log'), '--settings', USAGE_SETTINGS, '-p', '/usage', '--output-format', 'json'],
@@ -67,9 +67,10 @@ export async function fetchAntigravityUsage(options: AntigravityUsageOptions = {
       { killGraceMs: options.killGraceMs, timeoutMs: options.timeoutMs ?? USAGE_TIMEOUT_MS },
     );
     // agy also exits 2 for a flag it does not know, so `--settings` on an agy without it.
+    // `not_configured`, like an old version, so the card shows the `agy update` hint.
     if (result.code === 2 && result.stderr.includes('provided but not defined')) {
       return unavailable(usageError(
-        'unknown',
+        'not_configured',
         'This Antigravity CLI does not accept `--settings`, which the quota check needs; update it with `agy update`.',
       ));
     }
@@ -101,15 +102,22 @@ export async function fetchAntigravityUsage(options: AntigravityUsageOptions = {
   }
 }
 
-/** Why this `agy --version` output rules out `-p /usage`, or undefined when it does not. */
-function versionProblem(output: string): string | undefined {
+/**
+ * Why this `agy --version` output rules out `-p /usage`, or undefined when it does not.
+ * The card shows the message of any error but `unknown`, so an old agy, which
+ * `agy update` fixes, is `not_configured`.
+ */
+function versionProblem(output: string): ProviderUsageError | undefined {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(output);
-  if (!match) return 'Could not read the Antigravity CLI version, so its quota was not checked.';
+  if (!match) return usageError('unknown', 'Could not read the Antigravity CLI version, so its quota was not checked.');
   const version = match.slice(1, 4).map(Number);
   for (const [index, minimum] of MIN_USAGE_VERSION.entries()) {
     if (version[index]! > minimum) return undefined;
     if (version[index]! < minimum) {
-      return `Antigravity CLI ${match[0]} cannot report quota; ${MIN_USAGE_VERSION.join('.')} or later can (\`agy update\`).`;
+      return usageError(
+        'not_configured',
+        `Antigravity CLI ${match[0]} cannot report quota; ${MIN_USAGE_VERSION.join('.')} or later can (\`agy update\`).`,
+      );
     }
   }
   return undefined;

@@ -12,6 +12,7 @@ import {
   type Session,
 } from '../storage/schema/session.store.js';
 import { activitiesTaggedToItem } from './item-activities.js';
+import { antigravityAutoCompactTokensFor } from '../providers/antigravity-launch.js';
 import { claudeAutoCompactWindowFor } from '../providers/claude-launch.js';
 import { codexAutoCompactTokenLimitFor } from '../providers/codex.js';
 import type { ProviderSessionRecord } from '../providers/contract.js';
@@ -356,6 +357,7 @@ function providerAutoCompactWindowFor(
   runtimeEnv: Record<string, string> | undefined,
 ): number | undefined {
   if (runtimeKind === 'codex-cli') return codexAutoCompactTokenLimitFor(runtimeEnv);
+  if (runtimeKind === 'antigravity-cli') return antigravityAutoCompactTokensFor(runtimeKind, runtimeEnv);
   return claudeAutoCompactWindowFor(runtimeKind, runtimeEnv);
 }
 

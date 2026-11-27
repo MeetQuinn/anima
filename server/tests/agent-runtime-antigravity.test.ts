@@ -253,7 +253,7 @@ const FAKE_AGY = [
   "  }",
   "  process.exit(0);",
   "}",
-  "if (process.env.LAUNCH_PATH) fs.writeFileSync(process.env.LAUNCH_PATH, JSON.stringify({ argv, home: process.env.HOME }));",
+  "if (process.env.LAUNCH_PATH) fs.writeFileSync(process.env.LAUNCH_PATH, JSON.stringify({ argv, autoCompact: process.env.AGY_CLI_AUTO_COMPACT_OVERRIDE, home: process.env.HOME }));",
   "process.stdin.setEncoding('utf8');",
   "let buffer = '';",
   "let sessionId = 'agy-session-1';",
@@ -1671,6 +1671,7 @@ test('antigravity-cli runs the system prompt as a custom agent, selects model an
         'anima-runtime',
       ]);
       assert.equal(launch.home, process.env.HOME);
+      assert.equal(launch.autoCompact, '240000');
       assert.deepEqual(JSON.parse(await readFile(agentsPath, 'utf8')), {
         argv: ['--add-dir', agentDir, 'agents'],
         cwd: await realpath(stateDir),
@@ -1716,6 +1717,7 @@ test('antigravity-cli runs the system prompt as a custom agent, selects model an
       assert.equal(state.sessions.anima?.current?.id, 'agy-session-new');
       assert.equal(state.sessions.anima?.latestProviderStats?.currentContextTokens, 4096);
       assert.equal(state.sessions.anima?.latestProviderStats?.contextWindow, 1_048_576);
+      assert.equal(state.sessions.anima?.latestProviderStats?.autoCompactWindow, 240_000);
       const activities = allActivities(state);
       const shell = activities.find((activity) =>
         activity.type === 'tool.call.started' && activity.payload?.['providerToolId'] === 'agy-tool-1');
@@ -1886,6 +1888,28 @@ test('antigravity-cli saves a thinking level the probed menu lacks, and the next
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    await runtime?.close?.();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+test('antigravity-cli launches agy with the compaction point an agent sets for itself', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-compact-'));
+  let runtime: AgentRuntime | undefined;
+  try {
+    await withAnimaHome(stateDir, async () => {
+      const launchPath = join(stateDir, 'launch.json');
+      await installFakeAgy(stateDir);
+      const ctx = await ingestAgyEvent(stateDir, 'Compact later.', '1786000012.000101');
+      runtime = createAgentRuntime({
+        env: agyEnv(stateDir, {}, { AGY_CLI_AUTO_COMPACT_OVERRIDE: '0.5M', LAUNCH_PATH: launchPath }),
+        kind: 'antigravity-cli',
+      });
+      assert.equal((await runtime.run(await runtimeInput(runtime, ctx, await loadState()))).text, 'reply 1');
+      const launch = JSON.parse(await readFile(launchPath, 'utf8')) as Record<string, unknown>;
+      assert.equal(launch.autoCompact, '0.5M');
+    });
+  } finally {
     await runtime?.close?.();
     await rm(stateDir, { force: true, recursive: true });
   }
