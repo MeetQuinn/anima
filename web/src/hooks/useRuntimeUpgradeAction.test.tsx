@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { RuntimeUpgradeStatusResponse } from '@shared/runtime-upgrade';
+import { RuntimeUpgradeApplyError } from '@/api/system';
 import { queryKeys } from '@/lib/query-keys';
 import { useRuntimeUpgradeAction } from './useRuntimeUpgradeAction';
 
@@ -10,7 +11,13 @@ const api = vi.hoisted(() => ({ apply: vi.fn(), status: vi.fn() }));
 vi.mock('@/api/system', () => ({
   applyRuntimeUpgrade: api.apply,
   fetchRuntimeUpgrade: api.status,
-  RuntimeUpgradeApplyError: class extends Error {},
+  RuntimeUpgradeApplyError: class RuntimeUpgradeApplyError extends Error {
+    readonly status: number;
+    constructor(message: string, status: number) {
+      super(message);
+      this.status = status;
+    }
+  },
 }));
 vi.mock('@/hooks/useAgentDirectory', () => ({ useAgents: () => ({ data: [] }) }));
 
@@ -89,6 +96,19 @@ it('refreshes a stale offer after apply is rejected', async () => {
   expect(api.status).toHaveBeenCalledTimes(1);
   expect(view.result.current.status?.state).toBe('current');
   expect(view.result.current.applyError).toBe('Unsupported Media Type');
+  view.unmount();
+  view.client.clear();
+});
+
+it('reports an in-progress update on 409 conflict and uses plain fallback copy for non-Error rejections', async () => {
+  const view = mount();
+  api.apply.mockRejectedValueOnce(new RuntimeUpgradeApplyError('conflict', 409));
+  await act(async () => view.result.current.performUpgrade());
+  expect(view.result.current.applyError).toBe('An update is already in progress.');
+
+  api.apply.mockRejectedValueOnce('unexpected');
+  await act(async () => view.result.current.performUpgrade());
+  expect(view.result.current.applyError).toBe('Update failed to start.');
   view.unmount();
   view.client.clear();
 });

@@ -169,7 +169,7 @@ export default function RuntimeUpgradeRow() {
         <ProgressOverlay
           above
           title={availableTarget ? `Installing ${availableTarget}…` : 'Installing update…'}
-          body="Your current version keeps running while Anima installs and verifies the new one, then asks any working agents to pause before restart. The dashboard reloads automatically when it's back."
+          body="Anima keeps running while the update installs, then asks working agents to pause and restarts. The dashboard reloads automatically when Anima is back."
         />
       )}
     </>
@@ -226,7 +226,7 @@ function AvailableCard({
           className="flex w-full items-center justify-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-page"
         >
           <Download aria-hidden className="h-3 w-3" />
-          Upgrade &amp; restart
+          Update &amp; restart
         </button>
         {releaseNotesUrl && (
           <a
@@ -242,7 +242,7 @@ function AvailableCard({
         {error && <p className="mt-1.5 font-sans text-[11px] text-health-error">{error}</p>}
         {checkFailed && (
           <p className="mt-1.5 font-sans text-[11px] text-text-subtle">
-            Check failed: showing last known.
+            Update check failed. Showing last result.
           </p>
         )}
       </div>
@@ -274,13 +274,12 @@ function FailedCard({
         <AlertTriangle aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-health-error" />
         {rollbackFailed ? (
           <span className="font-serif text-[14px] font-medium text-text">
-            Update failed and rollback didn&apos;t complete. The runtime may need attention.
+            Update failed and rollback didn’t finish. The server may need attention.
           </span>
         ) : (
           <span className="font-serif text-[14px] font-medium text-text">
-            Update failed: still on{' '}
-            <span className="font-mono text-[12px] text-text-muted">{currentVersion}</span>
-            {' · nothing else changed'}
+            Update failed. Still on{' '}
+            <span className="font-mono text-[12px] text-text-muted">{currentVersion}</span>.
           </span>
         )}
       </div>
@@ -371,7 +370,7 @@ function CheckNowButton({
 function CheckFailedLabel() {
   return (
     <span className="font-sans text-[11px] text-text-subtle">
-      Check failed: showing last known.
+      Update check failed. Showing last result.
     </span>
   );
 }

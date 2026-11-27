@@ -137,7 +137,7 @@ describe('settings shell (desktop)', () => {
     expect(current.getAttribute('aria-current')).toBe('page');
     expect(within(list).getByRole('button', { name: 'Server' }).getAttribute('aria-current')).toBeNull();
     // Both groups, in order, and no agents sidebar anywhere on this surface.
-    expect(within(list).getByText('Runtime')).toBeTruthy();
+    expect(within(list).getByText('System')).toBeTruthy();
     expect(within(list).getByText('Policies')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /new agent/i })).toBeNull();
   });
@@ -283,7 +283,7 @@ describe('Update Anima button: install failure', () => {
     expect(screen.getByText('providers-page-body')).toBeTruthy();
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toMatch(/Update failed/);
-    expect(alert.textContent).toMatch(/still on 0\.1\.1-canary\.75\.1\.80810fb/);
+    expect(alert.textContent).toMatch(/Still on 0\.1\.1-canary\.75\.1\.80810fb\./);
     expect(alert.textContent).toMatch(/Target verification failed/);
 
     // Retry: the button is back and enabled; pressing it applies again and

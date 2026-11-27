@@ -100,7 +100,7 @@ describe('Provider connection display', () => {
         error: { type: 'unauthorized', message: 'Stored subscription login expired.' },
       }),
     );
-    expect(screen.getByText('Auth expired')).toBeTruthy();
+    expect(screen.getByText('Sign-in expired')).toBeTruthy();
     expect(screen.getByText('Subscription · Configured')).toBeTruthy();
   });
   it('does not call unknown cloud/keyring credentials signed out or connected', () => {
@@ -114,7 +114,7 @@ describe('Provider connection display', () => {
         },
       }),
     );
-    expect(screen.getByText('Authentication · Not inspected')).toBeTruthy();
+    expect(screen.getByText('Credentials · Not checked')).toBeTruthy();
     expect(screen.queryByText('Not configured')).toBeNull();
   });
   it('continues to render old runtime rows without connection metadata', () => {

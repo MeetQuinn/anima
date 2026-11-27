@@ -132,7 +132,7 @@ export function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
     return providerConnectionSummary(active.connection);
   }
   if (active.status !== 'available') {
-    if (active.error?.type === 'unauthorized') return 'Auth expired';
+    if (active.error?.type === 'unauthorized') return 'Sign-in expired';
     if (active.error?.type === 'not_configured') return 'Not configured';
     if (active.error?.type === 'network_error') return 'Unreachable';
     return 'Unavailable';
@@ -144,8 +144,8 @@ export function providerCollapsedSummary(usages: ProviderUsageRow[]): string {
 export function providerConnectionSummary(connection: NonNullable<ProviderUsageRow['connection']>): string {
   const method = connection.method === 'api-key' ? 'API key'
     : connection.method === 'subscription' ? 'Subscription'
-      : connection.method === 'cloud' ? 'Cloud provider' : 'Authentication';
+      : connection.method === 'cloud' ? 'Cloud provider' : 'Credentials';
   const state = connection.status === 'configured' ? 'Configured'
-    : connection.status === 'not-configured' ? 'No credential detected' : 'Not inspected';
+    : connection.status === 'not-configured' ? 'No credential detected' : 'Not checked';
   return `${method} · ${state}`;
 }

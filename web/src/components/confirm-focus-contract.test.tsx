@@ -240,6 +240,9 @@ describe('BusyConfirmModal focus contract', () => {
     expect(describedId).toBeTruthy();
     expect(document.getElementById(labelId!)?.textContent).toBe('Restart now?');
     expect(document.getElementById(describedId!)?.textContent).toContain('is working');
+    expect(document.getElementById(describedId!)?.textContent).toContain(
+      'Work that can’t pause in time is interrupted.',
+    );
   });
 
   it('contains Tab and Shift+Tab inside the dialog', () => {

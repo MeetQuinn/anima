@@ -32,7 +32,7 @@ export function PublicAddressForm({
     event.preventDefault();
     const parsed = PublicUrl.safeParse(value);
     if (!parsed.success) {
-      setError('Use an HTTPS address with no path, like https://anima.example.com.');
+      setError('Use a public HTTPS address with no path, like https://anima.example.com.');
       return;
     }
     setBusy(true);
@@ -47,7 +47,7 @@ export function PublicAddressForm({
       setSaved(true);
       onSaved?.(result.publicUrl ?? parsed.data);
     } catch {
-      setError('Could not save the address. Try again.');
+      setError('Couldn’t save the address. Try again.');
     } finally {
       setBusy(false);
     }
@@ -120,11 +120,13 @@ export const SET_PASSWORD_COMMAND = 'npx -y @meetquinn/animactl@latest dashboard
 export function PublicAddressGuidance() {
   return (
     <p className="max-w-prose font-serif text-[13px] leading-relaxed text-text-muted">
-      Forward the whole address to this dashboard, for example with a Cloudflare Tunnel. Protect it with
-      a sign-in gateway such as Cloudflare Access or a dashboard password. With a gateway, let{' '}
-      <span className="font-mono text-[12px] text-text">/webhooks/</span> through: Linear can’t sign in. Linear
-      apps created before this version post to <span className="font-mono text-[12px] text-text">/webhook</span>;
-      let that through too, or change their webhook URL.
+      Point this address at this dashboard (for example, with Cloudflare Tunnel) and protect it with a
+      sign-in gateway like Cloudflare Access or a dashboard password. If you use a gateway, bypass{' '}
+      <span className="font-mono text-[12px] text-text">/webhooks/</span> so Linear can deliver
+      events. Linear apps that still post to{' '}
+      <span className="font-mono text-[12px] text-text">/webhook</span> need that path bypassed too,
+      or their webhook URL changed to{' '}
+      <span className="font-mono text-[12px] text-text">/webhooks/linear</span>.
     </p>
   );
 }
@@ -133,15 +135,15 @@ function failureText(check: PublicUrlCheck): string {
   const http = check.status ? ` (HTTP ${check.status})` : '';
   switch (check.failure) {
     case 'gateway':
-      return `A sign-in page or access rule answered${http}. Let /webhooks/ through it, for example with a Cloudflare Access bypass for that path.`;
+      return `A sign-in page or access rule answered${http}. Bypass /webhooks/ in your gateway (for example, Cloudflare Access).`;
     case 'elsewhere':
-      return `Something answered${http}, but not this Anima. Forward the whole address to this dashboard.`;
+      return `Something responded${http}, but not this dashboard. Make sure this address forwards to this dashboard.`;
     case 'timeout':
-      return 'The address didn’t answer within 5 seconds. Check that your tunnel is running.';
+      return 'Timed out after 5 seconds. Check that your tunnel or proxy is running.';
     case 'not_configured':
       return 'No public address is saved yet.';
     default:
-      return `Anima couldn’t reach itself at this address${http}. Check that your tunnel is running and forwards to this dashboard.`;
+      return `Couldn’t reach this dashboard at this address${http}. Check that your tunnel or proxy is running and points here.`;
   }
 }
 
@@ -156,8 +158,7 @@ function OpenDashboardWarning() {
       <div className="min-w-0 space-y-1 font-sans text-[12px] leading-relaxed">
         <p className="text-[13px] font-semibold text-health-error">Anyone can open the dashboard at this address</p>
         <p className="max-w-prose text-text">
-          Anima opened it through this address without signing in. Whoever has the address can use the
-          dashboard, including its agents and settings.
+          No sign-in was required. Anyone with this address can access your agents and settings.
         </p>
         <p className="max-w-prose text-text-muted">
           Put a sign-in gateway such as Cloudflare Access in front of it and let{' '}
@@ -185,7 +186,7 @@ const redirected = (status: number) => status >= 300 && status < 400;
 function protection(check: PublicUrlCheck) {
   if (check.passwordSet) return 'Dashboard password enabled.';
   const status = check.dashboard?.status;
-  const seen = status === undefined ? undefined : redirected(status) ? `was redirected (HTTP ${status})` : `got HTTP ${status}`;
+  const seen = status === undefined ? undefined : redirected(status) ? `was redirected (HTTP ${status})` : `returned HTTP ${status}`;
   if (status !== undefined && asksFirst(status))
     return `No dashboard password. The address asked for sign-in or refused access (HTTP ${status}).`;
   return (
@@ -241,7 +242,7 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
       {result.reachable ? (
         <div role="status" className="space-y-1 font-sans text-[12px] leading-relaxed">
           <p className="flex flex-wrap items-center gap-x-1.5 text-health-ok">
-            <Check className="size-3.5" aria-hidden="true" /> Address reaches this Anima.
+            <Check className="size-3.5" aria-hidden="true" /> Address reaches this dashboard.
             <span className="text-text-subtle">{again}</span>
           </p>
           {!open && <p className="max-w-prose text-text-subtle">{protection(result)}</p>}
@@ -250,7 +251,7 @@ export function PublicAddressCheck({ publicUrl }: { publicUrl: string }) {
         <div role="alert" className="flex gap-2.5 rounded-sm border border-health-error/25 bg-health-error-soft/50 px-3 py-2.5">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-health-error" aria-hidden="true" />
           <div className="min-w-0 space-y-0.5 font-sans text-[12px] leading-relaxed">
-            <p className="font-medium text-health-error">Not reachable yet</p>
+            <p className="font-medium text-health-error">Not reachable</p>
             <p className="text-text-muted">
               {failureText(result)} {again}
             </p>
@@ -291,7 +292,7 @@ export default function PublicUrlSettings() {
       )}
       {query.isError && (
         <p role="alert" className="font-sans text-[13px] text-health-error">
-          Could not read the public address.{' '}
+          Couldn’t load the public address.{' '}
           <button
             type="button"
             className="min-h-11 px-1 underline md:min-h-8"

@@ -42,7 +42,7 @@ export function ProviderSignIn({
   // credential expires the CLI reports signed_out and the controls return.
   const controlsVisible = login.state !== 'signed_in';
   const stateLabel =
-    login.state === 'signed_in' ? 'Signed in' : login.state === 'signed_out' ? 'Not signed in' : 'Sign-in state unknown';
+    login.state === 'signed_in' ? 'Signed in' : login.state === 'signed_out' ? 'Not signed in' : 'Unknown';
   const stateTone =
     login.state === 'signed_in' ? 'text-text' : login.state === 'signed_out' ? 'text-health-warn' : 'text-text-muted';
   const expires = operation.expiresAt ? new Date(operation.expiresAt) : undefined;
@@ -63,8 +63,8 @@ export function ProviderSignIn({
         <div className="space-y-2 rounded-sm border border-border-soft bg-surface-elevated px-3 py-2.5">
           <p className="font-sans text-[11px] leading-relaxed text-text-muted">
             {operation.mode === 'device'
-              ? 'Open the link on any device, enter the code, and sign in to the provider account.'
-              : 'Finish the sign-in in the browser on this machine. The provider returns to Anima when it is done.'}
+              ? `Open the link on any device, enter the code, and sign in to ${label}.`
+              : 'Finish signing in on this machine’s browser. This updates automatically when you’re done.'}
           </p>
           {operation.url ? (
             <a
@@ -77,7 +77,7 @@ export function ProviderSignIn({
               <span className="break-all">{operation.url}</span>
             </a>
           ) : (
-            <p className="font-sans text-[11px] text-text-subtle">Waiting for the provider to print the sign-in link…</p>
+            <p className="font-sans text-[11px] text-text-subtle">Waiting for sign-in link…</p>
           )}
           {operation.mode === 'device' && operation.code && (
             <div className="flex flex-wrap items-center gap-2">
@@ -104,7 +104,7 @@ export function ProviderSignIn({
           <div className="flex flex-wrap items-center justify-between gap-2">
             {expires ? (
               <span className="font-sans text-[10px] text-text-subtle">
-                {`Link expires at ${expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                {`Expires at ${expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
               </span>
             ) : (
               <span aria-hidden />
@@ -126,7 +126,7 @@ export function ProviderSignIn({
             className="min-h-[44px] md:min-h-[36px] rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
             disabled={busy}
             onClick={() => onStart('browser')}
-            title={`Runs \`${login.command} login\` on this machine and opens the provider sign-in page here`}
+            title={`Runs ${login.command} login and opens the sign-in page in a browser on this machine`}
           >
             Sign in on this machine
           </button>
@@ -135,7 +135,7 @@ export function ProviderSignIn({
             className="min-h-[44px] md:min-h-[36px] rounded-sm border border-border-soft px-3 font-sans text-[11px] font-medium text-text-muted hover:border-border hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
             disabled={busy}
             onClick={() => onStart('device')}
-            title={`Runs \`${login.command} login --device-auth\`; finish on any device with a one-time code`}
+            title={`Runs ${login.command} login --device-auth to sign in on any device with a one-time code`}
           >
             Sign in with a code
           </button>
@@ -146,13 +146,13 @@ export function ProviderSignIn({
         <p className="font-sans text-[10px] leading-relaxed text-health-error">{operation.error}</p>
       )}
       {operation.status === 'cancelled' && !error && (
-        <p className="font-sans text-[10px] leading-relaxed text-text-subtle">Sign-in cancelled.</p>
+        <p className="font-sans text-[10px] leading-relaxed text-text-subtle">Sign-in canceled.</p>
       )}
       {error && <p className="font-sans text-[10px] leading-relaxed text-health-error">{error}</p>}
       {(running || controlsVisible) && (
         <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
-          Runs <code className="font-mono">{login.command} login</code> as this machine user. The provider stores the
-          credential; every agent using {label} on this machine shares it.
+          Runs <code className="font-mono">{login.command} login</code> on this machine. {label} stores your
+          credentials, and all agents using {label} share them.
         </p>
       )}
     </div>

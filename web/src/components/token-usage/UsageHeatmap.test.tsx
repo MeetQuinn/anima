@@ -61,7 +61,7 @@ describe('UsageHeatmap', () => {
     expect(screen.getAllByRole('img').length).toBe(364);
     expect(screen.getAllByLabelText(/before exact tracking began/).length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/1.2K tokens/)).toBeTruthy();
-    expect(screen.getByLabelText(/Token usage unavailable/)).toBeTruthy();
+    expect(screen.getByLabelText(/token usage unavailable/)).toBeTruthy();
     expect(screen.getAllByLabelText(/0 tokens/).length).toBeGreaterThan(0);
   });
 
@@ -105,7 +105,7 @@ describe('UsageHeatmap', () => {
 
   it('keeps measured usage visible when exact aggregate coverage is incomplete', () => {
     render(<UsageHeatmap days={[day('2026-02-26', 500_000)]} from="2025-12-28" through="2026-12-26" />);
-    const measured = screen.getByLabelText(/500K tokens · exact coverage incomplete/);
+    const measured = screen.getByLabelText(/500K tokens · partial tracking/);
     expect(measured.getAttribute('title')).not.toContain('before exact tracking began');
     // Measured usage is never repainted as "no data" just because coverage is
     // incomplete. The comparison is against a genuinely unmeasured day in the

@@ -67,11 +67,11 @@ export function useRuntimeUpgradeAction() {
       setPhase('idle');
       void queryClient.invalidateQueries({ queryKey: queryKeys.runtimeUpgrade() });
       if (err instanceof RuntimeUpgradeApplyError && err.status === 409) {
-        setApplyError('An agent started working. Try again once idle.');
+        setApplyError('An update is already in progress.');
       } else if (err instanceof RuntimeUpgradeApplyError && err.status === 503) {
         setApplyError('Update is unavailable right now.');
       } else {
-        setApplyError(err instanceof Error ? err.message : 'Upgrade failed to start.');
+        setApplyError(err instanceof Error ? err.message : 'Update failed to start.');
       }
     }
   }

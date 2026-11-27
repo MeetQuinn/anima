@@ -1,9 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { currentTokenUsageRange, fetchAgentTokenUsage } from '@/api/token-usage';
+import { currentTokenUsageRange, fetchAgentTokenUsage, localDate } from '@/api/token-usage';
 import { formatTokens } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
-import { UsageHeatmap } from './UsageHeatmap';
+import { UsageHeatmap, formatUsageDate, hasCoverageRule } from './UsageHeatmap';
 import { UsageTotals } from './UsageTotals';
 
 export function AgentUsageSection({ agentId }: { agentId: string }) {
@@ -28,10 +28,10 @@ export function AgentUsageSection({ agentId }: { agentId: string }) {
             {formatTokens(usage.totalTokens)}
           </div>
           <div className="mt-1 font-sans text-[11px] uppercase tracking-[0.11em] text-text-subtle">
-            Tokens processed · 52 weeks
+            Tokens · Past 52 weeks
           </div>
         </div>
-        <TrackingNote coverageStartedAt={usage.coverageStartedAt} />
+        <TrackingNote coverageStartedAt={usage.coverageStartedAt} from={range.from} />
       </div>
       <UsageHeatmap
         coverageStartedAt={usage.coverageStartedAt}
@@ -41,23 +41,24 @@ export function AgentUsageSection({ agentId }: { agentId: string }) {
       />
       <UsageTotals totals={usage} />
       <p className="font-sans text-[11px] leading-relaxed text-text-muted">
-        Provider-reported tokens only. Reasoning tokens are included in output and are never counted twice.
+        Provider-reported totals only. Output includes reasoning tokens.
       </p>
     </div>
   );
 }
 
-function TrackingNote({ coverageStartedAt }: { coverageStartedAt?: string }) {
+function TrackingNote({ coverageStartedAt, from }: { coverageStartedAt?: string; from: string }) {
   if (!coverageStartedAt) {
     return (
       <span className="max-w-xs font-sans text-[11px] leading-relaxed text-text-muted">
-        Exact tracking starts when this agent runtime next starts.
+        Exact tracking begins the next time this agent starts.
       </span>
     );
   }
+  if (hasCoverageRule(coverageStartedAt, from)) return null;
   return (
     <span className="max-w-xs text-right font-sans text-[11px] leading-relaxed text-text-muted">
-      Exact since {new Date(coverageStartedAt).toLocaleDateString()}
+      Exact since {formatUsageDate(localDate(new Date(coverageStartedAt)), { includeYear: true })}
     </span>
   );
 }

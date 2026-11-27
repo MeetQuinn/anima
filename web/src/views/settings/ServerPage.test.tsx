@@ -32,8 +32,9 @@ it('refreshes a cached old upgrade card on entry and when the server version cha
   api.info.mockResolvedValue(info('0.1.33'));
   api.upgrade.mockResolvedValue(status('0.1.33', 'current'));
   const view = render(<QueryClientProvider client={client}><ServerPage /></QueryClientProvider>);
-  await waitFor(() => expect(screen.queryByText('Upgrade & restart')).toBeNull());
+  await waitFor(() => expect(screen.queryByText('Update & restart')).toBeNull());
   expect(await screen.findByText('Up to date')).toBeTruthy();
+  expect(screen.getByText('Home')).toBeTruthy();
   expect(api.upgrade).toHaveBeenCalledTimes(1);
 
   client.setQueryData(queryKeys.runtimeUpgrade(), status('0.1.33', 'available'));
@@ -41,7 +42,7 @@ it('refreshes a cached old upgrade card on entry and when the server version cha
   await act(async () => { client.setQueryData(queryKeys.serverInfo(), info('0.1.34')); });
   await waitFor(() => expect(client.getQueryData(queryKeys.runtimeUpgrade())).toMatchObject({ currentVersion: '0.1.34' }));
   expect(api.upgrade).toHaveBeenCalledTimes(2);
-  expect(screen.queryByText('Upgrade & restart')).toBeNull();
+  expect(screen.queryByText('Update & restart')).toBeNull();
   view.unmount();
   client.clear();
 });

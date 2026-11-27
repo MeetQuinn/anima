@@ -143,7 +143,7 @@ export function ProviderUnit({
             {needsAttention ? (
               <span className="text-health-warn">Needs attention</span>
             ) : !management.installedVersion ? (
-              management.state === 'not_installed' ? 'not installed' : 'version unknown'
+              management.state === 'not_installed' ? 'Not installed' : 'Version unknown'
             ) : (
               collapsedSummary
             )}
@@ -151,7 +151,7 @@ export function ProviderUnit({
         )}
         {open && !management.installedVersion && (
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-subtle">
-            {management.state === 'not_installed' ? 'not installed' : 'version unknown'}
+            {management.state === 'not_installed' ? 'Not installed' : 'Version unknown'}
           </span>
         )}
       </button>
@@ -169,7 +169,7 @@ export function ProviderUnit({
               {updateOffer && (
                 <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="shrink-0 font-sans text-[11px] text-health-warn">
-                    Update available{management.latestVersion ? ` ${management.latestVersion}` : ''}
+                    Update available{management.latestVersion ? ` · v${management.latestVersion}` : ''}
                   </span>
                   {canApply ? (
                     <button
@@ -191,7 +191,7 @@ export function ProviderUnit({
                         title="Copy update command"
                       >
                         {copyStatus === 'copied' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                        {copyStatus === 'copied' ? 'Copied command' : 'Copy update command'}
+                        {copyStatus === 'copied' ? 'Copied' : 'Copy update command'}
                       </button>
                     )
                   )}
@@ -200,13 +200,13 @@ export function ProviderUnit({
               {manualUpdate && management.manualCommand && (
                 <div className="space-y-1 font-sans text-[11px] leading-relaxed text-text-muted">
                   <p>
-                    Run <code className="break-all font-mono text-text select-text">{management.manualCommand}</code> in this machine’s terminal to update.
+                    Run <code className="break-all font-mono text-text select-text">{management.manualCommand}</code> on this machine to update.
                   </p>
                   {management.sourceDetail && <p className="text-text-subtle">{management.sourceDetail}</p>}
                   {copyStatus === 'failed' && (
                     <p role="alert" className="text-health-error">Could not copy. Select the command and copy it manually.</p>
                   )}
-                  {copyStatus === 'copied' && <p role="status">Command copied.</p>}
+                  {copyStatus === 'copied' && <p role="status" className="sr-only">Command copied.</p>}
                 </div>
               )}
               {staleSessions && (
@@ -254,9 +254,9 @@ export function ProviderUnit({
                 }}
               >
                 <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
-                  Runtime command
+                  Command
                   <input
-                    aria-label={`${management.label} runtime command`}
+                    aria-label={`${management.label} command`}
                     autoCapitalize="off"
                     autoComplete="off"
                     className="mt-1.5 block min-h-[44px] w-full rounded-sm border border-border-soft bg-surface-elevated px-3 font-mono text-[12px] text-text placeholder:text-text-subtle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
@@ -275,7 +275,7 @@ export function ProviderUnit({
                 <label className="block font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle">
                   Arguments
                   <textarea
-                    aria-label={`${management.label} runtime arguments`}
+                    aria-label={`${management.label} arguments`}
                     autoCapitalize="off"
                     autoComplete="off"
                     className="mt-1.5 block min-h-[88px] w-full resize-y rounded-sm border border-border-soft bg-surface-elevated px-3 py-2.5 font-mono text-[12px] leading-relaxed text-text placeholder:text-text-subtle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-60"
@@ -294,7 +294,7 @@ export function ProviderUnit({
                 </label>
                 <div className="flex items-start justify-between gap-3">
                   <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
-                    Global for every agent using this provider. Command is an executable name or absolute path. Arguments are one argv entry per line; spaces are preserved and no shell parsing is used.
+                    Applies to agents using this provider that don’t set their own command. Command: a name or full path. Arguments: one per line, passed as-is (no shell).
                   </p>
                   <button
                     type="submit"
@@ -335,7 +335,7 @@ export function ProviderUnit({
                     </select>
                   </label>
                   <p className="font-sans text-[10px] leading-relaxed text-text-subtle">
-                    Global for every agent. Applies when its provider session next starts.
+                    Applies to all agents using this provider on their next session.
                   </p>
                   {contextLimitError && (
                     <p className="font-sans text-[10px] leading-relaxed text-health-error">
@@ -414,7 +414,7 @@ function UsageCard({ now, usage }: { now: Date; usage: ProviderUsageRow }) {
             {usage.error?.type === 'not_configured'
               ? 'Not configured'
               : usage.error?.type === 'unauthorized'
-                ? 'Auth expired'
+                ? 'Sign-in expired'
                 : usage.error?.type === 'network_error'
                   ? 'Unreachable'
                   : 'Unavailable'}

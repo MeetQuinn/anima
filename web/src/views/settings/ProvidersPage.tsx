@@ -148,7 +148,7 @@ export default function ProvidersPage() {
         message:
           error instanceof Error
             ? error.message
-            : 'Could not save runtime command',
+            : 'Could not save command',
         provider,
       });
     } finally {
@@ -170,7 +170,12 @@ export default function ProvidersPage() {
       await cancelThenSetQueryData(queryClient, queryKeys.providerLogin(), next);
     } catch (error) {
       setLoginFailure({
-        message: error instanceof Error ? error.message : 'Could not run the provider sign-in',
+        message:
+          error instanceof Error
+            ? error.message
+            : action === 'cancel'
+              ? 'Could not cancel sign-in'
+              : 'Could not start sign-in',
         provider,
       });
     } finally {
@@ -185,13 +190,14 @@ export default function ProvidersPage() {
       description: (
         <div className="space-y-2">
           <p>
-            Update the machine-wide {row.label} binary from v{row.installedVersion} to v{row.latestVersion}. This
-            affects {enabledAgents.length} {enabledAgents.length === 1 ? 'agent' : 'agents'}:{' '}
-            {enabledAgents.map((agent) => agent.name).join(', ') || 'none'}.
+            Update {row.label} on this machine from v{row.installedVersion} to v{row.latestVersion}.
+            {enabledAgents.length > 0
+              ? ` Used by ${enabledAgents.length} ${enabledAgents.length === 1 ? 'agent' : 'agents'}: ${enabledAgents.map((agent) => agent.name).join(', ')}.`
+              : ''}
           </p>
           <p>
-            Running work is not interrupted. New versions take effect when each provider session next restarts. Login
-            credentials and provider configuration are not changed.
+            Running sessions continue uninterrupted and use the new version on next restart. Sign-in
+            and settings won’t change.
           </p>
         </div>
       ),
@@ -250,7 +256,7 @@ export default function ProvidersPage() {
       <div className="py-5">
         {usageData?.providers.some((row) => row.connection) && (
           <p className="mb-5 font-sans text-[11px] leading-relaxed text-text-subtle">
-            Machine defaults; agent overrides and custom launchers may differ. “Configured” does not verify connectivity.
+            Shows machine defaults; individual agents or custom commands may differ. “Configured” means a credential or helper is set up; it isn’t tested.
           </p>
         )}
               {usageLoading || cliLoading ? (
@@ -328,7 +334,7 @@ export default function ProvidersPage() {
                   ))}
                 </div>
               ) : (
-                <p className="font-serif italic text-[13px] text-text-subtle">No provider CLIs found.</p>
+                <p className="font-serif italic text-[13px] text-text-subtle">No installed providers found.</p>
               )}
       </div>
       {modal}

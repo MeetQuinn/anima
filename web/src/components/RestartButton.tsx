@@ -55,7 +55,7 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
 
     async function tick() {
       if (Date.now() - startedAt.current > HEALTH_TIMEOUT_MS) {
-        setError('Restart timed out after 30s. Check logs.');
+        setError('Restart timed out after 30s. Check the server logs.');
         setPhase('failed');
         return;
       }
@@ -94,7 +94,7 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
             'group flex min-h-[44px] items-center focus-visible:outline-none md:min-h-0',
             phase === 'restarting' ? 'cursor-wait' : 'cursor-pointer',
           ].join(' ')}
-          title={phase === 'failed' && error ? error : 'Restart Anima services'}
+          title={phase === 'failed' && error ? error : 'Restart Anima'}
         >
           <span
             className={[
@@ -120,10 +120,10 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
                 ? 'cursor-wait text-text-on-spine-subtle'
                 : 'cursor-pointer text-text-on-spine-muted hover:bg-spine-elevated hover:text-text-on-spine focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
             ].join(' ')}
-            title="Restart Anima services"
+            title="Restart Anima"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${phase === 'restarting' ? 'animate-spin' : ''}`} />
-            <span>{phase === 'restarting' ? 'Restarting…' : 'Restart services'}</span>
+            <span>{phase === 'restarting' ? 'Restarting…' : 'Restart Anima'}</span>
           </button>
           {phase === 'failed' && error && (
             <div className="mt-1 px-2 text-[11px] text-health-error">{error}</div>
@@ -140,8 +140,8 @@ export default function RestartButton({ compact = false }: { compact?: boolean }
       )}
       {phase === 'restarting' && (
         <ProgressOverlay
-          title="Restarting Anima services…"
-          body="Any working agents are asked to pause and resume where they left off. The web app reloads automatically when services are back."
+          title="Restarting Anima…"
+          body="Working agents are asked to pause, then continue after the restart. The dashboard reloads automatically when Anima is back."
         />
       )}
     </>

@@ -112,7 +112,7 @@ export default function UpdateAnimaButton() {
         <ProgressOverlay
           above
           title={`Installing ${inProgressTarget ?? availableTarget}…`}
-          body="Your current version keeps running while Anima installs and verifies the new one, then asks any working agents to pause before restart. The dashboard reloads automatically when it's back."
+          body="Anima keeps running while the update installs, then asks working agents to pause and restarts. The dashboard reloads automatically when Anima is back."
         />
       )}
     </div>
@@ -145,10 +145,10 @@ function InstallFailedNote({
       <div className="flex items-start gap-1.5">
         <AlertTriangle aria-hidden className="mt-px h-3 w-3 shrink-0 text-health-error" />
         {rollbackFailed ? (
-          <span>Update failed and rollback didn&apos;t complete. The runtime may need attention.</span>
+          <span>Update failed and rollback didn’t finish. The server may need attention.</span>
         ) : (
           <span>
-            Update failed: still on <span className="font-mono text-[10px]">{currentVersion}</span>
+            Update failed. Still on <span className="font-mono text-[10px]">{currentVersion}</span>.
           </span>
         )}
       </div>

@@ -116,13 +116,13 @@ describe('ProvidersPage clipboard actions', () => {
     const button = await screen.findByTitle('Copy update command');
     button.focus();
     fireEvent.click(button);
-    await screen.findByRole('button', { name: 'Copied command' });
+    await screen.findByRole('button', { name: 'Copied' });
     expect(texts).toEqual(['claude update']);
     expect(exec).toHaveBeenCalledExactlyOnceWith('copy');
     expect(document.querySelector('textarea[readonly]')).toBeNull();
     expect(document.activeElement).toBe(button);
     expect(api.apply).not.toHaveBeenCalled();
-    expect(screen.getByText(/in this machine’s terminal/)).toBeTruthy();
+    expect(screen.getByText(/on this machine to update/)).toBeTruthy();
     expect(screen.getByText(/not a recognized native install/)).toBeTruthy();
     client.clear();
   });
@@ -134,7 +134,7 @@ describe('ProvidersPage clipboard actions', () => {
     useLegacyCopy(exec);
     const client = mountPage();
     fireEvent.click(await screen.findByTitle('Copy update command'));
-    await screen.findByRole('button', { name: 'Copied command' });
+    await screen.findByRole('button', { name: 'Copied' });
     expect(writeText).toHaveBeenCalledExactlyOnceWith('claude update');
     expect(exec).toHaveBeenCalledExactlyOnceWith('copy');
     expect(api.apply).not.toHaveBeenCalled();
@@ -148,7 +148,7 @@ describe('ProvidersPage clipboard actions', () => {
     useLegacyCopy(exec);
     const client = mountPage();
     fireEvent.click(await screen.findByTitle('Copy update command'));
-    await screen.findByRole('button', { name: 'Copied command' });
+    await screen.findByRole('button', { name: 'Copied' });
     expect(writeText).toHaveBeenCalledExactlyOnceWith('claude update');
     expect(exec).not.toHaveBeenCalled();
     client.clear();
@@ -162,11 +162,11 @@ describe('ProvidersPage clipboard actions', () => {
     button.focus();
     fireEvent.click(button);
     expect((await screen.findByRole('alert')).textContent).toMatch(/copy it manually/);
-    expect(screen.queryByRole('button', { name: 'Copied command' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
     expect(document.querySelector('textarea[readonly]')).toBeNull();
     expect(document.activeElement).toBe(button);
     fireEvent.click(screen.getByTitle('Copy update command'));
-    await screen.findByRole('button', { name: 'Copied command' });
+    await screen.findByRole('button', { name: 'Copied' });
     expect(screen.queryByRole('alert')).toBeNull();
     expect(api.apply).not.toHaveBeenCalled();
     client.clear();
@@ -177,7 +177,7 @@ describe('ProvidersPage clipboard actions', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }));
     expect(await screen.findByText('Update Codex CLI?')).toBeTruthy();
     expect(api.apply).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'Copied command' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
     client.clear();
   });
 
@@ -196,7 +196,7 @@ describe('ProvidersPage clipboard actions', () => {
     });
     await screen.findByText('claude update stable');
     await act(async () => { finish(); });
-    expect(screen.queryByRole('button', { name: 'Copied command' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
     expect(screen.queryByRole('status')).toBeNull();
     expect(writeText).toHaveBeenCalledExactlyOnceWith('claude update');
     client.clear();

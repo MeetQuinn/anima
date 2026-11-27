@@ -18,8 +18,8 @@ import { queryKeys } from '@/lib/query-keys';
 //   - On completion → an honest echo: "N agents resumed" fires ONLY when the
 //                      restart actually drained + re-queued running agents.
 //
-// Copy is continuity-first by design: the fear of lost work comes from the word
-// "interrupt", so we never use it — work is saved and continues.
+// Copy is continuity-first and honest: it leads with the drain-and-resume
+// path, and notes that work which can't pause in time is interrupted.
 // ---------------------------------------------------------------------------
 
 /** Names the running set for the confirm copy: 1 → the agent's name, 2+ → "N agents". */
@@ -71,11 +71,12 @@ export function ProgressOverlay({
 // ---------------------------------------------------------------------------
 
 /**
- * Light confirm shown ONLY when agents are mid-task. Continuity-first: it leads
- * with the named running agents and reassures that their work is saved and
- * resumes — it never says "interrupt". Calm accent palette (not error-red) to
- * reinforce that this is safe. The upgrade variant adds the target-version line;
- * everything else is shared.
+ * Light confirm shown ONLY when agents are mid-task. Continuity-first and
+ * honest: it leads with the named running agents and explains that Anima asks
+ * them to pause and resumes their work after the restart/update, while noting
+ * that work which can't pause in time is interrupted. Calm accent palette
+ * (not error-red) to reflect the normal drain path. The upgrade variant adds
+ * the target-version line; everything else is shared.
  */
 export function BusyConfirmModal({
   kind,
@@ -137,9 +138,9 @@ export function BusyConfirmModal({
           {title}
         </div>
         <div id={descriptionId} className="font-serif mt-2 text-[15px] leading-relaxed text-text-muted">
-          {/* Continuity-first: named, saved, resumes — never "interrupt". */}
-          {subject} {verb} working. Their work is saved. After the {action} they&apos;ll continue
-          right where they left off. Nothing is lost.
+          {/* Continuity-first and honest: drain-and-resume path plus timeout caveat. */}
+          {subject} {verb} working. Anima asks them to pause at a safe point, then picks their work
+          back up after the {action}. Work that can’t pause in time is interrupted.
         </div>
         {kind === 'upgrade' && target && (
           <div className="mt-2.5 font-sans text-[12px] text-text-muted">
@@ -296,7 +297,7 @@ export function RestartEchoToast() {
 
   if (!visible || !echo) return null;
 
-  const text = echo.kind === 'resumed' ? resumedText(echo.count) : 'Services restarted';
+  const text = echo.kind === 'resumed' ? resumedText(echo.count) : 'Anima restarted';
 
   return createPortal(
     <div
