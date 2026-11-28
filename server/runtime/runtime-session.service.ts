@@ -172,7 +172,7 @@ export class RuntimeSessionService {
     await this.sessionStore.update((session) => {
       if (!session) return undefined;
       const currentStartedAt = session.currentStartedAt ?? currentProviderSessionStartedAt(session);
-      if (activity.createdAt < currentStartedAt) {
+      if (activity.createdAt < currentStartedAt || statsOfArchivedSession(session, runtimeKind, activity)) {
         updated = session.currentStartedAt ? session : { ...session, currentStartedAt };
         return updated;
       }
@@ -416,6 +416,17 @@ function providerAutoCompactWindowFor(
   if (runtimeKind === 'codex-cli') return codexAutoCompactTokenLimitFor(runtimeEnv);
   if (runtimeKind === 'antigravity-cli') return providerContextLimitFor(runtimeKind, runtimeEnv, contextWindow);
   return claudeAutoCompactWindowFor(runtimeKind, runtimeEnv);
+}
+
+/**
+ * Stats a provider reports for a session Anima has archived, such as for a report
+ * `agy` finishes there before an item moves on, are not the current session's.
+ * Their activity stays on its item.
+ */
+function statsOfArchivedSession(session: Session, runtimeKind: string, activity: Activity): boolean {
+  const providerSessionId = stringField(activity.payload, 'providerSessionId');
+  return Boolean(providerSessionId)
+    && (session.archived ?? []).some((archived) => archived.kind === runtimeKind && archived.id === providerSessionId);
 }
 
 interface ContextLimitReached {

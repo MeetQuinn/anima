@@ -162,10 +162,11 @@ const CONFIG_OPTIONS = [
  *   then starts subagent 1, which stops before the prompt's Stop(false). The call fails before
  *   those Stops, or 100ms after the answer. Once WAKE_TRIGGER_PATH exists, the session says
  *   FINAL REPORT. and stops idle.
- * - reportLoop 'beforeStop' | 'afterStop': the first prompt starts subagent r and ends with
- *   Stop(false). 50ms later r stops, and the session's loop for r's report calls the model just
- *   before that Stop, or callAfterMs after it; the loop says 'PRIMARY REPORT.' and stops idle
- *   once WAKE_TRIGGER_PATH.report-go exists.
+ * - reportLoop 'beforeStop' | 'afterStop' | 'onTrigger': the first prompt starts subagent r and
+ *   ends with Stop(false). 50ms later r stops, and the session's loop for r's report calls the
+ *   model just before that Stop, callAfterMs after it, or once WAKE_TRIGGER_PATH.report-call
+ *   exists (then WAKE_TRIGGER_PATH.called is written); the loop says 'PRIMARY REPORT.' and stops
+ *   idle once WAKE_TRIGGER_PATH.report-go exists.
  * - nested: the first prompt starts coordinator c and ends with Stop(false). 50ms later c calls
  *   the model, starts a leaf and stops saying work goes on, and the session's loop says
  *   'COORDINATOR REPORT.' and stops the same way; the leaf stops once WAKE_TRIGGER_PATH.leaf-go
@@ -1000,6 +1001,10 @@ const FAKE_AGY = [
   "          if (scenario.reportLoop === 'beforeStop') modelCall(sessionId);",
   "          runStopHook('agy-subagent-r', true);",
   "          if (scenario.reportLoop === 'afterStop') setTimeout(() => modelCall(sessionId), scenario.callAfterMs || 0);",
+  "          if (scenario.reportLoop === 'onTrigger') whenTriggered('.report-call', () => {",
+  '            modelCall(sessionId);',
+  "            fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.called', '');",
+  '          });',
   '        }, 50);',
   "        whenTriggered('.report-go', () => {",
   "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'PRIMARY REPORT.' } });",
@@ -2275,6 +2280,13 @@ for (const scenario of [
         assert.match(first ?? '', /^agy-session-\d+$/);
         assert.equal(before?.latestProviderStats?.currentContextTokens, scenario.used);
         assert.equal(before?.latestProviderStats?.autoCompactWindow, 5_000);
+        assert.deepEqual(
+          [...new Set(allActivities(await loadState())
+            .filter((activity) => activity.payload?.['eventType'] === 'antigravity.context.stats')
+            .map((activity) => activity.payload?.['providerSessionId']))],
+          [first],
+          'the stats say which session they are for',
+        );
 
         const next = await ingestAgyEvent(stateDir, 'Carry on.', '1786000041.000002');
         assert.equal(await started.drainOnce(), 1);
@@ -2688,6 +2700,65 @@ test('antigravity-cli lets work agy does on its own finish on its item before an
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+for (const asked of [false, true]) {
+  test(`antigravity-cli ${asked ? 'counts a loop agy started on its own that has called the model but said nothing yet as work' : 'waits for a loop agy started on its own that has called the model but said nothing yet before an item moves to a new session'}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-silent-loop-'));
+    let runtime: AntigravityCliAgentRuntime | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const callsPath = join(stateDir, 'calls.jsonl');
+        const triggerPath = join(stateDir, 'wake-trigger');
+        await installFakeAgy(stateDir);
+        const firstCtx = await ingestAgyEvent(stateDir, 'Have a reader start.', '1786000033.000001');
+        const secondCtx = await ingestAgyEvent(stateDir, 'Start over.', '1786000033.000002');
+        runtime = new AntigravityCliAgentRuntime(
+          {
+            env: agyEnv(stateDir, { reportLoop: 'onTrigger', uniqueSessions: true }, { WAKE_TRIGGER_PATH: triggerPath }),
+            kind: 'antigravity-cli',
+          },
+          'agy',
+          [],
+          { wake: { pollMs: 20, quietMs: 60_000, settleMs: 100, subagentsDoneMs: 300 } },
+        );
+        const active = runtime;
+        assert.equal((await active.run(await runtimeInput(active, firstCtx, await loadState()))).text, 'Started a reader.');
+        // The reader stops, and agy has been silent long enough that nothing is left.
+        await withTimeout(active.waitForProviderQuiescent(), 5_000);
+        const firstPid = active.health().child?.pid;
+        assert.ok(firstPid);
+
+        // The session's loop for the reader's report calls the model; its first output has not come.
+        await writeFile(`${triggerPath}.report-call`, '');
+        await pollUntil(async () => existsSync(`${triggerPath}.called`), 5_000);
+        if (asked) assert.equal(active.isProviderQuiescent(), false, 'the model call agy made is work in progress');
+
+        const secondInput = { ...(await runtimeInput(active, secondCtx, await loadState())), providerSession: undefined };
+        let secondSettled = false;
+        const second = active.run(secondInput).finally(() => {
+          secondSettled = true;
+        });
+        await realDelay(300);
+        assert.equal(secondSettled, false, 'the item waits for the loop in the old session');
+        assert.equal(active.health().child?.alive, true);
+        assert.equal(active.health().child?.pid, firstPid);
+
+        await writeFile(`${triggerPath}.report-go`, '');
+        assert.equal((await withTimeout(second, 5_000)).text, 'Started a reader.');
+        const reports = allActivities(await loadState())
+          .filter((activity) => activity.type === 'agent.text' && activity.payload?.['text'] === 'PRIMARY REPORT.')
+          .map((activity) => activity.payload?.['itemId']);
+        assert.equal(reports[0], firstCtx.item.id, 'the report lands on the item that started the reader');
+        assert.notEqual(active.health().child?.pid, firstPid);
+        const calls = await readJsonLines(callsPath);
+        assert.equal(methodsOf(calls).filter((method) => method === 'session/new').length, 2);
+      });
+    } finally {
+      await runtime?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
 
 test('antigravity-cli moves an item to a new session when the old agy exits while the item waits for its work', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-leave-exited-'));

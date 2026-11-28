@@ -882,14 +882,38 @@ class AntigravityAcpController {
   /** Also waits for output already read from agy, which can open a self-started turn again. */
   async waitForQuiescent(signal?: AbortSignal): Promise<void> {
     for (;;) {
+      this.noteLoopStartedWhileIdle();
       await this.quiescentWaiters.waitUntilReady(() => this.isSettled(), signal);
-      if (!this.outputPending()) return;
-      await settledUnlessAborted(this.child.outputSettled!(), signal);
+      if (this.outputPending()) {
+        await settledUnlessAborted(this.child.outputSettled!(), signal);
+        continue;
+      }
+      this.noteLoopStartedWhileIdle();
+      if (this.isSettled()) return;
     }
   }
 
   isQuiescent(): boolean {
+    this.noteLoopStartedWhileIdle();
     return this.isSettled() && !this.outputPending();
+  }
+
+  /**
+   * Nothing reads the hook file while agy is idle, and a loop agy starts on its
+   * own, such as one for a subagent's report, can call the model well before its
+   * first output. A model call of the session's own in the file with no Stop of
+   * its own after it is such a loop: it is background work until that Stop.
+   */
+  private noteLoopStartedWhileIdle(): void {
+    if (this.exited || !this.sessionId || this.currentTurn || this.promptOnWire || !this.isSettled()) return;
+    let running = false;
+    for (const event of this.hookEvents?.pending() ?? []) {
+      if (event.hookEventName === 'PreInvocation' && event.conversationId === this.sessionId) running = true;
+      else if (this.isOwnStop(event)) running = false;
+    }
+    if (!running) return;
+    this.backgroundPending = true;
+    this.updateWakePoll();
   }
 
   /**
@@ -1155,6 +1179,7 @@ class AntigravityAcpController {
         ...usage,
         eventType: 'antigravity.context.stats',
         ...(model ? { model } : {}),
+        ...this.statsSession(),
         runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
         terminalReason: stopReason,
       });
@@ -1368,8 +1393,14 @@ class AntigravityAcpController {
     await input.effects.recordEvent({
       ...usage,
       eventType: 'antigravity.context.stats',
+      ...this.statsSession(),
       runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
     });
+  }
+
+  /** Which session context stats are for, so those of a session Anima has left stay out of the gauge. */
+  private statsSession(): { providerSessionId?: string } {
+    return this.sessionId ? { providerSessionId: this.sessionId } : {};
   }
 
   /**
@@ -1708,6 +1739,7 @@ class AntigravityAcpController {
         await turn.input.effects.recordEvent({
           ...this.latestUsage,
           eventType: 'antigravity.context.stats',
+          ...this.statsSession(),
           runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
         });
       }

@@ -750,9 +750,11 @@ Current process model:
   A session `agy` is still working in, in the background, is kept until a later item, and so is
   one where `agy` takes up work of its own while Anima archives it. Work `agy` starts on its own
   after that, such as a subagent's report, finishes on its item before the next item moves to a
-  new session; the same holds after an operator reset. An item a worker had already started, one
-  resumed after a restart or taken over from a worker that exited, stays in its session. An
-  agent can set its own limit as
+  new session; the same holds after an operator reset. A loop `agy` starts on its own counts as
+  work from its first model call, before it says anything. Usage `agy` reports for a session
+  Anima has left stays on its item, out of the new session's gauge and limit. An item a worker
+  had already started, one resumed after a restart or taken over from a worker that exited,
+  stays in its session. An agent can set its own limit as
   `AGY_CLI_AUTO_COMPACT_OVERRIDE` in its Launch env: a token count, a `K` or `M` shorthand, or a
   percentage of the model's window. `0` sets no limit; the profile form does not save an empty
   value. Anima passes the value to `agy` too, so an `agy` that honors it in ACP compacts before

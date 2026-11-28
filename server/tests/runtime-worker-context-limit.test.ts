@@ -10,7 +10,7 @@ import { allActivities, loadState } from './helpers/state.js';
 import { enqueueInbox, queueFor, silentLogger } from './helpers/runtime-worker.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
-import { recordRuntimeActivity } from '../runtime/activity.js';
+import { recordRuntimeActivity, recordRuntimeEvent } from '../runtime/activity.js';
 import type { Activity } from '../../shared/activity.js';
 import type {
   AgentRuntime,
@@ -182,6 +182,42 @@ test('runtime worker leaves a full agy session to work agy is still doing, then 
     await enqueue(stateDir);
     assert.equal(await worker.drainOnce(), 1);
     assert.deepEqual(runtime.sessions, ['agy-full', undefined]);
+    assert.equal(rotations(allActivities(await loadState())).length, 1);
+  });
+});
+
+test('runtime worker keeps usage agy reports for the session it left out of the new session', async () => {
+  const runtime = new SessionRecordingRuntime('antigravity-cli', { AGY_CLI_AUTO_COMPACT_OVERRIDE: '240000' });
+  await withWorker(runtime, async (worker, stateDir) => {
+    const first = await enqueue(stateDir);
+    assert.equal(await worker.drainOnce(), 1);
+    await lastTurnLeft(runtime, 300_000);
+    await enqueue(stateDir);
+    assert.equal(await worker.drainOnce(), 1);
+    const sessions = runtimeSessionServiceForAgent('scout');
+    await sessions.persistProviderSession(runtime.kind, { id: 'agy-new', updatedAt: new Date().toISOString() });
+
+    // agy finishes a report in the old session, and that loop's usage comes in after the new session started.
+    await recordRuntimeEvent({ agentId: 'scout', itemId: first.ctx.item.id }, runtime.kind, runtime.env, {
+      contextWindow: MODEL_WINDOW,
+      currentContextTokens: 280_000,
+      eventType: 'antigravity.context.stats',
+      providerSessionId: 'agy-full',
+    });
+    const session = await sessions.upsertPrimarySession();
+    assert.equal(session.current?.id, 'agy-new');
+    assert.equal(session.latestProviderStats, undefined, "the new session's gauge has none of it");
+    assert.equal(
+      allActivities(await loadState()).filter((activity) =>
+        activity.payload?.['eventType'] === 'antigravity.context.stats'
+        && activity.payload?.['itemId'] === first.ctx.item.id).length,
+      1,
+      'the usage stays on the item it came in for',
+    );
+
+    await enqueue(stateDir);
+    assert.equal(await worker.drainOnce(), 1);
+    assert.deepEqual(runtime.sessions, [undefined, undefined, 'agy-new']);
     assert.equal(rotations(allActivities(await loadState())).length, 1);
   });
 });
