@@ -166,7 +166,9 @@ const CONFIG_OPTIONS = [
  *   ends with Stop(false). 50ms later r stops, and the session's loop for r's report calls the
  *   model just before that Stop, callAfterMs after it, or once WAKE_TRIGGER_PATH.report-call
  *   exists (then WAKE_TRIGGER_PATH.called is written); the loop says 'PRIMARY REPORT.' and stops
- *   idle once WAKE_TRIGGER_PATH.report-go exists.
+ *   idle once WAKE_TRIGGER_PATH.report-go exists. handOff: that call also starts subagent h and
+ *   the loop stops saying work goes on, all before any output; once WAKE_TRIGGER_PATH.report-go
+ *   exists, h stops and the session's loop for h's report calls the model and reports.
  * - nested: the first prompt starts coordinator c and ends with Stop(false). 50ms later c calls
  *   the model, starts a leaf and stops saying work goes on, and the session's loop says
  *   'COORDINATOR REPORT.' and stops the same way; the leaf stops once WAKE_TRIGGER_PATH.leaf-go
@@ -1003,10 +1005,18 @@ const FAKE_AGY = [
   "          if (scenario.reportLoop === 'afterStop') setTimeout(() => modelCall(sessionId), scenario.callAfterMs || 0);",
   "          if (scenario.reportLoop === 'onTrigger') whenTriggered('.report-call', () => {",
   '            modelCall(sessionId);',
+  '            if (scenario.handOff) {',
+  "              modelCall('agy-subagent-h');",
+  '              runStopHook(sessionId, false);',
+  '            }',
   "            fs.writeFileSync(process.env.WAKE_TRIGGER_PATH + '.called', '');",
   '          });',
   '        }, 50);',
   "        whenTriggered('.report-go', () => {",
+  '          if (scenario.handOff) {',
+  "            runStopHook('agy-subagent-h', true);",
+  '            modelCall(sessionId);',
+  '          }',
   "          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'PRIMARY REPORT.' } });",
   "          update({ sessionUpdate: 'usage_update', used: 3500, size: 1048576 });",
   '          runStopHook(sessionId, true);',
@@ -2701,8 +2711,16 @@ test('antigravity-cli lets work agy does on its own finish on its item before an
   }
 });
 
-for (const asked of [false, true]) {
-  test(`antigravity-cli ${asked ? 'counts a loop agy started on its own that has called the model but said nothing yet as work' : 'waits for a loop agy started on its own that has called the model but said nothing yet before an item moves to a new session'}`, async () => {
+for (const { asked, handOff } of [
+  { asked: false, handOff: false },
+  { asked: true, handOff: false },
+  { asked: false, handOff: true },
+  { asked: true, handOff: true },
+]) {
+  const loop = handOff
+    ? 'a loop agy started on its own that has called the model, started a subagent and stopped saying work goes on, all before saying anything'
+    : 'a loop agy started on its own that has called the model but said nothing yet';
+  test(`antigravity-cli ${asked ? `counts ${loop} as work` : `waits for ${loop} before an item moves to a new session`}`, async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-silent-loop-'));
     let runtime: AntigravityCliAgentRuntime | undefined;
     try {
@@ -2714,7 +2732,7 @@ for (const asked of [false, true]) {
         const secondCtx = await ingestAgyEvent(stateDir, 'Start over.', '1786000033.000002');
         runtime = new AntigravityCliAgentRuntime(
           {
-            env: agyEnv(stateDir, { reportLoop: 'onTrigger', uniqueSessions: true }, { WAKE_TRIGGER_PATH: triggerPath }),
+            env: agyEnv(stateDir, { handOff, reportLoop: 'onTrigger', uniqueSessions: true }, { WAKE_TRIGGER_PATH: triggerPath }),
             kind: 'antigravity-cli',
           },
           'agy',
@@ -2728,7 +2746,8 @@ for (const asked of [false, true]) {
         const firstPid = active.health().child?.pid;
         assert.ok(firstPid);
 
-        // The session's loop for the reader's report calls the model; its first output has not come.
+        // The session's loop for the reader's report calls the model (and with handOff starts a
+        // subagent and stops saying work goes on); its first output has not come.
         await writeFile(`${triggerPath}.report-call`, '');
         await pollUntil(async () => existsSync(`${triggerPath}.called`), 5_000);
         if (asked) assert.equal(active.isProviderQuiescent(), false, 'the model call agy made is work in progress');

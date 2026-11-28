@@ -900,18 +900,20 @@ class AntigravityAcpController {
 
   /**
    * Nothing reads the hook file while agy is idle, and a loop agy starts on its
-   * own, such as one for a subagent's report, can call the model well before its
-   * first output. A model call of the session's own in the file with no Stop of
-   * its own after it is such a loop: it is background work until that Stop.
+   * own, such as one for a subagent's report, can call the model, start
+   * subagents and stop saying work goes on, all before any output. A model call
+   * in the file, or a Stop of the session's own that says work goes on, with no
+   * Stop of its own after it that says the session is idle, is such work: it is
+   * background work, and the poll applies those events as it does any others.
    */
   private noteLoopStartedWhileIdle(): void {
     if (this.exited || !this.sessionId || this.currentTurn || this.promptOnWire || !this.isSettled()) return;
-    let running = false;
+    let working = false;
     for (const event of this.hookEvents?.pending() ?? []) {
-      if (event.hookEventName === 'PreInvocation' && event.conversationId === this.sessionId) running = true;
-      else if (this.isOwnStop(event)) running = false;
+      if (event.hookEventName === 'PreInvocation') working = true;
+      else if (this.isOwnStop(event)) working = event.fullyIdle === false;
     }
-    if (!running) return;
+    if (!working) return;
     this.backgroundPending = true;
     this.updateWakePoll();
   }
