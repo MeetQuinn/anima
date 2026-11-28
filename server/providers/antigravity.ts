@@ -449,11 +449,18 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
   private async ensureController(input: AgentRuntimeInput): Promise<AntigravityAcpController> {
     const requestedSessionId = input.providerSession?.id;
     const existing = this.slot.get();
-    if (existing && requestedSessionId && existing.sessionId !== requestedSessionId) {
-      await this.slot.reset();
-    }
-    if (existing && !requestedSessionId && existing.sessionId) {
-      await this.slot.reset();
+    const leavesSession = requestedSessionId
+      ? existing?.sessionId !== requestedSessionId
+      : Boolean(existing?.sessionId);
+    if (existing && leavesSession) {
+      // This item moves to another session (Anima started a new one at the context
+      // limit, or an operator reset it). A turn agy started on its own in the old
+      // one, such as a subagent's report, finishes there and on its item first.
+      // If that agy exits instead, there is nothing left to wait for.
+      await existing.waitForQuiescent(input.signal).catch((error: unknown) => {
+        if (input.signal?.aborted) throw error;
+      });
+      if (this.slot.get() === existing) await this.slot.reset();
     }
 
     const controller =

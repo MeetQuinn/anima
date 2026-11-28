@@ -93,30 +93,36 @@ export class RuntimeSessionService {
     return this.archiveCurrentProviderSession(kind, (current) => (current.id === providerSessionId ? note : undefined));
   }
 
+  /** Whether the current provider session's last turn left its context at or over the limit. */
+  async providerSessionAtContextLimit(
+    kind: string,
+    runtimeEnv: Record<string, string> | undefined,
+  ): Promise<boolean> {
+    const session = await this.sessionStore.read();
+    return session?.current?.kind === kind && contextLimitReached(kind, runtimeEnv, session) !== undefined;
+  }
+
   /**
    * Archives the provider session once the context of its last turn has reached
    * the limit Anima keeps it under, so the next turn starts a new session. Only
    * `agy` has such a limit: its ACP server doesn't compact at a configured point.
    * The stats are the current session's own: archiving a session drops them, and
-   * stats from before `currentStartedAt` are never recorded.
+   * stats from before `currentStartedAt` are never recorded. `canLeave` is asked
+   * last, under the session file's lock, so work the provider took up while this
+   * waited for the lock keeps its session.
    */
   async archiveProviderSessionAtContextLimit(
     kind: string,
     runtimeEnv: Record<string, string> | undefined,
+    canLeave: () => boolean = () => true,
   ): Promise<ContextLimitRotation | undefined> {
-    let contextLimit: number | undefined;
-    let currentContextTokens: number | undefined;
+    let reached: ContextLimitReached | undefined;
     const recovered = await this.archiveCurrentProviderSession(kind, (_current, session) => {
-      const stats = session.latestProviderStats;
-      if (stats?.runtimeKind !== kind) return undefined;
-      contextLimit = providerContextLimitFor(kind, runtimeEnv, stats.contextWindow);
-      currentContextTokens = stats.currentContextTokens;
-      if (contextLimit === undefined || currentContextTokens === undefined) return undefined;
-      if (currentContextTokens < contextLimit) return undefined;
-      return `Context reached ${currentContextTokens} of ${contextLimit} tokens`;
+      reached = contextLimitReached(kind, runtimeEnv, session);
+      if (!reached || !canLeave()) return undefined;
+      return `Context reached ${reached.currentContextTokens} of ${reached.contextLimit} tokens`;
     });
-    if (!recovered || contextLimit === undefined || currentContextTokens === undefined) return undefined;
-    return { ...recovered, contextLimit, currentContextTokens };
+    return recovered && reached ? { ...recovered, ...reached } : undefined;
   }
 
   /**
@@ -410,6 +416,24 @@ function providerAutoCompactWindowFor(
   if (runtimeKind === 'codex-cli') return codexAutoCompactTokenLimitFor(runtimeEnv);
   if (runtimeKind === 'antigravity-cli') return providerContextLimitFor(runtimeKind, runtimeEnv, contextWindow);
   return claudeAutoCompactWindowFor(runtimeKind, runtimeEnv);
+}
+
+interface ContextLimitReached {
+  contextLimit: number;
+  currentContextTokens: number;
+}
+
+function contextLimitReached(
+  kind: string,
+  runtimeEnv: Record<string, string> | undefined,
+  session: Session,
+): ContextLimitReached | undefined {
+  const stats = session.latestProviderStats;
+  if (stats?.runtimeKind !== kind) return undefined;
+  const contextLimit = providerContextLimitFor(kind, runtimeEnv, stats.contextWindow);
+  const currentContextTokens = stats.currentContextTokens;
+  if (contextLimit === undefined || currentContextTokens === undefined) return undefined;
+  return currentContextTokens >= contextLimit ? { contextLimit, currentContextTokens } : undefined;
 }
 
 /** The context limit Anima starts a new provider session at, for providers that need one. */

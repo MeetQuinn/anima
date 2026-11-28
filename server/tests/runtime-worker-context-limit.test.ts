@@ -10,6 +10,7 @@ import { allActivities, loadState } from './helpers/state.js';
 import { enqueueInbox, queueFor, silentLogger } from './helpers/runtime-worker.js';
 import { AgentRuntimeWorker } from '../runtime/runtime-worker.js';
 import { runtimeSessionServiceForAgent } from '../runtime/runtime-session.service.js';
+import { recordRuntimeActivity } from '../runtime/activity.js';
 import type { Activity } from '../../shared/activity.js';
 import type {
   AgentRuntime,
@@ -56,6 +57,7 @@ async function withWorker(
         pollIntervalMs: 10_000,
         stateDir,
         workerId: 'test-worker',
+        workerIsAlive: (workerId) => workerId === 'test-worker',
       }, silentLogger);
       await body(worker, stateDir);
     });
@@ -199,3 +201,33 @@ test('runtime worker keeps a full agy session for an item it resumes after a res
     assert.equal(rotations(allActivities(await loadState())).length, 0);
   });
 });
+
+for (const started of [true, false]) {
+  test(`runtime worker ${started ? 'keeps a full agy session for' : 'starts a new agy session for'} an item a worker that died had ${started ? 'already started' : 'only claimed'}`, async () => {
+    const runtime = new SessionRecordingRuntime('antigravity-cli', { AGY_CLI_AUTO_COMPACT_OVERRIDE: '240000' });
+    await withWorker(runtime, async (worker, stateDir) => {
+      const decision = await enqueue(stateDir);
+      await lastTurnLeft(runtime, 300_000);
+      const queue = queueFor('scout');
+      const claimed = await queue.takeNextRunnable({ isWorkerAlive: () => true, workerId: 'worker-that-died' });
+      assert.equal(claimed?.id, decision.ctx.item.id);
+      if (started) {
+        await recordRuntimeActivity({ agentId: 'scout', itemId: decision.ctx.item.id }, runtime.kind, 'runtime.started');
+      }
+
+      // The worker takes the dead worker's item back; no restart drain marked it.
+      assert.equal(await worker.drainOnce(), 1);
+      const session = await runtimeSessionServiceForAgent('scout').upsertPrimarySession();
+      const rotated = rotations(allActivities(await loadState()));
+      if (started) {
+        assert.deepEqual(runtime.sessions, ['agy-full']);
+        assert.equal(session.archived, undefined);
+        assert.equal(rotated.length, 0);
+      } else {
+        assert.deepEqual(runtime.sessions, [undefined]);
+        assert.equal(session.archived?.[0]?.id, 'agy-full');
+        assert.equal(rotated.length, 1);
+      }
+    });
+  });
+}

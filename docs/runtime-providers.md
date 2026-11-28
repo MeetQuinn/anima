@@ -747,8 +747,12 @@ Current process model:
   240K tokens of context or more, Anima archives the session and the item starts a new one, without
   a summary; the agent carries on from its memory files and inbox. 240K is about where Claude Code
   compacts under Anima's default 272K window, so agents on either CLI carry about the same context.
-  A session `agy` is still working in, in the background, is kept until a later item, and an item
-  resumed after a restart stays in its session. An agent can set its own limit as
+  A session `agy` is still working in, in the background, is kept until a later item, and so is
+  one where `agy` takes up work of its own while Anima archives it. Work `agy` starts on its own
+  after that, such as a subagent's report, finishes on its item before the next item moves to a
+  new session; the same holds after an operator reset. An item a worker had already started, one
+  resumed after a restart or taken over from a worker that exited, stays in its session. An
+  agent can set its own limit as
   `AGY_CLI_AUTO_COMPACT_OVERRIDE` in its Launch env: a token count, a `K` or `M` shorthand, or a
   percentage of the model's window. `0` sets no limit; the profile form does not save an empty
   value. Anima passes the value to `agy` too, so an `agy` that honors it in ACP compacts before
