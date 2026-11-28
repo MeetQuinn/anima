@@ -17,8 +17,8 @@ import {
   claudeProviderEnv,
 } from '../providers/claude-launch.js';
 import {
-  ANTIGRAVITY_DEFAULT_AUTO_COMPACT_TOKENS,
-  antigravityAutoCompactTokensFor,
+  ANTIGRAVITY_DEFAULT_CONTEXT_LIMIT_TOKENS,
+  antigravityContextLimitFor,
   antigravityProviderEnv,
 } from '../providers/antigravity-launch.js';
 import { ControllerAgentRuntime } from '../providers/provider-runtime.js';
@@ -158,9 +158,9 @@ test('claude fast mode is an explicit per-agent launch opt-in', () => {
   ]);
 });
 
-test('antigravity provider env sets Anima\'s compaction point unless the agent sets its own', () => {
+test('antigravity provider env sets Anima\'s context limit unless the agent sets its own', () => {
   assert.deepEqual(antigravityProviderEnv({ kind: 'antigravity-cli' }), {
-    AGY_CLI_AUTO_COMPACT_OVERRIDE: String(ANTIGRAVITY_DEFAULT_AUTO_COMPACT_TOKENS),
+    AGY_CLI_AUTO_COMPACT_OVERRIDE: String(ANTIGRAVITY_DEFAULT_CONTEXT_LIMIT_TOKENS),
   });
   assert.deepEqual(
     antigravityProviderEnv({ env: { AGY_CLI_AUTO_COMPACT_OVERRIDE: '', EXTRA: 'kept' }, kind: 'antigravity-cli' }),
@@ -168,19 +168,27 @@ test('antigravity provider env sets Anima\'s compaction point unless the agent s
   );
 });
 
-test('antigravity compaction point reads the counts and shorthands agy takes', () => {
+test('antigravity context limit reads the counts, shorthands and percentages agy takes', () => {
   const at = (value: string | undefined) =>
-    antigravityAutoCompactTokensFor('antigravity-cli', value === undefined ? {} : { AGY_CLI_AUTO_COMPACT_OVERRIDE: value });
-  assert.equal(ANTIGRAVITY_DEFAULT_AUTO_COMPACT_TOKENS, 240_000);
+    antigravityContextLimitFor('antigravity-cli', value === undefined ? {} : { AGY_CLI_AUTO_COMPACT_OVERRIDE: value });
+  assert.equal(ANTIGRAVITY_DEFAULT_CONTEXT_LIMIT_TOKENS, 240_000);
   assert.equal(at(undefined), 240_000);
-  assert.equal(antigravityAutoCompactTokensFor('antigravity-cli', undefined), 240_000);
+  assert.equal(antigravityContextLimitFor('antigravity-cli', undefined), 240_000);
   assert.equal(at('150000'), 150_000);
   assert.equal(at(' 240K '), 240_000);
   assert.equal(at('240k'), 240_000);
   assert.equal(at('0.25M'), 250_000);
   assert.equal(at('1m'), 1_000_000);
-  for (const value of ['', '80%', 'abc', '0', '1.5', '-5', '12KB']) assert.equal(at(value), undefined, value);
-  assert.equal(antigravityAutoCompactTokensFor('claude-code', {}), undefined);
+  for (const value of ['', 'abc', '0', '1.5', '-5', '12KB', '0%', '101%', '%']) assert.equal(at(value), undefined, value);
+  const ofWindow = (value: string, contextWindow?: number) =>
+    antigravityContextLimitFor('antigravity-cli', { AGY_CLI_AUTO_COMPACT_OVERRIDE: value }, contextWindow);
+  assert.equal(ofWindow('25%', 1_048_576), 262_144);
+  assert.equal(ofWindow(' 12.5% ', 1_000_000), 125_000);
+  assert.equal(ofWindow('100%', 131_072), 131_072);
+  assert.equal(ofWindow('25%'), undefined, 'a percentage needs the model window');
+  assert.equal(ofWindow('25%', 0), undefined);
+  assert.equal(ofWindow('240K', 131_072), 240_000, 'a count does not depend on the window');
+  assert.equal(antigravityContextLimitFor('claude-code', {}), undefined);
 });
 
 test('claude auto-compact window resolution keeps env override semantics', () => {

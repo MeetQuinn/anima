@@ -12,7 +12,7 @@ import {
   type Session,
 } from '../storage/schema/session.store.js';
 import { activitiesTaggedToItem } from './item-activities.js';
-import { antigravityAutoCompactTokensFor } from '../providers/antigravity-launch.js';
+import { antigravityContextLimitFor } from '../providers/antigravity-launch.js';
 import { claudeAutoCompactWindowFor } from '../providers/claude-launch.js';
 import { codexAutoCompactTokenLimitFor } from '../providers/codex.js';
 import type { ProviderSessionRecord } from '../providers/contract.js';
@@ -22,6 +22,11 @@ export type { ProviderSession, Session };
 export interface RecoveredProviderSession {
   archived: ArchivedProviderSession;
   session: Session;
+}
+
+export interface ContextLimitRotation extends RecoveredProviderSession {
+  contextLimit: number;
+  currentContextTokens: number;
 }
 
 export class RuntimeSessionService {
@@ -85,12 +90,55 @@ export class RuntimeSessionService {
     providerSessionId: string,
     note: string,
   ): Promise<RecoveredProviderSession | undefined> {
+    return this.archiveCurrentProviderSession(kind, (current) => (current.id === providerSessionId ? note : undefined));
+  }
+
+  /** Whether the current provider session's last turn left its context at or over the limit. */
+  async providerSessionAtContextLimit(
+    kind: string,
+    runtimeEnv: Record<string, string> | undefined,
+  ): Promise<boolean> {
+    const session = await this.sessionStore.read();
+    return session?.current?.kind === kind && contextLimitReached(kind, runtimeEnv, session) !== undefined;
+  }
+
+  /**
+   * Archives the provider session once the context of its last turn has reached
+   * the limit Anima keeps it under, so the next turn starts a new session. Only
+   * `agy` has such a limit: its ACP server doesn't compact at a configured point.
+   * The stats are the current session's own: archiving a session drops them, and
+   * stats from before `currentStartedAt` are never recorded. `canLeave` is asked
+   * last, under the session file's lock, so work the provider took up while this
+   * waited for the lock keeps its session.
+   */
+  async archiveProviderSessionAtContextLimit(
+    kind: string,
+    runtimeEnv: Record<string, string> | undefined,
+    canLeave: () => boolean = () => true,
+  ): Promise<ContextLimitRotation | undefined> {
+    let reached: ContextLimitReached | undefined;
+    const recovered = await this.archiveCurrentProviderSession(kind, (_current, session) => {
+      reached = contextLimitReached(kind, runtimeEnv, session);
+      if (!reached || !canLeave()) return undefined;
+      return `Context reached ${reached.currentContextTokens} of ${reached.contextLimit} tokens`;
+    });
+    return recovered && reached ? { ...recovered, ...reached } : undefined;
+  }
+
+  /**
+   * Archives the current session of this provider when `noteFor` gives a note for
+   * it, read and written under the session file's lock.
+   */
+  private async archiveCurrentProviderSession(
+    kind: string,
+    noteFor: (current: ProviderSession, session: Session) => string | undefined,
+  ): Promise<RecoveredProviderSession | undefined> {
     const archivedAt = nowIso();
     let recovered: RecoveredProviderSession | undefined;
     await this.sessionStore.update((session) => {
-      if (session?.current?.kind !== kind || session.current.id !== providerSessionId) {
-        return undefined;
-      }
+      if (session?.current?.kind !== kind) return undefined;
+      const note = noteFor(session.current, session);
+      if (note === undefined) return undefined;
       const archived: ArchivedProviderSession = {
         ...session.current,
         archivedAt,
@@ -124,7 +172,7 @@ export class RuntimeSessionService {
     await this.sessionStore.update((session) => {
       if (!session) return undefined;
       const currentStartedAt = session.currentStartedAt ?? currentProviderSessionStartedAt(session);
-      if (activity.createdAt < currentStartedAt) {
+      if (activity.createdAt < currentStartedAt || statsOfArchivedSession(session, runtimeKind, activity)) {
         updated = session.currentStartedAt ? session : { ...session, currentStartedAt };
         return updated;
       }
@@ -268,7 +316,7 @@ function mergeSessionStats(
   runtimeEnv: Record<string, string> | undefined,
   payload: Record<string, unknown>,
 ): ProviderSessionStatsSummary {
-  const summary = providerSessionStatsSummary(activity, runtimeKind, runtimeEnv, payload);
+  const summary = providerSessionStatsSummary(activity, runtimeKind, payload);
   const eventType = stringField(payload, 'eventType');
   const usedTokens =
     eventType === 'grok.context.stats'
@@ -281,9 +329,11 @@ function mergeSessionStats(
     eventType === 'grok.context.stats'
       ? summary.currentContextTokens
       : summary.currentContextTokens ?? current?.currentContextTokens;
+  const contextWindow = summary.contextWindow ?? current?.contextWindow;
   return providerStatsSummary({
     ...summary,
-    contextWindow: summary.contextWindow ?? current?.contextWindow,
+    autoCompactWindow: providerAutoCompactWindowFor(runtimeKind, runtimeEnv, contextWindow),
+    contextWindow,
     currentContextTokens,
     sessionCompactionCount: current?.sessionCompactionCount,
     sessionTokenUsage: addOptional(current?.sessionTokenUsage, usedTokens),
@@ -301,7 +351,11 @@ function mergeContextStats(
   return providerStatsSummary({
     ...(current ?? {}),
     activityId: keepProviderStatsStamp ? current?.activityId : activity.activityId,
-    autoCompactWindow: providerAutoCompactWindowFor(runtimeKind, runtimeEnv),
+    autoCompactWindow: providerAutoCompactWindowFor(
+      runtimeKind,
+      runtimeEnv,
+      numberField(payload, 'contextWindow') ?? current?.contextWindow,
+    ),
     createdAt: keepProviderStatsStamp ? current?.createdAt : activity.createdAt,
     runtimeKind: stringField(payload, 'runtimeKind') ?? current?.runtimeKind ?? runtimeKind,
     contextWindow: numberField(payload, 'contextWindow') ?? current?.contextWindow,
@@ -319,7 +373,7 @@ function mergeCompactionStats(
   return providerStatsSummary({
     ...(current ?? {}),
     activityId: keepProviderStatsStamp ? current?.activityId : activity.activityId,
-    autoCompactWindow: providerAutoCompactWindowFor(runtimeKind, runtimeEnv),
+    autoCompactWindow: providerAutoCompactWindowFor(runtimeKind, runtimeEnv, current?.contextWindow),
     createdAt: keepProviderStatsStamp ? current?.createdAt : activity.createdAt,
     runtimeKind: stringField(activity.payload, 'runtimeKind') ?? current?.runtimeKind ?? runtimeKind,
     sessionCompactionCount: (current?.sessionCompactionCount ?? 0) + 1,
@@ -329,12 +383,10 @@ function mergeCompactionStats(
 function providerSessionStatsSummary(
   activity: Activity,
   runtimeKind: string,
-  runtimeEnv: Record<string, string> | undefined,
   payload: Record<string, unknown>,
 ): ProviderSessionStatsSummary {
   const summary = providerStatsSummary({
     activityId: activity.activityId,
-    autoCompactWindow: providerAutoCompactWindowFor(runtimeKind, runtimeEnv),
     cacheCreationInputTokens: numberField(payload, 'cacheCreationInputTokens'),
     cacheReadInputTokens: numberField(payload, 'cacheReadInputTokens'),
     contextWindow: numberField(payload, 'contextWindow'),
@@ -352,13 +404,56 @@ function providerSessionStatsSummary(
   return usedTokens !== undefined ? { ...summary, usedTokens } : summary;
 }
 
+/**
+ * Where the gauge's limit is: the point a provider compacts at, or for `agy` the
+ * point Anima starts a new session at (see providerContextLimitFor).
+ */
 function providerAutoCompactWindowFor(
   runtimeKind: string,
   runtimeEnv: Record<string, string> | undefined,
+  contextWindow: number | undefined,
 ): number | undefined {
   if (runtimeKind === 'codex-cli') return codexAutoCompactTokenLimitFor(runtimeEnv);
-  if (runtimeKind === 'antigravity-cli') return antigravityAutoCompactTokensFor(runtimeKind, runtimeEnv);
+  if (runtimeKind === 'antigravity-cli') return providerContextLimitFor(runtimeKind, runtimeEnv, contextWindow);
   return claudeAutoCompactWindowFor(runtimeKind, runtimeEnv);
+}
+
+/**
+ * Stats a provider reports for a session Anima has archived, such as for a report
+ * `agy` finishes there before an item moves on, are not the current session's.
+ * Their activity stays on its item.
+ */
+function statsOfArchivedSession(session: Session, runtimeKind: string, activity: Activity): boolean {
+  const providerSessionId = stringField(activity.payload, 'providerSessionId');
+  return Boolean(providerSessionId)
+    && (session.archived ?? []).some((archived) => archived.kind === runtimeKind && archived.id === providerSessionId);
+}
+
+interface ContextLimitReached {
+  contextLimit: number;
+  currentContextTokens: number;
+}
+
+function contextLimitReached(
+  kind: string,
+  runtimeEnv: Record<string, string> | undefined,
+  session: Session,
+): ContextLimitReached | undefined {
+  const stats = session.latestProviderStats;
+  if (stats?.runtimeKind !== kind) return undefined;
+  const contextLimit = providerContextLimitFor(kind, runtimeEnv, stats.contextWindow);
+  const currentContextTokens = stats.currentContextTokens;
+  if (contextLimit === undefined || currentContextTokens === undefined) return undefined;
+  return currentContextTokens >= contextLimit ? { contextLimit, currentContextTokens } : undefined;
+}
+
+/** The context limit Anima starts a new provider session at, for providers that need one. */
+function providerContextLimitFor(
+  runtimeKind: string,
+  runtimeEnv: Record<string, string> | undefined,
+  contextWindow: number | undefined,
+): number | undefined {
+  return antigravityContextLimitFor(runtimeKind, runtimeEnv, contextWindow);
 }
 
 function providerStatsSummary(value: Record<string, unknown>): ProviderSessionStatsSummary {

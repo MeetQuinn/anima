@@ -449,11 +449,18 @@ export class AntigravityCliAgentRuntime extends ControllerAgentRuntime<Antigravi
   private async ensureController(input: AgentRuntimeInput): Promise<AntigravityAcpController> {
     const requestedSessionId = input.providerSession?.id;
     const existing = this.slot.get();
-    if (existing && requestedSessionId && existing.sessionId !== requestedSessionId) {
-      await this.slot.reset();
-    }
-    if (existing && !requestedSessionId && existing.sessionId) {
-      await this.slot.reset();
+    const leavesSession = requestedSessionId
+      ? existing?.sessionId !== requestedSessionId
+      : Boolean(existing?.sessionId);
+    if (existing && leavesSession) {
+      // This item moves to another session (Anima started a new one at the context
+      // limit, or an operator reset it). A turn agy started on its own in the old
+      // one, such as a subagent's report, finishes there and on its item first.
+      // If that agy exits instead, there is nothing left to wait for.
+      await existing.waitForQuiescent(input.signal).catch((error: unknown) => {
+        if (input.signal?.aborted) throw error;
+      });
+      if (this.slot.get() === existing) await this.slot.reset();
     }
 
     const controller =
@@ -875,14 +882,40 @@ class AntigravityAcpController {
   /** Also waits for output already read from agy, which can open a self-started turn again. */
   async waitForQuiescent(signal?: AbortSignal): Promise<void> {
     for (;;) {
+      this.noteLoopStartedWhileIdle();
       await this.quiescentWaiters.waitUntilReady(() => this.isSettled(), signal);
-      if (!this.outputPending()) return;
-      await settledUnlessAborted(this.child.outputSettled!(), signal);
+      if (this.outputPending()) {
+        await settledUnlessAborted(this.child.outputSettled!(), signal);
+        continue;
+      }
+      this.noteLoopStartedWhileIdle();
+      if (this.isSettled()) return;
     }
   }
 
   isQuiescent(): boolean {
+    this.noteLoopStartedWhileIdle();
     return this.isSettled() && !this.outputPending();
+  }
+
+  /**
+   * Nothing reads the hook file while agy is idle, and a loop agy starts on its
+   * own, such as one for a subagent's report, can call the model, start
+   * subagents and stop saying work goes on, all before any output. A model call
+   * in the file, or a Stop of the session's own that says work goes on, with no
+   * Stop of its own after it that says the session is idle, is such work: it is
+   * background work, and the poll applies those events as it does any others.
+   */
+  private noteLoopStartedWhileIdle(): void {
+    if (this.exited || !this.sessionId || this.currentTurn || this.promptOnWire || !this.isSettled()) return;
+    let working = false;
+    for (const event of this.hookEvents?.pending() ?? []) {
+      if (event.hookEventName === 'PreInvocation') working = true;
+      else if (this.isOwnStop(event)) working = event.fullyIdle === false;
+    }
+    if (!working) return;
+    this.backgroundPending = true;
+    this.updateWakePoll();
   }
 
   /**
@@ -1148,6 +1181,7 @@ class AntigravityAcpController {
         ...usage,
         eventType: 'antigravity.context.stats',
         ...(model ? { model } : {}),
+        ...this.statsSession(),
         runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
         terminalReason: stopReason,
       });
@@ -1361,8 +1395,14 @@ class AntigravityAcpController {
     await input.effects.recordEvent({
       ...usage,
       eventType: 'antigravity.context.stats',
+      ...this.statsSession(),
       runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
     });
+  }
+
+  /** Which session context stats are for, so those of a session Anima has left stay out of the gauge. */
+  private statsSession(): { providerSessionId?: string } {
+    return this.sessionId ? { providerSessionId: this.sessionId } : {};
   }
 
   /**
@@ -1374,14 +1414,19 @@ class AntigravityAcpController {
    * the reports. Model calls and Stops of subagent conversations tell which
    * subagents are running (see subagentsDone). Every event is in the file in the
    * order agy got to it, so what a Stop that finds no work left covers is what came
-   * before it, however late Anima reads agy's output.
+   * before it, however late Anima reads agy's output. A Stop ends only the work
+   * before it: a model call after the last one starts work of its own, which
+   * outside a prompt is background work until its Stop (as a loop Anima sees on
+   * disk before it applies the call, see noteLoopStartedWhileIdle).
    */
   private applyHookEvents(ready: (event: AntigravityHookEvent) => boolean, answered?: AgentRuntimeInput): void {
     if (this.exited) return;
     let stopped = false;
+    let calledAfterStop = false;
     for (const event of this.hookEvents?.take(ready) ?? []) {
       if (event.hookEventName === 'PreInvocation') {
         this.noteModelCall(event);
+        calledAfterStop = stopped;
         continue;
       }
       if (!this.isOwnStop(event)) {
@@ -1389,6 +1434,7 @@ class AntigravityAcpController {
         continue;
       }
       stopped = true;
+      calledAfterStop = false;
       this.backgroundPending = event.fullyIdle === false;
       if (this.backgroundPending) {
         this.subagents.ownLoop = false;
@@ -1403,6 +1449,7 @@ class AntigravityAcpController {
       this.endWake();
       if (!this.backgroundPending) this.pendingTools.clear();
     }
+    if (calledAfterStop && !answered && !this.promptOnWire) this.backgroundPending = true;
     this.settleBackground();
   }
 
@@ -1701,6 +1748,7 @@ class AntigravityAcpController {
         await turn.input.effects.recordEvent({
           ...this.latestUsage,
           eventType: 'antigravity.context.stats',
+          ...this.statsSession(),
           runtimeKind: ANTIGRAVITY_RUNTIME_KIND,
         });
       }

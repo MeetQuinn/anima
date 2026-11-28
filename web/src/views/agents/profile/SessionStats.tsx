@@ -1,7 +1,9 @@
 import { formatTokens, formatUptime, shortIso } from '@/lib/format';
 import type { AgentSessionSummary, ProviderSessionStatsSummary } from '@shared/snapshot';
 
-// Context occupancy gauge — % to compact (claude) or % full (codex).
+// Context occupancy gauge — % to compact (claude), % to a new session (agy, where
+// Anima starts one at the limit because agy's ACP server doesn't compact there) or
+// % full (codex).
 export function ContextOccupancy({ stats }: { stats?: ProviderSessionStatsSummary }) {
   if (!stats || stats.currentContextTokens === undefined) {
     // Only show a hint when stats exist but context is pending (e.g. between
@@ -31,7 +33,7 @@ export function ContextOccupancy({ stats }: { stats?: ProviderSessionStatsSummar
   const gauge = compactIsBinding
     ? {
         denom: compactWindow!,
-        label: 'to compact',
+        label: stats.runtimeKind === 'antigravity-cli' ? 'to new session' : 'to compact',
         detail: [
           `${formatTokens(used)} / ${formatTokens(compactWindow!)}`,
           modelWindow ? `model window ${formatTokens(modelWindow)}` : null,

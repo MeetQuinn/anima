@@ -39,6 +39,7 @@ import { classifyProviderRetry } from '../providers/provider-retry.js';
 import type { RuntimeItemFailure } from './failure-notice.js';
 import { defaultAgentHealthService, isProviderFailureReason } from './agent-health.service.js';
 import { runtimeSessionServiceForAgent } from './runtime-session.service.js';
+import { activitiesTaggedToItem } from './item-activities.js';
 import type { AgentRuntimeHandleSnapshot } from '../../shared/snapshot.js';
 import { TeamRunLimiter } from './team-run-limiter.js';
 import {
@@ -404,6 +405,8 @@ export class AgentRuntimeWorker {
       await this.notifyItemStarted(context);
       if (context.item.handling.resumeReason === 'runtime_restart') {
         await this.recordRestartResumeActivity(context);
+      } else {
+        await this.startNewProviderSessionAtContextLimit(context);
       }
       const runContext = context;
       let providerProgressHealthClearStarted = false;
@@ -615,6 +618,50 @@ export class AgentRuntimeWorker {
         message: 'Resumed after restart',
       },
     );
+  }
+
+  /**
+   * Gives this item a new provider session when the current one's context has
+   * reached the limit Anima keeps it under (only `agy` has one; its ACP server
+   * doesn't compact at a configured point). The agent carries on from its memory
+   * files and inbox, without a summary. A provider still working in the background
+   * keeps its session until a later item, and so does an item that already started
+   * a turn: a restart marks the one it drained, but a worker that died mid-turn
+   * leaves its item queued again with no mark. Whether the provider is idle is
+   * asked again under the session file's lock, and the runtime itself lets work
+   * that starts after that finish before it leaves the session. Best effort: a
+   * failure keeps the session.
+   */
+  private async startNewProviderSessionAtContextLimit(context: RuntimeItemContext): Promise<void> {
+    const runtime = this.options.agentRuntime;
+    const providerIdle = () => runtime.isProviderQuiescent?.() !== false;
+    if (!providerIdle()) return;
+    try {
+      const sessions = runtimeSessionServiceForAgent(this.options.agentId);
+      if (!(await sessions.providerSessionAtContextLimit(runtime.kind, runtime.env))) return;
+      const earlier = await activitiesTaggedToItem(this.options.agentId, context.item);
+      if (earlier.some((activity) => activity.type === 'runtime.started')) return;
+      const rotated = await sessions.archiveProviderSessionAtContextLimit(runtime.kind, runtime.env, providerIdle);
+      if (!rotated) return;
+      context.session = rotated.session;
+      await recordSessionRotationActivity({
+        agentId: this.options.agentId,
+        itemId: context.item.id,
+      }, {
+        archivedAt: rotated.archived.archivedAt,
+        archivedCount: 1,
+        archivedProviderSessions: [rotated.archived],
+        automatic: true,
+        contextLimit: rotated.contextLimit,
+        currentContextTokens: rotated.currentContextTokens,
+        note: rotated.archived.note,
+        reason: 'context_limit',
+      });
+    } catch (error) {
+      this.logger.error(
+        `Runtime worker could not start a new provider session for item ${context.item.id}: ${errorMessage(error)}`,
+      );
+    }
   }
 
   private async recoverCorruptProviderSession(

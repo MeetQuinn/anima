@@ -48,6 +48,23 @@ describe('ContextOccupancy', () => {
     expect(screen.queryByText(/as of latest activity/)).toBeNull();
   });
 
+  it('says an agy agent gets a new session at its limit, since agy does not compact there', () => {
+    render(
+      <ContextOccupancy
+        stats={stats({
+          currentContextTokens: 120_000,
+          autoCompactWindow: 240_000,
+          contextWindow: 1_048_576,
+          runtimeKind: 'antigravity-cli',
+        })}
+      />,
+    );
+    expect(screen.getByText('50%')).toBeTruthy();
+    expect(screen.getByText('to new session')).toBeTruthy();
+    expect(screen.queryByText('to compact')).toBeNull();
+    expect(screen.getByText(/120K \/ 240K · model window 1M/)).toBeTruthy();
+  });
+
   it('keeps to-compact when compact threshold equals the model window', () => {
     render(
       <ContextOccupancy
