@@ -1414,14 +1414,19 @@ class AntigravityAcpController {
    * the reports. Model calls and Stops of subagent conversations tell which
    * subagents are running (see subagentsDone). Every event is in the file in the
    * order agy got to it, so what a Stop that finds no work left covers is what came
-   * before it, however late Anima reads agy's output.
+   * before it, however late Anima reads agy's output. A Stop ends only the work
+   * before it: a model call after the last one starts work of its own, which
+   * outside a prompt is background work until its Stop (as a loop Anima sees on
+   * disk before it applies the call, see noteLoopStartedWhileIdle).
    */
   private applyHookEvents(ready: (event: AntigravityHookEvent) => boolean, answered?: AgentRuntimeInput): void {
     if (this.exited) return;
     let stopped = false;
+    let calledAfterStop = false;
     for (const event of this.hookEvents?.take(ready) ?? []) {
       if (event.hookEventName === 'PreInvocation') {
         this.noteModelCall(event);
+        calledAfterStop = stopped;
         continue;
       }
       if (!this.isOwnStop(event)) {
@@ -1429,6 +1434,7 @@ class AntigravityAcpController {
         continue;
       }
       stopped = true;
+      calledAfterStop = false;
       this.backgroundPending = event.fullyIdle === false;
       if (this.backgroundPending) {
         this.subagents.ownLoop = false;
@@ -1443,6 +1449,7 @@ class AntigravityAcpController {
       this.endWake();
       if (!this.backgroundPending) this.pendingTools.clear();
     }
+    if (calledAfterStop && !answered && !this.promptOnWire) this.backgroundPending = true;
     this.settleBackground();
   }
 
