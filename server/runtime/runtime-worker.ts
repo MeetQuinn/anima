@@ -404,6 +404,8 @@ export class AgentRuntimeWorker {
       await this.notifyItemStarted(context);
       if (context.item.handling.resumeReason === 'runtime_restart') {
         await this.recordRestartResumeActivity(context);
+      } else {
+        await this.startNewProviderSessionAtContextLimit(context);
       }
       const runContext = context;
       let providerProgressHealthClearStarted = false;
@@ -615,6 +617,41 @@ export class AgentRuntimeWorker {
         message: 'Resumed after restart',
       },
     );
+  }
+
+  /**
+   * Gives this item a new provider session when the current one's context has
+   * reached the limit Anima keeps it under (only `agy` has one; its ACP server
+   * doesn't compact at a configured point). The agent carries on from its memory
+   * files and inbox, without a summary. A provider still working in the background
+   * keeps its session until a later item. Best effort: a failure keeps the session.
+   */
+  private async startNewProviderSessionAtContextLimit(context: RuntimeItemContext): Promise<void> {
+    const runtime = this.options.agentRuntime;
+    if (runtime.isProviderQuiescent?.() === false) return;
+    try {
+      const rotated = await runtimeSessionServiceForAgent(this.options.agentId)
+        .archiveProviderSessionAtContextLimit(runtime.kind, runtime.env);
+      if (!rotated) return;
+      context.session = rotated.session;
+      await recordSessionRotationActivity({
+        agentId: this.options.agentId,
+        itemId: context.item.id,
+      }, {
+        archivedAt: rotated.archived.archivedAt,
+        archivedCount: 1,
+        archivedProviderSessions: [rotated.archived],
+        automatic: true,
+        contextLimit: rotated.contextLimit,
+        currentContextTokens: rotated.currentContextTokens,
+        note: rotated.archived.note,
+        reason: 'context_limit',
+      });
+    } catch (error) {
+      this.logger.error(
+        `Runtime worker could not start a new provider session for item ${context.item.id}: ${errorMessage(error)}`,
+      );
+    }
   }
 
   private async recoverCorruptProviderSession(

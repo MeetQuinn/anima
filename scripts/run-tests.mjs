@@ -178,6 +178,7 @@ const groups = {
     'cli-message.test.js',
     'provider-connection-keychain.test.js',
     'runtime-worker-coherence.test.js',
+    'runtime-worker-context-limit.test.js',
     'runtime-worker-failures.test.js',
     'runtime-worker-stall.test.js',
     'runtime-worker-followups.test.js',

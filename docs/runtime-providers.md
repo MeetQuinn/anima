@@ -204,7 +204,7 @@ When a provider emits a new session id, the adapter calls `effects.persistProvid
 
 Provider sessions are not the Anima product session. If a provider session is compacted, rotated, restarted, or replaced, Anima still has the durable primary session, inbox history, instructions, and activity log.
 
-If a resumed provider session is identified as structurally corrupt, the worker can archive that exact provider session and retry the current inbox item once with a fresh provider session. Any follow-ups already appended to the failed run are requeued before the retry. The recovery writes an automatic `anima.session.rotate` activity. This is separate from ordinary provider-process crash retry: adapters must raise a typed corruption error for a condition they can identify precisely rather than treating every provider failure as damaged session state. Codex currently does this for resumed-session turn desynchronization and the exact missing-tool-output transcript diagnostic.
+If a resumed provider session is identified as structurally corrupt, the worker can archive that exact provider session and retry the current inbox item once with a fresh provider session. Any follow-ups already appended to the failed run are requeued before the retry. The recovery writes an automatic `anima.session.rotate` activity. This is separate from ordinary provider-process crash retry: adapters must raise a typed corruption error for a condition they can identify precisely rather than treating every provider failure as damaged session state. Codex currently does this for resumed-session turn desynchronization and the exact missing-tool-output transcript diagnostic. The worker also archives an Antigravity session whose context has reached its limit before the next item starts (see Antigravity CLI below); that rotation records `reason: "context_limit"`.
 
 ## Codex Adapter
 
@@ -740,16 +740,20 @@ Current process model:
 - Anima starts one persistent `agy acp --dangerously-skip-permissions` process and speaks ACP over
   stdio. Operator **Arguments** go after `acp`. Anima refuses the Antigravity desktop app's `agy`
   editor launcher, which would open an editor window instead of an ACP server.
-- Anima launches `agy` with `AGY_CLI_AUTO_COMPACT_OVERRIDE=240000`, so a conversation compacts at
-  240K tokens (`agy` 1.5.15 and later read it for every model). Without it, `agy` compacts where
-  its server decides, and a Gemini conversation can grow toward the model's 1M-token window, with
-  every model call carrying all of it. 240K is about where Claude Code compacts under Anima's
-  default 272K window, so agents on either CLI carry about the same context. `agy` ignores a value
-  above the model's window, so GPT-OSS 120B (131K) keeps its own point. An agent can set its own
-  value in its Launch env: a token count, a `K` or `M` shorthand, or a percentage of the model's
-  window. `0` leaves the point to `agy`; the profile form does not save an empty value. The
-  profile's context gauge measures against a count or shorthand. For a percentage or `0` it has
-  no token count to use, so it shows how full the model's window is instead.
+- `agy acp` does not compact a conversation at a set point: 1.5.18 ignores
+  `AGY_CLI_AUTO_COMPACT_OVERRIDE` in ACP, and only its TUI reads it. Left alone, a Gemini
+  conversation grows toward the model's 1M-token window, with every model call carrying all of it.
+  Anima keeps it to 240K instead. When an item is about to start and the session's last turn left
+  240K tokens of context or more, Anima archives the session and the item starts a new one, without
+  a summary; the agent carries on from its memory files and inbox. 240K is about where Claude Code
+  compacts under Anima's default 272K window, so agents on either CLI carry about the same context.
+  A session `agy` is still working in, in the background, is kept until a later item, and an item
+  resumed after a restart stays in its session. An agent can set its own limit as
+  `AGY_CLI_AUTO_COMPACT_OVERRIDE` in its Launch env: a token count, a `K` or `M` shorthand, or a
+  percentage of the model's window. `0` sets no limit; the profile form does not save an empty
+  value. Anima passes the value to `agy` too, so an `agy` that honors it in ACP compacts before
+  Anima would start over. A model whose window is under the limit (GPT-OSS 120B has 131K) never
+  reaches it. The profile's context gauge measures against the limit and reads "to new session".
 - The Anima runtime profile replaces Antigravity's own system prompt. Before it starts the
   process, Anima writes the profile as a custom agent, `.agents/agents/anima-runtime.md` under
   `~/.anima/run/agents/<id>/antigravity-cli-agent/`, with `excludeDefaultComponents: true` and a

@@ -480,7 +480,7 @@ const FAKE_AGY = [
   "    if (msg.method === 'session/new') {",
   "      if (scenario.newError) { send({ jsonrpc: '2.0', id: msg.id, error: scenario.newError }); continue; }",
   '      if (scenario.newHangs) continue;',
-  "      sessionId = 'agy-session-new';",
+  "      sessionId = scenario.uniqueSessions ? 'agy-session-' + process.pid : 'agy-session-new';",
   "      send({ jsonrpc: '2.0', id: msg.id, result: { sessionId, configOptions } });",
   '      continue;',
   '    }',
@@ -1168,6 +1168,7 @@ const FAKE_AGY = [
   '        }, 10);',
   '        continue;',
   '      }',
+  "      if (scenario.contextUsed) update({ sessionUpdate: 'usage_update', used: scenario.contextUsed, size: 1048576 });",
   "      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: scenario.richTurn ? ' + appended' : 'reply ' + promptCount } });",
   '      if (scenario.wake) runStopHook(sessionId, wakeDone);',
   "      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });",
@@ -1893,7 +1894,7 @@ test('antigravity-cli saves a thinking level the probed menu lacks, and the next
   }
 });
 
-test('antigravity-cli launches agy with the compaction point an agent sets for itself', async () => {
+test('antigravity-cli passes agy the context limit an agent sets for itself', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-compact-'));
   let runtime: AgentRuntime | undefined;
   try {
@@ -2234,6 +2235,63 @@ test('antigravity-cli creates a fresh session when the persisted one is gone', a
     await rm(stateDir, { force: true, recursive: true });
   }
 });
+
+for (const scenario of [
+  { name: 'starts a new session for the next item once a turn leaves the context at its limit', used: 5_000 },
+  { name: 'keeps the session for the next item while the context is below its limit', used: 4_999 },
+]) {
+  test(`antigravity-cli ${scenario.name}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'anima-agy-context-limit-'));
+    let worker: AgentRuntimeWorker | undefined;
+    try {
+      await withAnimaHome(stateDir, async () => {
+        const callsPath = join(stateDir, 'calls.jsonl');
+        await ensureTestAgentConfig({ agentId: 'anima', stateDir });
+        await installFakeAgy(stateDir);
+        const runtime = createAgentRuntime({
+          env: agyEnv(stateDir, { contextUsed: scenario.used, uniqueSessions: true }, { AGY_CLI_AUTO_COMPACT_OVERRIDE: '5K' }),
+          kind: 'antigravity-cli',
+        });
+        const started = new AgentRuntimeWorker(
+          { agentId: 'anima', agentRuntime: runtime, homePath: stateDir, queue: new WakeQueueService('anima'), stateDir },
+          { error() {}, log() {} },
+        );
+        worker = started;
+        await ingestAgyEvent(stateDir, 'Fill the context.', '1786000041.000001');
+        assert.equal(await started.drainOnce(), 1);
+        const before = (await loadState()).sessions.anima;
+        const first = before?.current?.id;
+        assert.match(first ?? '', /^agy-session-\d+$/);
+        assert.equal(before?.latestProviderStats?.currentContextTokens, scenario.used);
+        assert.equal(before?.latestProviderStats?.autoCompactWindow, 5_000);
+
+        const next = await ingestAgyEvent(stateDir, 'Carry on.', '1786000041.000002');
+        assert.equal(await started.drainOnce(), 1);
+        const state = await loadState();
+        const methods = methodsOf(await readJsonLines(callsPath));
+        assert.equal(methods.filter((method) => method === 'session/prompt').length, 2);
+        assert.equal(methods.includes('session/resume'), false);
+        const rotation = allActivities(state).filter((activity) => activity.type === 'anima.session.rotate');
+        if (scenario.used < 5_000) {
+          assert.equal(methods.filter((method) => method === 'session/new').length, 1);
+          assert.equal(state.sessions.anima?.current?.id, first);
+          assert.equal(rotation.length, 0);
+          return;
+        }
+        assert.equal(methods.filter((method) => method === 'session/new').length, 2);
+        assert.equal(state.sessions.anima?.archived?.[0]?.id, first);
+        assert.match(state.sessions.anima?.current?.id ?? '', /^agy-session-\d+$/);
+        assert.notEqual(state.sessions.anima?.current?.id, first);
+        assert.equal(rotation.length, 1);
+        assert.equal(rotation[0]?.payload?.['itemId'], next.item.id);
+        assert.equal(rotation[0]?.payload?.['reason'], 'context_limit');
+      });
+    } finally {
+      await worker?.close();
+      await rm(stateDir, { force: true, recursive: true });
+    }
+  });
+}
 
 const QUOTED_QUOTA_TEXTS = [
   'Individual quota reached. Ask your team admin to raise the daily limit.',
